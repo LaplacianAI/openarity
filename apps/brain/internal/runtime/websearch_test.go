@@ -432,8 +432,8 @@ func TestAProviderErrorIsAToolErrorAndTheRunGoesOn(t *testing.T) {
 	f.hubRun(t, "team/model")
 	url := "http://searxng:8080"
 	if _, err := f.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
-		SandboxProvider: "none",
-		TeamID:          f.team, ModelName: new("team/model"), ModelMaxTokens: new(int32(2048)),
+		SandboxProvider: "none", BrowserProvider: "none",
+		TeamID: f.team, ModelName: new("team/model"), ModelMaxTokens: new(int32(2048)),
 		SearchProvider: "searxng", SearchUrl: &url, CompactionMessages: 100,
 	}); err != nil {
 		t.Fatal(err)

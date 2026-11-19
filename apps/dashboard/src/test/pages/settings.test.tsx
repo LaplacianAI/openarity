@@ -72,6 +72,7 @@ describe("the request the form sends", () => {
       model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
       search: { provider: "brave" },
       sandbox: { provider: "none" },
+      browser: { provider: "none" },
       learning: false,
       compaction_messages: 250,
       hub: null,
@@ -181,6 +182,7 @@ describe("each group on its own", () => {
       model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
       search: { provider: "brave" },
       sandbox: { provider: "none" },
+      browser: { provider: "none" },
       learning: true,
       compaction_messages: 250,
       hub: null,
@@ -266,6 +268,7 @@ it("saves the learning switch without touching the key", async () => {
     model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
     search: { provider: "brave" },
     sandbox: { provider: "none" },
+    browser: { provider: "none" },
     learning: true,
     compaction_messages: 250,
     hub: null,
@@ -596,4 +599,129 @@ describe("an E2B team's template", () => {
     );
     expect((body as { sandbox: object }).sandbox).not.toHaveProperty("template");
   });
+});
+
+const LIGHTPANDA: TeamSettings = {
+  ...NEVER,
+  browser: { provider: "lightpanda", url: "ws://lightpanda:9222", key_set: true },
+  updated_at: "2026-11-19T09:00:00Z",
+};
+
+const KERNEL: TeamSettings = {
+  ...NEVER,
+  browser: { provider: "kernel", url: null, key_set: true },
+  updated_at: "2026-11-19T09:00:00Z",
+};
+
+describe("the browser the form sends", () => {
+  const ask = (patch: Partial<ReturnType<typeof draftOf>>, stored: TeamSettings = NEVER) =>
+    settingsRequest({ ...draftOf(stored), ...patch }, stored);
+  const browserOf = (body: unknown) => (body as { browser: Record<string, unknown> }).browser;
+
+  it("keeps the stored key while the provider and address are unchanged", () => {
+    const body = ask({ learning: true }, LIGHTPANDA);
+    expect(browserOf(body)).toEqual({ provider: "lightpanda", url: "ws://lightpanda:9222" });
+  });
+
+  it("keeps a hosted browser's key, and sends it no address", () => {
+    expect(browserOf(ask({ browserURL: "ws://left-over" }, KERNEL))).toEqual({
+      provider: "kernel",
+    });
+  });
+
+  it("needs a key for a hosted browser, and never carries one across providers", () => {
+    expect(ask({ browser: "browserbase" })).toMatch(/never carried/);
+    expect(ask({ browser: "anchor", browserURL: "" }, KERNEL)).toMatch(/never carried/);
+  });
+
+  it("takes a self-hosted browser with no key", () => {
+    expect(browserOf(ask({ browser: "lightpanda", browserURL: " ws://lightpanda:9222 " }))).toEqual(
+      {
+        provider: "lightpanda",
+        url: "ws://lightpanda:9222",
+      },
+    );
+    expect(browserOf(ask({ browser: "cdp", browserURL: "ws://chrome:9222" }))).toEqual({
+      provider: "cdp",
+      url: "ws://chrome:9222",
+    });
+  });
+
+  it("asks for the key again when a self-hosted browser moves, or to drop it", () => {
+    expect(ask({ browserURL: "ws://lightpanda-2:9222" }, LIGHTPANDA)).toMatch(/old address/);
+    expect(
+      browserOf(ask({ browserURL: "ws://lightpanda-2:9222", dropBrowserKey: true }, LIGHTPANDA)),
+    ).toEqual({
+      provider: "lightpanda",
+      url: "ws://lightpanda-2:9222",
+      api_key: "",
+    });
+  });
+
+  it("never sends an empty key to a hosted browser, even when told to drop it", () => {
+    expect(ask({ dropBrowserKey: true }, KERNEL)).toMatchObject({
+      browser: { provider: "kernel" },
+    });
+    expect(browserOf(ask({ dropBrowserKey: true }, KERNEL))).not.toHaveProperty("api_key");
+  });
+
+  it("refuses a CDP browser with no address, and Bright Data without USER:PASS", () => {
+    expect(ask({ browser: "cdp" })).toMatch(/address/);
+    expect(ask({ browser: "brightdata", browserKey: "token" })).toMatch(/USER:PASS/);
+    expect(browserOf(ask({ browser: "brightdata", browserKey: "u:p" }))).toEqual({
+      provider: "brightdata",
+      api_key: "u:p",
+    });
+  });
+
+  // A brain from before browsers sends no browser at all.
+  it("reads a team with no browser field as having none", () => {
+    expect(draftOf(NEVER).browser).toBe("none");
+    expect(browserOf(ask({}))).toEqual({ provider: "none" });
+  });
+
+  it("saves the browser on its own, leaving the search as stored", () => {
+    const body = groupRequest(
+      "browser",
+      { ...draftOf(BRAVE), provider: "tavily", browser: "kernel", browserKey: "k" },
+      BRAVE,
+    );
+    expect(body).toMatchObject({
+      search: { provider: "brave" },
+      browser: { provider: "kernel", api_key: "k" },
+    });
+  });
+});
+
+it("saves a self-hosted browser at its address, with no key", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    "GET /teams/{id}/settings": { body: NEVER },
+    "PUT /teams/{id}/settings": {
+      body: saved({
+        ...NEVER,
+        browser: { provider: "lightpanda", url: "ws://lightpanda:9222", key_set: false },
+      }),
+    },
+  });
+  at();
+
+  await userEvent.selectOptions(await screen.findByLabelText(/browser provider/i), "lightpanda");
+  await userEvent.type(screen.getByLabelText(/^address$/i), "ws://lightpanda:9222");
+  expect(screen.getByLabelText(/^token$/i)).toHaveValue("");
+  await saveIn("Browser");
+
+  await waitFor(() => expect(put(seen)).toBeDefined());
+  expect(put(seen).browser).toEqual({ provider: "lightpanda", url: "ws://lightpanda:9222" });
+  expect(await within(group("Browser")).findByText("Saved")).toBeInTheDocument();
+});
+
+it("shows a hosted browser's key field, and no address", async () => {
+  brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: KERNEL } });
+  at();
+
+  expect(await screen.findByLabelText(/browser provider/i)).toHaveValue("kernel");
+  expect(screen.getByLabelText(/^api key$/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/^address$/i)).not.toBeInTheDocument();
+  expect(screen.getByText(/a key is set\. leave this empty to keep it/i)).toBeInTheDocument();
 });

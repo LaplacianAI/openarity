@@ -571,6 +571,8 @@ export type ListedAgent = AgentSummary & {
   delegation: Delegation;
   /** web_search and web_fetch by its own grant. */
   web: boolean;
+  /** The team's browser, by its own grant. */
+  browser: boolean;
   mcp_server_count: number;
   skill_count: number;
   /** Read only when delegation is listed. */
@@ -596,6 +598,8 @@ export type Agent = AgentSummary & {
   delegates: string[];
   /** web_search and web_fetch, granted together. A hub has both whatever this says. */
   web: boolean;
+  /** The team's browser, to drive pages with. A hub has it whatever this says. */
+  browser: boolean;
 };
 
 /** Whom an agent may hand work to: any other agent in its team, only its delegates, or no one. */
@@ -625,6 +629,8 @@ export type AgentRequest = {
   delegates?: string[];
   /** Left out, the brain reads false. */
   web?: boolean;
+  /** Left out, the brain reads false. */
+  browser?: boolean;
 };
 
 /** GET /teams/{id}/mcp-servers. Credentials are references, never values. */
@@ -762,6 +768,23 @@ export type SearchProvider =
 export type SandboxProvider = "none" | "e2b" | "daytona" | "sandboxd";
 
 /**
+ * What a team's runs drive pages in. Browserless, Steel and Lightpanda are
+ * hosted, or self-hosted at a URL; cdp is any CDP browser at a URL; the rest
+ * are hosted only.
+ */
+export type BrowserProvider =
+  | "none"
+  | "browserless"
+  | "steel"
+  | "lightpanda"
+  | "cdp"
+  | "browserbase"
+  | "hyperbrowser"
+  | "anchor"
+  | "kernel"
+  | "brightdata";
+
+/**
  * GET /teams/{id}/settings. A team that never saved reads the defaults, with
  * `updated_at` null. The search key is never returned; `key_set` says
  * whether there is one.
@@ -777,6 +800,8 @@ export type TeamSettings = {
     template?: string | null;
     key_set: boolean;
   };
+  /** The key is never returned. Absent from a brain that predates browsers. */
+  browser?: { provider: BrowserProvider; url: string | null; key_set: boolean };
   learning: boolean;
   compaction_messages: number;
   /** The agent every message reaches first; null for the built-in orchestrator. */
@@ -796,6 +821,12 @@ export type TeamSettingsRequest = {
    * key while the provider and its URL are unchanged.
    */
   sandbox?: { provider: SandboxProvider; url?: string; template?: string; api_key?: string };
+  /**
+   * Left out, the stored browser stays. `api_key` left out keeps the stored
+   * key while the provider and its URL are unchanged; for a self-hosted
+   * browser an empty one removes it.
+   */
+  browser?: { provider: BrowserProvider; url?: string; api_key?: string };
   learning: boolean;
   compaction_messages: number;
   /** An agent's name in the team; null for the built-in orchestrator. */

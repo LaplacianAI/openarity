@@ -33,6 +33,7 @@ type Agent struct {
 	TokenBudget        *int64
 	Delegation         string
 	Web                bool
+	Browser            bool
 }
 
 type AgentDelegate struct {
@@ -487,6 +488,9 @@ type TeamSetting struct {
 	SandboxTemplate    *string
 	ApprovalMode       string
 	ApprovalTtlMinutes int32
+	BrowserProvider    string
+	BrowserUrl         *string
+	BrowserSecretID    *uuid.UUID
 }
 
 type User struct {

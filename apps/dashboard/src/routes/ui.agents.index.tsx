@@ -21,7 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmptyState, LoadMore, Mono, PageHeader } from "@/components/ui-bits";
-import { delegationWords, grantWords } from "@/lib/agent-draft";
+import { delegationWords, grantWords, webWords } from "@/lib/agent-draft";
 import { count } from "@/lib/runs";
 
 export const Route = createFileRoute("/ui/agents/")({
@@ -153,7 +153,7 @@ function AgentTable({ agents }: { agents: ListedAgent[] }) {
               {grantWords(a)}
             </TableCell>
             <TableCell label="Web" className="whitespace-nowrap">
-              {a.web ? "On" : "Off"}
+              {webWords(a)}
             </TableCell>
             <TableCell label="Hands work to" className="whitespace-nowrap">
               {delegationWords(a)}

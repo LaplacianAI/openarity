@@ -447,6 +447,31 @@ func TestTheShippedPolicyServesSandboxKeysAndRoomTokens(t *testing.T) {
 	}
 }
 
+// A team's browser key is written once, read, and destroyed when replaced,
+// under the policy that ships; nothing deeper under browser/ is the brain's.
+func TestTheShippedPolicyServesBrowserKeys(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, _, _ := brainStore(t)
+	team := uuid.New()
+	path := secrets.Path(team, secrets.KindBrowser, uuid.New())
+	if err := writer.Put(t.Context(), path, "v", "s3cret"); err != nil {
+		t.Fatalf("saving a browser key: %v", err)
+	}
+	if got, err := reader.Get(t.Context(), path, "v"); err != nil || got != "s3cret" {
+		t.Fatalf("reading the browser key = %q, %v", got, err)
+	}
+	if err := writer.Delete(t.Context(), path); err != nil {
+		t.Fatalf("destroying a replaced browser key: %v", err)
+	}
+	if _, err := reader.Get(t.Context(), path, "v"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("after destroying the key, err = %v, want secrets.ErrNotFound", err)
+	}
+	if err := writer.Put(t.Context(), path+"/extra", "v", "x"); err == nil {
+		t.Errorf("wrote %s/extra, below a browser key", path)
+	}
+}
+
 // The two sandbox rules are one segment each: nothing deeper under a team's
 // sandbox is the brain's to write.
 func TestTheSandboxRulesCannotBeWalkedOutOf(t *testing.T) {
@@ -562,6 +587,8 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/metadata/teams/+/sandbox/+"`,
 		`path "secret/data/teams/+/sandbox/rooms/+"`,
 		`path "secret/metadata/teams/+/sandbox/rooms/+"`,
+		`path "secret/data/teams/+/browser/+"`,
+		`path "secret/metadata/teams/+/browser/+"`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("policy-brain.hcl no longer contains %s — the tests above are\n"+

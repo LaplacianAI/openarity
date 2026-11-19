@@ -18,6 +18,7 @@ import type {
   ApprovalMode,
   ApprovalRuleMode,
   ApprovalSettings,
+  BrowserProvider,
   SandboxProvider,
   SearchProvider,
   TeamSettings,
@@ -80,6 +81,56 @@ const SANDBOXES: { value: SandboxProvider; label: string; about: string }[] = [
     about: "Your own sandboxd at its address, with its token as the key.",
   },
 ];
+
+/**
+ * What a team's runs drive pages in. Where the browser runs is what a team is
+ * choosing: on the provider's network, or on its own beside the brain.
+ */
+const BROWSERS: { value: BrowserProvider; label: string; about: string }[] = [
+  { value: "none", label: "Off", about: "Runs have no browser." },
+  {
+    value: "lightpanda",
+    label: "Lightpanda",
+    about:
+      "A browser built for automation, using a fraction of Chrome's memory; a few sites do not work in it yet. Hosted, or your own at its address.",
+  },
+  {
+    value: "browserless",
+    label: "Browserless",
+    about: "Chrome, hosted, or your own Browserless at its address with its token as the key.",
+  },
+  {
+    value: "steel",
+    label: "Steel",
+    about: "Chrome, hosted, or your own Steel at its API address, which takes no key.",
+  },
+  {
+    value: "cdp",
+    label: "Any CDP browser (self-hosted)",
+    about:
+      "Any browser that speaks the Chrome DevTools Protocol at its address, such as headless-shell. Keep it on a network only the brain reaches.",
+  },
+  {
+    value: "browserbase",
+    label: "Browserbase",
+    about: "Hosted. Each run gets a session of its own.",
+  },
+  {
+    value: "hyperbrowser",
+    label: "Hyperbrowser",
+    about: "Hosted. Each run gets a session of its own.",
+  },
+  { value: "anchor", label: "Anchor", about: "Hosted. Each run gets a session of its own." },
+  { value: "kernel", label: "Kernel", about: "Hosted. Each run gets a browser of its own." },
+  {
+    value: "brightdata",
+    label: "Bright Data",
+    about:
+      "Hosted, with its proxies, for sites that block automation. The key is the zone's username and password, as USER:PASS.",
+  },
+];
+/** Providers that run at an address of the team's own. */
+const BROWSER_URL: BrowserProvider[] = ["browserless", "steel", "lightpanda", "cdp"];
 
 /** What an E2B team's rooms start from when it names no template; the build script's default. */
 const E2B_DEFAULT_TEMPLATE = "openarity-sandbox";
@@ -181,6 +232,12 @@ export type SettingsDraft = {
   sandboxTemplate: string;
   /** Typed only; the stored key is never read back. */
   sandboxKey: string;
+  browser: BrowserProvider;
+  browserURL: string;
+  /** Typed only; the stored key is never read back. */
+  browserKey: string;
+  /** A self-hosted browser only: reach it with no key. */
+  dropBrowserKey: boolean;
   learning: boolean;
   compaction: string;
   /** The chosen hub agent; null for the built-in orchestrator. */
@@ -202,6 +259,11 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     sandboxURL: s.sandbox?.url ?? "",
     sandboxTemplate: s.sandbox?.template ?? "",
     sandboxKey: "",
+    // A brain from before browsers sends none: the team has none.
+    browser: s.browser?.provider ?? "none",
+    browserURL: s.browser?.url ?? "",
+    browserKey: "",
+    dropBrowserKey: false,
     learning: s.learning,
     compaction: String(s.compaction_messages),
     hub: s.hub,
@@ -209,7 +271,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
 }
 
 /** The groups of the page, each saved on its own. */
-export type Group = "model" | "hub" | "search" | "sandbox" | "learning";
+export type Group = "model" | "hub" | "search" | "sandbox" | "browser" | "learning";
 
 /** Which of the draft's fields each group owns. */
 const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
@@ -217,6 +279,7 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
   hub: ["hub", "compaction"],
   search: ["provider", "url", "key", "dropKey"],
   sandbox: ["sandbox", "sandboxURL", "sandboxTemplate", "sandboxKey"],
+  browser: ["browser", "browserURL", "browserKey", "dropBrowserKey"],
   learning: ["learning"],
 };
 
@@ -319,11 +382,14 @@ export function settingsRequest(
 
   const sandbox = sandboxRequest(d, stored);
   if (typeof sandbox === "string") return sandbox;
+  const browser = browserRequest(d, stored);
+  if (typeof browser === "string") return browser;
 
   return {
     model,
     search,
     sandbox,
+    browser,
     learning: d.learning,
     compaction_messages: compaction,
     // Whole, as the rest is: null sends the team back to the built-in orchestrator.
@@ -364,6 +430,40 @@ function sandboxRequest(
       : "Paste the provider's key. A key is never carried from one provider to another.";
   }
   return sandbox;
+}
+
+/**
+ * The browser as the brain takes it. A hosted one needs its key; a
+ * self-hosted one may have none, and its key stays with its address.
+ */
+export function browserRequest(
+  d: SettingsDraft,
+  stored: TeamSettings,
+): TeamSettingsRequest["browser"] | string {
+  const browser: NonNullable<TeamSettingsRequest["browser"]> = { provider: d.browser };
+  if (d.browser === "none") return browser;
+
+  const url = d.browserURL.trim();
+  if (d.browser === "cdp" && url === "") return "A CDP browser needs its address.";
+  if (BROWSER_URL.includes(d.browser) && url !== "") browser.url = url;
+  const hosted = browser.url === undefined && d.browser !== "cdp";
+
+  const was = stored.browser;
+  const sameProvider = was?.provider === d.browser;
+  const keeps = was?.key_set === true && sameProvider && (was.url ?? "") === (browser.url ?? "");
+  if (d.browserKey !== "") {
+    if (d.browser === "brightdata" && !d.browserKey.includes(":")) {
+      return "Bright Data's key is the zone's username and password, as USER:PASS.";
+    }
+    browser.api_key = d.browserKey;
+  } else if (d.dropBrowserKey && !hosted) {
+    browser.api_key = "";
+  } else if (hosted && !keeps) {
+    return "Paste the provider's key. A key is never carried from one provider to another.";
+  } else if (!hosted && !keeps && was?.key_set && sameProvider) {
+    return "The key stays with the old address. Paste it again, or choose to reach it with none.";
+  }
+  return browser;
 }
 
 /** One group: what it decides, its fields, and its own Save. */
@@ -440,7 +540,7 @@ function Section({
   );
 }
 
-const GROUPS: Group[] = ["model", "hub", "search", "sandbox", "learning"];
+const GROUPS: Group[] = ["model", "hub", "search", "sandbox", "browser", "learning"];
 
 function SettingsForm({
   teamId,
@@ -470,6 +570,14 @@ function SettingsForm({
   const sandboxKeyKept =
     stored.sandbox?.key_set === true && stored.sandbox.provider === draft.sandbox;
   const sandboxAbout = SANDBOXES.find((p) => p.value === draft.sandbox)?.about;
+  const browserKeyKept =
+    stored.browser?.key_set === true &&
+    stored.browser.provider === draft.browser &&
+    (stored.browser.url ?? "") === draft.browserURL.trim();
+  const browserAbout = BROWSERS.find((p) => p.value === draft.browser)?.about;
+  const browserTakesURL = BROWSER_URL.includes(draft.browser);
+  const browserSelfHosted =
+    draft.browser === "cdp" || (browserTakesURL && draft.browserURL.trim() !== "");
 
   // A plain call rather than useMutation: a mutation keeps its variables in
   // the query client's cache, and they can hold the key.
@@ -741,6 +849,85 @@ function SettingsForm({
               onChange={(e) => set("sandbox", { sandboxKey: e.target.value })}
             />
           </Field>
+        ) : null}
+      </Section>
+
+      <Section
+        title="Browser"
+        about="What the hub, and agents granted one, drive pages in: open, read, click and type. A page runs its scripts, and a browser of your own is never let reach a private address."
+        {...props("browser")}
+      >
+        <Field label="Browser provider" htmlFor="settings-browser" hint={browserAbout}>
+          <select
+            id="settings-browser"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={draft.browser}
+            onChange={(e) =>
+              // The address and key are the old provider's.
+              set("browser", {
+                browser: e.target.value as BrowserProvider,
+                browserURL: "",
+                browserKey: "",
+                dropBrowserKey: false,
+              })
+            }
+          >
+            {BROWSERS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {browserTakesURL ? (
+          <Field
+            label="Address"
+            htmlFor="settings-browser-url"
+            hint={
+              draft.browser === "cdp"
+                ? "Where the brain reaches it, such as ws://headless-shell:9222."
+                : draft.browser === "steel"
+                  ? "Empty for Steel's hosted service; your instance's API address, such as http://steel:3000, otherwise."
+                  : "Empty for the hosted service; your own browser's address, such as ws://lightpanda:9222, otherwise."
+            }
+          >
+            <Input
+              id="settings-browser-url"
+              spellCheck={false}
+              value={draft.browserURL}
+              onChange={(e) => set("browser", { browserURL: e.target.value })}
+            />
+          </Field>
+        ) : null}
+        {draft.browser !== "none" && !(browserSelfHosted && draft.dropBrowserKey) ? (
+          <Field
+            label={browserSelfHosted ? "Token" : "API key"}
+            htmlFor="settings-browser-key"
+            hint={
+              browserKeyKept
+                ? "A key is set. Leave this empty to keep it."
+                : browserSelfHosted
+                  ? "Only if your browser asks for one. Kept in the secret store and never shown again."
+                  : "Kept in the secret store and never shown again."
+            }
+          >
+            <Input
+              id="settings-browser-key"
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              value={draft.browserKey}
+              onChange={(e) => set("browser", { browserKey: e.target.value })}
+            />
+          </Field>
+        ) : null}
+        {browserSelfHosted && stored.browser?.key_set ? (
+          <SwitchField
+            label="Reach it with no key"
+            description="Removes the stored key, for a browser of your own that asks for none."
+            checked={draft.dropBrowserKey}
+            onCheckedChange={(dropBrowserKey) => set("browser", { dropBrowserKey, browserKey: "" })}
+          />
         ) : null}
       </Section>
 

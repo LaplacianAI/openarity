@@ -1,0 +1,51 @@
+# Steel, Chrome behind a session API, for the browser a team's runs drive.
+# The open-source build of the hosted service, with the same API: a run makes
+# a session and ends it.
+#
+# Measured: a 3.8 GB image, about 950 MiB resident idle and 980 MiB after a
+# page: the heaviest of the four here. Its session API answered and released
+# a session (200), and it names its browser as ws://localhost:3000/ whatever
+# it is reached by; the brain dials the host it reached the API at instead.
+#
+#   cd deployment
+#   docker compose -f docker-compose.yml -f docker-compose.steel.yml up -d
+#
+# A team chooses it in its settings, not here. The open-source build takes no
+# key:
+#
+#   oa teams settings set <team> --browser steel --browser-url http://steel:3000
+#
+# Steel asks no one for a key, so it sits on a network of its own at a fixed
+# address, shared only with the worker, which runs the agents, and only that
+# address is named for the brain to dial:
+#
+#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.226/32
+#
+# A page the browser opens may still try a private address; the brain refuses
+# each such request before the browser makes it.
+
+name: openarity
+
+services:
+  steel:
+    # Steel publishes only latest, so the image is pinned by its digest.
+    image: ghcr.io/steel-dev/steel-browser@sha256:e10ce7adecc94d000b28d256c45ffa113dc78b4fc8d38de5f7940b139c3a220d
+    networks:
+      browser-steel:
+        ipv4_address: 172.31.255.226
+    shm_size: 512m
+    restart: unless-stopped
+
+  worker:
+    networks:
+      - default
+      - browser-steel
+
+networks:
+  # A /29 for the gateway, Steel and the worker. If it collides with a network
+  # on this machine, change the subnet, Steel's address and the /32 in
+  # MCP_PRIVATE_NETWORKS together.
+  browser-steel:
+    ipam:
+      config:
+        - subnet: 172.31.255.224/29

@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -37,6 +37,9 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.SandboxTemplate,
 		&i.ApprovalMode,
 		&i.ApprovalTtlMinutes,
+		&i.BrowserProvider,
+		&i.BrowserUrl,
+		&i.BrowserSecretID,
 	)
 	return i, err
 }
@@ -66,7 +69,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id
 `
 
 type SetTeamApprovalParams struct {
@@ -99,6 +102,9 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.SandboxTemplate,
 		&i.ApprovalMode,
 		&i.ApprovalTtlMinutes,
+		&i.BrowserProvider,
+		&i.BrowserUrl,
+		&i.BrowserSecretID,
 	)
 	return i, err
 }
@@ -120,13 +126,15 @@ INSERT INTO team_settings (
     model_name, model_max_tokens, model_temperature,
     search_provider, search_url, search_secret_id,
     learning, compaction_messages, hub_agent_id,
-    sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template
+    sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
+    browser_provider, browser_url, browser_secret_id
 ) VALUES (
     $1,
     $2, $3, $4,
     $5, $6, $7,
     $8, $9, $10,
-    $11, $12, $13, $14
+    $11, $12, $13, $14,
+    $15, $16, $17
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -142,8 +150,11 @@ ON CONFLICT (team_id) DO UPDATE SET
     sandbox_url         = EXCLUDED.sandbox_url,
     sandbox_secret_id   = EXCLUDED.sandbox_secret_id,
     sandbox_template    = EXCLUDED.sandbox_template,
+    browser_provider    = EXCLUDED.browser_provider,
+    browser_url         = EXCLUDED.browser_url,
+    browser_secret_id   = EXCLUDED.browser_secret_id,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id
 `
 
 type UpsertTeamSettingsParams struct {
@@ -161,6 +172,9 @@ type UpsertTeamSettingsParams struct {
 	SandboxUrl         *string
 	SandboxSecretID    *uuid.UUID
 	SandboxTemplate    *string
+	BrowserProvider    string
+	BrowserUrl         *string
+	BrowserSecretID    *uuid.UUID
 }
 
 // The whole row every time. A save that keeps the search key passes the same
@@ -182,6 +196,9 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.SandboxUrl,
 		arg.SandboxSecretID,
 		arg.SandboxTemplate,
+		arg.BrowserProvider,
+		arg.BrowserUrl,
+		arg.BrowserSecretID,
 	)
 	var i TeamSetting
 	err := row.Scan(
@@ -202,6 +219,9 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.SandboxTemplate,
 		&i.ApprovalMode,
 		&i.ApprovalTtlMinutes,
+		&i.BrowserProvider,
+		&i.BrowserUrl,
+		&i.BrowserSecretID,
 	)
 	return i, err
 }

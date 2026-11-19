@@ -1,0 +1,53 @@
+# headless-shell, Chrome's headless build with nothing else, for the browser a
+# team's runs drive, as the cdp provider. No account and no key.
+#
+# Measured: a 539 MB image, about 230 MiB resident idle and 300 MiB after a
+# page. The lightest Chrome here; Lightpanda is lighter still, and Chrome
+# opens the sites Lightpanda cannot.
+#
+#   cd deployment
+#   docker compose -f docker-compose.yml -f docker-compose.headless-shell.yml up -d
+#
+# Chrome answers its debugging port only when the Host is an address or
+# localhost ("Host header is specified and is not an IP address or
+# localhost", measured), so a team names the address, not the service:
+#
+#   oa teams settings set <team> --browser cdp --browser-url http://172.31.255.218:9222
+#
+# Chrome asks no one for a key: whatever reaches the port drives the browser.
+# So it sits on a network of its own at a fixed address, shared only with the
+# worker, which runs the agents, and only that address is named for the brain
+# to dial:
+#
+#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.218/32
+#
+# A page the browser opens may still try a private address; the brain refuses
+# each such request before the browser makes it.
+
+name: openarity
+
+services:
+  headless-shell:
+    # Chrome's stable build. A browser's fixes are security fixes, so this is
+    # raised with each stable release rather than left to age.
+    image: chromedp/headless-shell:159.0.8154.13
+    networks:
+      browser-headless-shell:
+        ipv4_address: 172.31.255.218
+    # Chrome wants more shared memory than Docker's 64 MB for a page of any size.
+    shm_size: 256m
+    restart: unless-stopped
+
+  worker:
+    networks:
+      - default
+      - browser-headless-shell
+
+networks:
+  # A /29 for the gateway, Chrome and the worker. If it collides with a network
+  # on this machine, change the subnet, Chrome's address, the URL teams save
+  # and the /32 in MCP_PRIVATE_NETWORKS together.
+  browser-headless-shell:
+    ipam:
+      config:
+        - subnet: 172.31.255.216/29

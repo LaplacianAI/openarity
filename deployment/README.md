@@ -74,6 +74,7 @@ make staging    # image plus authentik: OIDC only, no development token
 make objects    # add SeaweedFS and create the bucket — for the object store tests
 make ollama     # add a local embedding model, for the graph
 make searxng    # add SearXNG, a search engine for the hub's web_search
+make browser name=lightpanda   # add a browser for runs: or headless-shell, browserless, steel
 make grafana    # add Loki, Alloy and Grafana for the stack's logs (optional)
 make ps         # what is running, and on which ports
 make logs       # follow the brain; make logs service=authentik-server
@@ -628,6 +629,26 @@ SearXNG asks the public engines from this machine's address, so a busy team
 can be rate-limited by them; Brave and Tavily are the answer then. `make dev`
 and `make image` recreate the worker without the search network, and `make
 searxng` again puts it back.
+
+## A browser
+
+A team's runs can drive a browser, hosted or one of your own. `make browser
+name=<one>` runs one beside the brain, each on a network of its own shared
+only with the worker, as SearXNG is:
+
+| `name=` | Memory after a page, measured | Address to name | A team saves |
+| --- | --- | --- | --- |
+| `lightpanda` | about 63 MiB | `172.31.255.242/32` | `--browser lightpanda --browser-url ws://lightpanda:9222` |
+| `headless-shell` | about 300 MiB | `172.31.255.218/32` | `--browser cdp --browser-url http://172.31.255.218:9222` |
+| `browserless` | about 600 MiB | `172.31.255.234/32` | `--browser browserless --browser-url ws://browserless:3000`, its token as the key |
+| `steel` | about 980 MiB | `172.31.255.226/32` | `--browser steel --browser-url http://steel:3000` |
+
+Name the address in `OPENARITY_MCP_PRIVATE_NETWORKS`, comma-separated from
+any other. Browserless needs `BROWSERLESS_TOKEN` in `.env`; the others ask no
+one for a key, which is why nothing but the worker shares their network.
+Lightpanda refuses a request by a name it was not told, and headless-shell
+one by any name at all, which is why its URL is an address. Staging, and
+`deploy.sh`, add the one `BROWSER_STACK` names in `.env`.
 
 ## Logs
 

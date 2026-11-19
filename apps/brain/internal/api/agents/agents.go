@@ -319,7 +319,7 @@ func Columns(req Request) (db.CreateAgentParams, error) {
 		ModelName: req.Model.Name, MaxTokens: req.Model.MaxTokens, Temperature: req.Model.Temperature,
 		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
 		Parser: req.Parser, TokenBudget: req.TokenBudget, Delegation: delegationOf(req),
-		Web: req.Web != nil && *req.Web,
+		Web: req.Web != nil && *req.Web, Browser: req.Browser != nil && *req.Browser,
 	}
 
 	if req.OutputSchema != nil {
@@ -340,12 +340,13 @@ func Columns(req Request) (db.CreateAgentParams, error) {
 // RequestOf is the request Columns would turn into this row, grants aside:
 // what an agent is, said the way it is asked for.
 func RequestOf(row db.Agent) (Request, error) {
-	delegation, web := row.Delegation, row.Web
+	delegation, web, browser := row.Delegation, row.Web, row.Browser
 	req := Request{
 		Name: row.Name, Description: row.Description, Kind: Kind(row.Kind), Instructions: row.Instructions,
 		Model:   ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
 		Pattern: row.Pattern, MaxSteps: row.MaxSteps, SteerContinuations: row.SteerContinuations,
 		Parser: row.Parser, TokenBudget: row.TokenBudget, Delegation: &delegation, Web: &web,
+		Browser: &browser,
 	}
 
 	if row.OutputSchema != nil {
@@ -370,7 +371,7 @@ func UpdateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 		Pattern: c.Pattern, MaxSteps: c.MaxSteps, SteerContinuations: c.SteerContinuations,
 		OutputSchema: c.OutputSchema, Parser: c.Parser,
 		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
-		TokenBudget: c.TokenBudget, Delegation: c.Delegation, Web: c.Web,
+		TokenBudget: c.TokenBudget, Delegation: c.Delegation, Web: c.Web, Browser: c.Browser,
 	}
 }
 
@@ -462,6 +463,7 @@ func view(row db.Agent, g grants) (detail, error) {
 		Delegation:         row.Delegation,
 		Delegates:          g.delegates,
 		Web:                row.Web,
+		Browser:            row.Browser,
 	}
 	if d.MCPServers == nil {
 		d.MCPServers = []ServerGrant{}
@@ -501,7 +503,7 @@ func viewSummary(row db.Agent) summary {
 func viewListed(row db.ListAgentsByTeamRow) listed {
 	return listed{
 		summary:    viewSummary(row.Agent),
-		Delegation: row.Agent.Delegation, Web: row.Agent.Web,
+		Delegation: row.Agent.Delegation, Web: row.Agent.Web, Browser: row.Agent.Browser,
 		ServerCount: row.ServerCount, SkillCount: row.SkillCount, DelegateCount: row.DelegateCount,
 	}
 }

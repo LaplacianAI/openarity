@@ -71,6 +71,9 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		CompactionMessages: p.CompactionMessages,
 		HubAgentID:         p.HubAgentID,
 		SandboxProvider:    p.SandboxProvider,
+		BrowserProvider:    p.BrowserProvider,
+		BrowserUrl:         p.BrowserUrl,
+		BrowserSecretID:    p.BrowserSecretID,
 		SandboxUrl:         p.SandboxUrl,
 		SandboxSecretID:    p.SandboxSecretID,
 		SandboxTemplate:    p.SandboxTemplate,
@@ -257,6 +260,11 @@ type wire struct {
 		Template *string `json:"template"`
 		KeySet   bool    `json:"key_set"`
 	} `json:"sandbox"`
+	Browser struct {
+		Provider string  `json:"provider"`
+		URL      *string `json:"url"`
+		KeySet   bool    `json:"key_set"`
+	} `json:"browser"`
 	Learning           bool  `json:"learning"`
 	CompactionMessages int32 `json:"compaction_messages"`
 	Hub                *struct {

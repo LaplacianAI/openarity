@@ -104,8 +104,8 @@ func TestTwoKeysOnOneStdinSayWhy(t *testing.T) {
 
 	_, err := clitest.ExecuteWithStdin(t, commands, "k\n", "teams", "settings", "set", teamID,
 		"--search", "brave", "--search-key-stdin", "--sandbox", "e2b", "--sandbox-key-stdin")
-	if err == nil || !strings.Contains(err.Error(), "two commands") {
-		t.Fatalf("err = %v, want it to say to use two commands", err)
+	if err == nil || !strings.Contains(err.Error(), "separate commands") {
+		t.Fatalf("err = %v, want it to say to use separate commands", err)
 	}
 }
 

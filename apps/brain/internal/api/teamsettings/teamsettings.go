@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	browserpkg "github.com/LaplacianAI/openarity/apps/brain/internal/browser"
 	sandboxpkg "github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -121,12 +122,22 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	web, webWritten, ok := h.browserOf(w, r, teamID, req.Browser, stored)
+	if !ok {
+		for _, path := range []string{written, boxWritten} {
+			if path != "" {
+				h.forget(r.Context(), teamID, path)
+			}
+		}
+		return
+	}
 
 	p := params(teamID, req, secretID, hub)
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
+	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
 	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
 	if err != nil {
-		for _, path := range []string{written, boxWritten} {
+		for _, path := range []string{written, boxWritten, webWritten} {
 			if path != "" {
 				h.forget(r.Context(), teamID, path)
 			}
@@ -279,6 +290,7 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 			Template: row.SandboxTemplate,
 			KeySet:   row.SandboxSecretID != nil,
 		},
+		Browser:            browserView(row),
 		Learning:           row.Learning,
 		CompactionMessages: row.CompactionMessages,
 		Hub:                hub,
@@ -294,6 +306,7 @@ func defaults() settings {
 	return settings{
 		Search:             search{Provider: providerNone},
 		Sandbox:            sandbox{Provider: string(sandboxpkg.None)},
+		Browser:            browser{Provider: string(browserpkg.None)},
 		CompactionMessages: defaultCompaction,
 	}
 }

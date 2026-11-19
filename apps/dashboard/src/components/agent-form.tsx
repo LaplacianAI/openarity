@@ -340,12 +340,21 @@ export function AgentForm({
         />
       </Section>
 
-      <Section title="The web" about="Searching the web and reading pages, granted together.">
+      <Section
+        title="The web"
+        about="Searching the web and reading pages, and driving a browser, each granted on its own."
+      >
         <SwitchField
           label="Can search the web and read pages"
           description="It is given the web search and page reading tools. The hub has them either way."
           checked={draft.web}
           onCheckedChange={(web) => set({ web })}
+        />
+        <SwitchField
+          label="Can drive a browser"
+          description="It can open pages, read them, click and type, in the browser chosen in Settings. Pages run their scripts, so grant it only where it is needed. The hub has it either way."
+          checked={draft.browser}
+          onCheckedChange={(browser) => set({ browser })}
         />
       </Section>
 

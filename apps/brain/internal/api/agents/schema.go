@@ -53,6 +53,7 @@ type listed struct {
 	summary
 	Delegation    string `json:"delegation"`
 	Web           bool   `json:"web"`
+	Browser       bool   `json:"browser"`
 	ServerCount   int64  `json:"mcp_server_count"`
 	SkillCount    int64  `json:"skill_count"`
 	DelegateCount int64  `json:"delegate_count"`
@@ -72,6 +73,7 @@ type detail struct {
 	Delegation         string        `json:"delegation"`
 	Delegates          []uuid.UUID   `json:"delegates"`
 	Web                bool          `json:"web"`
+	Browser            bool          `json:"browser"`
 }
 
 type Request struct {
@@ -92,6 +94,7 @@ type Request struct {
 	Delegation         *string       `json:"delegation"`
 	Delegates          []uuid.UUID   `json:"delegates"`
 	Web                *bool         `json:"web"`
+	Browser            *bool         `json:"browser"`
 }
 
 type agentCursor struct {

@@ -1,0 +1,58 @@
+# Browserless, Chrome behind a server that asks for a token, for the browser
+# a team's runs drive. The open-source build of the hosted service, with the
+# same API.
+#
+# Measured: a 4 GB image, about 420 MiB resident idle and 600 MiB after a
+# page. A wrong token is refused at the handshake with a 401.
+#
+#   cd deployment
+#   cp .env.example .env                        # then fill in the Browserless block
+#   docker compose -f docker-compose.yml -f docker-compose.browserless.yml up -d
+#
+# A team chooses it in its settings, not here, with the same token as its key:
+#
+#   printf %s "$BROWSERLESS_TOKEN" | oa teams settings set <team> \
+#       --browser browserless --browser-url ws://browserless:3000 --browser-key-stdin
+#
+# It sits on a network of its own at a fixed address, shared only with the
+# worker, which runs the agents, and only that address is named for the brain
+# to dial:
+#
+#   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.234/32
+#
+# Naming the compose network instead would open Postgres and OpenBao to any
+# URL a team saves. A page the browser opens may still try a private address;
+# the brain refuses each such request before the browser makes it.
+
+name: openarity
+
+services:
+  browserless:
+    image: ghcr.io/browserless/chromium:v2.64.0
+    environment:
+      # No default: without a token Browserless lets anyone drive it.
+      TOKEN: ${BROWSERLESS_TOKEN:?set BROWSERLESS_TOKEN in deployment/.env}
+      # Runs share it: one browser each, and the rest wait rather than fail.
+      CONCURRENT: ${BROWSERLESS_CONCURRENT:-4}
+      QUEUED: ${BROWSERLESS_QUEUED:-16}
+      # A run's session, ended by the run; this only stops one left behind.
+      TIMEOUT: "1800000"
+    networks:
+      browser-browserless:
+        ipv4_address: 172.31.255.234
+    shm_size: 512m
+    restart: unless-stopped
+
+  worker:
+    networks:
+      - default
+      - browser-browserless
+
+networks:
+  # A /29 for the gateway, Browserless and the worker. If it collides with a
+  # network on this machine, change the subnet, Browserless's address and the
+  # /32 in MCP_PRIVATE_NETWORKS together.
+  browser-browserless:
+    ipam:
+      config:
+        - subnet: 172.31.255.232/29
