@@ -13,6 +13,13 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   buy nothing. The cap still stops a run, which then keeps its latest summary
   as its output. A summary call's usage counts against the budget and is
   skipped by the wrap-up check, because it read the whole context.
+- **Steps wrap up as the budget does.** Two steps before `MaxSteps` the run
+  is told which step of how many it is at and to answer, and its tools
+  refuse, so a run near its limit ends with an answer rather than failing at
+  it. Two, because the recorder hears of a step as it starts and the ask can
+  land a step late; a run of fewer than four steps is never asked, as it
+  would lose its tools almost at once. One that still calls tools to the end
+  fails at `MaxSteps` and keeps what it had, as one stopped at its budget does.
 - **Compaction is the SDK's; the brain sets its thresholds and records it.**
   Past `compaction_messages`, or when the next request would read
   `min(100k, max(budget/10, 50k))` tokens. The 50k floor is there because a

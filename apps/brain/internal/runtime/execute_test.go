@@ -164,7 +164,7 @@ func newExecFixture(t *testing.T, model *scripted) *execFixture {
 	}
 	if err := raw.QueryRow(t.Context(), `
 		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
-		VALUES ($1, 'triage', 'test/model', 1024, 'react', 5) RETURNING id`, team.ID).Scan(&f.agent); err != nil {
+		VALUES ($1, 'triage', 'test/model', 1024, 'react', 10) RETURNING id`, team.ID).Scan(&f.agent); err != nil {
 		t.Fatalf("insert agent: %v", err)
 	}
 	var session uuid.UUID
