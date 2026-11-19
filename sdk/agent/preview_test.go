@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -315,6 +316,20 @@ func TestATurnIsHeldAsNearItsLimitAsPreviewsCan(t *testing.T) {
 				}
 			},
 		},
+		"exactly at the limit": {
+			cfg: Compaction{AfterMessages: 100}, results: sameResults(4, "get_diff", 48<<10),
+		},
+		"a byte over the limit": {
+			cfg:     Compaction{AfterMessages: 100},
+			results: append(sameResults(4, "get_diff", 48<<10), [2]string{"get_diff", "x"}),
+			cut:     []int{0},
+		},
+		"a limit of one byte": {
+			cfg: Compaction{AfterMessages: 100, TurnResults: 1}, results: sameResults(3, "get_diff", 45<<10), cut: []int{0, 1, 2},
+		},
+		"skills, which are kept word for word": {
+			cfg: Compaction{AfterMessages: 100}, results: sameResults(5, SkillToolName, 45<<10),
+		},
 		"reads, which are never previewed": {
 			cfg: Compaction{AfterMessages: 100}, results: sameResults(7, ReadOutputToolName, 32<<10),
 		},
@@ -342,5 +357,62 @@ func TestATurnIsHeldAsNearItsLimitAsPreviewsCan(t *testing.T) {
 				c.check(t, sent)
 			}
 		})
+	}
+}
+
+// A match that fills the read exactly is shown whole; one line more is not,
+// and says so.
+func TestAMatchAtTheReadsLimitIsShownWhole(t *testing.T) {
+	var lines []string
+	total := 0
+	for total < readBytes {
+		n := len(lines) + 1
+		line := "m" + strings.Repeat("x", 40)
+		if out := len(fmt.Sprintf("%d: %s\n", n, line)); total+out > readBytes {
+			line = "m" + strings.Repeat("x", readBytes-total-len(fmt.Sprintf("%d: m\n", n)))
+		}
+		total += len(fmt.Sprintf("%d: %s\n", n, line))
+		lines = append(lines, line)
+	}
+	read := func(lines []string) string {
+		h := &compactHandle{}
+		h.setFull([]Message{say(RoleUser, "task"), called("c1", "get_diff"), result("c1", strings.Join(lines, "\n"))})
+		out, err := readOutputTool(h).Invoke(context.Background(), json.RawMessage(`{"call":"c1","match":"^m"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if total != readBytes {
+		t.Fatalf("built %d bytes of matches, want exactly %d", total, readBytes)
+	}
+	if out := read(lines); strings.Contains(out, "[stopped") {
+		t.Errorf("a match of exactly %d bytes was cut", readBytes)
+	}
+	more := append(slices.Clone(lines), "m one more")
+	if out := read(more); !strings.Contains(out, fmt.Sprintf("%d of the %d matching lines shown", len(lines), len(more))) {
+		t.Errorf("one line past the limit, the read ends %q", out[max(0, len(out)-160):])
+	}
+}
+
+// A run reads only its own results: a call id it never made is refused.
+func TestAReadOfAnotherRunsCallIsRefused(t *testing.T) {
+	h := &compactHandle{}
+	h.setFull([]Message{say(RoleUser, "task"), called("c1", "get_diff"), result("c1", "mine")})
+	_, err := readOutputTool(h).Invoke(context.Background(), json.RawMessage(`{"call":"parent_call_9"}`))
+	if err == nil || !strings.Contains(err.Error(), "no tool result in this run") {
+		t.Fatalf("a call id from outside the run: %v, want it refused", err)
+	}
+}
+
+func TestAReadThatCannotBeMadeSaysWhy(t *testing.T) {
+	h := &compactHandle{}
+	h.setFull([]Message{say(RoleUser, "task"), called("c1", "get_diff"), result("c1", "one\ntwo")})
+	read := readOutputTool(h).Invoke
+	if _, err := read(context.Background(), json.RawMessage(`{"call":"c1","match":"("}`)); err == nil || !strings.Contains(err.Error(), "not a regular expression") {
+		t.Errorf("a bad expression: %v, want it named", err)
+	}
+	if out, err := read(context.Background(), json.RawMessage(`{"call":"c1","from_line":9}`)); err != nil || !strings.Contains(out, "It has no line 9.") {
+		t.Errorf("a line past the end: %q, %v; want it said, not an error", out, err)
 	}
 }
