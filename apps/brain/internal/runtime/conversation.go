@@ -34,7 +34,20 @@ func (e *Executor) conversation(ctx context.Context, row db.Run) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("reading the conversation of run %s: %w", row.ID, err)
 	}
-	return withHistory(said, row.Input), nil
+	word, err := e.store.RunTriggerWord(ctx, row.ID)
+	if err != nil {
+		return "", fmt.Errorf("reading what run %s's channel is called: %w", row.ID, err)
+	}
+	return calledBy(word) + withHistory(said, row.Input), nil
+}
+
+// calledBy tells a run the word its channel answers to. Without it a model
+// reads "@Fduv can you explain this?" as asking someone else.
+func calledBy(word string) string {
+	if word == "" {
+		return ""
+	}
+	return "In this chat you are called " + word + ": a message that names it is addressed to you.\n\n"
 }
 
 // withHistory puts what was said, oldest first and newest kept when it does

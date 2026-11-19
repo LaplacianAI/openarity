@@ -962,6 +962,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   event, so the trace and the session stream show it. A run that waits for
   approval says what it wants in its turn's last text, with no call after
   it, so that is its output and reaches the chat as the reply.
+- **A channel run is told the word its channel answers to.** The trigger
+  word decides whether a message is answered, but the message reaches the
+  run as written, so a model read "@Fduv can you explain this?" as asking
+  someone else. The run's first message, not the system prompt, says "In
+  this chat you are called @Fduv", so the system blocks stay cacheable. The
+  word stays in the text: stripping it would change what the person wrote,
+  and what the session shows. A bot's own handle on Slack or Telegram is not
+  told yet; the run does not hold it.
 - **An MCP secret is written whole, and never read back.** `PUT
   /teams/{id}/mcp-secrets/{name}` takes every key of the secret and writes
   them with one `PutAll`: an OpenBao write replaces the keys a path held, so

@@ -367,3 +367,20 @@ func (q *Queries) RunShowsEvents(ctx context.Context, runID uuid.UUID) (bool, er
 	err := row.Scan(&column_1)
 	return column_1, err
 }
+
+const runTriggerWord = `-- name: RunTriggerWord :one
+SELECT COALESCE((
+    SELECT ch.trigger_word FROM runs r
+    JOIN sessions s ON s.id = r.session_id
+    JOIN channels ch ON ch.id = s.channel_id
+    WHERE r.id = $1::uuid), '')::text
+`
+
+// The word a run's channel is called by: empty when it has none, or when the
+// run has no channel, so a run is never failed for asking.
+func (q *Queries) RunTriggerWord(ctx context.Context, runID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, runTriggerWord, runID)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}

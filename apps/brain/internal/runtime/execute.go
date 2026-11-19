@@ -34,6 +34,7 @@ type Store interface {
 	ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error)
 	GetRun(ctx context.Context, id uuid.UUID) (db.Run, error)
 	RunShowsEvents(ctx context.Context, runID uuid.UUID) (bool, error)
+	RunTriggerWord(ctx context.Context, runID uuid.UUID) (string, error)
 	InsertEventReply(ctx context.Context, arg db.InsertEventReplyParams) (int64, error)
 	TxStore
 	ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
