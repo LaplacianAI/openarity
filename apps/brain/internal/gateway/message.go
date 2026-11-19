@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -79,6 +80,40 @@ type Inbound struct {
 	// answers_in, since nobody else is in that conversation, and needs the
 	// channel's trigger word when it has one.
 	ToSelf bool
+
+	// Answer is a person answering a request with the platform's own control
+	// (a button, a keyboard, a poll) rather than typing. Text is then what
+	// they pressed, as the conversation should read it. It is only an
+	// input: the gateway decides whether it may answer anything.
+	Answer *Answer
+}
+
+// Decision is what a person chose on a request.
+type Decision string
+
+const (
+	Approve    Decision = "approve"
+	ApproveRun Decision = "approve_run"
+	Decline    Decision = "decline"
+	// DeclineAsk is Decline with a form for the reason, which the platform
+	// opens before anything is decided: Slack's modal.
+	DeclineAsk Decision = "decline_ask"
+)
+
+// Answer names a request one of three ways, whichever the platform carries:
+// its id, from a button the brain drew; its code; or, for a poll, the
+// SHA-256 of each option chosen, which the gateway matches against the
+// options PollOptions draws for the requests waiting in the conversation.
+type Answer struct {
+	ApprovalID string
+	Code       string
+	Hashes     [][]byte
+	Decision   Decision
+	Reason     string
+	// Handle is what the platform needs to answer the tap where it was made:
+	// Slack's response_url and trigger_id, Telegram's callback query id and
+	// message. The gateway keeps it for the notice and never reads it.
+	Handle json.RawMessage
 }
 
 type Result struct {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -141,8 +142,8 @@ func TestATelegramChannelIsConnectedWithItsBotsIdentity(t *testing.T) {
 		t.Fatalf("setWebhook body %q: %v", tg.bodies[1], err)
 	}
 	if hook.URL != got.HookURL || hook.SecretToken != got.SigningSecret ||
-		len(hook.AllowedUpdates) != 1 || hook.AllowedUpdates[0] != "message" {
-		t.Errorf("setWebhook = %+v, want the hook URL, the secret, and messages only", hook)
+		!slices.Equal(hook.AllowedUpdates, []string{"message", "callback_query"}) {
+		t.Errorf("setWebhook = %+v, want the hook URL, the secret, messages and a prompt's taps", hook)
 	}
 	if !got.Connected {
 		t.Error("a channel the brain pointed the bot at does not say it is connected")

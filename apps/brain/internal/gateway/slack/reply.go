@@ -30,13 +30,22 @@ type postMessage struct {
 }
 
 // Reply sends the answer in the conversation it came from: a channel's in
-// its thread. One too long for a message is several, in order.
+// its thread. One too long for a message is several, in order. An approval
+// that asks its person here ends in the buttons to answer it; a notice about
+// a tap is answered where the tap was made.
 func (provider) Reply(
 	_ gateway.Channel, out gateway.Outbound, creds gateway.Credentials, _ time.Time,
 ) ([]gateway.OutboundRequest, error) {
 	token := creds.Get(KeyBotToken)
 	if token == "" {
 		return nil, errors.New("slack: no bot token")
+	}
+	if out.Kind == "notice" && out.Notice != nil && len(out.Notice.Handle) > 0 {
+		req, err := tapNotice(token, out)
+		if err != nil {
+			return nil, err
+		}
+		return []gateway.OutboundRequest{req}, nil
 	}
 	channel, thread, err := target(out.Session.Ref)
 	if err != nil {
@@ -46,9 +55,22 @@ func (provider) Reply(
 	if len(parts) == 0 {
 		return nil, errors.New("slack: nothing to send")
 	}
+	var buttons []block
+	if out.Kind == "approval" {
+		buttons = approvalBlocks(out.Prompt)
+	}
 	reqs := make([]gateway.OutboundRequest, 0, len(parts))
-	for _, part := range parts {
-		req, err := post(token, postMessage{Channel: channel, ThreadTS: thread, Markdown: part})
+	for i, part := range parts {
+		var req gateway.OutboundRequest
+		var err error
+		if i == len(parts)-1 && len(buttons) > 0 {
+			req, err = postJSON(token, postBlocks{
+				Channel: channel, ThreadTS: thread, Text: part,
+				Blocks: append([]block{{Type: "markdown", Text: part}}, buttons...),
+			})
+		} else {
+			req, err = post(token, postMessage{Channel: channel, ThreadTS: thread, Markdown: part})
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -106,7 +128,7 @@ var final = []string{
 	"channel_not_found", "not_in_channel", "is_archived", "msg_too_long", "no_text",
 	"invalid_arguments", "markdown_text_conflict", "invalid_blocks", "restricted_action",
 	"cannot_reply_to_message", "invalid_auth", "not_authed", "account_inactive",
-	"token_revoked", "missing_scope",
+	"token_revoked", "missing_scope", "expired_trigger_id", "invalid_trigger_id", "trigger_exchanged",
 }
 
 // accepted reads chat.postMessage's answer: Slack says no with a 200 and

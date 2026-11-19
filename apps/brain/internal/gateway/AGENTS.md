@@ -24,6 +24,7 @@ internal/gateway/
   senders.go        ResolveSender, and the display-name cleaning
   sink.go           where a delivery goes; inbox.go is the stand-in
   answer.go         whether a stored message starts a run, steers one (giving up its sender's own requests), or is left
+  approve.go        an answer given in the chat (typed, a tap, a vote): matched to its request and decided
   send.go           the outbox's replies and notices: claim, build through the provider, post, mark
   job.go            the reply queue, the kick a finished run sends, the sweep
   providertest/     the conformance suite every adapter runs

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway/custom"
 )
@@ -155,5 +156,57 @@ func TestCustomTakesAReplyURL(t *testing.T) {
 
 	if _, ok := custom.New().(gateway.URLReplier); !ok {
 		t.Error("custom does not take a reply URL")
+	}
+}
+
+// A receiver that draws its own controls is given the prompt's requests: the
+// code only on one its person may answer, so it cannot offer the others.
+func TestAPromptCarriesItsRequestsForTheReceiversControls(t *testing.T) {
+	t.Parallel()
+
+	out := outbound()
+	out.Kind = "approval"
+	out.Prompt = &approval.Prompt{Requests: []approval.PromptRequest{
+		{ID: "a1", Code: "7K2F", Tool: "github__create_issue", Summary: "title: x", ExpiresAt: replyAt, Ask: true},
+		{ID: "a2", Tool: "mail__send", Summary: "to: y", ExpiresAt: replyAt},
+	}}
+	reqs, err := replier(t).Reply(to(), out, creds(), replyAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Kind     string `json:"kind"`
+		Approval struct {
+			Requests []struct {
+				ID   string `json:"id"`
+				Code string `json:"code"`
+				Ask  bool   `json:"ask"`
+			} `json:"requests"`
+		} `json:"approval"`
+	}
+	if err := json.Unmarshal(reqs[0].Body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != "approval" || len(got.Approval.Requests) != 2 {
+		t.Fatalf("the reply carries %+v", got)
+	}
+	if r := got.Approval.Requests[0]; r.ID != "a1" || r.Code != "7K2F" || !r.Ask {
+		t.Errorf("the request its person may answer is %+v", r)
+	}
+	if r := got.Approval.Requests[1]; r.Code != "" || r.Ask {
+		t.Errorf("a request for an approver carries %+v", r)
+	}
+}
+
+// An answer is not a prompt: it carries no approval at all.
+func TestAnAnswerCarriesNoApproval(t *testing.T) {
+	t.Parallel()
+
+	reqs, err := replier(t).Reply(to(), outbound(), creds(), replyAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(reqs[0].Body, []byte(`"approval"`)) {
+		t.Errorf("an answer carries an approval: %s", reqs[0].Body)
 	}
 }

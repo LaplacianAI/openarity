@@ -60,6 +60,7 @@ const (
 	// run waits. A delegate's words reach the person through its parent.
 	askedTop = "Not made yet: this call needs a person's approval, and they have been asked. " +
 		"Tell them in your own words what you want to do and why, then end your turn. " +
+		"Do not tell them how to answer or give them a code: that is added for you. " +
 		"Do not try another way meanwhile: you will be told their answer, and an approved call is made for you."
 	askedDeep = "Not made yet: this call needs a person's approval, and they have been asked. " +
 		"Say in your own words what you want to do and why, then end your turn: it reaches them through " +

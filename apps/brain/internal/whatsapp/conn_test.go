@@ -1,6 +1,8 @@
 package whatsapp
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"errors"
 	"strings"
 	"testing"
@@ -360,5 +362,44 @@ func TestADeviceTakenOverIsUnpairedSayingSo(t *testing.T) {
 	}
 	if len(f.devices.deleted) != 0 || cli.discos == 0 {
 		t.Errorf("deleted %v, disconnected %d times; want the keys kept and the client let go", f.devices.deleted, cli.discos)
+	}
+}
+
+func vote(id types.MessageID) *events.Message {
+	return incoming(id, &waE2E.Message{PollUpdateMessage: &waE2E.PollUpdateMessage{}})
+}
+
+func TestAPollVoteIsDecryptedAndHandedOverAsAnAnswer(t *testing.T) {
+	f, _, cli := connected(t)
+	want := sha256.Sum256([]byte(gateway.PollOptions("7K2F")[0]))
+	cli.votes = map[types.MessageID][][]byte{"V1": {want[:]}}
+	cli.emit(vote("V1"))
+
+	eventually(t, "the vote delivered", func() bool { return len(f.receiver.delivered()) == 1 })
+	in := f.receiver.delivered()[0][0]
+	if in.ExternalID != "V1" || in.Author.Ref != priya.String() || in.Session.Ref != priya.String() {
+		t.Fatalf("delivered %+v", in)
+	}
+	if in.Answer == nil || len(in.Answer.Hashes) != 1 || !bytes.Equal(in.Answer.Hashes[0], want[:]) {
+		t.Fatalf("answer %+v; want the decrypted hash", in.Answer)
+	}
+}
+
+// WhatsApp does not send a vote again, and a vote nobody can read answers
+// nothing: it is logged, and the message after it still arrives.
+func TestAVoteThatCannotBeDecryptedOrChoseNothingIsDropped(t *testing.T) {
+	f, _, cli := connected(t)
+	cli.votes = map[types.MessageID][][]byte{"EMPTY": {}}
+	cli.emit(vote("UNKNOWN"))
+	cli.emit(vote("EMPTY"))
+	cli.emit(incoming("M1", &waE2E.Message{Conversation: proto.String("hi")}))
+
+	eventually(t, "the message after them delivered", func() bool { return len(f.receiver.delivered()) == 1 })
+	if in := f.receiver.delivered()[0][0]; in.Text != "hi" || in.Answer != nil {
+		t.Fatalf("delivered %+v; the votes went first", in)
+	}
+	log := f.logText()
+	if strings.Count(log, "not decrypted") != 1 || strings.Count(log, "chose nothing") != 1 {
+		t.Errorf("log %q; want each drop said once, the unreadable vote not also taken for an empty one", log)
 	}
 }

@@ -61,7 +61,7 @@ WITH claimed AS (
         FOR UPDATE SKIP LOCKED)
     RETURNING r.*
 )
-SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq,
+SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq, c.detail,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -97,7 +97,7 @@ WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attemp
 -- name: ListRunReplies :many
 SELECT run_id, kind, status, attempts, last_error, sent_at, next_attempt_at
 FROM replies
-WHERE run_id = ANY(sqlc.arg('run_ids')::uuid[]) AND event_seq IS NULL;
+WHERE run_id = ANY(sqlc.arg('run_ids')::uuid[]) AND kind IN ('answer', 'apology');
 
 -- Whether a run's steps are sent to its conversation as they happen: a run
 -- that answers a channel whose reply_mode is events. Only a top-level run
@@ -137,3 +137,37 @@ SELECT COALESCE((
     JOIN sessions s ON s.id = r.session_id
     JOIN channels ch ON ch.id = s.channel_id
     WHERE r.id = sqlc.arg('run_id')::uuid), '')::text;
+
+-- A run that waits for a person asks them in its conversation: what the
+-- agent said and the brain's footer, with detail naming the requests for the
+-- platform's buttons. Keyed by the waiting event, so a run that asks again
+-- later asks again, and a park written twice is one prompt. Only a top-level
+-- run answers a channel; one whose session came from none, or a custom
+-- channel with no reply URL (nowhere to post), inserts nothing.
+-- It answers the newest message the run read, as its answer will.
+-- name: InsertApprovalPrompt :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text, event_seq, detail)
+SELECT r.team_id, r.id, r.session_id, s.channel_id,
+       (SELECT m.id FROM messages m WHERE m.session_id = r.session_id
+        ORDER BY m.received_at DESC, m.id DESC LIMIT 1),
+       'approval', sqlc.arg('text')::text, sqlc.arg('event_seq')::integer, sqlc.arg('detail')::jsonb
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = sqlc.arg('run_id')::uuid AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING;
+
+-- The brain's short word on an answer given in the chat, on the run that
+-- asked, answering the message (or the tap) it is about: one at most for
+-- each, so a delivery the platform repeats is told once. A custom channel
+-- with no reply URL is told nothing, as InsertReply: it has nowhere to post.
+-- name: InsertNotice :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text, detail)
+SELECT sqlc.arg('team_id')::uuid, sqlc.arg('run_id')::uuid, sqlc.arg('session_id')::uuid,
+       ch.id, sqlc.arg('message_id')::uuid, 'notice', sqlc.arg('text')::text,
+       sqlc.narg('detail')::jsonb
+FROM channels ch
+WHERE ch.id = sqlc.arg('channel_id')::uuid
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (in_reply_to) WHERE kind = 'notice' DO NOTHING;
