@@ -692,7 +692,7 @@ function SettingsForm({
         <Field
           label="Messages before a transcript compacts"
           htmlFor="settings-compaction"
-          hint={`${MIN_COMPACTION} to ${MAX_COMPACTION}. A run also compacts when its next request would read a tenth of its token budget, or 100,000 tokens, whichever is less.`}
+          hint={`${MIN_COMPACTION} to ${MAX_COMPACTION}. A run also compacts when its next request would read a tenth of its token budget, at least 50,000 and at most 100,000 tokens.`}
         >
           <Input
             id="settings-compaction"

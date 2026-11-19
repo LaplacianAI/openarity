@@ -14,7 +14,10 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   skipped by the wrap-up check, because it read the whole context.
 - **Compaction is the SDK's; the brain sets its thresholds and records it.**
   Past `compaction_messages`, or when the next request would read
-  `min(100k, budget/10)` tokens. The summary is a message in the transcript,
+  `min(100k, max(budget/10, 50k))` tokens. The 50k floor is there because a
+  compaction keeps the latest ~15k tokens, the prompt and the tools: a line
+  under that is crossed again at once, and a small run spends its budget
+  summarising itself. A small budget is held by its soft lines instead. The summary is a message in the transcript,
   marked `compaction`, as Claude Code and opencode keep theirs: the runner
   splices it back into every save, so the Postgres store's rewrite of the whole
   transcript keeps it, and a resumed run carries on from it with no model call

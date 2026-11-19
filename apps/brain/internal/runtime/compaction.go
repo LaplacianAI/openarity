@@ -18,8 +18,12 @@ import (
 const (
 	// compactCeiling is the most a run's next request may read before it
 	// compacts. A run's own budget lowers it to a tenth of the budget, so no
-	// single call spends more than that.
+	// single call spends more than that, but never below compactFloor: a
+	// compaction keeps the latest ~15,000 tokens, the prompt and the tools,
+	// so a lower line is crossed again at once and the run spends its budget
+	// summarising. A small budget is kept by its soft lines instead.
 	compactCeiling = 100_000
+	compactFloor   = 50_000
 	// defaultCompactionMessages is team_settings.compaction_messages' default,
 	// for a team that never saved its settings.
 	defaultCompactionMessages = 100
@@ -61,11 +65,11 @@ func (b *Builder) teamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSe
 }
 
 // compactionFor is how a run compacts: past the team's message count, or past
-// the smaller of the ceiling and a tenth of the run's budget.
+// a tenth of the run's budget, held between the floor and the ceiling.
 func compactionFor(messages int32, budget int64) *agent.Compaction {
 	return &agent.Compaction{
 		AfterMessages:    int(messages),
-		AfterInputTokens: int(min(compactCeiling, budget/10)),
+		AfterInputTokens: int(min(compactCeiling, max(budget/10, compactFloor))),
 	}
 }
 
