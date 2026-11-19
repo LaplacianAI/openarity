@@ -122,3 +122,12 @@ WHERE r.id = sqlc.arg('run_id')::uuid
   AND r.reply_to_channel
   AND ch.reply_mode = 'events'
 ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING;
+
+-- name: RunTriggerWord :one
+-- The word a run's channel is called by: empty when it has none, or when the
+-- run has no channel, so a run is never failed for asking.
+SELECT COALESCE((
+    SELECT ch.trigger_word FROM runs r
+    JOIN sessions s ON s.id = r.session_id
+    JOIN channels ch ON ch.id = s.channel_id
+    WHERE r.id = sqlc.arg('run_id')::uuid), '')::text;

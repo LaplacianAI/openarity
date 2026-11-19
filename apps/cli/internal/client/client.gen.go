@@ -1078,9 +1078,9 @@ type Channel struct {
 
 	// ReplyMode What the conversation is sent while a run works. `final`, the
 	// default, is the answer alone. `events` is each step a person
-	// would follow, a message of its own that stays: what the agent
-	// says before it calls a tool, "Using `<tool>`…" and "Asking
-	// `<agent>`…", then the answer. The run's own bookkeeping (finding
+	// would follow, a message of its own that stays: "Using `<tool>`…"
+	// and "Asking `<agent>`…", then the answer. What the model writes
+	// on the way to a call is not sent. The run's own bookkeeping (finding
 	// tools, planning, reading files) and tools' results are never
 	// sent; nor is anything of a run another agent was handed. Always
 	// `final` where `can_show_events` is false.
@@ -1106,9 +1106,9 @@ type Channel struct {
 
 // ChannelReplyMode What the conversation is sent while a run works. `final`, the
 // default, is the answer alone. `events` is each step a person
-// would follow, a message of its own that stays: what the agent
-// says before it calls a tool, "Using `<tool>`…" and "Asking
-// `<agent>`…", then the answer. The run's own bookkeeping (finding
+// would follow, a message of its own that stays: "Using `<tool>`…"
+// and "Asking `<agent>`…", then the answer. What the model writes
+// on the way to a call is not sent. The run's own bookkeeping (finding
 // tools, planning, reading files) and tools' results are never
 // sent; nor is anything of a run another agent was handed. Always
 // `final` where `can_show_events` is false.
@@ -1360,9 +1360,9 @@ type CreatedChannel struct {
 
 	// ReplyMode What the conversation is sent while a run works. `final`, the
 	// default, is the answer alone. `events` is each step a person
-	// would follow, a message of its own that stays: what the agent
-	// says before it calls a tool, "Using `<tool>`…" and "Asking
-	// `<agent>`…", then the answer. The run's own bookkeeping (finding
+	// would follow, a message of its own that stays: "Using `<tool>`…"
+	// and "Asking `<agent>`…", then the answer. What the model writes
+	// on the way to a call is not sent. The run's own bookkeeping (finding
 	// tools, planning, reading files) and tools' results are never
 	// sent; nor is anything of a run another agent was handed. Always
 	// `final` where `can_show_events` is false.
@@ -1408,9 +1408,9 @@ type CreatedChannel struct {
 
 // CreatedChannelReplyMode What the conversation is sent while a run works. `final`, the
 // default, is the answer alone. `events` is each step a person
-// would follow, a message of its own that stays: what the agent
-// says before it calls a tool, "Using `<tool>`…" and "Asking
-// `<agent>`…", then the answer. The run's own bookkeeping (finding
+// would follow, a message of its own that stays: "Using `<tool>`…"
+// and "Asking `<agent>`…", then the answer. What the model writes
+// on the way to a call is not sent. The run's own bookkeeping (finding
 // tools, planning, reading files) and tools' results are never
 // sent; nor is anything of a run another agent was handed. Always
 // `final` where `can_show_events` is false.
@@ -1588,9 +1588,9 @@ type ListedChannel struct {
 
 	// ReplyMode What the conversation is sent while a run works. `final`, the
 	// default, is the answer alone. `events` is each step a person
-	// would follow, a message of its own that stays: what the agent
-	// says before it calls a tool, "Using `<tool>`…" and "Asking
-	// `<agent>`…", then the answer. The run's own bookkeeping (finding
+	// would follow, a message of its own that stays: "Using `<tool>`…"
+	// and "Asking `<agent>`…", then the answer. What the model writes
+	// on the way to a call is not sent. The run's own bookkeeping (finding
 	// tools, planning, reading files) and tools' results are never
 	// sent; nor is anything of a run another agent was handed. Always
 	// `final` where `can_show_events` is false.
@@ -1619,9 +1619,9 @@ type ListedChannel struct {
 
 // ListedChannelReplyMode What the conversation is sent while a run works. `final`, the
 // default, is the answer alone. `events` is each step a person
-// would follow, a message of its own that stays: what the agent
-// says before it calls a tool, "Using `<tool>`…" and "Asking
-// `<agent>`…", then the answer. The run's own bookkeeping (finding
+// would follow, a message of its own that stays: "Using `<tool>`…"
+// and "Asking `<agent>`…", then the answer. What the model writes
+// on the way to a call is not sent. The run's own bookkeeping (finding
 // tools, planning, reading files) and tools' results are never
 // sent; nor is anything of a run another agent was handed. Always
 // `final` where `can_show_events` is false.

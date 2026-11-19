@@ -363,7 +363,7 @@ function ChannelDetail({
         {channel.can_show_events ? (
           <KeyValue label="While it works">
             {channel.reply_mode === "events"
-              ? "Each step is sent as it happens: what the agent says it will do, the tools it uses, the agents it asks. Every message stays in the chat; the answer comes last."
+              ? "Each step is sent as it happens: the tools it uses, the agents it asks. Every message stays in the chat; the answer comes last."
               : "Nothing until the answer, which is sent alone."}
             {canWrite ? (
               <EditReplyMode teamId={teamId} channel={channel} onChanged={onChanged} />

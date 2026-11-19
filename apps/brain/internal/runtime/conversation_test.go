@@ -111,3 +111,33 @@ func TestHistoryStopsAtTheFirstTurnThatDoesNotFit(t *testing.T) {
 		t.Errorf("history = %q, want the recent turn only, stopping at the one that does not fit", got)
 	}
 }
+
+// A channel run is told the word its channel answers to, so "@Fduv, what
+// now?" reads as asked of it; a channel with no word adds nothing.
+func TestAChannelRunIsToldWhatItIsCalled(t *testing.T) {
+	t.Parallel()
+
+	s, row := channelRun(t, "final")
+	e := &Executor{store: s, logger: quietLogger()}
+	plain, err := e.conversation(t.Context(), row)
+	if err != nil {
+		t.Fatalf("conversation: %v", err)
+	}
+	if plain != row.Input {
+		t.Errorf("a channel with no word: %q, want the message alone", plain)
+	}
+
+	if _, err := s.Pool().Exec(t.Context(), `
+		UPDATE channels SET trigger_word = '@Fduv'
+		WHERE id = (SELECT channel_id FROM sessions WHERE id = $1)`, row.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.conversation(t.Context(), row)
+	if err != nil {
+		t.Fatalf("conversation: %v", err)
+	}
+	want := "In this chat you are called @Fduv: a message that names it is addressed to you.\n\n" + row.Input
+	if got != want {
+		t.Errorf("conversation = %q, want %q", got, want)
+	}
+}

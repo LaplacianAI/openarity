@@ -383,8 +383,9 @@ In the dashboard, it is **While it works** in the channel's sheet. Both need
 `channel:write`.
 
 Each step is a message of its own, and it stays in the conversation. A step is
-sent event by event, never word by word: what the agent says before it calls a
-tool, then **Using** that tool, or **Asking** another agent for help. The run's
+sent event by event, never word by word: **Using** a tool, or **Asking**
+another agent for help. What the model writes on its way to a call is not sent:
+it is as often a note to itself as words to you. The run's
 own bookkeeping (finding its tools, planning, reading the files it was sent)
 is not sent, nor is what a tool returned, nor anything the agent asked does.
 The answer comes last, and only it quotes the message it answers.
