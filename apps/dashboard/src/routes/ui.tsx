@@ -175,8 +175,8 @@ export function useOffersDeletedTeams(): boolean {
  * nobody is, and when the reader may not see the queue: the brain leaves the
  * count out for them rather than saying zero.
  */
-function useWaiting(teamId: string | null, every: number): number | null {
-  return useTeamSummary(teamId, every).data?.waiting_senders ?? null;
+function useWaiting(teamId: string | null, every: number, background: boolean): number | null {
+  return useTeamSummary(teamId, every, background).data?.waiting_senders ?? null;
 }
 
 /**
@@ -184,7 +184,7 @@ function useWaiting(teamId: string | null, every: number): number | null {
  * when there is more than a page. Null for none, and for a reader who may not
  * see them: the brain refuses, and a badge that says zero would be a guess.
  */
-function usePendingRequests(teamId: string | null, every: number) {
+function usePendingRequests(teamId: string | null, every: number, background: boolean) {
   const perms = usePermissions(teamId);
   const pending = useQuery({
     queryKey: ["approvals", teamId, "pending-count"],
@@ -193,6 +193,7 @@ function usePendingRequests(teamId: string | null, every: number) {
     enabled: Boolean(teamId) && !perms.isPending && perms.can("approval:read"),
     staleTime: Math.min(every, 30_000),
     refetchInterval: every,
+    refetchIntervalInBackground: background,
   });
   const n = pending.data?.items.length ?? 0;
   const more = Boolean(pending.data?.next_cursor);
@@ -257,9 +258,11 @@ function Shell({ pathname }: { pathname: string }) {
   const groups = navGroups(useOffersDeletedTeams());
   // While notifications are on, the badges ask twice as often: the notices
   // are read from what they bring.
-  const every = useNotifySwitch().state === "on" ? NOTIFY_POLL_MS : BADGE_POLL_MS;
-  const senders = useWaiting(teamId, every);
-  const requests = usePendingRequests(teamId, every);
+  // and in a hidden tab, which is where a notification is wanted.
+  const notifying = useNotifySwitch().state === "on";
+  const every = notifying ? NOTIFY_POLL_MS : BADGE_POLL_MS;
+  const senders = useWaiting(teamId, every, notifying);
+  const requests = usePendingRequests(teamId, every, notifying);
   const requestsBadge = requests.n === 0 ? null : `${requests.n}${requests.more ? "+" : ""}`;
   const waiting: Badges = {
     [APPROVALS.to]: senders ? String(senders) : null,
@@ -514,6 +517,14 @@ function titleCount(senders: number, requests: number, more: boolean): string | 
 function NotifyItem() {
   const { state, turnOn, turnOff } = useNotifySwitch();
   if (state === "unsupported") return null;
+  if (state === "unable") {
+    return (
+      <DropdownMenuItem disabled>
+        <BellOff aria-hidden />
+        This browser can't show notifications from a tab
+      </DropdownMenuItem>
+    );
+  }
   if (state === "blocked") {
     return (
       <DropdownMenuItem disabled>
@@ -542,6 +553,14 @@ const SHEET_ITEM =
 function NotifyButton() {
   const { state, turnOn, turnOff } = useNotifySwitch();
   if (state === "unsupported") return null;
+  if (state === "unable") {
+    return (
+      <div className="flex items-start gap-2.5 px-2.5 py-2 text-sm text-muted-foreground">
+        <BellOff aria-hidden className="mt-0.5 size-4 shrink-0" />
+        <p>This browser can't show notifications from a tab. The badges still count what waits.</p>
+      </div>
+    );
+  }
   if (state === "blocked") {
     return (
       <div className="flex items-start gap-2.5 px-2.5 py-2 text-sm text-muted-foreground">

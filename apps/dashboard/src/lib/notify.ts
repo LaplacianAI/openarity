@@ -22,7 +22,20 @@ export const BADGE_POLL_MS = 60_000;
 /** More new requests than this at once arrive as one notification. */
 export const BURST = 3;
 
-export type NotifyState = "unsupported" | "blocked" | "off" | "on";
+/**
+ * "unable": the browser has Notification but refuses to show one from a tab,
+ * as Chrome on Android does, wanting a service worker the dashboard has not
+ * got until Web Push. Found out at the first notice, which is lost; a reload
+ * asks again.
+ */
+export type NotifyState = "unsupported" | "unable" | "blocked" | "off" | "on";
+
+let refused = false;
+
+/** For tests: a fresh page, as a reload is, asks the browser again. */
+export function forgetRefusal() {
+  refused = false;
+}
 
 function supported(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
@@ -78,6 +91,7 @@ function watch() {
 /** Where notifications stand in this browser: on only when wanted and allowed. */
 export function notifyState(): NotifyState {
   if (!supported()) return "unsupported";
+  if (refused) return "unable";
   if (Notification.permission === "denied") return "blocked";
   const on = session ?? wanted();
   return on && Notification.permission === "granted" ? "on" : "off";
@@ -175,9 +189,13 @@ function show(title: string, body: string, tag: string, open: () => void, again 
       open();
       n.close();
     };
-  } catch {
-    // A browser that refuses a notification here (some phones want a service
-    // worker) still has the badge.
+  } catch (err) {
+    // Only an illegal constructor says this browser cannot from a tab; any
+    // other failure may pass, and leaves the switch as it is.
+    if (err instanceof TypeError && !refused) {
+      refused = true;
+      changed();
+    }
   }
 }
 
@@ -214,7 +232,10 @@ export function useApprovalNotices({
   who.current = can;
 
   useEffect(() => {
-    const now = `${on}|${teamId}|${me}`;
+    // What the viewer may answer is in it too: gaining approval:decide would
+    // make every request waiting on someone else read as new.
+    const may = `${who.current("approval:self")}|${who.current("approval:decide")}`;
+    const now = `${on}|${teamId}|${me}|${may}`;
     if (seen.current.for !== now) seen.current = { for: now, ids: null };
     // A request looked at before the viewer was known is looked at again
     // once they are, as a new baseline: their own were not told apart.

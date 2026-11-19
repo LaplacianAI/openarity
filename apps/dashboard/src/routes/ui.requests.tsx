@@ -151,6 +151,12 @@ function Requests() {
             />
           ) : (
             <div>
+              {opened !== undefined && !found && !list.hasNextPage ? (
+                <p className="mb-2 text-sm text-muted-foreground" role="status">
+                  The request you opened is not {status === "pending" ? "waiting" : "here"}: it may
+                  have been answered, or expired.
+                </p>
+              ) : null}
               <ul aria-label="Tool approvals" className="space-y-2">
                 {rows.map((a) => (
                   <li

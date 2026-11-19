@@ -132,7 +132,7 @@ it("brings the request a link names to the eye and the keyboard", async () => {
   expect(first).not.toHaveAttribute("aria-current");
 });
 
-it("leaves the list as it is when the request a link names is not in it", async () => {
+it("says so when the request a link names is no longer waiting", async () => {
   brain({
     ...team(["approval:read", "approval:self"]),
     "GET /whoami": { body: { id: "me" } },
@@ -143,4 +143,7 @@ it("leaves the list as it is when the request a link names is not in it", async 
   const list = await screen.findByRole("list", { name: "Tool approvals" });
   expect(within(list).getByRole("listitem")).not.toHaveAttribute("aria-current");
   expect(document.activeElement).toBe(document.body);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "The request you opened is not waiting: it may have been answered, or expired.",
+  );
 });

@@ -1,9 +1,10 @@
+import { focusManager } from "@tanstack/react-query";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import type { ToolApproval } from "@/api/types";
-import { brain, STAMP, showAt, TEAM, team } from "@/test/brain";
+import { forgetRefusal } from "@/lib/notify";
+import { brain, type Seen, STAMP, showAt, TEAM, team } from "@/test/brain";
 
 const { Route: UiRoute } = await import("@/routes/ui");
 
@@ -90,14 +91,15 @@ function later(): [Promise<void>, () => void] {
   return [held, release];
 }
 
-function shell(actions = ["approval:read", "approval:self", "channel:read"]) {
-  const t = team(actions);
-  const permissions = t["GET /teams/{id}/permissions"] as { body: unknown };
-  brain({
-    ...t,
+let actions: string[] = [];
+
+function shell(granted = ["approval:read", "approval:self", "channel:read"]): Seen[] {
+  actions = granted;
+  const seen = brain({
+    ...team(granted),
     "GET /teams/{id}/permissions": async () => {
       await perms;
-      return permissions;
+      return { body: { actions, super_admin: false } };
     },
     "GET /whoami": async () => {
       await me;
@@ -115,8 +117,10 @@ function shell(actions = ["approval:read", "approval:self", "channel:read"]) {
       },
     }),
   });
-  return showAt("/ui", [["/ui", UiRoute]]);
+  router = showAt("/ui", [["/ui", UiRoute]]);
+  return seen;
 }
+let router: ReturnType<typeof showAt>;
 
 /** One poll: the next look, and what it fetches settled. */
 async function poll() {
@@ -150,6 +154,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  forgetRefusal();
+  focusManager.setFocused(undefined);
+  Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   window.matchMedia = realMatchMedia;
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -161,7 +168,7 @@ afterEach(() => {
 describe("notifications of approvals", () => {
   it("tells of a new request the viewer may answer, once, and opens Tool approvals", async () => {
     pending = [request("old")];
-    const router = shell();
+    shell();
     await screen.findByRole("navigation", { name: "Main" });
     await poll();
     expect(shown).toEqual([]);
@@ -181,6 +188,103 @@ describe("notifications of approvals", () => {
     act(() => shown[0]?.onclick?.());
     await waitFor(() => expect(router.state.location.pathname).toBe("/ui/requests"));
     expect(router.state.location.search).toMatchObject({ request: "new" });
+  });
+
+  it("keeps asking in a hidden tab while they are on, and not while off", async () => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    focusManager.setFocused(undefined);
+    const asks = (seen: Seen[]) => seen.filter((s) => s.path.includes("/approvals")).length;
+
+    let seen = shell();
+    await screen.findByRole("navigation", { name: "Main" });
+    await poll();
+    const before = asks(seen);
+    pending = [request("new")];
+    waiting = 1;
+    await poll();
+    await poll();
+    expect(asks(seen)).toBeGreaterThan(before);
+    await waitFor(() =>
+      expect(shown.map((n) => n.tag).sort()).toEqual(["approval:new", `senders:${TEAM}`]),
+    );
+
+    cleanup();
+    window.localStorage.removeItem("oa.notifications");
+    seen = shell();
+    await screen.findByRole("navigation", { name: "Main" });
+    await poll();
+    const off = asks(seen);
+    await poll();
+    await poll();
+    expect(asks(seen)).toBe(off);
+  });
+
+  it("is unavailable where the browser refuses one from a tab", async () => {
+    vi.stubGlobal(
+      "Notification",
+      class extends FakeNotification {
+        constructor() {
+          super("refused");
+          throw new TypeError("Illegal constructor");
+        }
+      },
+    );
+    shell();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await screen.findByRole("navigation", { name: "Main" });
+    await poll();
+    pending = [request("new")];
+    await poll();
+
+    await user.click(await screen.findByRole("button", { name: /ann@example.com/ }));
+    const item = await screen.findByRole("menuitem", {
+      name: "This browser can't show notifications from a tab",
+    });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("stays on when a notification fails for another reason", async () => {
+    vi.stubGlobal(
+      "Notification",
+      class extends FakeNotification {
+        constructor() {
+          super("failed");
+          throw new Error("not now");
+        }
+      },
+    );
+    shell();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await screen.findByRole("navigation", { name: "Main" });
+    await poll();
+    pending = [request("new")];
+    await poll();
+
+    await user.click(await screen.findByRole("button", { name: /ann@example.com/ }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Turn off notifications" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not take what waited for someone else as new when the viewer may now answer it", async () => {
+    pending = [request("theirs", { requested_for: "sam" })];
+    const seen = shell();
+    await screen.findByRole("navigation", { name: "Main" });
+    await poll();
+
+    // The viewer is given approval:decide, read again once the window has focus.
+    actions = [...actions, "approval:decide"];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61_000);
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    // Something else arrives, so the requests are looked at again.
+    pending = [...pending, request("next", { requested_for: "sam" })];
+    await poll();
+    await poll();
+    expect(seen.filter((x) => x.path.endsWith("/permissions"))).toHaveLength(2);
+    expect(shown.map((n) => n.tag)).not.toContain("approval:theirs");
   });
 
   it("says nothing of a request someone else must answer", async () => {
