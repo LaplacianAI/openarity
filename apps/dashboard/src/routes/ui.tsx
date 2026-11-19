@@ -3,6 +3,8 @@ import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-r
 import {
   Activity,
   ArchiveRestore,
+  Bell,
+  BellOff,
   BookOpen,
   Bot,
   ChevronsUpDown,
@@ -27,7 +29,7 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useState } from "react";
 import { fetchWhoami, listDeletedTeams, listToolApprovals } from "@/api";
 import { usePermissions } from "@/api/permissions";
-import { useCurrentTeam, useToken } from "@/api/session";
+import { useCurrentTeam, useMe, useToken } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
 import { setToken } from "@/api/token";
 import {
@@ -58,6 +60,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/lib/media";
 import { isActive } from "@/lib/nav";
+import { useApprovalNotices, useNotifySwitch, useWaitingTitle } from "@/lib/notify";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -249,6 +252,9 @@ function Shell({ pathname }: { pathname: string }) {
   const senders = useWaiting(teamId);
   const requests = usePendingRequests(teamId);
   const waiting: Badges = { [APPROVALS.to]: senders, [REQUESTS.to]: requests };
+  const perms = usePermissions(teamId);
+  useApprovalNotices(teamId, perms.can, useMe(), !perms.isPending && perms.can("approval:read"));
+  useWaitingTitle(countOf(senders) + countOf(requests));
   const [finding, setFinding] = useState(false);
   const find = useCallback(() => setFinding(true), []);
   useCommandKey(find);
@@ -479,7 +485,37 @@ function usePrincipal(): string {
   return p?.email ?? p?.subject ?? "…";
 }
 
-/** Who is signed in, the theme, and signing out: one menu at the foot. */
+/** A badge's count as a number: "50+" counts as 50, no badge as none. */
+function countOf(badge: string | null): number {
+  return badge ? Number.parseInt(badge, 10) || 0 : 0;
+}
+
+/** The menu's notifications item: on, off, or why it cannot be. */
+function NotifyItem() {
+  const { state, turnOn, turnOff } = useNotifySwitch();
+  if (state === "unsupported") return null;
+  if (state === "blocked") {
+    return (
+      <DropdownMenuItem disabled>
+        <BellOff aria-hidden />
+        Notifications blocked by the browser
+      </DropdownMenuItem>
+    );
+  }
+  return state === "on" ? (
+    <DropdownMenuItem onSelect={turnOff}>
+      <BellOff aria-hidden />
+      Turn off notifications
+    </DropdownMenuItem>
+  ) : (
+    <DropdownMenuItem onSelect={() => void turnOn()}>
+      <Bell aria-hidden />
+      Notify me of approvals
+    </DropdownMenuItem>
+  );
+}
+
+/** Who is signed in, the theme, notifications, and signing out: one menu at the foot. */
 function Account({ rail }: { rail: boolean }) {
   const who = usePrincipal();
   const { theme, toggle } = useTheme();
@@ -517,6 +553,7 @@ function Account({ rail }: { rail: boolean }) {
           {theme === "dark" ? <Sun aria-hidden /> : <Moon aria-hidden />}
           {theme === "dark" ? "Light theme" : "Dark theme"}
         </DropdownMenuItem>
+        <NotifyItem />
         <DropdownMenuItem onSelect={() => setToken(null)}>
           <LogOut aria-hidden />
           Sign out
