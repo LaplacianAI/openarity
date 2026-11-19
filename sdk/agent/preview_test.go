@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,12 @@ func (r *compactRig) sendWith(t *testing.T, msgs []Message, tools ...Tool) []Mes
 
 func named(name string, p Preview) Tool { return Tool{Name: name, Preview: p} }
 
+// ends is a preview without the line before it that says it is a part.
+func ends(preview string) string {
+	_, rest, _ := strings.Cut(preview, "\n")
+	return rest
+}
+
 // two results of the same size, from two tools.
 func twoResults(size int) []Message {
 	big := "<page>" + strings.Repeat("x", size) + "</page>"
@@ -31,10 +38,10 @@ func twoResults(size int) []Message {
 }
 
 func TestAToolsOwnPreviewAppliesToItsResultsAlone(t *testing.T) {
-	r := rig(Compaction{AfterMessages: 100})
+	r := rig(Compaction{AfterMessages: 100, Preview: Preview{Over: 64 << 10}, TurnResults: 1 << 20})
 	sent := r.sendWith(t, twoResults(40<<10), named("web_fetch", pagePreview), named("get_diff", Preview{}))
 
-	page, diff := text(sent[2]), text(sent[4])
+	page, diff := ends(text(sent[2])), text(sent[4])
 	if !strings.Contains(page, "Read the rest with read_output") {
 		t.Fatalf("a 40 KiB page over web_fetch's 32 KiB was sent whole")
 	}
@@ -45,7 +52,7 @@ func TestAToolsOwnPreviewAppliesToItsResultsAlone(t *testing.T) {
 		t.Fatalf("the preview's head is %d bytes, want web_fetch's 24 KiB", len(head))
 	}
 	if diff != text(twoResults(40 << 10)[4]) {
-		t.Fatalf("get_diff's 40 KiB result was previewed; it is under the run's 100 KiB")
+		t.Fatalf("get_diff's 40 KiB result was previewed; it is under the run's 64 KiB")
 	}
 }
 
@@ -53,7 +60,7 @@ func TestAToolThatSetsOnlyItsThresholdKeepsTheRunsHeadAndTail(t *testing.T) {
 	r := rig(Compaction{AfterMessages: 100, Preview: Preview{Head: 2 << 10, Tail: 1 << 10}})
 	sent := r.sendWith(t, twoResults(40<<10), named("web_fetch", Preview{Over: 32 << 10}))
 
-	page := text(sent[2])
+	page := ends(text(sent[2]))
 	head, _, _ := strings.Cut(page, "\n…\n")
 	if len(head) != 2<<10 {
 		t.Fatalf("the head is %d bytes; want the run's 2 KiB under the tool's own threshold", len(head))
@@ -89,7 +96,7 @@ func TestAPreviewThatCannotStandInForAResultIsRefused(t *testing.T) {
 		want string
 	}{
 		"head and tail past the threshold":                {tool: Preview{Over: 10 << 10, Head: 8 << 10, Tail: 4 << 10}, want: `tool "web_fetch"`},
-		"only a threshold, under the run's head and tail": {tool: Preview{Over: 8 << 10}, want: `tool "web_fetch"`},
+		"only a threshold, under the run's head and tail": {tool: Preview{Over: 4 << 10}, want: `tool "web_fetch"`},
 		"a negative size":                                 {tool: Preview{Head: -1}, want: "negative"},
 		"the run's own":                                   {run: Preview{Over: 4 << 10}, want: "Spec.Compaction.Preview"},
 	} {
@@ -124,5 +131,113 @@ func TestASkillIsNeverPreviewed(t *testing.T) {
 
 	if text(sent[2]) != body {
 		t.Fatalf("a skill's body was previewed; a skill is kept word for word")
+	}
+}
+
+// A result is sent whole up to the default 48 KiB, and past it as its ends,
+// under a line that says it is only a part.
+func TestPast48KiBAResultIsShownAsItsEnds(t *testing.T) {
+	r := rig(Compaction{AfterMessages: 100})
+	at, over := strings.Repeat("a", 48<<10), strings.Repeat("b", 48<<10+1)
+	sent := r.sendWith(t, []Message{
+		say(RoleUser, "task"),
+		called("c1", "get_diff"), result("c1", at),
+		say(RoleAssistant, "next"),
+		called("c2", "get_diff"), result("c2", over),
+	}, named("get_diff", Preview{}))
+
+	if text(sent[2]) != at {
+		t.Errorf("a result of exactly 48 KiB was previewed")
+	}
+	shown := text(sent[5])
+	if !strings.HasPrefix(shown, "[only part of the output of c2 (get_diff) is shown: its first 4 KiB and last 2 KiB of 48 KiB, 13 lines. The rest is not shown]\n") {
+		t.Fatalf("the preview does not open by saying it is a part:\n%.200s", shown)
+	}
+	if head, _, _ := strings.Cut(ends(shown), "\n…\n"); len(head) != 4<<10 {
+		t.Errorf("the head is %d bytes, want 4 KiB", len(head))
+	}
+}
+
+// One turn's results are held to TurnResults in all, the largest previewed
+// first, and the same transcript is shown the same way every time, so the
+// cached prefix holds. A turn under the limit is left alone.
+func TestATurnsResultsAreHeldToTheirLimit(t *testing.T) {
+	r := rig(Compaction{AfterMessages: 100})
+	sizes := []int{45 << 10, 47 << 10, 40 << 10, 46 << 10, 47 << 10, 30 << 10, 3 << 10}
+	msgs := []Message{say(RoleUser, "task")}
+	calls := Message{Role: RoleAssistant}
+	for i := range sizes {
+		calls.ToolCalls = append(calls.ToolCalls, ToolCall{ID: fmt.Sprintf("t%d", i), Name: "get_diff"})
+	}
+	msgs = append(msgs, calls)
+	for i, n := range sizes {
+		msgs = append(msgs, result(fmt.Sprintf("t%d", i), strings.Repeat("x", n)))
+	}
+	msgs = append(msgs, called("lone", "get_diff"), result("lone", strings.Repeat("y", 47<<10)))
+
+	sent := r.sendWith(t, msgs, named("get_diff", Preview{}))
+	total, cut := 0, []int{}
+	for i := range sizes {
+		m := text(sent[2+i])
+		total += len(m)
+		if m != text(msgs[2+i]) {
+			cut = append(cut, i)
+		}
+	}
+	if total > defaultTurnResults {
+		t.Errorf("the turn's results were sent as %d bytes, over %d", total, defaultTurnResults)
+	}
+	if len(cut) != 2 || cut[0] != 1 || cut[1] != 4 {
+		t.Errorf("previewed %v, want the two largest, 1 and 4, and no more than fit", cut)
+	}
+	if lone := text(sent[len(sent)-1]); lone != text(msgs[len(msgs)-1]) {
+		t.Errorf("a turn under the limit was previewed")
+	}
+	again := r.sendWith(t, msgs, named("get_diff", Preview{}))
+	for i := range sent {
+		if text(sent[i]) != text(again[i]) {
+			t.Fatalf("message %d was shown differently the second time; the cached prefix would break", i)
+		}
+	}
+}
+
+// read_output results and skills are never previewed to fit a turn: a read
+// is already capped, and a skill is kept word for word.
+func TestATurnOfReadsIsNotPreviewed(t *testing.T) {
+	r := rig(Compaction{AfterMessages: 100})
+	calls := Message{Role: RoleAssistant}
+	msgs := []Message{say(RoleUser, "task"), calls}
+	for i := range 5 {
+		id := fmt.Sprintf("r%d", i)
+		msgs[1].ToolCalls = append(msgs[1].ToolCalls, ToolCall{ID: id, Name: ReadOutputToolName})
+		msgs = append(msgs, result(id, strings.Repeat("r", 45<<10)))
+	}
+	sent := r.sendWith(t, msgs, named(ReadOutputToolName, Preview{}))
+	for i := 2; i < len(msgs); i++ {
+		if text(sent[i]) != text(msgs[i]) {
+			t.Errorf("read %d was previewed to fit the turn", i-2)
+		}
+	}
+}
+
+func TestANegativeTurnLimitIsRefused(t *testing.T) {
+	if err := checkCompaction(&Compaction{AfterMessages: 10, TurnResults: -1}, nil); err == nil {
+		t.Error("a negative TurnResults was accepted")
+	}
+}
+
+// A match broader than one read says how many lines matched and how many it
+// shows, so the model narrows it instead of reading on blind.
+func TestABroadMatchSaysHowMuchItLeftOut(t *testing.T) {
+	h := &compactHandle{}
+	long := strings.Repeat("match this line with some words in it\n", 2000)
+	h.setFull([]Message{say(RoleUser, "task"), called("c1", "get_diff"), result("c1", long)})
+
+	out, err := readOutputTool(h).Invoke(context.Background(), json.RawMessage(`{"call":"c1","match":"match"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) > readBytes+1024 || !strings.Contains(out, "of the 2000 matching lines shown") {
+		t.Fatalf("a broad match returned %d bytes, ending %q", len(out), out[max(0, len(out)-200):])
 	}
 }

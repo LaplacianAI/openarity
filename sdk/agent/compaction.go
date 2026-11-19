@@ -39,13 +39,17 @@ type Compaction struct {
 	// Preview is how a large tool result is shown, for a tool that sets none
 	// of its own; zero fields take the defaults.
 	Preview Preview
+	// TurnResults is how many bytes the results of one turn's calls are shown
+	// in all; past it the largest are previewed as if over their Over, until
+	// they fit. 192 KiB when zero.
+	TurnResults int
 }
 
 // Preview is how a large tool result is shown to the model: whole up to
 // Over bytes, and past it its first Head and last Tail bytes with a
 // read_output handle for the rest. The transcript keeps the result whole. A
-// zero field takes the run's value, and the run's takes the default: 100 KiB,
-// 8 KiB and 4 KiB. It applies only to a run with Spec.Compaction, which is
+// zero field takes the run's value, and the run's takes the default: 48 KiB,
+// 4 KiB and 2 KiB. It applies only to a run with Spec.Compaction, which is
 // what offers read_output.
 type Preview struct {
 	Over int
@@ -53,7 +57,10 @@ type Preview struct {
 	Tail int
 }
 
-var defaultPreview = Preview{Over: 100 << 10, Head: 8 << 10, Tail: 4 << 10}
+// Claude Code's own: 50,000 characters whole, 200,000 a turn.
+var defaultPreview = Preview{Over: 48 << 10, Head: 4 << 10, Tail: 2 << 10}
+
+const defaultTurnResults = 192 << 10
 
 // or fills each zero field of p from q.
 func (p Preview) or(q Preview) Preview {
@@ -252,7 +259,7 @@ func checkCompaction(c *Compaction, tools []Tool) error {
 	if c == nil {
 		return nil
 	}
-	if c.AfterMessages < 0 || c.AfterInputTokens < 0 || c.KeepTokens < 0 {
+	if c.AfterMessages < 0 || c.AfterInputTokens < 0 || c.KeepTokens < 0 || c.TurnResults < 0 {
 		return errors.New("Spec.Compaction has a negative limit")
 	}
 	if c.AfterMessages == 0 && c.AfterInputTokens == 0 {
@@ -566,8 +573,57 @@ func (c *compactingClient) view(msgs []Message) []Message {
 		}
 		out = append(out, m)
 	}
+	c.fitTurns(msgs[start:], out[len(out)-(len(msgs)-start):], names)
 	return out
 }
+
+// fitTurns holds each turn's results, a run of tool messages, to TurnResults
+// in all: the one a preview shortens most is previewed, then the next, until
+// they fit or none is left that a preview would shorten, as one already
+// previewed is not. sent is what view made of
+// msgs, message for message; it depends only on msgs, so a request repeats
+// the view before it and the cached prefix holds.
+func (c *compactingClient) fitTurns(msgs, sent []Message, names map[string]string) {
+	most := c.cfg.TurnResults
+	if most == 0 {
+		most = defaultTurnResults
+	}
+	for i := 0; i < len(sent); {
+		if sent[i].Role != RoleTool {
+			i++
+			continue
+		}
+		j, total := i, 0
+		for ; j < len(sent) && sent[j].Role == RoleTool; j++ {
+			total += len(sent[j].Text())
+		}
+		for total > most {
+			k, gain := -1, 0
+			for x := i; x < j; x++ {
+				name := names[msgs[x].ToolCallID]
+				if !previewable(name) {
+					continue
+				}
+				cut := c.cut(msgs[x], name, c.preview(name))
+				if g := len(sent[x].Text()) - len(cut.Text()); g > gain {
+					k, gain = x, g
+				}
+			}
+			if k < 0 {
+				break
+			}
+			name := names[msgs[k].ToolCallID]
+			sent[k] = c.cut(msgs[k], name, c.preview(name))
+			total -= gain
+		}
+		i = j
+	}
+}
+
+// previewable is a tool whose result may be shown in part: a read_output
+// result is already capped, and previewing it would only send the model back
+// to read its own read; a skill is kept word for word.
+func previewable(name string) bool { return name != ReadOutputToolName && !isSkill(name) }
 
 // markerMessage is a summary as the transcript keeps it: the text the model
 // is sent, marked so a later run knows it for a summary.
@@ -657,14 +713,21 @@ func (c *compactingClient) preview(name string) Preview {
 }
 
 func (c *compactingClient) shown(m Message, name string) Message {
-	// A read_output result is already capped, and previewing it would only
-	// send the model back to read its own read; a skill is kept word for word.
-	if m.Role != RoleTool || name == ReadOutputToolName || isSkill(name) {
+	if m.Role != RoleTool || !previewable(name) {
 		return m
 	}
 	p := c.preview(name)
+	if len(m.Text()) <= p.Over {
+		return m
+	}
+	return c.cut(m, name, p)
+}
+
+// cut is m shown as its first Head and last Tail bytes. Its first line says
+// it is a part, so the model does not take the ends for the whole.
+func (c *compactingClient) cut(m Message, name string, p Preview) Message {
 	text := m.Text()
-	if len(text) <= p.Over {
+	if len(text) <= p.Head+p.Tail {
 		return m
 	}
 	// Cut on rune boundaries, as report.go does: at most three bytes either way.
@@ -677,10 +740,12 @@ func (c *compactingClient) shown(m Message, name string) Message {
 		from++
 	}
 	head, tail := text[:end], text[from:]
+	who, whole := m.ToolCallID+nameNote(name), fmt.Sprintf("%s, %d lines", size(len(text)), len(splitLines(text)))
 	m.Content = []Content{{Type: ContentText, Text: fmt.Sprintf(
-		"%s\n…\n%s\n[output of %s%s: %s, %d lines; %s shown. Read the rest with %s "+
+		"[only part of the output of %s is shown: its first %s and last %s of %s. The rest is not shown]\n"+
+			"%s\n…\n%s\n[output of %s: %s; %s shown. Read the rest with %s "+
 			"{\"call\":%q,\"from_line\":N,\"lines\":M} or {\"call\":%q,\"match\":\"regex\"}]",
-		head, tail, m.ToolCallID, nameNote(name), size(len(text)), len(splitLines(text)),
+		who, size(len(head)), size(len(tail)), whole, head, tail, who, whole,
 		size(len(head)+len(tail)), ReadOutputToolName, m.ToolCallID, m.ToolCallID)}}
 	return m
 }

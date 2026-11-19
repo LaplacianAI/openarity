@@ -290,9 +290,10 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   title folded to one line, and every `<page` or `</page` in the body escaped
   whatever its case. The body is kept whole, up to the 2 MiB the plain fetch
   reads, with a line saying so when it stopped there; it was cut at 32 KiB
-  until `read_output` could reach the rest. The tool's preview shows a page
-  past 32 KiB as its first 24 KiB and last 8 KiB, so the model always sees
-  both ends of the envelope. A line the page wrote
+  until `read_output` could reach the rest. A page is previewed like any
+  result, past 48 KiB as its first 4 KiB and last 2 KiB, so the model always
+  sees both ends of the envelope. Its own 32 KiB preview went when results
+  that size, resent on every call, turned out to be most of a run's spend. A line the page wrote
   that starts like the brain's is escaped with a backslash, so only the
   brain's says the page was cut. The url must be http or https, carry no
   user, name a host and fit in 2,048 bytes, and a host a browser would read

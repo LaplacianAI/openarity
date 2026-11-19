@@ -271,7 +271,7 @@ func TestClearingOldResultsIsEnoughWithoutAModelCall(t *testing.T) {
 }
 
 func TestTheEstimateCountsWhatArrivedSinceTheLastCall(t *testing.T) {
-	r := rig(Compaction{AfterInputTokens: 50_000, KeepTokens: 1_000})
+	r := rig(Compaction{AfterInputTokens: 50_000, KeepTokens: 1_000, Preview: Preview{Over: 100 << 10}, TurnResults: 1 << 20})
 	r.model.usage = Usage{InputTokens: 1_000}
 	msgs := conversation(4, func(int) string { return "small" })
 	r.send(t, msgs)

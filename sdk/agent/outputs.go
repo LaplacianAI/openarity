@@ -17,8 +17,9 @@ const (
 	// A line longer than this is read as several, so a minified file is still
 	// readable in parts.
 	lineBytes = 4 << 10
-	// One read returns at most this much, about 25k tokens.
-	readBytes    = 100 << 10
+	// One read returns at most this much, about 8k tokens: a read is kept in
+	// the context like any result, and a broad match would fill it.
+	readBytes    = 32 << 10
 	defaultLines = 200
 	maxLines     = 2000
 )
@@ -145,18 +146,25 @@ func matching(head string, lines []string, pattern string) (string, error) {
 	}
 
 	var b strings.Builder
-	found := 0
+	found, shown, next := 0, 0, 0
 	for i, line := range lines {
 		if !re.MatchString(line) {
 			continue
 		}
 		found++
 		out := fmt.Sprintf("%d: %s\n", i+1, line)
-		if b.Len()+len(out) > readBytes {
-			fmt.Fprintf(&b, "[stopped at %s; narrow the expression, or read a range from line %d]\n", size(readBytes), i+1)
-			break
+		if next > 0 || b.Len()+len(out) > readBytes {
+			if next == 0 {
+				next = i + 1
+			}
+			continue
 		}
+		shown++
 		b.WriteString(out)
+	}
+	if next > 0 {
+		fmt.Fprintf(&b, "[stopped at %s: %d of the %d matching lines shown. Narrow the expression, or read a range from line %d]\n",
+			size(readBytes), shown, found, next)
 	}
 	if found == 0 {
 		return fmt.Sprintf("%s No line matches %q.", head, pattern), nil

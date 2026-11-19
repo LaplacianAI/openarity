@@ -95,14 +95,24 @@ The pin is saved with the message, so a resumed run keeps it too.
 
 ## Large results
 
-A tool result over 100 KiB is shown as its first 8 KiB, its last 4 KiB, and a
-line saying how to read the rest. The transcript keeps it whole. Those three
-sizes are the defaults; a run sets its own, and a tool its own over that:
+A tool result over 48 KiB is shown as its first 4 KiB and its last 2 KiB,
+under a line saying only part of it is shown and over one saying how to read
+the rest. The transcript keeps it whole. Those three sizes are the defaults; a
+run sets its own, and a tool its own over that.
+
+The results of one turn's calls are shown in 192 KiB at most: past it the
+largest is previewed as if it were over its threshold, then the next, until
+they fit. Six 45 KiB results, each under 48 KiB, would otherwise reach the
+model whole. Both defaults are Claude Code's own: 50,000 characters a result,
+200,000 a turn. `TurnResults` sets the limit. The choice depends only on the
+transcript, so every request shows a turn the same way and a cached prefix
+holds.
 
 ```go
 spec.Compaction = &agent.Compaction{
 	AfterMessages: 100,
-	Preview:       agent.Preview{Over: 64 << 10}, // every tool: past 64 KiB, its first 8 KiB and last 4 KiB
+	Preview:       agent.Preview{Over: 64 << 10}, // every tool: past 64 KiB, its first 4 KiB and last 2 KiB
+	TurnResults:   128 << 10,                     // one turn's results, in all
 }
 fetch := agent.Tool{
 	Name:    "web_fetch",
@@ -125,8 +135,10 @@ word. A compacting run has one more tool for the rest:
 `read_output` reads the whole result from the run's own transcript, by its call
 id: a line range, or the lines a regular expression (RE2) matches, with their
 numbers, under a line naming the tool they came from. One read returns at most
-about 25,000 tokens, and a line longer than 4 KiB, a minified file's, is read in
-parts. It works after a compaction and after a resume.
+32 KiB, about 8,000 tokens, since a read stays in the context like any result;
+a match broader than that says how many lines matched and how many it shows,
+so the model narrows it. A line longer than 4 KiB, a minified file's, is read
+in parts. It works after a compaction and after a resume.
 
 ## Finishing before the budget is gone
 
