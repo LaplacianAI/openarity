@@ -73,6 +73,7 @@ export type TraceItem =
   | { type: "unavailable"; name: string; reason: string }
   | { type: "compacted"; compaction: Compaction }
   | { type: "wrap_up"; reason: string }
+  | { type: "skipped"; what: string; reason: string }
   | { type: "other"; event: RunEvent };
 
 /** A run setting part of its context aside: old results cleared, turns folded into a summary. */
@@ -176,6 +177,9 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
         break;
       case "wrap_up":
         trace.items.push({ type: "wrap_up", reason: text(d.reason) });
+        break;
+      case "skipped":
+        trace.items.push({ type: "skipped", what: text(d.what), reason: text(d.reason) });
         break;
       case "step": {
         const n = d.step;

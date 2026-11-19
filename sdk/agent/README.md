@@ -312,6 +312,18 @@ change what the agent set out to do. That only *saves* tokens on a dependent
 chain: a current model asks for independent calls together in one turn, so ReAct
 pays one call for all of them.
 
+A pattern's own step never costs the answer. When Reflection's review comes
+back without a readable critique (the model answered in text, the arguments
+were not JSON, the call failed or was cut off), or a rewrite fails, the answer
+it was working on is returned and a `SkippedEvent` says what was skipped and
+why. ReWOO answers without a plan when the plan it was given cannot be read, is
+longer than `MaxSteps` or was cut off. Only a cancelled run stops.
+
+The review asks for its critique by name, `Request.MustCall`, which the
+OpenAI-compatible client sends as `tool_choice`. It is a hint: Claude refuses
+to be told which tool to call while it thinks, so a request refused as a bad
+request for naming one is asked once more without it.
+
 `Pattern` is an interface, so you can register your own — or wrap a shipped one
 in your own policy — without changing the library. See
 [`examples/custom`](examples/custom) for one enforcing a token ceiling.

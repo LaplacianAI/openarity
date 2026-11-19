@@ -371,37 +371,69 @@ func TestNothingToPlanIsAnsweredWithoutTools(t *testing.T) {
 	}
 }
 
-func TestAPlanWithUnreadableArgumentsIsRefused(t *testing.T) {
-	t.Parallel()
-
-	model := &fakeModel{turns: []turn{answered(calling(PlanToolName, `{"steps":`))}}
-	_, err := ReWOO().Run(t.Context(), agent.Input{
-		Spec: rewooSpec(tool("count", "3", nil, nil)), Messages: ask("go"), Model: model,
-	})
-	if !errors.Is(err, ErrNoPlan) {
-		t.Errorf("err = %v, want ErrNoPlan", err)
+// rewooKept runs ReWOO against model and returns its answer, the skips it
+// reported and the calls it made.
+func rewooKept(t *testing.T, s agent.Spec, model *fakeModel) (agent.Result, []agent.SkippedEvent) {
+	t.Helper()
+	events := make(chan agent.Event, 64)
+	result, err := ReWOO().Run(t.Context(), agent.Input{Spec: s, Messages: ask("go"), Model: model, Events: events})
+	close(events)
+	if err != nil {
+		t.Fatalf("Run: %v, want it answered without the plan", err)
 	}
+	var skipped []agent.SkippedEvent
+	for e := range events {
+		if sk, ok := e.(agent.SkippedEvent); ok {
+			skipped = append(skipped, sk)
+		}
+	}
+	return result, skipped
 }
 
-// Here MaxSteps caps tool calls rather than model turns, because the model is
-// called twice whatever happens and a ceiling on that bounds nothing.
-func TestAPlanLongerThanTheCeilingIsRefused(t *testing.T) {
+// A plan the model wrote and the pattern cannot use is answered as no plan:
+// the solver answers with no evidence, nothing is run, and the skip says why.
+func TestAnUnusablePlanIsAnsweredWithoutOne(t *testing.T) {
 	t.Parallel()
 
-	s := rewooSpec(tool("count", "3", nil, nil))
-	s.MaxSteps = 2
+	cut := turn{resp: agent.Response{
+		Message: calling(PlanToolName, `{"steps":[{"tool":"count","args":{},"why":"a"}]}`),
+		Finish:  agent.FinishLength,
+	}}
+	for name, c := range map[string]struct {
+		plan     turn
+		maxSteps int
+		want     string
+	}{
+		"unreadable": {answered(calling(PlanToolName, `{"steps":`)), 8, ErrNoPlan.Error()},
+		// Here MaxSteps caps tool calls rather than model turns, because the
+		// model is called twice whatever happens.
+		"too long": {submitted(`[{"tool":"count","args":{},"why":"a"},{"tool":"count","args":{},"why":"b"},{"tool":"count","args":{},"why":"c"}]`), 2, "3 steps"},
+		// A truncated plan is missing its last steps, and nothing downstream
+		// would know they were meant to exist.
+		"cut off": {cut, 8, agent.ErrTruncated.Error()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var ran bool
+			s := rewooSpec(tool("count", "3", nil, &ran))
+			s.MaxSteps = c.maxSteps
+			model := &fakeModel{turns: []turn{c.plan, answered(text("the answer"))}}
 
-	model := &fakeModel{turns: []turn{submitted(`[
-		{"tool":"count","args":{},"why":"a"},
-		{"tool":"count","args":{},"why":"b"},
-		{"tool":"count","args":{},"why":"c"}]`)}}
-
-	_, err := ReWOO().Run(t.Context(), agent.Input{Spec: s, Messages: ask("go"), Model: model})
-	if !errors.Is(err, agent.ErrMaxSteps) {
-		t.Fatalf("err = %v, want ErrMaxSteps", err)
-	}
-	if !strings.Contains(err.Error(), "3 steps") {
-		t.Errorf("err = %v, want it to say how long the plan was", err)
+			result, skipped := rewooKept(t, s, model)
+			if result.Output != "the answer" || result.Steps != 2 {
+				t.Errorf("Output %q in %d steps, want the solver's answer in 2", result.Output, result.Steps)
+			}
+			if ran {
+				t.Error("an unusable plan was carried out")
+			}
+			if len(skipped) != 1 || skipped[0].What != "plan" || skipped[0].Step != 1 ||
+				!strings.Contains(skipped[0].Reason, c.want) {
+				t.Errorf("skipped %+v, want the plan at step 1, saying %q", skipped, c.want)
+			}
+			if len(model.calls) != 2 || len(model.calls[1].Tools) != 0 {
+				t.Errorf("%d calls, the solver offered %d tools; want 2 and none", len(model.calls), len(model.calls[1].Tools))
+			}
+		})
 	}
 }
 
@@ -442,32 +474,6 @@ func TestReWOOWithNoModelClientIsRefused(t *testing.T) {
 
 	if _, err := ReWOO().Run(t.Context(), agent.Input{Spec: rewooSpec(tool("c", "", nil, nil))}); err == nil {
 		t.Error("a run with no ModelClient was accepted")
-	}
-}
-
-// A truncated plan is a plan missing its last steps, and nothing downstream
-// would know they were meant to exist.
-func TestATruncatedPlanStopsTheRunBeforeAnythingRuns(t *testing.T) {
-	t.Parallel()
-
-	var ran bool
-	model := &fakeModel{turns: []turn{{resp: agent.Response{
-		Message: calling(PlanToolName, `{"steps":[{"tool":"count","args":{},"why":"a"}]}`),
-		Finish:  agent.FinishLength,
-		Usage:   agent.Usage{InputTokens: 10, OutputTokens: 5},
-	}}}}
-
-	result, err := ReWOO().Run(t.Context(), agent.Input{
-		Spec: rewooSpec(tool("count", "3", nil, &ran)), Messages: ask("go"), Model: model,
-	})
-	if !errors.Is(err, agent.ErrTruncated) {
-		t.Fatalf("err = %v, want ErrTruncated", err)
-	}
-	if ran {
-		t.Error("a truncated plan was executed")
-	}
-	if result.Steps != 1 {
-		t.Errorf("Steps = %d, want the planning step", result.Steps)
 	}
 }
 

@@ -68,7 +68,7 @@ func (l reflection) Run(ctx context.Context, in agent.Input) (agent.Result, erro
 
 		verdict, err := l.reflect(ctx, in, msgs)
 		if err != nil {
-			return result, fmt.Errorf("reflecting on cycle %d: %w", cycle, err)
+			return kept(ctx, in, result, step, "critique", fmt.Errorf("reflecting on cycle %d: %w", cycle, err))
 		}
 		if !verdict.NeedsRefinement {
 			return result, nil
@@ -80,7 +80,7 @@ func (l reflection) Run(ctx context.Context, in agent.Input) (agent.Result, erro
 
 		improved, err := l.refine(ctx, in, msgs, verdict.Critique)
 		if err != nil {
-			return result, fmt.Errorf("rewriting on cycle %d: %w", cycle, err)
+			return kept(ctx, in, result, step, "rewrite", fmt.Errorf("rewriting on cycle %d: %w", cycle, err))
 		}
 
 		msgs = append(slices.Clone(msgs[:answerStart(msgs)]), improved.msgs...)
@@ -88,6 +88,17 @@ func (l reflection) Run(ctx context.Context, in agent.Input) (agent.Result, erro
 		result.Output = improved.text
 	}
 
+	return result, nil
+}
+
+// kept is the answer a review or a rewrite was working on, handed back when
+// that work failed: a finished answer is never lost to a pattern's own step.
+// Only a cancelled run stops, since nobody is waiting for its answer.
+func kept(ctx context.Context, in agent.Input, result agent.Result, step int, what string, err error) (agent.Result, error) {
+	if ctx.Err() != nil {
+		return result, err
+	}
+	in.Emit(ctx, agent.SkippedEvent{Step: step, What: what, Reason: err.Error()})
 	return result, nil
 }
 
@@ -101,7 +112,7 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	ask.Spec.System = append(slices.Clone(in.Spec.System), reflecting)
 	ask.Spec.Tools = []agent.Tool{critiqueTool()}
 
-	resp, err := react{aside: true}.call(ctx, ask, msgs)
+	resp, err := react{aside: true, must: CritiqueToolName}.call(ctx, ask, msgs)
 	if err != nil {
 		return critique{}, err
 	}

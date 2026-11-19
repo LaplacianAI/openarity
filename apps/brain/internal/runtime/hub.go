@@ -77,8 +77,11 @@ func (b *Builder) hubAgent(ctx context.Context, run db.Run) (db.Agent, error) {
 }
 
 func (b *Builder) reach(run db.Run, a db.Agent) ReachSource {
-	if run.Hub || run.Builder {
+	switch {
+	case run.Builder:
 		return teamReach(b.graph.Store, run.TeamID, self(a))
+	case run.Hub:
+		return hubReach(b.graph.Store, run.TeamID, self(a))
 	}
 	return agentReach(b.graph.Store, run.TeamID, a.ID)
 }

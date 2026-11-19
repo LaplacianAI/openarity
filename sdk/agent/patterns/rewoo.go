@@ -51,6 +51,13 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	in.Emit(ctx, agent.StepEvent{Step: 1})
 	plan, call, resp, err := l.plan(ctx, in)
 	result.Steps = 1
+	// A plan the model wrote that cannot be read, is too long or was cut off
+	// is answered as no plan at all: what the person asked is still owed an
+	// answer. A planning call that failed outright is the run's failure.
+	if unusable(err) {
+		in.Emit(ctx, agent.SkippedEvent{Step: 1, What: "plan", Reason: err.Error()})
+		err = errNothingToPlan
+	}
 	if errors.Is(err, errNothingToPlan) {
 		// Answered as after a plan, with no evidence: the planning turn's
 		// own words were never shown, so they are not kept as the answer.
@@ -91,6 +98,10 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	result.Messages = msgs
 	result.Output = answer.text
 	return result, err
+}
+
+func unusable(err error) bool {
+	return errors.Is(err, ErrNoPlan) || errors.Is(err, agent.ErrMaxSteps) || errors.Is(err, agent.ErrTruncated)
 }
 
 type step struct {

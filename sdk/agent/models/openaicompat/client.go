@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -45,11 +46,28 @@ func (c *Client) Complete(ctx context.Context, req agent.Request) (agent.Respons
 	}
 
 	completion, err := c.oai.Chat.Completions.New(ctx, params)
+	if refusedChoice(req, err) {
+		completion, err = c.oai.Chat.Completions.New(ctx, unforced(params))
+	}
 	if err != nil {
 		return agent.Response{}, modelError(err)
 	}
 
 	return fromCompletion(*completion, req.Model.Name)
+}
+
+// refusedChoice is a request that named the tool to call, refused as a bad
+// request: Claude will not be told which tool to call while it thinks, and
+// some models never. Asked again without it, the model may still call the
+// tool, and the pattern reads whatever comes back.
+func refusedChoice(req agent.Request, err error) bool {
+	var answered *openai.Error
+	return req.MustCall != "" && errors.As(err, &answered) && answered.StatusCode == http.StatusBadRequest
+}
+
+func unforced(params openai.ChatCompletionNewParams) openai.ChatCompletionNewParams {
+	params.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{}
+	return params
 }
 
 func (c *Client) Stream(ctx context.Context, req agent.Request) (agent.Stream, error) {
@@ -64,7 +82,14 @@ func (c *Client) Stream(ctx context.Context, req agent.Request) (agent.Stream, e
 		IncludeUsage: openai.Bool(true),
 	}
 
-	return &stream{raw: c.oai.Chat.Completions.NewStreaming(ctx, params), model: req.Model.Name}, nil
+	s := &stream{raw: c.oai.Chat.Completions.NewStreaming(ctx, params), model: req.Model.Name}
+	if req.MustCall != "" {
+		s.unforced = func() *ssestream.Stream[openai.ChatCompletionChunk] {
+			return c.oai.Chat.Completions.NewStreaming(ctx, unforced(params))
+		}
+		s.req = req
+	}
+	return s, nil
 }
 
 // stream turns chunks into text deltas and one final response.
@@ -91,6 +116,13 @@ type stream struct {
 	// model is the one asked, which the turn's reasoning is kept against.
 	model string
 
+	// unforced asks again without naming the tool, once, for a stream
+	// refused before its first chunk because it named one; req is what was
+	// asked, to tell that refusal from any other.
+	unforced func() *ssestream.Stream[openai.ChatCompletionChunk]
+	req      agent.Request
+	seen     bool
+
 	cur  agent.StreamEvent
 	err  error
 	done bool
@@ -101,8 +133,9 @@ func (s *stream) Next() bool {
 		return false
 	}
 
-	for s.raw.Next() {
+	for s.next() {
 		chunk := s.raw.Current()
+		s.seen = true
 		s.acc.AddChunk(chunk)
 		reasoning := s.observe(chunk)
 
@@ -253,6 +286,20 @@ func (s *stream) repair(final *agent.Response) {
 	}
 }
 
+// next is the raw stream's next chunk, after asking once more without the
+// named tool if the first answer refused it.
+func (s *stream) next() bool {
+	if s.raw.Next() {
+		return true
+	}
+	if s.seen || s.unforced == nil || !refusedChoice(s.req, s.raw.Err()) {
+		return false
+	}
+	_ = s.raw.Close()
+	s.raw, s.unforced = s.unforced(), nil
+	return s.raw.Next()
+}
+
 func (s *stream) Event() agent.StreamEvent { return s.cur }
 func (s *stream) Err() error               { return s.err }
 func (s *stream) Close() error             { return s.raw.Close() }
@@ -290,6 +337,10 @@ func toParams(req agent.Request) (openai.ChatCompletionNewParams, error) {
 		return params, err
 	}
 	params.Tools = tools
+	if req.MustCall != "" {
+		params.ToolChoice = openai.ToolChoiceOptionFunctionToolChoice(
+			openai.ChatCompletionNamedToolChoiceFunctionParam{Name: req.MustCall})
+	}
 
 	if format, ok := toResponseFormat(req.OutputSchema); ok {
 		params.ResponseFormat = format

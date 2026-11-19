@@ -65,7 +65,7 @@ func (f *fakeStore) CountOtherAgents(_ context.Context, arg db.CountOtherAgentsP
 
 func (f *fakeReach) ListTeamReach(_ context.Context, arg db.ListTeamReachParams) (db.ListTeamReachRow, error) {
 	f.teamAsked = append(f.teamAsked, arg)
-	return db.ListTeamReachRow{AgentIds: f.teamAgents, ToolIds: f.tools, SkillIds: f.skills}, f.teamErr
+	return db.ListTeamReachRow{AgentIds: f.teamAgents, ToolIds: f.teamTools, SkillIds: f.teamSkills}, f.teamErr
 }
 
 // --- the fixture's run, made the hub's ---
@@ -320,39 +320,88 @@ func TestAFailedCountFailsTheHubsBuild(t *testing.T) {
 
 // --- the hub's graph ---
 
-// The hub searches its whole team, read on every call, leaving out only
-// itself; never the reach of the agent it happens to be.
-func TestTheHubsGraphSearchesTheWholeTeam(t *testing.T) {
-	for name, setup := range map[string]func(f *fixture) *uuid.UUID{
-		"the orchestrator": func(f *fixture) *uuid.UUID { f.asOrchestrator(); f.teamModel(); return nil },
-		"a chosen hub":     func(f *fixture) *uuid.UUID { f.asChosenHub(); return &f.agent.ID },
+// The hub finds every other agent in the team, read on every call, to hand
+// work to; but as tools and skills only what it holds itself, since those are
+// all it can call or load. A tool on a server granted to nobody, or to
+// another agent, is never offered to it as one.
+func TestTheHubsGraphFindsTheTeamsAgentsAndOnlyItsOwnTools(t *testing.T) {
+	f := newFixture()
+	f.asChosenHub()
+	f.withTeam(2)
+	r := f.graph.reach
+	r.teamAgents = []uuid.UUID{uuid.New(), uuid.New()}
+	r.teamTools, r.teamSkills = []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}, []uuid.UUID{uuid.New(), uuid.New()}
+	r.tools, r.skills = []uuid.UUID{uuid.New()}, []uuid.UUID{uuid.New()}
+
+	g := graphTools(f.build(t))
+	if len(g) != 1 {
+		t.Fatalf("graph tools = %d, want 1", len(g))
+	}
+	for range 2 {
+		if _, err := g[0].Invoke(t.Context(), json.RawMessage(`{"query":"invoices"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := db.ListTeamReachParams{TeamID: f.run.TeamID, Exclude: &f.agent.ID}
+	if got := r.teamAsked; len(got) != 2 || !reflect.DeepEqual(got[0], want) {
+		t.Errorf("team reach asked %+v, want %+v on each call", got, want)
+	}
+	if len(r.agentsAsked) != 0 {
+		t.Errorf("the hub read whom it may delegate to as a plain agent %d times", len(r.agentsAsked))
+	}
+	if len(r.toolsOf) != 2 || r.toolsOf[0] != f.agent.ID || len(r.skillsOf) != 2 || r.skillsOf[0] != f.agent.ID {
+		t.Errorf("grants read for %v and %v, want the hub's own on each call", r.toolsOf, r.skillsOf)
+	}
+	wantReach := graph.Reach{Agents: r.teamAgents, Tools: r.tools, Skills: r.skills}
+	if got := f.graph.search.asked; len(got) != 2 || !reflect.DeepEqual(got[0].Reach, wantReach) {
+		t.Errorf("searched %+v, want the team's agents and the hub's own tools and skills %+v", got, wantReach)
+	}
+}
+
+// The built-in hub holds no tools and no skills: it finds the agents to hand
+// work to, and through them what they hold, and nothing of its own to call.
+func TestTheBuiltInHubsGraphFindsAgentsAndNothingToCall(t *testing.T) {
+	f := newFixture()
+	f.asOrchestrator()
+	f.teamModel()
+	f.withTeam(2)
+	r := f.graph.reach
+	r.teamAgents = []uuid.UUID{uuid.New()}
+	r.teamTools, r.teamSkills = []uuid.UUID{uuid.New()}, []uuid.UUID{uuid.New()}
+	r.tools, r.skills = []uuid.UUID{uuid.New()}, []uuid.UUID{uuid.New()}
+
+	g := graphTools(f.build(t))
+	if _, err := g[0].Invoke(t.Context(), json.RawMessage(`{"query":"invoices"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.toolsOf)+len(r.skillsOf) != 0 {
+		t.Errorf("grants read for %v and %v, though the built-in hub is no agent", r.toolsOf, r.skillsOf)
+	}
+	want := graph.Reach{Agents: r.teamAgents}
+	if got := f.graph.search.asked; len(got) != 1 || !reflect.DeepEqual(got[0].Reach, want) {
+		t.Errorf("searched %+v, want the team's agents alone %+v", got, want)
+	}
+}
+
+// What the hub holds that cannot be read fails the search, rather than
+// searching with less than it holds or more.
+func TestAHubsGrantsThatCannotBeReadAreAToolError(t *testing.T) {
+	for name, broken := range map[string]func(r *fakeReach){
+		"tools":  func(r *fakeReach) { r.toolsErr = errors.New("conn closed") },
+		"skills": func(r *fakeReach) { r.skillsErr = errors.New("conn closed") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture()
-			exclude := setup(f)
+			f.asChosenHub()
 			f.withTeam(2)
-			f.graph.reach.teamAgents = []uuid.UUID{uuid.New(), uuid.New()}
-
+			broken(f.graph.reach)
 			g := graphTools(f.build(t))
-			if len(g) != 1 {
-				t.Fatalf("graph tools = %d, want 1", len(g))
+			if _, err := g[0].Invoke(t.Context(), json.RawMessage(`{"query":"invoices"}`)); err == nil {
+				t.Error("the search ran without the hub's own reach")
 			}
-			for range 2 {
-				if _, err := g[0].Invoke(t.Context(), json.RawMessage(`{"query":"invoices"}`)); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			want := db.ListTeamReachParams{TeamID: f.run.TeamID, Exclude: exclude}
-			if got := f.graph.reach.teamAsked; len(got) != 2 || !reflect.DeepEqual(got[0], want) {
-				t.Errorf("team reach asked %+v, want %+v on each call", got, want)
-			}
-			if len(f.graph.reach.agentsAsked) != 0 {
-				t.Errorf("the hub read an agent's own reach %d times", len(f.graph.reach.agentsAsked))
-			}
-			wantReach := graph.Reach{Agents: f.graph.reach.teamAgents, Tools: f.graph.reach.tools, Skills: f.graph.reach.skills}
-			if got := f.graph.search.asked; len(got) != 2 || !reflect.DeepEqual(got[0].Reach, wantReach) {
-				t.Errorf("searched %+v, want the team's reach %+v", got, wantReach)
+			if f.graph.search.calls() != 0 {
+				t.Error("the graph was searched")
 			}
 		})
 	}

@@ -17,6 +17,11 @@ type Request struct {
 	Messages     []Message
 	Tools        []Tool
 	OutputSchema *OutputSchema
+	// MustCall names the one tool the model must call this turn, for a call
+	// a pattern makes to read a tool call back, such as a critique. It is a
+	// hint: a client drops it for a model that refuses to be told, as Claude
+	// does while it thinks, so a pattern still reads whatever comes back.
+	MustCall string
 }
 
 type FinishReason string

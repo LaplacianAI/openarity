@@ -1,6 +1,7 @@
 package patterns
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -285,62 +286,102 @@ func TestReflectionRefusesANilModel(t *testing.T) {
 	}
 }
 
-// A reflecting turn that answers in prose rather than calling the tool leaves
-// the pattern with no verdict. Guessing from the text is how "no major changes
-// needed, though I would note…" gets read as approval.
-func TestAReflectingTurnThatSubmitsNothingIsRefused(t *testing.T) {
-	t.Parallel()
-
-	model := &fakeModel{turns: []turn{
-		answered(text("a draft")),
-		answered(text("looks good to me")),
-	}}
-
-	_, err := Reflection(1).Run(t.Context(), agent.Input{
-		Spec: reflectSpec(), Messages: ask("write something"), Model: model,
+// reflectKept runs one cycle against model and returns what came back and the
+// skips it reported: a review or rewrite that fails keeps the answer it was
+// working on rather than failing the run.
+func reflectKept(t *testing.T, model *fakeModel) (agent.Result, []agent.SkippedEvent) {
+	t.Helper()
+	events := make(chan agent.Event, 64)
+	result, err := Reflection(1).Run(t.Context(), agent.Input{
+		Spec: reflectSpec(), Messages: ask("write something"), Model: model, Events: events,
 	})
-	if !errors.Is(err, ErrNoCritique) {
-		t.Fatalf("err = %v, want ErrNoCritique", err)
+	close(events)
+	if err != nil {
+		t.Fatalf("Run: %v, want the answer kept", err)
+	}
+	var skipped []agent.SkippedEvent
+	for e := range events {
+		if s, ok := e.(agent.SkippedEvent); ok {
+			skipped = append(skipped, s)
+		}
+	}
+	return result, skipped
+}
+
+// skippedFor checks one skip of what, at step, whose reason says each of want.
+func skippedFor(t *testing.T, got []agent.SkippedEvent, what string, step int, want ...string) {
+	t.Helper()
+	if len(got) != 1 || got[0].What != what || got[0].Step != step {
+		t.Fatalf("skipped %+v, want one %q at step %d", got, what, step)
+	}
+	for _, w := range want {
+		if !strings.Contains(got[0].Reason, w) {
+			t.Errorf("the reason %q does not say %q", got[0].Reason, w)
+		}
 	}
 }
 
-func TestACritiqueWithUnreadableArgumentsIsRefused(t *testing.T) {
+// A reflecting turn that answers in prose rather than calling the tool leaves
+// the pattern with no verdict. Guessing from the text is how "no major changes
+// needed, though I would note…" gets read as approval; failing the run is how
+// a finished answer reaches nobody. So the draft stands, and the skip says why.
+func TestAReflectingTurnThatSubmitsNothingKeepsTheDraft(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: []turn{
+	result, skipped := reflectKept(t, &fakeModel{turns: []turn{
+		answered(text("a draft")),
+		answered(text("looks good to me")),
+	}})
+	if result.Output != "a draft" || result.Steps != 2 {
+		t.Errorf("Output %q in %d steps, want the draft in 2", result.Output, result.Steps)
+	}
+	skippedFor(t, skipped, "critique", 2, ErrNoCritique.Error(), "cycle 1")
+}
+
+// The critique is asked for by name, so a model that can be told to call it is.
+func TestTheReflectingTurnMustCallTheCritique(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeModel{turns: []turn{answered(text("a draft")), critiqued(false, "")}}
+	if _, err := Reflection(1).Run(t.Context(), agent.Input{
+		Spec: reflectSpec(), Messages: ask("write something"), Model: model,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reqs := model.calls
+	if len(reqs) != 2 || reqs[0].MustCall != "" || reqs[1].MustCall != CritiqueToolName {
+		t.Errorf("must call %q then %q, want nothing then %q", reqs[0].MustCall, reqs[1].MustCall, CritiqueToolName)
+	}
+}
+
+func TestACritiqueWithUnreadableArgumentsKeepsTheDraft(t *testing.T) {
+	t.Parallel()
+
+	result, skipped := reflectKept(t, &fakeModel{turns: []turn{
 		answered(text("a draft")),
 		answered(calling(CritiqueToolName, `{"needs_refinement":`)),
-	}}
-
-	_, err := Reflection(1).Run(t.Context(), agent.Input{
-		Spec: reflectSpec(), Messages: ask("write something"), Model: model,
-	})
-	if !errors.Is(err, ErrNoCritique) {
-		t.Fatalf("err = %v, want ErrNoCritique", err)
+	}})
+	if result.Output != "a draft" {
+		t.Errorf("Output = %q, want the draft", result.Output)
 	}
 	// Distinguishable from a turn that called nothing at all, or the two
-	// failures cannot be told apart in a log.
-	if !strings.Contains(err.Error(), "JSON") {
-		t.Errorf("the error does not say the arguments were unreadable: %v", err)
-	}
+	// failures cannot be told apart in a trace.
+	skippedFor(t, skipped, "critique", 2, "JSON")
 }
 
 // "Change it" with no reason gives the rewriting turn nothing to act on, so it
-// rewrites at random. Better to refuse than to spend a call on that.
-func TestACritiqueAskingForChangesWithoutSayingWhichIsRefused(t *testing.T) {
+// would rewrite at random. Better to keep the draft than spend a call on that.
+func TestACritiqueAskingForChangesWithoutSayingWhichKeepsTheDraft(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: []turn{
+	result, skipped := reflectKept(t, &fakeModel{turns: []turn{
 		answered(text("a draft")),
 		critiqued(true, ""),
-	}}
-
-	_, err := Reflection(1).Run(t.Context(), agent.Input{
-		Spec: reflectSpec(), Messages: ask("write something"), Model: model,
-	})
-	if !errors.Is(err, ErrNoCritique) {
-		t.Fatalf("err = %v, want ErrNoCritique", err)
+	}})
+	if result.Output != "a draft" {
+		t.Errorf("Output = %q, want the draft", result.Output)
 	}
+	skippedFor(t, skipped, "critique", 2, "without saying which")
 }
 
 // A verdict of "no change" with an empty critique is the normal happy path and
@@ -360,20 +401,17 @@ func TestACritiqueAskingForNothingNeedsNoReason(t *testing.T) {
 	}
 }
 
-func TestATruncatedReflectingTurnIsReported(t *testing.T) {
+func TestATruncatedReflectingTurnKeepsTheDraft(t *testing.T) {
 	t.Parallel()
 
 	cut := answered(text("a partial critique"))
 	cut.resp.Finish = agent.FinishLength
 
-	model := &fakeModel{turns: []turn{answered(text("a draft")), cut}}
-
-	_, err := Reflection(1).Run(t.Context(), agent.Input{
-		Spec: reflectSpec(), Messages: ask("write something"), Model: model,
-	})
-	if !errors.Is(err, agent.ErrTruncated) {
-		t.Fatalf("err = %v, want ErrTruncated", err)
+	result, skipped := reflectKept(t, &fakeModel{turns: []turn{answered(text("a draft")), cut}})
+	if result.Output != "a draft" {
+		t.Errorf("Output = %q, want the draft", result.Output)
 	}
+	skippedFor(t, skipped, "critique", 2, agent.ErrTruncated.Error())
 }
 
 // The draft was paid for and is still the best answer there is. Returning
@@ -381,17 +419,11 @@ func TestATruncatedReflectingTurnIsReported(t *testing.T) {
 func TestARewriteCutOffEveryTimeKeepsTheAnswerItAlreadyHad(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: append([]turn{
+	result, skipped := reflectKept(t, &fakeModel{turns: append([]turn{
 		answered(text("the original draft")),
 		critiqued(true, "make it better"),
-	}, cutTurns("half a rewri", 1+continuations)...)}
-
-	result, err := Reflection(1).Run(t.Context(), agent.Input{
-		Spec: reflectSpec(), Messages: ask("write something"), Model: model,
-	})
-	if !errors.Is(err, agent.ErrTruncated) {
-		t.Fatalf("err = %v, want ErrTruncated", err)
-	}
+	}, cutTurns("half a rewri", 1+continuations)...)})
+	skippedFor(t, skipped, "rewrite", 3, agent.ErrTruncated.Error())
 	if result.Output != "the original draft" {
 		t.Errorf("Output = %q, want the draft that survived", result.Output)
 	}
@@ -413,47 +445,50 @@ func TestAFailureWhileGeneratingNamesThePhase(t *testing.T) {
 	}
 }
 
-func TestAFailureWhileReflectingNamesThePhaseAndTheCycle(t *testing.T) {
+// A model that fails while reviewing has still written the draft: it stands,
+// and the skip names the phase, the cycle and the failure.
+func TestAFailureWhileReflectingKeepsTheDraftNamingThePhaseAndTheCycle(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: []turn{
+	result, skipped := reflectKept(t, &fakeModel{turns: []turn{
 		answered(text("a draft")),
 		{err: errors.New("gateway down")},
-	}}
+	}})
+	if result.Output != "a draft" {
+		t.Errorf("Output = %q, want the draft", result.Output)
+	}
+	skippedFor(t, skipped, "critique", 2, "reflecting", "cycle 1", "gateway down")
+}
 
-	_, err := Reflection(1).Run(t.Context(), agent.Input{
+// A cancelled run stops: nobody is waiting for the draft.
+func TestACancelledReviewFailsTheRun(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	model := &fakeModel{turns: []turn{
+		answered(text("a draft")),
+		{err: context.Canceled, before: cancel},
+	}}
+	_, err := Reflection(1).Run(ctx, agent.Input{
 		Spec: reflectSpec(), Messages: ask("hello"), Model: model,
 	})
-	if err == nil {
-		t.Fatal("Run succeeded against a failing model")
-	}
-	for _, want := range []string{"reflecting", "cycle 1"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the error does not mention %q: %v", want, err)
-		}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation", err)
 	}
 }
 
-func TestAFailureWhileRewritingNamesThePhaseAndTheCycle(t *testing.T) {
+func TestAFailureWhileRewritingKeepsTheDraftNamingThePhaseAndTheCycle(t *testing.T) {
 	t.Parallel()
 
-	model := &fakeModel{turns: []turn{
+	result, skipped := reflectKept(t, &fakeModel{turns: []turn{
 		answered(text("a draft")),
 		critiqued(true, "improve it"),
 		{err: errors.New("gateway down")},
-	}}
-
-	_, err := Reflection(1).Run(t.Context(), agent.Input{
-		Spec: reflectSpec(), Messages: ask("hello"), Model: model,
-	})
-	if err == nil {
-		t.Fatal("Run succeeded against a failing model")
+	}})
+	if result.Output != "a draft" || result.Steps != 3 {
+		t.Errorf("Output %q in %d steps, want the draft in 3", result.Output, result.Steps)
 	}
-	for _, want := range []string{"rewriting", "cycle 1"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the error does not mention %q: %v", want, err)
-		}
-	}
+	skippedFor(t, skipped, "rewrite", 3, "rewriting", "cycle 1", "gateway down")
 }
 
 // A caller handing Messages back next turn must see one answer, not the draft,

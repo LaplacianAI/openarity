@@ -264,6 +264,9 @@ func recordOther(ctx context.Context, s EventStore, runID uuid.UUID, worker stri
 			return fmt.Errorf("recording the message behind a steer: %w", err)
 		}
 		return nil
+	case agent.SkippedEvent:
+		reason, _ := clip(e.Reason)
+		return appendEvent(ctx, s, runID, worker, "skipped", skippedPayload{Step: e.Step, What: e.What, Reason: reason})
 	case agent.CompactedEvent:
 		return appendEvent(ctx, s, runID, worker, "compacted", compactedPayload{
 			Reason: e.Reason, Cleared: e.Cleared, Folded: e.Folded, Before: e.Before, After: e.After,
@@ -341,4 +344,12 @@ func clip(s string) (string, bool) {
 		cut--
 	}
 	return s[:cut], true
+}
+
+// skippedPayload is a pattern's own step left out, with the run going on
+// from what it had: the review whose critique could not be read, say.
+type skippedPayload struct {
+	Step   int    `json:"step"`
+	What   string `json:"what"`
+	Reason string `json:"reason"`
 }

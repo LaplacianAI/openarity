@@ -42,6 +42,9 @@ type turn struct {
 	// thinking and saying, when set, are the reasoning and text this turn
 	// streams, in place of the fake's deltas.
 	thinking, saying []string
+
+	// before runs as the turn is asked for, such as a cancel.
+	before func()
 }
 
 func (m *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
@@ -52,6 +55,9 @@ func (m *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Respon
 	}
 	t := m.turns[0]
 	m.turns = m.turns[1:]
+	if t.before != nil {
+		t.before()
+	}
 	return t.resp, t.err
 }
 

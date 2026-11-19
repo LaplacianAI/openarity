@@ -609,6 +609,13 @@ function TraceView({
                 {item.reason === "time" ? "time nearly up" : "token budget nearly spent"}
               </Note>
             );
+          case "skipped":
+            return (
+              <Note key={key} kind="skipped" warn>
+                <span className="font-medium text-foreground">{skippedWords(item.what)}</span>:{" "}
+                {item.reason}
+              </Note>
+            );
           default:
             return (
               <Note key={key} kind={item.event.kind}>
@@ -682,6 +689,20 @@ function CompactedNote({ compaction: c }: { compaction: Compaction }) {
       ) : null}
     </Note>
   );
+}
+
+/** What a skipped step was, as a person reads it: the run kept going without it. */
+export function skippedWords(what: string): string {
+  switch (what) {
+    case "critique":
+      return "Self-review skipped, the answer kept";
+    case "rewrite":
+      return "Rewrite skipped, the answer before it kept";
+    case "plan":
+      return "Plan skipped, answered without one";
+    default:
+      return "A step was skipped";
+  }
 }
 
 function Note({
