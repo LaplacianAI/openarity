@@ -43,6 +43,7 @@ func site(t *testing.T, b realBrowser) (base string, public Public) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `<!doctype html><title>Home</title><h1>Welcome</h1>
 <p>Plain words.</p><a href="/next">Next page</a>
+<a href=" JavaScript:alert(1)">Run it</a><a href="data:text/html,hi">Data</a><a href="vbscript:x">VB</a>
 <script src="http://`+refused+`/tracker.js"></script>`)
 	})
 	mux.HandleFunc("/next", func(w http.ResponseWriter, _ *http.Request) {
@@ -125,6 +126,17 @@ func TestAPageIsReadWithItsControlsNumbered(t *testing.T) {
 	}
 	if !strings.Contains(s.Text, "[1 link] Next page (/next)") {
 		t.Errorf("the link is not numbered:\n%s", s.Text)
+	}
+	// A link to anything but a page is numbered, its address left out.
+	for _, want := range []string{"[2 link] Run it ", "[3 link] Data ", "[4 link] VB "} {
+		if !strings.Contains(s.Text+" ", want) {
+			t.Errorf("want %q, with no address, in:\n%s", want, s.Text)
+		}
+	}
+	for _, never := range []string{"alert", "text/html", "vbscript"} {
+		if strings.Contains(s.Text, never) {
+			t.Errorf("the read shows %q:\n%s", never, s.Text)
+		}
 	}
 }
 

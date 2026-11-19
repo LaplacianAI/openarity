@@ -35,6 +35,16 @@
       return false;
     }
   };
+  // web is whether a link goes to a page: only an http or https address is
+  // shown, never a script, data or anything else a page names.
+  const web = (href) => {
+    try {
+      const u = new URL(href, location.href);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch (e) {
+      return false;
+    }
+  };
   const kind = (el) => {
     const tag = el.tagName;
     const role = (el.getAttribute("role") || "").toLowerCase();
@@ -73,7 +83,7 @@
     const text = flat(el.textContent, 100) || flat(el.getAttribute("value"), 100) || flat(named, 100);
     if (k === "link") {
       const href = el.getAttribute("href") || "";
-      return text + (href && !href.startsWith("javascript:") ? " (" + flat(href, 120) + ")" : "");
+      return text + (web(href) ? " (" + flat(href, 120) + ")" : "");
     }
     return text || flat(el.getAttribute("alt"), 100);
   };
