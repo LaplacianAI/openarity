@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -282,7 +283,7 @@ func TestAGuestsYesIsToldItWaitsForAnApprover(t *testing.T) {
 }
 
 // A code that names nothing waiting decides nothing: an old yes cannot
-// approve a newer request.
+// approve a newer request, and is told where the old one stands.
 func TestAnOldCodeCannotApproveANewRequest(t *testing.T) {
 	w := newChatWorld(t, "member")
 	old := w.ask(t, "c1", "PQR2", time.Hour, false)
@@ -300,7 +301,7 @@ func TestAnOldCodeCannotApproveANewRequest(t *testing.T) {
 	if got := w.request(t, fresh); got.Status != "pending" {
 		t.Errorf("the new request is %s after an old code", got.Status)
 	}
-	if n := w.notices(t); len(n) != 2 || n[1].text != "No request is waiting with the code PQR2." {
+	if n := w.notices(t); len(n) != 2 || n[1].text != "PQR2 is no longer waiting. Approved: create_issue on github." {
 		t.Errorf("notices %+v", n)
 	}
 }
@@ -465,5 +466,106 @@ func TestATapOnAnAnsweredRequestSaysItIsOver(t *testing.T) {
 	n := w.notices(t)
 	if len(n) != 2 || !n[1].detail.Settled || n[1].text != "Declined: create_issue on github." {
 		t.Errorf("notices %+v", n)
+	}
+}
+
+// A yes followed by a word that is no code of the sender's ("yes sure") is
+// what they wrote, read as writing again, never "no such code".
+func TestAYesAndAWordThatIsNoCodeIsWhatTheyWrote(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "yes sure", nil)
+
+	if n := w.notices(t); len(n) != 0 {
+		t.Errorf("notices %+v for a yes that names no code", n)
+	}
+	if got := w.request(t, a); got.Status != "cancelled" {
+		t.Errorf("the request is %s, want given up by writing again", got.Status)
+	}
+	if !w.asks(t, "m-1") {
+		t.Error("the message asks nothing: it was swallowed")
+	}
+}
+
+// Another person typing someone's code learns nothing of it and decides
+// nothing: a code names only the sender's own requests.
+func TestSomeoneElseTypingACodeDecidesNothing(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	other := w.someone(t, "approver")
+
+	w.say(t, other, "m-1", "yes 7K2F", nil)
+
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Errorf("the request is %s after someone else typed its code", got.Status)
+	}
+	if n := w.notices(t); len(n) != 0 {
+		t.Errorf("notices %+v, want nothing said of another's request", n)
+	}
+}
+
+// In a group the footer asks for "yes 7K2F", so that answers without a
+// mention; a bare yes to nobody in particular is not an answer.
+func TestInAGroupACodeAnswersWithoutAMentionAndABareYesDoesNot(t *testing.T) {
+	w := newChatWorld(t, "member")
+	if _, err := w.raw.Exec(t.Context(), `UPDATE sessions SET kind = 'group', user_id = NULL WHERE id = $1`, w.session); err != nil {
+		t.Fatalf("make the conversation a group: %v", err)
+	}
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "yes", nil)
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Fatalf("a bare yes to nobody in a group left the request %s", got.Status)
+	}
+	if n := w.notices(t); len(n) != 0 {
+		t.Fatalf("notices %+v for a bare yes in a group", n)
+	}
+
+	w.say(t, w.user, "m-2", "yes 7K2F", nil)
+	if got := w.request(t, a); got.Status != "approved" {
+		t.Errorf("the request is %s after yes 7K2F in the group, want approved", got.Status)
+	}
+	if w.asks(t, "m-2") {
+		t.Error("the answer asks a run")
+	}
+}
+
+// A tap naming someone else's answered request is told nothing of it: not
+// its tool, not how it was answered.
+func TestATapOnSomeoneElsesAnsweredRequestLearnsNothing(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	w.say(t, w.user, "m-1", "no", nil)
+	other := w.someone(t, "member")
+
+	w.say(t, other, "tap-1", "Approve", &gateway.Answer{ApprovalID: a.ID.String(), Decision: gateway.Approve})
+
+	if n := w.notices(t); len(n) != 1 {
+		t.Errorf("notices %+v, want only the owner's own decline", n)
+	}
+}
+
+// A typed code answers without a mention only from a person writing now:
+// never a bot's message, nor one read back from before the bot was there.
+func TestACodeFromABotOrFromBeforeTheBotAnswersNothing(t *testing.T) {
+	w := newChatWorld(t, "member")
+	if _, err := w.raw.Exec(t.Context(), `UPDATE sessions SET kind = 'group', user_id = NULL WHERE id = $1`, w.session); err != nil {
+		t.Fatalf("make the conversation a group: %v", err)
+	}
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	for i, in := range []gateway.Inbound{
+		{Author: gateway.Author{Ref: "bot", IsBot: true}},
+		{Author: gateway.Author{Ref: "u-1"}, Historical: true},
+	} {
+		in.ExternalID, in.Text = fmt.Sprintf("m-%d", i), "yes 7K2F"
+		in.Session = gateway.Session{Ref: "c-1", Kind: gateway.SessionGroup}
+		d := gateway.Delivery{UserID: w.user, Inbound: in}
+		if err := gateway.NewInbox(inbox{w.store.Store}, w.runs, discardLogger()).Deliver(t.Context(), w.channel, []gateway.Delivery{d}); err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+	}
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Errorf("the request is %s after a bot's or an old yes 7K2F", got.Status)
 	}
 }

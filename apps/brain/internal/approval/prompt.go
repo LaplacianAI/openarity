@@ -36,18 +36,25 @@ func ToolName(tool string) string {
 	return name + " on " + server
 }
 
-// Footer is the brain's line for each request under what the agent said:
-// what it is, how to answer it here or that an approver was asked, and how
-// long it waits. The words above it are the agent's; these never are, so
-// they cannot be talked into a different code.
+// Footer is the brain's lines for each request under what the agent said:
+// what it is, how to answer it here or that an approver was asked, how long
+// it waits, then the call's own arguments, indented. The words above it are
+// the agent's and can misdescribe the call; these never are, so they cannot
+// be talked into a different code. The summary is the stored call's, already
+// cleaned of control and format characters and cut short (Summary).
 func Footer(reqs []PromptRequest, now time.Time) string {
 	lines := make([]string, 0, len(reqs))
 	for _, r := range reqs {
-		how := "sent to an approver"
+		how := "sent to an approver, who answers on the dashboard"
 		if r.Ask {
 			how = fmt.Sprintf("reply yes %s or no %s", r.Code, r.Code)
 		}
 		lines = append(lines, fmt.Sprintf("%s · %s · %s", ToolName(r.Tool), how, Left(r.ExpiresAt, now)))
+		for _, l := range strings.Split(r.Summary, "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				lines = append(lines, "    "+l)
+			}
+		}
 	}
 	return strings.Join(lines, "\n")
 }

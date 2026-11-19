@@ -85,6 +85,19 @@ JOIN runs r ON r.id = a.root_run_id
 WHERE r.session_id = $1 AND a.status = 'pending'
 ORDER BY a.created_at, a.id;
 
+-- The sender's own request in a conversation that a typed code names: the
+-- waiting one first, else the newest answered (a code is unique only among
+-- what a tree is waiting on, so an old one can come round again). A code that
+-- names none of theirs is no answer, only what they wrote.
+-- name: GetOwnApprovalByCode :one
+SELECT a.* FROM approvals a
+JOIN runs r ON r.id = a.root_run_id
+WHERE r.session_id = sqlc.arg('session_id')::uuid
+  AND a.code = sqlc.arg('code')::text
+  AND a.requested_for = sqlc.arg('requested_for')::uuid
+ORDER BY (a.status = 'pending') DESC, a.created_at DESC, a.id DESC
+LIMIT 1;
+
 -- One sweep's worth of requests past their time, read without a lock: each
 -- is then expired the way a late answer expires it, the session taken first
 -- and the request after, so the sweep and a person deciding take the two

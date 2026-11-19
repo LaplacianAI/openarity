@@ -371,15 +371,20 @@ a conversation's stream starts at what was said after the upgrade.
 
 When an agent asks before a call (see the team's **Tool approvals** settings),
 the run waits and the conversation it came from is told, in the agent's own
-words, with a line from the brain under them for each request: the tool, how to
-answer, and how long it waits.
+words, with lines from the brain under them for each request: the tool, how to
+answer and how long it waits, then the call's own arguments (its first fields,
+cut short). The agent's words can misdescribe the call; the arguments are what
+it will run with.
 
 - **The person the run works for, when they may approve their own** (a
   `member`, `approver` or `admin`), is asked right there: buttons in Slack
   (**Approve**, **Approve for this run**, **Decline…**, which asks for an
   optional reason), a keyboard in Telegram, a poll on WhatsApp. Typing
-  `yes 7K2F` or `no 7K2F` works on every channel, and a bare `yes` or `no`
-  when only one request waits.
+  `yes 7K2F` or `no 7K2F` works on every channel, in a group too without
+  mentioning the bot, and a bare `yes` or `no` when only one request waits
+  (in a group, only in a message that asks the bot). A code names only the
+  sender's own requests: `yes` and a word that is none of them is read as
+  what it says.
 - **Anyone else** (a `guest`, or a request a rule wants someone else to
   answer) is told it went to an approver. No code is shown, and nothing typed
   in the chat decides it: approvers answer on the dashboard's **Tool

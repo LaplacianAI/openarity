@@ -23,6 +23,7 @@ import (
 type Approvals interface {
 	ListPendingApprovalsBySession(ctx context.Context, sessionID uuid.UUID) ([]db.Approval, error)
 	GetApproval(ctx context.Context, arg db.GetApprovalParams) (db.Approval, error)
+	GetOwnApprovalByCode(ctx context.Context, arg db.GetOwnApprovalByCodeParams) (db.Approval, error)
 	DecideApproval(ctx context.Context, arg db.DecideApprovalParams) (db.Approval, error)
 	InsertNotice(ctx context.Context, arg db.InsertNoticeParams) (int64, error)
 }
@@ -80,12 +81,20 @@ type chat struct {
 }
 
 // answerTyped decides a typed answer, or says it is not one (handled false):
-// the message is then an ordinary one. A yes or a no is an answer only while
-// the sender has a request waiting in the conversation; with none, it is
-// what they said.
-func answerTyped(ctx context.Context, c chat) (outcome, bool, error) {
+// the message is then an ordinary one. A code names one of the sender's own
+// requests in the conversation, and a word that names none of them ("yes
+// sure") is what they wrote. A bare yes or no is an answer only while the
+// sender has a request waiting and the message asks the bot: in a group, a
+// "yes" to nobody in particular is not one, while "yes 7K2F" is, as the
+// footer asks for it, mention or not.
+func answerTyped(ctx context.Context, c chat, addressed bool) (outcome, bool, error) {
 	d, code, ok := typed(c.m.Text, c.ch.answering().Trigger)
-	if !ok {
+	switch {
+	case !ok:
+		return outcome{}, false, nil
+	case code != "":
+		return c.answerCode(ctx, d, code)
+	case !addressed:
 		return outcome{}, false, nil
 	}
 	pending, err := c.q.ListPendingApprovalsBySession(ctx, c.s.ID)
@@ -100,16 +109,6 @@ func answerTyped(ctx context.Context, c chat) (outcome, bool, error) {
 	}
 	if len(mine) == 0 {
 		return outcome{}, false, nil
-	}
-	if code != "" {
-		for _, a := range pending {
-			if a.Code == code {
-				out, err := c.decide(ctx, a, d, "")
-				return out, true, err
-			}
-		}
-		out, err := c.tell(ctx, mine[0].RootRunID, "No request is waiting with the code "+code+".", ReplyNotice{})
-		return out, true, err
 	}
 
 	maySelf, err := c.maySelf(ctx)
@@ -140,6 +139,26 @@ func answerTyped(ctx context.Context, c chat) (outcome, bool, error) {
 	return out, true, err
 }
 
+// answerCode decides the sender's own request a typed code names. One
+// answered already is said to be over, so a late or repeated yes is told
+// where it stands rather than read as writing again.
+func (c chat) answerCode(ctx context.Context, d Decision, code string) (outcome, bool, error) {
+	a, err := c.q.GetOwnApprovalByCode(ctx, db.GetOwnApprovalByCodeParams{
+		SessionID: c.s.ID, Code: code, RequestedFor: c.m.UserID,
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return outcome{}, false, nil
+	case err != nil:
+		return outcome{}, false, fmt.Errorf("request %s in session %s: %w", code, c.s.ID, err)
+	case a.Status != "pending":
+		out, err := c.tell(ctx, a.RootRunID, code+" is no longer waiting. "+over(a), ReplyNotice{})
+		return out, true, err
+	}
+	out, err := c.decide(ctx, a, d, "")
+	return out, true, err
+}
+
 // answerTap decides an answer given with the platform's own control. It
 // names its request by id, code or the hash of a poll's option; one that no
 // longer waits is said to be over, and its controls are taken away.
@@ -161,11 +180,13 @@ func answerTap(ctx context.Context, c chat) (outcome, error) {
 		}
 	}
 
-	// Answered, expired or ended already: said once, where it was tapped.
+	// Answered, expired or ended already: said once, where it was tapped,
+	// and only to its own person, so a tap naming someone else's request
+	// learns nothing of it.
 	if id, err := uuid.Parse(ans.ApprovalID); err == nil {
 		a, err := c.q.GetApproval(ctx, db.GetApprovalParams{ID: id, TeamID: c.ch.TeamID})
 		switch {
-		case err == nil && a.Status != "pending":
+		case err == nil && a.Status != "pending" && a.RequestedFor != nil && *a.RequestedFor == c.m.UserID:
 			return c.tell(ctx, a.RootRunID, over(a), ReplyNotice{Handle: ans.Handle, Settled: true})
 		case err != nil && !errors.Is(err, pgx.ErrNoRows):
 			return outcome{}, fmt.Errorf("request %s: %w", id, err)

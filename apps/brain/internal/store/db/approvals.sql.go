@@ -343,6 +343,56 @@ func (q *Queries) GetApprovalByCall(ctx context.Context, arg GetApprovalByCallPa
 	return i, err
 }
 
+const getOwnApprovalByCode = `-- name: GetOwnApprovalByCode :one
+SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other, a.told_at FROM approvals a
+JOIN runs r ON r.id = a.root_run_id
+WHERE r.session_id = $1::uuid
+  AND a.code = $2::text
+  AND a.requested_for = $3::uuid
+ORDER BY (a.status = 'pending') DESC, a.created_at DESC, a.id DESC
+LIMIT 1
+`
+
+type GetOwnApprovalByCodeParams struct {
+	SessionID    uuid.UUID
+	Code         string
+	RequestedFor uuid.UUID
+}
+
+// The sender's own request in a conversation that a typed code names: the
+// waiting one first, else the newest answered (a code is unique only among
+// what a tree is waiting on, so an old one can come round again). A code that
+// names none of theirs is no answer, only what they wrote.
+func (q *Queries) GetOwnApprovalByCode(ctx context.Context, arg GetOwnApprovalByCodeParams) (Approval, error) {
+	row := q.db.QueryRow(ctx, getOwnApprovalByCode, arg.SessionID, arg.Code, arg.RequestedFor)
+	var i Approval
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RunID,
+		&i.RootRunID,
+		&i.CallID,
+		&i.Tool,
+		&i.Class,
+		&i.Arguments,
+		&i.Summary,
+		&i.Status,
+		&i.Code,
+		&i.RequestedFor,
+		&i.DecidedBy,
+		&i.DecidedVia,
+		&i.DecisionScope,
+		&i.Reason,
+		&i.ExpiresAt,
+		&i.DecidedAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+		&i.RequireOther,
+		&i.ToldAt,
+	)
+	return i, err
+}
+
 const getVisibleApproval = `-- name: GetVisibleApproval :one
 SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other, a.told_at FROM approvals a
 JOIN runs r ON r.id = a.root_run_id

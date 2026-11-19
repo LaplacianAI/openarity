@@ -1011,6 +1011,10 @@ func (f *inboxStore) GetApproval(context.Context, db.GetApprovalParams) (db.Appr
 	return db.Approval{}, pgx.ErrNoRows
 }
 
+func (f *inboxStore) GetOwnApprovalByCode(context.Context, db.GetOwnApprovalByCodeParams) (db.Approval, error) {
+	return db.Approval{}, pgx.ErrNoRows
+}
+
 func (f *inboxStore) DecideApproval(context.Context, db.DecideApprovalParams) (db.Approval, error) {
 	return db.Approval{}, pgx.ErrNoRows
 }

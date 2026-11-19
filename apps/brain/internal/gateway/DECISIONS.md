@@ -385,6 +385,21 @@ gives up its writer's requests, and a yes must not give up the very request it
 answers. Only the whole message is an answer, so `yes 7K2F` inside a sentence
 is what it says.
 
+**A code is one of the sender's own, or it is not a code.** The word after
+yes or no names a request only if it is the code of one the sender was asked
+in this conversation: a waiting one is decided, an answered one is said to be
+over. Any other word ("yes sure") is what they wrote. A lookup over everyone's
+requests would tell a group which codes are live, and a "no such code" reply
+would swallow an ordinary message. A typed code answers in a group without a
+mention, as the footer asks for it; a bare yes there must still ask the bot,
+since "yes" to a colleague is not an answer.
+
+**The footer shows the call, not the agent's account of it.** Under each
+request go the stored call's own arguments (`approval.Summary`: the first
+fields, cleaned of control and format characters, cut short), indented so no
+argument reads as the brain's line. Someone approving with a word or a vote
+sees what will run, not only what the agent said it would do.
+
 **Short replies are notices.** Approved, which code, only Sam can answer: a
 reply of kind `notice`, one at most for each message it answers, carrying the
 tap's handle so a platform can answer where it was tapped and take the

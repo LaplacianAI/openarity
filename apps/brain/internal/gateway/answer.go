@@ -29,7 +29,8 @@ type outcome struct {
 // written, dashboard or channel, as a request it gives up records it.
 //
 // An answer comes first: a tap on the brain's own prompt asks it whatever the
-// channel's word or where it answers, and a typed one is read before steering,
+// channel's word or where it answers, as does a typed code, and a typed
+// answer is read before steering,
 // so a yes is never a steer, never the next run's input, and never gives up
 // the very request it answers. A message that answered is not marked as
 // asking, so no run ever takes it.
@@ -39,12 +40,18 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 		return answerTap(ctx, c)
 	}
 	if !asksUs(ch, s, m) {
-		return outcome{}, nil
+		// "yes 7K2F" answers where its person writes it, a group thread
+		// without a mention too; never a bot's or one from before the bot.
+		if m.Author.IsBot || m.Historical {
+			return outcome{}, nil
+		}
+		out, _, err := answerTyped(ctx, c, false)
+		return out, err
 	}
 	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 && len(m.Missed) == 0 {
 		return outcome{unanswered: "the message has no text"}, nil
 	}
-	if out, handled, err := answerTyped(ctx, c); handled || err != nil {
+	if out, handled, err := answerTyped(ctx, c, true); handled || err != nil {
 		return out, err
 	}
 

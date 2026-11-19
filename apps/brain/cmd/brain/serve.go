@@ -104,11 +104,12 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	go func() {
 		n, err := channels.Reconnect(ctx, logger, dbStore, channelSecrets{secretStore, secretWriter}, registry,
 			registry.Names(), cfg.WebhookPublicURL, downloads)
-		if err != nil && ctx.Err() == nil {
+		switch {
+		case err != nil && ctx.Err() == nil:
 			logger.Warn("channels not pointed again", "error", err)
-			return
+		case err == nil:
+			logger.Info("channels pointed again", "count", n)
 		}
-		logger.Info("channels pointed again", "count", n)
 	}()
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)

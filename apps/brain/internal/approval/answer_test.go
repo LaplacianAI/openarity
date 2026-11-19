@@ -36,3 +36,17 @@ func TestTheChatAsksOnlyWhoMayApproveTheirOwn(t *testing.T) {
 		t.Error("someone who may not approve their own is asked in the chat")
 	}
 }
+
+// The chat decides only what MayAnswer allows its person without deciding
+// the team's requests: the two rules cannot drift apart.
+func TestTheChatAsksOnlyWhatMayAnswerAllowsItsOwnPerson(t *testing.T) {
+	t.Parallel()
+
+	for _, requireOther := range []bool{false, true} {
+		for _, maySelf := range []bool{false, true} {
+			if got, want := AsksInChat(requireOther, maySelf), MayAnswer(true, requireOther, false, maySelf); got != want {
+				t.Errorf("AsksInChat(requireOther %v, maySelf %v) = %v, MayAnswer for the person = %v", requireOther, maySelf, got, want)
+			}
+		}
+	}
+}
