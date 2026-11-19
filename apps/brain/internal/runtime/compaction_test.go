@@ -6,16 +6,23 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-func TestARunCompactsAtATenthOfItsBudgetCappedAtTheCeiling(t *testing.T) {
+// A run compacts at a tenth of its budget, never past the ceiling, and never
+// below the floor: under it, what a compaction keeps is already over the line.
+func TestARunCompactsAtATenthOfItsBudgetBetweenTheFloorAndTheCeiling(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		budget int64
 		want   int
 	}{
-		{1_000_000, 100_000},
 		{5_000_000, 100_000},
-		{200_000, 20_000},
+		{1_000_000, 100_000},
+		{700_000, 70_000},
+		{500_000, 50_000},
+		{300_000, 50_000},
+		{150_000, 50_000},
+		{100_000, 50_000},
+		{1, 50_000},
 	} {
 		got := compactionFor(42, tc.budget)
 		if got.AfterInputTokens != tc.want || got.AfterMessages != 42 {
