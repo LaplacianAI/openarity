@@ -32,9 +32,16 @@ func (e *Executor) park(ctx context.Context, row db.Run, l Lineage, said string)
 	if said != "" {
 		output = &said
 	}
-	parked, again, err := parkRun(ctx, e.store, row.ID, l.Worker, row.ParentRunID != nil, output, payload)
+	parked, again, asked, err := parkAndAsk(ctx, e.store, row.ID, l.Worker, row.ParentRunID != nil, output, payload)
 	if err != nil {
 		return fmt.Errorf("parking run %s: %w", row.ID, err)
+	}
+	// Kicked by the waiting event, as a step is: kicked by the run, it would
+	// take the run's own kick, and its answer would wait for the sweep.
+	if asked != 0 && e.kickEvent != nil {
+		if err := e.kickEvent(row.ID, asked); err != nil {
+			e.logger.WarnContext(ctx, "prompt not kicked; the sweep will send it", "run", row.ID, "err", err)
+		}
 	}
 	if !parked || again == nil || e.enqueue == nil {
 		return nil

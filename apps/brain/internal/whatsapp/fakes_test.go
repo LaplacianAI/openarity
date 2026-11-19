@@ -45,6 +45,9 @@ type fakeClient struct {
 	pairCode  string
 	pairErr   error
 	download  []byte
+	// votes is what DecryptPollVote answers by vote id; one not in it fails
+	// as whatsmeow's does when the poll's secret is not known.
+	votes map[types.MessageID][][]byte
 }
 
 type sentMessage struct {
@@ -145,6 +148,21 @@ func (f *fakeClient) SendChatPresence(_ context.Context, _ types.JID, state type
 	defer f.mu.Unlock()
 	f.presences = append(f.presences, state)
 	return nil
+}
+
+// BuildPollCreation is whatsmeow's own: it needs no connection.
+func (f *fakeClient) BuildPollCreation(name string, options []string, selectable int) *waE2E.Message {
+	return (&whatsmeow.Client{}).BuildPollCreation(name, options, selectable)
+}
+
+func (f *fakeClient) DecryptPollVote(_ context.Context, vote *events.Message) (*waE2E.PollVoteMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	hashes, ok := f.votes[vote.Info.ID]
+	if !ok {
+		return nil, errors.New("failed to decrypt poll vote: message secret not found")
+	}
+	return &waE2E.PollVoteMessage{SelectedOptions: hashes}, nil
 }
 
 func (f *fakeClient) DownloadAny(context.Context, *waE2E.Message) ([]byte, error) {

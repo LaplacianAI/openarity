@@ -60,3 +60,11 @@ WHERE c.team_id = sqlc.arg('team_id')
    OR (c.created_at, c.id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
 ORDER BY c.created_at DESC, c.id DESC
 LIMIT sqlc.arg('page_size');
+
+-- Every channel of these providers in a team not deleted, for pointing each
+-- at its channel again when the brain starts.
+-- name: ListLiveChannelsOf :many
+SELECT c.* FROM channels c
+JOIN teams t ON t.id = c.team_id AND t.deleted_at IS NULL
+WHERE c.provider = ANY(sqlc.arg('providers')::text[])
+ORDER BY c.created_at, c.id;

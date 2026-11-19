@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -189,13 +191,17 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 				return nil, fmt.Errorf("the %s provider sends no replies", row.Provider)
 			}
 			ch := Channel{ID: row.ChannelID, TeamID: row.TeamID, ReplyURL: deref(row.ReplyUrl)}
-			return rp.Reply(ch, Outbound{
+			out := Outbound{
 				ID:        id,
 				Session:   Session{Ref: deref(row.SessionRef), Kind: SessionKind(row.SessionKind)},
 				InReplyTo: deref(row.InReplyTo),
 				Kind:      row.Kind,
 				Text:      row.Text,
-			}, creds, time.Now())
+			}
+			if err := withDetail(&out, row.Detail); err != nil {
+				return nil, err
+			}
+			return rp.Reply(ch, out, creds, time.Now())
 		},
 		sent: func(ctx context.Context) (int64, error) { return s.store.ReplySent(ctx, at) },
 		partSent: func(ctx context.Context, parts int32) (int64, error) {
@@ -210,6 +216,29 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 			return s.store.GiveUpReply(ctx, db.GiveUpReplyParams{ID: row.ID, Attempts: row.Attempts, Error: msg})
 		},
 	}
+}
+
+// withDetail reads what a prompt or a notice carries beyond its text. One
+// that cannot be read is final: the same bytes fail the same way.
+func withDetail(out *Outbound, detail []byte) error {
+	if len(detail) == 0 {
+		return nil
+	}
+	switch out.Kind {
+	case "approval":
+		var p approval.Prompt
+		if err := json.Unmarshal(detail, &p); err != nil {
+			return fmt.Errorf("reading the prompt's requests: %w", err)
+		}
+		out.Prompt = &p
+	case "notice":
+		var n ReplyNotice
+		if err := json.Unmarshal(detail, &n); err != nil {
+			return fmt.Errorf("reading the notice: %w", err)
+		}
+		out.Notice = &n
+	}
+	return nil
 }
 
 // notice is one request: a notice is a sentence, never split, so it has no

@@ -11,6 +11,7 @@ import (
 
 	"go.mau.fi/whatsmeow/types"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 )
 
@@ -35,6 +36,30 @@ type Part struct {
 	Quote string `json:"quote,omitempty"`
 	// Mentions are the people the text names with @, by their address.
 	Mentions []string `json:"mentions,omitempty"`
+	// Poll, when set, makes this part a poll and not text: Text is empty.
+	// Older parts have none, so they read as they always did.
+	Poll *Poll `json:"poll,omitempty"`
+}
+
+// Poll is a single-choice poll: the question, and the options a vote is
+// matched against by their SHA-256, so they are sent exactly as given.
+type Poll struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+}
+
+// pollQuestionRunes bounds a poll's question, so a long tool name cannot
+// make WhatsApp refuse the poll.
+const pollQuestionRunes = 200
+
+// PollQuestion is what an approval's poll asks: the tool as a person reads
+// it, and the code.
+func PollQuestion(tool, code string) string {
+	name := []rune(approval.ToolName(tool))
+	if len(name) > pollQuestionRunes {
+		name = append(name[:pollQuestionRunes-1], '…')
+	}
+	return "Allow " + string(name) + "? (" + code + ")"
 }
 
 // Reply is a run's answer, or a step of it, as parts: WhatsApp's own marks
@@ -61,6 +86,26 @@ func (provider) Reply(_ gateway.Channel, out gateway.Outbound, _ gateway.Credent
 			return nil, err
 		}
 		reqs = append(reqs, req)
+	}
+	// An approval is also asked by poll, one for each request the person
+	// here may answer: a linked number cannot show buttons. Typing still
+	// works, as the text says. A notice is only text, whatever Private and
+	// Settled say: WhatsApp can neither answer privately nor take a poll away.
+	if out.Kind == "approval" && out.Prompt != nil {
+		for _, r := range out.Prompt.Requests {
+			if !r.Ask || r.Code == "" {
+				continue
+			}
+			p := Part{
+				ID: out.ID + ":" + strconv.Itoa(len(reqs)), To: to,
+				Poll: &Poll{Question: PollQuestion(r.Tool, r.Code), Options: gateway.PollOptions(r.Code)},
+			}
+			req, err := request(p)
+			if err != nil {
+				return nil, err
+			}
+			reqs = append(reqs, req)
+		}
 	}
 	return reqs, nil
 }
@@ -96,8 +141,11 @@ func ReadPart(req gateway.OutboundRequest) (Part, error) {
 	if err := json.Unmarshal(req.Body, &p); err != nil {
 		return Part{}, fmt.Errorf("whatsapp: reading a part: %w", err)
 	}
-	if p.ID == "" || p.To == "" || p.Text == "" {
-		return Part{}, errors.New("whatsapp: a part with no id, address or text")
+	if p.ID == "" || p.To == "" || (p.Text == "") == (p.Poll == nil) {
+		return Part{}, errors.New("whatsapp: a part with no id, address, or exactly one of text and a poll")
+	}
+	if p.Poll != nil && (p.Poll.Question == "" || len(p.Poll.Options) < 2) {
+		return Part{}, errors.New("whatsapp: a poll with no question or fewer than two options")
 	}
 	return p, nil
 }

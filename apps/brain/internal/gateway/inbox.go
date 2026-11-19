@@ -45,6 +45,7 @@ type Runs interface {
 	MarkMessageAsks(ctx context.Context, id uuid.UUID) error
 	ConsumeMessages(ctx context.Context, arg db.ConsumeMessagesParams) (int64, error)
 	Superseding
+	Approvals
 }
 
 type Queries interface {
@@ -76,10 +77,20 @@ type Inbox struct {
 	store  InboxStore
 	runs   Enqueuer
 	logger *slog.Logger
+	// notices sends a notice queued about a message now; nil leaves it to
+	// the reply sweep, a minute at most.
+	notices func(ctx context.Context, messageID uuid.UUID) error
 }
 
 func NewInbox(s InboxStore, runs Enqueuer, logger *slog.Logger) *Inbox {
 	return &Inbox{store: s, runs: runs, logger: logger}
+}
+
+// KickingNotices has each notice the inbox queues sent at once, rather than
+// at the next reply sweep.
+func (i *Inbox) KickingNotices(kick func(ctx context.Context, messageID uuid.UUID) error) *Inbox {
+	i.notices = kick
+	return i
 }
 
 // Delivered is what became of one message: the conversation it is in, and
@@ -158,6 +169,11 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 // Handing a run over before its row commits would let a worker claim a run it
 // cannot find.
 func (i *Inbox) follow(ctx context.Context, ch Channel, m Delivery, out outcome) {
+	if out.notice != uuid.Nil && i.notices != nil {
+		if err := i.notices(ctx, out.notice); err != nil {
+			i.logger.WarnContext(ctx, "notice not kicked; the sweep will send it", "message", out.notice, "err", err)
+		}
+	}
 	switch {
 	case out.run != uuid.Nil:
 		if err := i.runs.Enqueue(ctx, out.run); err != nil {
