@@ -11,6 +11,7 @@ import (
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
@@ -97,6 +98,18 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	// addresses only, and no redirect followed somewhere unchecked.
 	downloads := replyClient(reachable(cfg.MCPPrivateNetworks))
 	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments, enqueuer, notices, downloads)
+	// Every channel a provider is told where to post is pointed at itself
+	// again, with what the provider asks for today: a Telegram bot connected
+	// before approvals in the chat would never hear a tap on a prompt.
+	go func() {
+		n, err := channels.Reconnect(ctx, logger, dbStore, channelSecrets{secretStore, secretWriter}, registry,
+			registry.Names(), cfg.WebhookPublicURL, downloads)
+		if err != nil && ctx.Err() == nil {
+			logger.Warn("channels not pointed again", "error", err)
+			return
+		}
+		logger.Info("channels pointed again", "count", n)
+	}()
 
 	guard, err := newGuard(ctx, logger, dbStore, authorizer)
 	if err != nil {

@@ -146,3 +146,10 @@ ORDER BY created_at, id;
 -- name: MarkApprovalsTold :exec
 UPDATE approvals SET told_at = now()
 WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND status <> 'pending' AND told_at IS NULL;
+
+-- What a tree still asks, for the prompt its conversation is sent when it
+-- parks: every request the brain has not ended, oldest first.
+-- name: ListTreePending :many
+SELECT * FROM approvals
+WHERE root_run_id = $1 AND status = 'pending'
+ORDER BY created_at, id;

@@ -7,10 +7,10 @@ that arrives on it is stored in a conversation, and, when it is addressed to
 the team and the sender has been let in, it starts a run of the team's
 [hub](hub.md). The hub's answer is posted back to the channel.
 
-Each channel belongs to one team and one provider. There are three:
-[`telegram`](#telegram), a Telegram bot; [`whatsapp`](whatsapp.md), a WhatsApp
-number linked as a device; and `custom`, a generic signed webhook for anything
-else. Slack and Discord adapters are not written.
+Each channel belongs to one team and one provider. There are four:
+[`slack`](#slack), a Slack app; [`telegram`](#telegram), a Telegram bot;
+[`whatsapp`](whatsapp.md), a WhatsApp number linked as a device; and `custom`,
+a generic signed webhook for anything else. A Discord adapter is not written.
 
 ## Connecting a channel
 
@@ -26,6 +26,39 @@ provider issues its own secret, pipe it in with `--secret-stdin`. `--reply-url`
 is optional; see [Replies](#replies).
 
 The dashboard does the same under **Channels → Connect channel**.
+
+## Slack
+
+Create a Slack app, give its bot the scopes it needs to read and post in the
+places it is added, and install it. Then connect the channel with the app's
+**Signing Secret** (Basic Information) and its **Bot User OAuth Token**
+(`xoxb-…`). The token goes in on stdin and the secret from a file, as there
+is one stdin:
+
+```sh
+printf %s "$SLACK_BOT_TOKEN" | oa channels create platform acme \
+  --provider slack --credential-stdin bot_token \
+  --secret-file <(printf %s "$SLACK_SIGNING_SECRET")
+```
+
+Slack posts to two addresses of the channel's webhook URL, and the app must be
+told both. Each is verified with the same signing secret. With the channel's
+address `<webhook URL>` (`oa channels list -o json`, or the channel's sheet in
+the dashboard):
+
+| App setting | Value |
+| --- | --- |
+| **Event Subscriptions → Request URL** | `<webhook URL>` (`/hooks/slack/<channel id>`) |
+| **Interactivity & Shortcuts → Interactivity → Request URL** | `<webhook URL>/interactivity` (`/hooks/slack/<channel id>/interactivity`) |
+
+Turn **Interactivity** on and paste the second address. Without it the app
+still works, but an approval's buttons do nothing: Slack has nowhere to send a
+tap. A run that needs its person's approval in a Slack thread then shows
+**Approve**, **Approve for this run** and **Decline…** under the request.
+**Decline…** opens a form with an optional reason. A tap is answered only if the
+person who tapped may answer that request, as when they reply in words; anyone
+else is told so, privately, and nothing changes. Once the request is decided its
+message is edited to the outcome, so an old prompt cannot be tapped again.
 
 ## Telegram
 
@@ -61,7 +94,8 @@ A Telegram message is answered:
   (`/status@yourbot`), or replies to one of its messages. A forum topic is a
   conversation of its own.
 
-Edits, channel posts and button presses are not read.
+Edits and channel posts are not read. A button press is read only on the
+keyboard of an approval prompt (see [Approving in the chat](#approving-in-the-chat)).
 
 A new bot has **privacy mode** on, and then Telegram sends it, in a group,
 only commands to it and replies to it: a message that just names
@@ -333,6 +367,35 @@ After upgrading, run `brain backfill session-seq` once to number what
 conversations held before, so their streams replay from the start. Until then
 a conversation's stream starts at what was said after the upgrade.
 
+## Approving in the chat
+
+When an agent asks before a call (see the team's **Tool approvals** settings),
+the run waits and the conversation it came from is told, in the agent's own
+words, with a line from the brain under them for each request: the tool, how to
+answer, and how long it waits.
+
+- **The person the run works for, when they may approve their own** (a
+  `member`, `approver` or `admin`), is asked right there: buttons in Slack
+  (**Approve**, **Approve for this run**, **Decline…**, which asks for an
+  optional reason), a keyboard in Telegram, a poll on WhatsApp. Typing
+  `yes 7K2F` or `no 7K2F` works on every channel, and a bare `yes` or `no`
+  when only one request waits.
+- **Anyone else** (a `guest`, or a request a rule wants someone else to
+  answer) is told it went to an approver. No code is shown, and nothing typed
+  in the chat decides it: approvers answer on the dashboard's **Tool
+  approvals** page or with `oa approvals`.
+
+Only the whole message is an answer: `yes 7K2F` inside a sentence is a
+sentence. A code answers only the request it was given for, so an old `yes`
+never approves a newer one. A tap from anyone but the person the request is
+for is told so privately and changes nothing, and once a request is decided its
+buttons are taken away. An answer is never read as a new message: it does not
+steer the run, and it does not give the request up the way writing something
+else does.
+
+A Telegram bot connected before this is pointed at its channel again when the
+brain starts, so it is sent the taps on a prompt's keyboard too.
+
 ## Replies
 
 When a run started from a channel finishes, its answer is written to an outbox
@@ -414,6 +477,25 @@ A `POST` with `Content-Type: application/json`:
 
 `id` is the id of the run. `kind` is `answer` or `apology`. `in_reply_to` is the
 `id` of the incoming message it answers, and is left out when there is none.
+
+A run that waits for a person sends a reply of `kind` `approval` (its `id` is
+`<run id>:<n>`, like a step's), with the agent's words and the brain's footer in
+`text`, and the requests in `approval`, for a receiver that draws its own
+buttons:
+
+```json
+"approval": {
+  "requests": [
+    { "id": "…", "code": "7K2F", "tool": "github__create_issue",
+      "summary": "title: Disk full", "expires_at": "2026-11-19T13:00:00Z", "ask": true }
+  ]
+}
+```
+
+A request with `ask` set is the person's to answer in the chat: post `yes 7K2F`
+or `no 7K2F` back as a message. One without has gone to an approver and carries
+no code. The brain's short word on an answer given in the chat is a reply of
+`kind` `notice`, quoting the message it is about.
 
 A step is a reply of `kind` `event`, with no `in_reply_to`. Its `id` is the
 run's and the step's, `<run id>:<n>`, so dropping a repeat by `id` drops only

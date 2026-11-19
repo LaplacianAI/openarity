@@ -1,0 +1,469 @@
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+)
+
+// A conversation in a channel with a run waiting in it, against Postgres:
+// what a person answering in the chat meets.
+type chatWorld struct {
+	*runWorld
+	channel gateway.Channel
+	session uuid.UUID
+	run     uuid.UUID
+	runs    *resumes
+}
+
+type resumes struct {
+	mu  sync.Mutex
+	ids []uuid.UUID
+}
+
+func (r *resumes) Enqueue(context.Context, uuid.UUID) error { return nil }
+
+func (r *resumes) Resume(_ context.Context, id uuid.UUID, _ int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ids = append(r.ids, id)
+	return nil
+}
+
+func (r *resumes) got() []uuid.UUID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]uuid.UUID(nil), r.ids...)
+}
+
+// newChatWorld is a direct conversation with the world's user, of the given
+// role, whose run waits.
+func newChatWorld(t *testing.T, role string) *chatWorld {
+	t.Helper()
+	w := &chatWorld{runWorld: newRunWorld(t), runs: &resumes{}}
+	replies := "https://replies.example/support"
+	ch, err := w.store.CreateChannel(t.Context(), db.CreateChannelParams{
+		TeamID: w.team, Provider: "custom", Name: "support", ReplyUrl: &replies,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	w.channel = gateway.Channel{ID: ch.ID, TeamID: w.team}
+	w.member(t, w.user, role)
+	if err := w.raw.QueryRow(t.Context(), `
+		INSERT INTO sessions (team_id, channel_id, provider_ref, kind, user_id)
+		VALUES ($1, $2, 'c-1', 'direct', $3) RETURNING id`, w.team, ch.ID, w.user).Scan(&w.session); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	w.run = uuid.New()
+	if _, err := w.raw.Exec(t.Context(), `
+		INSERT INTO runs (id, team_id, session_id, root_run_id, agent_name, input, hub, reply_to_channel, user_id, status, waiting_since)
+		VALUES ($1, $2, $3, $1, 'hub', 'open an issue about the disk', true, true, $4, 'waiting', now())`,
+		w.run, w.team, w.session, w.user); err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	return w
+}
+
+func (w *chatWorld) member(t *testing.T, user uuid.UUID, role string) {
+	t.Helper()
+	if _, err := w.raw.Exec(t.Context(),
+		`INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, $3)`, w.team, user, role); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+}
+
+func (w *chatWorld) someone(t *testing.T, role string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := w.raw.QueryRow(t.Context(),
+		`INSERT INTO users (issuer, subject) VALUES ('https://id.test', $1) RETURNING id`, uuid.NewString()).Scan(&id); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	w.member(t, id, role)
+	return id
+}
+
+// ask is a request of the waiting run, made for the world's user.
+func (w *chatWorld) ask(t *testing.T, call, code string, expires time.Duration, requireOther bool) db.Approval {
+	t.Helper()
+	a, err := w.store.InsertApproval(t.Context(), db.InsertApprovalParams{
+		TeamID: w.team, RunID: w.run, RootRunID: w.run, CallID: call, Tool: "github__create_issue", Class: "write",
+		Arguments: []byte(`{}`), Summary: "title: Disk full", Code: code, RequestedFor: &w.user,
+		ExpiresAt: time.Now().Add(expires), RequireOther: requireOther,
+	})
+	if err != nil {
+		t.Fatalf("InsertApproval: %v", err)
+	}
+	return a
+}
+
+// say delivers a message, or a tap, from a person in the conversation.
+func (w *chatWorld) say(t *testing.T, from uuid.UUID, id, text string, answer *gateway.Answer) {
+	t.Helper()
+	d := gateway.Delivery{
+		UserID: from,
+		Inbound: gateway.Inbound{
+			ExternalID: id, Author: gateway.Author{Ref: "u-" + from.String()[:8]},
+			Session: gateway.Session{Ref: "c-1", Kind: gateway.SessionDirect}, Text: text, Answer: answer,
+		},
+	}
+	if err := gateway.NewInbox(inbox{w.store.Store}, w.runs, discardLogger()).Deliver(t.Context(), w.channel, []gateway.Delivery{d}); err != nil {
+		t.Fatalf("Deliver %q: %v", text, err)
+	}
+}
+
+func (w *chatWorld) request(t *testing.T, a db.Approval) db.Approval {
+	t.Helper()
+	got, err := w.store.GetApproval(t.Context(), db.GetApprovalParams{ID: a.ID, TeamID: w.team})
+	if err != nil {
+		t.Fatalf("GetApproval: %v", err)
+	}
+	return got
+}
+
+type notice struct {
+	text   string
+	detail gateway.ReplyNotice
+}
+
+func (w *chatWorld) notices(t *testing.T) []notice {
+	t.Helper()
+	rows, err := w.raw.Query(t.Context(), `SELECT text, detail FROM replies WHERE kind = 'notice' ORDER BY id`)
+	if err != nil {
+		t.Fatalf("read notices: %v", err)
+	}
+	defer rows.Close()
+	var out []notice
+	for rows.Next() {
+		var n notice
+		var detail []byte
+		if err := rows.Scan(&n.text, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if len(detail) > 0 {
+			if err := json.Unmarshal(detail, &n.detail); err != nil {
+				t.Fatalf("detail %s: %v", detail, err)
+			}
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// asks is whether the message stored under this id asks a run anything.
+func (w *chatWorld) asks(t *testing.T, id string) bool {
+	t.Helper()
+	var asks bool
+	if err := w.raw.QueryRow(t.Context(), `SELECT asks FROM messages WHERE external_id = $1`, id).Scan(&asks); err != nil {
+		t.Fatalf("read message %s: %v", id, err)
+	}
+	return asks
+}
+
+func (w *chatWorld) runStatus(t *testing.T) string {
+	t.Helper()
+	var s string
+	if err := w.raw.QueryRow(t.Context(), `SELECT status FROM runs WHERE id = $1`, w.run).Scan(&s); err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	return s
+}
+
+// A yes from the person a request is for, who may approve their own, decides
+// it in the chat: approved by them, via the channel, the run queued again and
+// handed back, one notice, and the message never a steer.
+func TestAYesInTheChatApprovesTheRequestAndResumesTheRun(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "yes", nil)
+
+	got := w.request(t, a)
+	if got.Status != "approved" || got.DecidedBy == nil || *got.DecidedBy != w.user ||
+		got.DecidedVia == nil || *got.DecidedVia != "channel" || got.DecisionScope == nil || *got.DecisionScope != "once" {
+		t.Fatalf("the request is %s by %v via %v (%v), want approved once by the person via the channel",
+			got.Status, got.DecidedBy, got.DecidedVia, got.DecisionScope)
+	}
+	if s := w.runStatus(t); s != "queued" {
+		t.Errorf("the run is %s, want queued again", s)
+	}
+	if r := w.runs.got(); len(r) != 1 || r[0] != w.run {
+		t.Errorf("handed back %v, want [%s]", r, w.run)
+	}
+	if n := w.notices(t); len(n) != 1 || n[0].text != "Approved: create_issue on github." {
+		t.Errorf("notices %+v", n)
+	}
+	if w.asks(t, "m-1") {
+		t.Error("the yes asks a run: it would be a steer or the next run's input")
+	}
+	var events int
+	if err := w.raw.QueryRow(t.Context(),
+		`SELECT count(*) FROM run_events WHERE run_id = $1 AND kind = 'approval_decided'`, w.run).Scan(&events); err != nil || events != 1 {
+		t.Errorf("%d approval_decided events, %v; want 1", events, err)
+	}
+}
+
+// A custom channel with no reply URL takes messages in and has nowhere to
+// post back to: a yes from it still answers, and no notice is written that
+// could only be given up.
+func TestAYesFromAChannelWithNowhereToReplyAnswersSilently(t *testing.T) {
+	w := newChatWorld(t, "member")
+	if _, err := w.raw.Exec(t.Context(), `UPDATE channels SET reply_url = NULL WHERE id = $1`, w.channel.ID); err != nil {
+		t.Fatalf("clear the reply URL: %v", err)
+	}
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "yes", nil)
+
+	if got := w.request(t, a); got.Status != "approved" {
+		t.Fatalf("the request is %s, want approved", got.Status)
+	}
+	if n := w.notices(t); len(n) != 0 {
+		t.Errorf("notices %+v, want none for a channel with nowhere to post", n)
+	}
+	if w.asks(t, "m-1") {
+		t.Error("the yes asks a run")
+	}
+}
+
+// With two waiting, a bare yes names neither: the codes come back and
+// nothing is decided. The code then decides the one it names.
+func TestABareYesWithTwoWaitingAsksWhichAndTheCodeDecides(t *testing.T) {
+	w := newChatWorld(t, "member")
+	first, second := w.ask(t, "c1", "7K2F", time.Hour, false), w.ask(t, "c2", "9ABC", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "y", nil)
+	if n := w.notices(t); len(n) != 1 || !strings.Contains(n[0].text, "yes 7K2F") || !strings.Contains(n[0].text, "yes 9ABC") {
+		t.Fatalf("notices %+v, want the codes", n)
+	}
+	if w.request(t, first).Status != "pending" || w.request(t, second).Status != "pending" {
+		t.Fatal("a bare yes with two waiting decided something")
+	}
+
+	w.say(t, w.user, "m-2", "no 9abc", nil)
+	if got := w.request(t, second); got.Status != "denied" {
+		t.Errorf("the request the code names is %s, want denied", got.Status)
+	}
+	if got := w.request(t, first); got.Status != "pending" {
+		t.Errorf("the other is %s, want still pending", got.Status)
+	}
+	if s := w.runStatus(t); s != "waiting" {
+		t.Errorf("the run is %s while a request still waits, want waiting", s)
+	}
+}
+
+// A guest may not approve their own: their yes is told it waits for an
+// approver, and it gives up nothing, as writing again would.
+func TestAGuestsYesIsToldItWaitsForAnApprover(t *testing.T) {
+	w := newChatWorld(t, "guest")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "yes 7K2F", nil)
+
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Errorf("the request is %s, want pending: a guest's yes decided or gave it up", got.Status)
+	}
+	if n := w.notices(t); len(n) != 1 || !strings.Contains(n[0].text, "waits for an approver") {
+		t.Errorf("notices %+v", n)
+	}
+	if w.asks(t, "m-1") {
+		t.Error("the guest's yes asks a run")
+	}
+}
+
+// A code that names nothing waiting decides nothing: an old yes cannot
+// approve a newer request.
+func TestAnOldCodeCannotApproveANewRequest(t *testing.T) {
+	w := newChatWorld(t, "member")
+	old := w.ask(t, "c1", "PQR2", time.Hour, false)
+	w.say(t, w.user, "m-1", "yes PQR2", nil)
+	if w.request(t, old).Status != "approved" {
+		t.Fatal("the first request was not approved")
+	}
+	if _, err := w.raw.Exec(t.Context(), `UPDATE runs SET status = 'waiting', waiting_since = now() WHERE id = $1`, w.run); err != nil {
+		t.Fatal(err)
+	}
+	fresh := w.ask(t, "c2", "XYZ3", time.Hour, false)
+
+	w.say(t, w.user, "m-2", "yes PQR2", nil)
+
+	if got := w.request(t, fresh); got.Status != "pending" {
+		t.Errorf("the new request is %s after an old code", got.Status)
+	}
+	if n := w.notices(t); len(n) != 2 || n[1].text != "No request is waiting with the code PQR2." {
+		t.Errorf("notices %+v", n)
+	}
+}
+
+// Nothing waiting for the sender: yes is just what they said.
+func TestAYesWithNothingWaitingIsAnOrdinaryMessage(t *testing.T) {
+	w := newChatWorld(t, "member")
+
+	w.say(t, w.user, "m-1", "yes", nil)
+
+	if n := w.notices(t); len(n) != 0 {
+		t.Errorf("notices %+v for a yes with nothing waiting", n)
+	}
+	if !w.asks(t, "m-1") {
+		t.Error("a yes with nothing waiting does not ask anything")
+	}
+}
+
+// "yes 7K2F" inside a sentence is a sentence: what the person wrote, read as
+// writing again.
+func TestACodeInsideASentenceIsNotAnAnswer(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "sure, yes 7K2F but change the title", nil)
+
+	if got := w.request(t, a); got.Status != "cancelled" {
+		t.Errorf("the request is %s, want given up by writing again", got.Status)
+	}
+	if n := w.notices(t); len(n) != 0 {
+		t.Errorf("notices %+v for a sentence", n)
+	}
+}
+
+// Someone else's tap on the buttons is told privately and changes nothing,
+// even an approver's: the chat decides only its person's requests.
+func TestSomeoneElsesTapChangesNothing(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	approver := w.someone(t, "approver")
+
+	w.say(t, approver, "tap-1", "Approve", &gateway.Answer{
+		ApprovalID: a.ID.String(), Decision: gateway.Approve, Handle: json.RawMessage(`{"h":1}`),
+	})
+
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Errorf("the request is %s after someone else's tap", got.Status)
+	}
+	n := w.notices(t)
+	var handle struct{ H int }
+	if len(n) == 1 {
+		_ = json.Unmarshal(n[0].detail.Handle, &handle)
+	}
+	if len(n) != 1 || !n[0].detail.Private || handle.H != 1 {
+		t.Errorf("notices %+v, want one private word where the tap was made", n)
+	}
+}
+
+// A tap names its request by id, and settles it where it was tapped.
+func TestATapApprovesForTheRunAndSettlesThePrompt(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "tap-1", "Approve for this run", &gateway.Answer{
+		ApprovalID: a.ID.String(), Decision: gateway.ApproveRun, Handle: json.RawMessage(`{"h":2}`),
+	})
+
+	got := w.request(t, a)
+	if got.Status != "approved" || got.DecisionScope == nil || *got.DecisionScope != "run" {
+		t.Fatalf("the request is %s (%v), want approved for the run", got.Status, got.DecisionScope)
+	}
+	n := w.notices(t)
+	if len(n) != 1 || !n[0].detail.Settled || n[0].detail.Private || n[0].text != "Approved for this run: create_issue on github." {
+		t.Errorf("notices %+v", n)
+	}
+}
+
+// A poll's vote names its request by the hash of the option chosen.
+func TestAPollVoteDeclines(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	sum := sha256.Sum256([]byte(gateway.PollOptions("7K2F")[1]))
+
+	w.say(t, w.user, "vote-1", "Voted in the poll", &gateway.Answer{Hashes: [][]byte{sum[:]}})
+
+	if got := w.request(t, a); got.Status != "denied" {
+		t.Errorf("the request is %s after a vote to decline", got.Status)
+	}
+}
+
+// Decline with a reason opens the form first: nothing is decided until it is
+// sent, and then the reason is the request's.
+func TestADeclineWithAReasonAsksForItFirst(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "tap-1", "Decline…", &gateway.Answer{ApprovalID: a.ID.String(), Decision: gateway.DeclineAsk})
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Fatalf("the request is %s before the reason was given", got.Status)
+	}
+	if n := w.notices(t); len(n) != 1 || n[0].detail.Form == nil || n[0].detail.Form.ID != a.ID.String() {
+		t.Fatalf("notices %+v, want a form for the request", n)
+	}
+
+	w.say(t, w.user, "modal-1", "Decline", &gateway.Answer{
+		ApprovalID: a.ID.String(), Decision: gateway.Decline, Reason: "  not that repo  ",
+	})
+	got := w.request(t, a)
+	if got.Status != "denied" || got.Reason == nil || *got.Reason != "not that repo" {
+		t.Errorf("the request is %s with reason %v", got.Status, got.Reason)
+	}
+}
+
+// A request past its time is marked expired, as a late answer from anywhere
+// is, and the run resumes with that.
+func TestALateYesFindsTheRequestExpired(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", -time.Minute, false)
+
+	w.say(t, w.user, "m-1", "yes", nil)
+
+	got := w.request(t, a)
+	if got.Status != "expired" || got.DecidedBy != nil || got.DecidedVia == nil || *got.DecidedVia != "sweep" {
+		t.Errorf("the request is %s by %v via %v, want expired by the brain", got.Status, got.DecidedBy, got.DecidedVia)
+	}
+	if s := w.runStatus(t); s != "queued" {
+		t.Errorf("the run is %s, want queued to carry on without it", s)
+	}
+	if n := w.notices(t); len(n) != 1 || !strings.Contains(n[0].text, "expired") {
+		t.Errorf("notices %+v", n)
+	}
+}
+
+// A platform that delivers a tap twice is answered once.
+func TestATapDeliveredTwiceIsAnsweredOnce(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	tap := &gateway.Answer{ApprovalID: a.ID.String(), Decision: gateway.Approve}
+
+	w.say(t, w.user, "tap-1", "Approve", tap)
+	w.say(t, w.user, "tap-1", "Approve", tap)
+
+	if n := w.notices(t); len(n) != 1 {
+		t.Errorf("%d notices for one tap delivered twice", len(n))
+	}
+	if r := w.runs.got(); len(r) != 1 {
+		t.Errorf("handed back %d times", len(r))
+	}
+}
+
+// A tap on a prompt whose request is over is told so, and settled.
+func TestATapOnAnAnsweredRequestSaysItIsOver(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	w.say(t, w.user, "m-1", "no", nil)
+
+	w.say(t, w.user, "tap-1", "Approve", &gateway.Answer{ApprovalID: a.ID.String(), Decision: gateway.Approve})
+
+	if got := w.request(t, a); got.Status != "denied" {
+		t.Errorf("the request is %s, want still denied", got.Status)
+	}
+	n := w.notices(t)
+	if len(n) != 2 || !n[1].detail.Settled || n[1].text != "Declined: create_issue on github." {
+		t.Errorf("notices %+v", n)
+	}
+}

@@ -93,18 +93,7 @@ func Map(m *events.Message, self Self, trigger string, historical, shared bool) 
 		SentAt:      m.Info.Timestamp,
 		Historical:  historical,
 		ToSelf:      toSelf,
-	}
-	if m.Info.IsGroup {
-		in.Session = gateway.Session{Ref: chat.ToNonAD().String(), Kind: gateway.SessionGroup}
-	} else {
-		// A direct chat is the other person, named as their sender is, so a
-		// chat that arrives by LID and one by number are one conversation.
-		// The owner's own is to the person the chat is with.
-		other := author
-		if own && !toSelf {
-			other = phoneFirst(chat, m.Info.RecipientAlt)
-		}
-		in.Session = gateway.Session{Ref: other.String(), Kind: gateway.SessionDirect}
+		Session:     place(m, author, own, toSelf),
 	}
 	for _, raw := range ctx.GetMentionedJID() {
 		// A mention is of a person; anything else in the list is not one,
@@ -116,6 +105,21 @@ func Map(m *events.Message, self Self, trigger string, historical, shared bool) 
 		in.Mentions = append(in.Mentions, gateway.Mention{SenderRef: j.ToNonAD().String(), IsUs: self.is(j)})
 	}
 	return in, true
+}
+
+// place is the session a message belongs to: a group by its address, a
+// direct chat by the other person, named as their sender is, so a chat that
+// arrives by LID and one by number are one conversation. The owner's own is
+// to the person the chat is with.
+func place(m *events.Message, author types.JID, own, toSelf bool) gateway.Session {
+	if m.Info.IsGroup {
+		return gateway.Session{Ref: m.Info.Chat.ToNonAD().String(), Kind: gateway.SessionGroup}
+	}
+	other := author
+	if own && !toSelf {
+		other = phoneFirst(m.Info.Chat, m.Info.RecipientAlt)
+	}
+	return gateway.Session{Ref: other.String(), Kind: gateway.SessionDirect}
 }
 
 // phoneFirst is a person by their number when WhatsApp gave one, since a LID

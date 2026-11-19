@@ -350,6 +350,46 @@ file. The sender's name is the `user_profile` Slack sends beside a message,
 which is not in its reference, so a message without one is a sender with no
 name.
 
+## An answer in the chat decides only its person's request
+
+A run that waits for a person sends its conversation a reply of kind
+`approval`: what the agent said, then the brain's footer, which the model never
+writes, so it cannot be talked into a different code. Its `detail` carries the
+requests for a platform's controls (Slack's buttons, Telegram's keyboard,
+WhatsApp's poll); typing `yes <code>` works everywhere.
+
+**Who answers here.** Only the person the request was made for, and only when
+they may approve their own (`approval.AsksInChat`). A guest, or a request a
+rule wants someone else to answer, is only said to have gone to an approver,
+with no code: a code shown to someone who may not use it invites a reply that
+is always refused, and a request wanting a second person deserves the
+arguments read on the dashboard, not a "yes" in passing in a group. An
+approver in a group cannot decide someone else's from the chat; that can be
+added later if it is asked for.
+
+**A tap is an input, never a capability.** `Inbound.Answer` names a request by
+id, code or a poll option's hash. The adapter never authorises; `approve.go`
+does, against the requests waiting in that conversation.
+
+**Decided in the message's own transaction.** `EnsureSession`'s upsert locks
+the conversation's session, which every writer of a request takes first (a
+person deciding elsewhere, the sweep, a tree ending), so the request read as
+pending is still pending, nothing more is locked, and a crash cannot lose a
+yes the message was stored with. Deciding after the commit, through the
+runtime's `Decide`, would have taken the session again in a second
+transaction and could lose the answer between the two.
+
+**Never a steer.** A message that answered is not marked as asking, so no run
+takes it, and it gives nothing up: writing anything else to a waiting run
+gives up its writer's requests, and a yes must not give up the very request it
+answers. Only the whole message is an answer, so `yes 7K2F` inside a sentence
+is what it says.
+
+**Short replies are notices.** Approved, which code, only Sam can answer: a
+reply of kind `notice`, one at most for each message it answers, carrying the
+tap's handle so a platform can answer where it was tapped and take the
+controls away.
+
 ## A stranger is told, from an outbox of its own
 
 A sender nobody has let in used to hear nothing, and from their side the bot

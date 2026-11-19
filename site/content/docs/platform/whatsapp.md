@@ -233,6 +233,15 @@ connection still remembers it.
 message. On WhatsApp that is several typed-out messages for one question, and
 it is the busiest pattern a number can show. Keep it on the answer alone.
 
+## Approving a tool call
+
+A linked number cannot show buttons, so when a run waits for you to approve a
+tool call, the message is followed by a poll for each request you may answer
+here: "Approve 7K2F" and "Decline 7K2F", one choice. Tap one to answer. Typing
+still works, as the message says: `yes 7K2F` or `no 7K2F`. Only a person who
+may approve the call can answer it, by either way, and a vote from anyone else
+is ignored. A request that went to an approver rather than to you has no poll.
+
 ## Where the keys are kept
 
 A linked device is a set of keys, and whoever holds them can read and send as

@@ -20,17 +20,32 @@ type outcome struct {
 	// resumed is the steered run, queued again because the message gave up
 	// what it was waiting for its sender to approve.
 	resumed *db.RequeueAnsweredRow
+	// notice is the message the brain queued a notice about, to send now.
+	notice uuid.UUID
 }
 
-// answer is what a stored message does: starts a run, or steers the one
-// already working. via is where it was written, dashboard or channel, as a
-// request it gives up records it.
+// answer is what a stored message does: answers a request its sender was
+// asked, starts a run, or steers the one already working. via is where it was
+// written, dashboard or channel, as a request it gives up records it.
+//
+// An answer comes first: a tap on the brain's own prompt asks it whatever the
+// channel's word or where it answers, and a typed one is read before steering,
+// so a yes is never a steer, never the next run's input, and never gives up
+// the very request it answers. A message that answered is not marked as
+// asking, so no run ever takes it.
 func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery, messageID uuid.UUID, via string) (outcome, error) {
+	c := chat{q: q, ch: ch, s: s, m: m, message: messageID}
+	if m.Answer != nil {
+		return answerTap(ctx, c)
+	}
 	if !asksUs(ch, s, m) {
 		return outcome{}, nil
 	}
 	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 && len(m.Missed) == 0 {
 		return outcome{unanswered: "the message has no text"}, nil
+	}
+	if out, handled, err := answerTyped(ctx, c); handled || err != nil {
+		return out, err
 	}
 
 	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: ch.TeamID, UserID: m.UserID, Action: "run:write"})

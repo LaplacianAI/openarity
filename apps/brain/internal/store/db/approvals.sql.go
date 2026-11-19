@@ -609,6 +609,57 @@ func (q *Queries) ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]Appr
 	return items, nil
 }
 
+const listTreePending = `-- name: ListTreePending :many
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals
+WHERE root_run_id = $1 AND status = 'pending'
+ORDER BY created_at, id
+`
+
+// What a tree still asks, for the prompt its conversation is sent when it
+// parks: every request the brain has not ended, oldest first.
+func (q *Queries) ListTreePending(ctx context.Context, rootRunID uuid.UUID) ([]Approval, error) {
+	rows, err := q.db.Query(ctx, listTreePending, rootRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.RunID,
+			&i.RootRunID,
+			&i.CallID,
+			&i.Tool,
+			&i.Class,
+			&i.Arguments,
+			&i.Summary,
+			&i.Status,
+			&i.Code,
+			&i.RequestedFor,
+			&i.DecidedBy,
+			&i.DecidedVia,
+			&i.DecisionScope,
+			&i.Reason,
+			&i.ExpiresAt,
+			&i.DecidedAt,
+			&i.UsedAt,
+			&i.CreatedAt,
+			&i.RequireOther,
+			&i.ToldAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUntoldApprovals = `-- name: ListUntoldApprovals :many
 SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals
 WHERE run_id = $1 AND status <> 'pending' AND told_at IS NULL
