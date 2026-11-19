@@ -235,7 +235,13 @@ func recordOne(ctx context.Context, s EventStore, runID uuid.UUID, worker string
 func recordOther(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, e agent.Event) error {
 	switch e := e.(type) {
 	case agent.StepEvent:
-		return appendEvent(ctx, s, runID, worker, "step", stepPayload{Step: e.Step})
+		if err := appendEvent(ctx, s, runID, worker, "step", stepPayload{Step: e.Step}); err != nil {
+			return err
+		}
+		if wrap := lines.stepped(e.Step); wrap != nil {
+			return appendEvent(ctx, s, runID, worker, "wrap_up", wrap)
+		}
+		return nil
 	case agent.ToolResultEvent:
 		output, cutOutput := clip(e.Output)
 		failure, cutError := clip(e.Err)

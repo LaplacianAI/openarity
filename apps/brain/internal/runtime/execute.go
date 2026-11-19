@@ -275,13 +275,15 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		e.logger.WarnContext(ctx, "Run failed",
 			"run", row.ID, "team", row.TeamID, "agent", row.AgentName, "model", model, "error", said)
 	}
+	// MaxSteps is the run's own error, not a cause: a limit all the same.
+	limited := stopped(cause) || errors.Is(runErr, agent.ErrMaxSteps)
 	switch {
 	case status == "succeeded":
-	case stopped(cause) && summary != "":
+	case limited && summary != "":
 		// What it had, rather than nothing: a summary says what was found and
 		// what was left, which the last few words before the cut rarely do.
 		output = summary
-	case stopped(cause):
+	case limited:
 	default:
 		output = ""
 	}
@@ -377,6 +379,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		runner, streams = e.streamer, true
 	}
 	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
+	lines.steps = built.Spec.MaxSteps
 	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, lines,
 		streams, e.teller(context.WithoutCancel(ctx), row), events, notes, stop)
 	// The model client reads the conversation's files for each request.
