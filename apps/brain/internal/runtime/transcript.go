@@ -34,8 +34,7 @@ func transcriptOf(row db.Run) string {
 func (e *Executor) begin(ctx context.Context, row db.Run, msgs []agent.Message) (bool, []agent.Message, error) {
 	if row.Transcript == nil { // a delegate, or a run from before shared transcripts
 		if len(msgs) > 0 {
-			kept, err := e.kept(ctx, row, msgs)
-			return true, closeCalls(msgs, kept), err
+			return true, closeCalls(msgs), nil
 		}
 		first, err := e.firstMessage(ctx, row)
 		return false, []agent.Message{first}, err
@@ -44,11 +43,10 @@ func (e *Executor) begin(ctx context.Context, row db.Run, msgs []agent.Message) 
 	if row.TranscriptFrom != nil {
 		from := int(*row.TranscriptFrom)
 		if len(msgs) > from {
-			kept, err := e.kept(ctx, row, msgs)
-			return true, closeCalls(msgs, kept), err
+			return true, closeCalls(msgs), nil
 		}
 		first, err := e.firstMessage(ctx, row)
-		return true, append(closeCalls(msgs, nil), first), err
+		return true, append(closeCalls(msgs), first), err
 	}
 
 	first, err := e.firstMessage(ctx, row)
@@ -56,7 +54,7 @@ func (e *Executor) begin(ctx context.Context, row db.Run, msgs []agent.Message) 
 		return false, nil, err
 	}
 	// What an earlier run left open is closed: its requests are its own.
-	msgs = closeCalls(msgs, nil)
+	msgs = closeCalls(msgs)
 	if err := e.store.SetTranscriptFrom(ctx, db.SetTranscriptFromParams{ID: row.ID, Position: int32(len(msgs))}); err != nil { //nolint:gosec // a transcript is never 2^31 messages
 		return false, nil, fmt.Errorf("placing run %s in its transcript: %w", row.ID, err)
 	}
@@ -96,10 +94,8 @@ func (e *Executor) firstMessage(ctx context.Context, row db.Run) (agent.Message,
 
 // closeCalls gives a result to every call of the transcript's last turn that
 // has none: a run stopped while a tool ran leaves its call open, and the next
-// request would be refused for it. The calls in kept are left open, for the
-// run to make: a call a person has answered, and those after it that a
-// suspension stopped before. A turn's files message stays last.
-func closeCalls(msgs []agent.Message, kept map[string]bool) []agent.Message {
+// request would be refused for it. A turn's files message stays last.
+func closeCalls(msgs []agent.Message) []agent.Message {
 	end := len(msgs)
 	if end > 0 && msgs[end-1].Role == agent.RoleUser && msgs[end-1].Attached {
 		end--
@@ -123,7 +119,7 @@ func closeCalls(msgs []agent.Message, kept map[string]bool) []agent.Message {
 	}
 	var closing []agent.Message
 	for _, call := range msgs[last].ToolCalls {
-		if !answered[call.ID] && !kept[call.ID] {
+		if !answered[call.ID] {
 			closing = append(closing, agent.Message{
 				Role: agent.RoleTool, ToolCallID: call.ID,
 				Content: []agent.Content{{Type: agent.ContentText, Text: endedMidCall}},
@@ -135,50 +131,6 @@ func closeCalls(msgs []agent.Message, kept map[string]bool) []agent.Message {
 	}
 	// msgs[end:] is the files message, when there is one.
 	return slices.Concat(msgs[:end], closing, msgs[end:])
-}
-
-// keptOpen is which of the last turn's open calls a resumed run makes rather
-// than closes: each call that asked a person, whatever they said, since the
-// gate answers it from the request; and every call after one whose approval
-// is not yet spent, because the turn stopped there and never reached them.
-// After a crash inside an approved call its approval is spent, so the calls
-// after it are closed, as any call cut off is.
-func keptOpen(msgs []agent.Message, asked []db.Approval) map[string]bool {
-	if len(asked) == 0 {
-		return nil
-	}
-	byCall := make(map[string]db.Approval, len(asked))
-	for _, a := range asked {
-		byCall[a.CallID] = a
-	}
-	var turn []agent.ToolCall
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == agent.RoleAssistant {
-			turn = msgs[i].ToolCalls
-			break
-		}
-	}
-	kept := map[string]bool{}
-	stopped := false
-	for _, call := range turn {
-		if a, ok := byCall[call.ID]; ok {
-			kept[call.ID] = true
-			stopped = stopped || a.UsedAt == nil
-			continue
-		}
-		if stopped {
-			kept[call.ID] = true
-		}
-	}
-	return kept
-}
-
-func (e *Executor) kept(ctx context.Context, row db.Run, msgs []agent.Message) (map[string]bool, error) {
-	asked, err := e.store.ListRunApprovals(ctx, row.ID)
-	if err != nil {
-		return nil, fmt.Errorf("reading what run %s asked a person: %w", row.ID, err)
-	}
-	return keptOpen(msgs, asked), nil
 }
 
 func today(now time.Time) string {

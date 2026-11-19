@@ -288,12 +288,17 @@ func TestDueRequestsExpireAndARunsRequestsAreCancelled(t *testing.T) {
 	due := mustAsk(t, s, dueP)
 	later := mustAsk(t, s, asking(f, r, r, "call_2", "LATR"))
 
-	expired, err := s.ExpireDueApprovals(t.Context(), 10)
+	listed, err := s.ListDueApprovals(t.Context(), 10)
 	if err != nil {
-		t.Fatalf("ExpireDueApprovals: %v", err)
+		t.Fatalf("ListDueApprovals: %v", err)
 	}
-	if len(expired) != 1 || expired[0].ID != due.ID || expired[0].Status != "expired" {
-		t.Fatalf("expired %v, want only %s", expired, due.ID)
+	if len(listed) != 1 || listed[0].ID != due.ID {
+		t.Fatalf("due %v, want only %s", listed, due.ID)
+	}
+	if _, err := s.DecideApproval(t.Context(), db.DecideApprovalParams{
+		ID: due.ID, TeamID: due.TeamID, Status: "expired", DecidedVia: ptr("sweep"),
+	}); err != nil {
+		t.Fatalf("expire: %v", err)
 	}
 
 	cancelled, err := s.CancelRunApprovals(t.Context(), r)

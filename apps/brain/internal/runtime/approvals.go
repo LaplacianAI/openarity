@@ -30,12 +30,14 @@ type TxStore interface {
 	InTx(ctx context.Context, fn func(*db.Queries) error) error
 }
 
-// parkRun parks a run a tool suspended: its waiting event, then the run set
-// waiting with no worker. A decision can land before the run has parked; if
-// nothing of the tree is pending any more, the run is queued again in the
-// same transaction rather than left waiting for an answer already given.
-// Parked is false when this worker no longer held the run.
-func parkRun(ctx context.Context, s TxStore, runID uuid.UUID, worker string, payload []byte) (parked bool, again *Resumed, err error) {
+// parkRun parks a run whose turn ended waiting: its waiting event, then the
+// run set waiting with no worker, what it said as its output. A decision can land before the run has parked; if
+// nothing of the tree is pending any more, the root is queued again in the
+// same transaction rather than left waiting for an answer already given. A
+// delegate is parked the same way and never queued: its parent's call takes
+// it up again, and the root is what is queued. Parked is false when this
+// worker no longer held the run.
+func parkRun(ctx context.Context, s TxStore, runID uuid.UUID, worker string, child bool, said *string, payload []byte) (parked bool, again *Resumed, err error) {
 	err = s.InTx(ctx, func(q *db.Queries) error {
 		if _, err := q.LockRunSession(ctx, runID); err != nil {
 			return fmt.Errorf("lock the session of run %s: %w", runID, err)
@@ -47,11 +49,19 @@ func parkRun(ctx context.Context, s TxStore, runID uuid.UUID, worker string, pay
 		} else if err != nil {
 			return fmt.Errorf("record that run %s is waiting: %w", runID, err)
 		}
-		n, err := q.ParkRun(ctx, db.ParkRunParams{ID: runID, Worker: worker})
+		var n int64
+		if child {
+			n, err = q.ParkChild(ctx, db.ParkChildParams{ID: runID, Worker: worker, Said: said})
+		} else {
+			n, err = q.ParkRun(ctx, db.ParkRunParams{ID: runID, Worker: worker, Said: said})
+		}
 		if err != nil || n == 0 {
 			return err
 		}
 		parked = true
+		if child {
+			return nil
+		}
 		row, err := q.RequeueAnswered(ctx, runID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -28,8 +27,7 @@ type ApprovalStore interface {
 	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
 	ListRolePermissions(ctx context.Context, role string) ([]string, error)
 	InsertApproval(ctx context.Context, arg db.InsertApprovalParams) (db.Approval, error)
-	GetApprovalByCall(ctx context.Context, arg db.GetApprovalByCallParams) (db.Approval, error)
-	ClaimApprovalUse(ctx context.Context, id uuid.UUID) (db.Approval, error)
+	FindPendingRequest(ctx context.Context, arg db.FindPendingRequestParams) (db.Approval, error)
 	FindRunScopedApproval(ctx context.Context, arg db.FindRunScopedApprovalParams) (db.Approval, error)
 }
 
@@ -52,8 +50,23 @@ const (
 	expiredCall   = "Nobody answered in time, so the call was not made."
 	cancelledCall = "The request to make this call was cancelled, so it was not made."
 	usedCall      = "The run stopped during this call after it was approved; it is not known whether it was made."
-	changedCall   = "These are not the arguments that were approved, so the call was not made. " +
-		"Call the tool again to ask for these."
+	// Superseded: the person wrote again instead of answering. At the top
+	// the model reads their message next; a delegate never sees it, so it
+	// hands the turn back up to where it is read.
+	supersededCall = "Not made: the person wrote again before answering. Read what they said, and act on that."
+	supersededDeep = "Not made: the person wrote again to the agent that asked you, before answering. " +
+		"Stop here: report what you did and what you did not, so it can act on what they said."
+	// Asked: the model says it in its own words, then ends its turn, and the
+	// run waits. A delegate's words reach the person through its parent.
+	askedTop = "Not made yet: this call needs a person's approval, and they have been asked. " +
+		"Tell them in your own words what you want to do and why, then end your turn. " +
+		"Do not try another way meanwhile: you will be told their answer, and an approved call is made for you."
+	askedDeep = "Not made yet: this call needs a person's approval, and they have been asked. " +
+		"Say in your own words what you want to do and why, then end your turn: it reaches them through " +
+		"the agent that asked you. Do not try another way meanwhile: you will be told their answer, " +
+		"and an approved call is made for you."
+	askedAgain = "This call, with these arguments, already waits for a person's approval. " +
+		"End your turn: you will be told their answer."
 )
 
 // policy is what a run's calls are decided by, read once when it is built.
@@ -143,13 +156,10 @@ func (p *policy) gate(t agent.Tool, at target) (agent.Tool, *Unavailable) {
 	case approval.Ask:
 	}
 
-	switch {
-	case p.pattern == agent.PatternReWOO:
-		// ReWOO plans every call before it makes one, and cannot wait.
+	if p.pattern == agent.PatternReWOO {
+		// ReWOO plans every call before it makes one: the steps after an ask
+		// would run on a call that was never made.
 		return agent.Tool{}, &Unavailable{Name: t.Name, Reason: "it needs a person's approval, which this pattern cannot wait for"}
-	case p.run.ParentRunID != nil:
-		return refusing(t, fmt.Sprintf("%s needs a person's approval, which a delegated agent cannot wait for yet; "+
-			"it was not made. Say what you would have done, and the agent that asked you can do it.", t.Name)), nil
 	}
 
 	asked := t
@@ -186,10 +196,12 @@ type toModel string
 
 func (t toModel) Error() string { return string(t) }
 
-// ask is one call of a tool that needs a person: the request made the first
-// time, the run suspended until it is answered, and on the run's return the
-// answer acted on. A request is found again by the run and the model's call
-// id, so a call asked again after a crash or a resume is the same request.
+// ask is one call of a tool that needs a person. Nothing is made here
+// unless the tool is approved for the rest of the run: the request is
+// recorded, and the model is told to say so in its own words and end its
+// turn, after which the run waits (hold). The answer is acted on when the run
+// resumes (answers.go), so the call made is exactly the one approved. The
+// same call asked again while it waits is the same request.
 func (p *policy) ask(ctx context.Context, at target, requireOther bool, args json.RawMessage,
 	call func() (agent.ToolResult, error),
 ) (agent.ToolResult, error) {
@@ -198,44 +210,28 @@ func (p *policy) ask(ctx context.Context, at target, requireOther bool, args jso
 		return agent.ToolResult{}, errors.New("the call has no id to be approved by, so it was not made")
 	}
 
-	a, err := p.store.GetApprovalByCall(ctx, db.GetApprovalByCallParams{RunID: p.run.ID, CallID: callID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		if granted, err := p.store.FindRunScopedApproval(ctx, db.FindRunScopedApprovalParams{
-			RootRunID: p.run.RootRunID, Tool: at.name,
-		}); err == nil && granted.ID != uuid.Nil {
-			return call()
-		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return agent.ToolResult{}, fmt.Errorf("reading whether %s is approved for this run: %w", at.name, err)
-		}
-		if err := p.request(ctx, at, requireOther, callID, args); err != nil {
-			return agent.ToolResult{}, err
-		}
-		return agent.ToolResult{}, agent.Suspend("waiting for a person to approve " + at.name)
-	}
-	if err != nil {
-		return agent.ToolResult{}, fmt.Errorf("reading the request for this call: %w", err)
+	granted, err := p.store.FindRunScopedApproval(ctx, db.FindRunScopedApprovalParams{RootRunID: p.run.RootRunID, Tool: at.name})
+	switch {
+	case err == nil && granted.ID != uuid.Nil:
+		return call()
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		return agent.ToolResult{}, fmt.Errorf("reading whether %s is approved for this run: %w", at.name, err)
 	}
 
-	switch a.Status {
-	case "pending":
-		return agent.ToolResult{}, agent.Suspend("waiting for a person to approve " + at.name)
-	case "denied":
-		return agent.ToolResult{}, toModel(declinedWith(a.Reason))
-	case "expired":
-		return agent.ToolResult{}, toModel(expiredCall)
-	case "cancelled":
-		return agent.ToolResult{}, toModel(cancelledCall)
+	if _, err := p.store.FindPendingRequest(ctx, db.FindPendingRequestParams{
+		RunID: p.run.ID, Tool: at.name, Arguments: args,
+	}); err == nil {
+		return agent.ToolResult{}, toModel(askedAgain)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return agent.ToolResult{}, fmt.Errorf("reading whether %s is already asked about: %w", at.name, err)
 	}
-	// Approved: for exactly these arguments, once.
-	if !sameArguments(a.Arguments, args) {
-		return agent.ToolResult{}, toModel(changedCall)
+	if err := p.request(ctx, at, requireOther, callID, args); err != nil {
+		return agent.ToolResult{}, err
 	}
-	if _, err := p.store.ClaimApprovalUse(ctx, a.ID); errors.Is(err, pgx.ErrNoRows) {
-		return agent.ToolResult{}, toModel(usedCall)
-	} else if err != nil {
-		return agent.ToolResult{}, fmt.Errorf("spending the approval for this call: %w", err)
+	if p.run.ParentRunID != nil {
+		return agent.ToolResult{}, toModel(askedDeep)
 	}
-	return call()
+	return agent.ToolResult{}, toModel(askedTop)
 }
 
 type approvalRequestedPayload struct {
@@ -318,14 +314,4 @@ func declinedWith(reason *string) string {
 		said = string(r[:reasonChars-1]) + "…"
 	}
 	return fmt.Sprintf("%s They said: %q", declined, said)
-}
-
-// sameArguments compares what was approved with what is called, as values:
-// Postgres keeps jsonb in its own key order and spacing.
-func sameArguments(stored, called []byte) bool {
-	var a, b any
-	if json.Unmarshal(stored, &a) != nil || json.Unmarshal(called, &b) != nil {
-		return false
-	}
-	return reflect.DeepEqual(a, b)
 }

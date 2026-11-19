@@ -88,9 +88,22 @@ func DelegateTool(deps DelegateDeps, caller db.Agent, run db.Run, l Lineage) age
 			if err != nil {
 				return "", err
 			}
+			if child.Status == "waiting" {
+				return waitingReport(child), nil
+			}
 			return report(child, reportEnd()), nil
 		},
 	}
+}
+
+// waitingReport is a delegate that stopped for a person's answer: what it
+// said about it, in its envelope, after what the caller must do, which is to
+// say so to the person in its own words and stop. The child carries on, and
+// reports again, when the run resumes.
+func waitingReport(child db.Run) string {
+	return fmt.Sprintf("%s is waiting for a person's approval and carries on once they answer. "+
+		"Tell them in your own words what it needs and why, then end your turn; its next report "+
+		"comes to you when it carries on.\n\n%s", child.AgentName, report(child, reportEnd()))
 }
 
 func parseDelegateArgs(raw json.RawMessage) (string, string, error) {

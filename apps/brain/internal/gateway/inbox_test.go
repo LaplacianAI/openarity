@@ -21,6 +21,14 @@ import (
 // (channel_id, external_id) absorbing a replay, and EnsureSession returning
 // the session that already exists for a ref.
 type inboxStore struct {
+	// asking is what the active run waits for people to approve; requeued is
+	// what queuing it again returns once nothing is left pending, nil for a
+	// run that is not waiting.
+	asking     []db.Approval
+	requeued   *db.RequeueAnsweredRow
+	superseded []db.SupersedeApprovalsParams
+	decided    []uuid.UUID
+
 	stored   map[string]db.InsertMessageParams
 	ids      map[string]uuid.UUID
 	sessions map[string]db.Session
@@ -113,6 +121,32 @@ func (f *inboxStore) AddSteer(_ context.Context, arg db.AddSteerParams) error {
 	return nil
 }
 
+func (f *inboxStore) SupersedeApprovals(_ context.Context, arg db.SupersedeApprovalsParams) ([]db.Approval, error) {
+	f.superseded = append(f.superseded, arg)
+	var ended, left []db.Approval
+	for _, a := range f.asking {
+		if a.RootRunID == arg.RootRunID && a.RequestedFor != nil && *a.RequestedFor == arg.UserID {
+			ended = append(ended, a)
+		} else {
+			left = append(left, a)
+		}
+	}
+	f.asking = left
+	return ended, nil
+}
+
+func (f *inboxStore) AppendDecidedEvents(_ context.Context, ids []uuid.UUID) error {
+	f.decided = append(f.decided, ids...)
+	return nil
+}
+
+func (f *inboxStore) RequeueAnswered(context.Context, uuid.UUID) (db.RequeueAnsweredRow, error) {
+	if f.requeued == nil || len(f.asking) > 0 {
+		return db.RequeueAnsweredRow{}, pgx.ErrNoRows
+	}
+	return *f.requeued, nil
+}
+
 func (f *inboxStore) HubCanRun(context.Context, uuid.UUID) (bool, error) {
 	return !f.noModel || f.hubAgent, nil
 }
@@ -143,10 +177,19 @@ func (f *inboxStore) ConsumeMessages(_ context.Context, arg db.ConsumeMessagesPa
 // enqueued records the runs handed to the workers, and whether any was handed
 // over while the transaction that created it was still open.
 type enqueued struct {
-	store *inboxStore
-	runs  []uuid.UUID
-	early bool
-	err   error
+	store   *inboxStore
+	runs    []uuid.UUID
+	resumed []db.RequeueAnsweredRow
+	early   bool
+	err     error
+}
+
+func (e *enqueued) Resume(_ context.Context, id uuid.UUID, attempt int32) error {
+	if e.store != nil && e.store.inTx {
+		e.early = true
+	}
+	e.resumed = append(e.resumed, db.RequeueAnsweredRow{ID: id, Attempt: attempt})
+	return e.err
 }
 
 func (e *enqueued) Enqueue(_ context.Context, id uuid.UUID) error {

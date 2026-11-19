@@ -90,6 +90,10 @@ type Built struct {
 	Agent       string
 	Unavailable []Unavailable
 	servers     *runServers
+	// answerable is every tool a person could be asked about, by the name a
+	// request records, as it is before the gate: what a resume makes once
+	// the call is approved.
+	answerable map[string]agent.Tool
 }
 
 // Close ends the sessions the run's calls opened. Safe to call twice, and on
@@ -131,7 +135,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if err != nil {
 		return Built{}, err
 	}
-	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b}}
+	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b}, answerable: map[string]agent.Tool{}}
 	built.Spec.Session = session
 	gates, err := b.policyFor(ctx, run, settings, built.Spec.Pattern, l)
 	if err != nil {
@@ -225,6 +229,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			if gates != nil {
 				actor = gates.actor
 			}
+			built.answerable[t.Name] = t
 			gated, refused := gates.gate(t, target{name: t.Name, class: approval.ClassFor(approval.Egress, actor)})
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)
@@ -379,9 +384,11 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 				return catalogue{}, fmt.Errorf("the MCP servers %q and %q both offer %q", first, s.Name, name)
 			}
 			owner[name] = s.Name
-			t, refused := gates.gate(limited(server.tool(name, row)), target{
+			raw, at := limited(server.tool(name, row)), target{
 				name: s.Name + "__" + row.Name, server: s.Name, class: approval.ClassOf(row.Annotations, s.TrustHints),
-			})
+			}
+			built.answerable[at.name] = raw
+			t, refused := gates.gate(raw, at)
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)
 				continue

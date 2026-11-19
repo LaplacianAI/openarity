@@ -15,10 +15,10 @@ import (
 const cancelRunApprovals = `-- name: CancelRunApprovals :many
 UPDATE approvals SET status = 'cancelled', decided_via = 'sweep', decided_at = now()
 WHERE root_run_id = $1 AND status = 'pending'
-RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other
+RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at
 `
 
-// A cancelled run's requests are no longer anyone's to answer.
+// A run that ended, however it ended, leaves nothing to answer.
 func (q *Queries) CancelRunApprovals(ctx context.Context, rootRunID uuid.UUID) ([]Approval, error) {
 	rows, err := q.db.Query(ctx, cancelRunApprovals, rootRunID)
 	if err != nil {
@@ -50,6 +50,7 @@ func (q *Queries) CancelRunApprovals(ctx context.Context, rootRunID uuid.UUID) (
 			&i.UsedAt,
 			&i.CreatedAt,
 			&i.RequireOther,
+			&i.ToldAt,
 		); err != nil {
 			return nil, err
 		}
@@ -64,7 +65,7 @@ func (q *Queries) CancelRunApprovals(ctx context.Context, rootRunID uuid.UUID) (
 const claimApprovalUse = `-- name: ClaimApprovalUse :one
 UPDATE approvals SET used_at = now()
 WHERE id = $1 AND status = 'approved' AND used_at IS NULL
-RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other
+RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at
 `
 
 // An approval is spent by the call it was for, once. The condition is on the
@@ -95,6 +96,7 @@ func (q *Queries) ClaimApprovalUse(ctx context.Context, id uuid.UUID) (Approval,
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.RequireOther,
+		&i.ToldAt,
 	)
 	return i, err
 }
@@ -120,7 +122,7 @@ UPDATE approvals SET
     reason         = $5,
     decided_at     = now()
 WHERE id = $6 AND team_id = $7 AND status = 'pending'
-RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other
+RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at
 `
 
 type DecideApprovalParams struct {
@@ -168,70 +170,58 @@ func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) 
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.RequireOther,
+		&i.ToldAt,
 	)
 	return i, err
 }
 
-const expireDueApprovals = `-- name: ExpireDueApprovals :many
-WITH due AS (
-    SELECT id FROM approvals
-    WHERE status = 'pending' AND expires_at <= now()
-    ORDER BY expires_at
-    LIMIT $1
-    FOR UPDATE SKIP LOCKED
-)
-UPDATE approvals a SET status = 'expired', decided_via = 'sweep', decided_at = now()
-FROM due WHERE a.id = due.id
-RETURNING a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other
+const findPendingRequest = `-- name: FindPendingRequest :one
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals
+WHERE run_id = $1 AND tool = $2 AND status = 'pending'
+  AND arguments = $3::jsonb
+LIMIT 1
 `
 
-// One sweep's worth of requests past their time. SKIP LOCKED so a request
-// someone is deciding right now is left to them, and two sweeps never take
-// the same row.
-func (q *Queries) ExpireDueApprovals(ctx context.Context, batch int32) ([]Approval, error) {
-	rows, err := q.db.Query(ctx, expireDueApprovals, batch)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Approval
-	for rows.Next() {
-		var i Approval
-		if err := rows.Scan(
-			&i.ID,
-			&i.TeamID,
-			&i.RunID,
-			&i.RootRunID,
-			&i.CallID,
-			&i.Tool,
-			&i.Class,
-			&i.Arguments,
-			&i.Summary,
-			&i.Status,
-			&i.Code,
-			&i.RequestedFor,
-			&i.DecidedBy,
-			&i.DecidedVia,
-			&i.DecisionScope,
-			&i.Reason,
-			&i.ExpiresAt,
-			&i.DecidedAt,
-			&i.UsedAt,
-			&i.CreatedAt,
-			&i.RequireOther,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type FindPendingRequestParams struct {
+	RunID     uuid.UUID
+	Tool      string
+	Arguments []byte
+}
+
+// A call asked for again while it waits, in the same run and with the same
+// arguments, is the request already made: asked once, answered once.
+func (q *Queries) FindPendingRequest(ctx context.Context, arg FindPendingRequestParams) (Approval, error) {
+	row := q.db.QueryRow(ctx, findPendingRequest, arg.RunID, arg.Tool, arg.Arguments)
+	var i Approval
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RunID,
+		&i.RootRunID,
+		&i.CallID,
+		&i.Tool,
+		&i.Class,
+		&i.Arguments,
+		&i.Summary,
+		&i.Status,
+		&i.Code,
+		&i.RequestedFor,
+		&i.DecidedBy,
+		&i.DecidedVia,
+		&i.DecisionScope,
+		&i.Reason,
+		&i.ExpiresAt,
+		&i.DecidedAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+		&i.RequireOther,
+		&i.ToldAt,
+	)
+	return i, err
 }
 
 const findRunScopedApproval = `-- name: FindRunScopedApproval :one
-SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other FROM approvals
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals
 WHERE root_run_id = $1 AND tool = $2 AND status = 'approved' AND decision_scope = 'run'
 ORDER BY decided_at
 LIMIT 1
@@ -269,12 +259,13 @@ func (q *Queries) FindRunScopedApproval(ctx context.Context, arg FindRunScopedAp
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.RequireOther,
+		&i.ToldAt,
 	)
 	return i, err
 }
 
 const getApproval = `-- name: GetApproval :one
-SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other FROM approvals WHERE id = $1 AND team_id = $2
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals WHERE id = $1 AND team_id = $2
 `
 
 type GetApprovalParams struct {
@@ -308,12 +299,13 @@ func (q *Queries) GetApproval(ctx context.Context, arg GetApprovalParams) (Appro
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.RequireOther,
+		&i.ToldAt,
 	)
 	return i, err
 }
 
 const getApprovalByCall = `-- name: GetApprovalByCall :one
-SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other FROM approvals WHERE run_id = $1 AND call_id = $2
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals WHERE run_id = $1 AND call_id = $2
 `
 
 type GetApprovalByCallParams struct {
@@ -346,6 +338,7 @@ func (q *Queries) GetApprovalByCall(ctx context.Context, arg GetApprovalByCallPa
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.RequireOther,
+		&i.ToldAt,
 	)
 	return i, err
 }
@@ -360,7 +353,7 @@ INSERT INTO approvals (
     $9, $10, $11, $12
 )
 ON CONFLICT (run_id, call_id) DO NOTHING
-RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other
+RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at
 `
 
 type InsertApprovalParams struct {
@@ -422,12 +415,13 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.RequireOther,
+		&i.ToldAt,
 	)
 	return i, err
 }
 
 const listApprovals = `-- name: ListApprovals :many
-SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other FROM approvals a
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals a
 WHERE a.team_id = $1
   AND (COALESCE(cardinality($2::text[]), 0) = 0
    OR a.status = ANY($2::text[]))
@@ -484,6 +478,7 @@ func (q *Queries) ListApprovals(ctx context.Context, arg ListApprovalsParams) ([
 			&i.UsedAt,
 			&i.CreatedAt,
 			&i.RequireOther,
+			&i.ToldAt,
 		); err != nil {
 			return nil, err
 		}
@@ -495,8 +490,44 @@ func (q *Queries) ListApprovals(ctx context.Context, arg ListApprovalsParams) ([
 	return items, nil
 }
 
+const listDueApprovals = `-- name: ListDueApprovals :many
+SELECT id, team_id FROM approvals
+WHERE status = 'pending' AND expires_at <= now()
+ORDER BY expires_at
+LIMIT $1
+`
+
+type ListDueApprovalsRow struct {
+	ID     uuid.UUID
+	TeamID uuid.UUID
+}
+
+// One sweep's worth of requests past their time, read without a lock: each
+// is then expired the way a late answer expires it, the session taken first
+// and the request after, so the sweep and a person deciding take the two
+// locks in the same order and never deadlock.
+func (q *Queries) ListDueApprovals(ctx context.Context, batch int32) ([]ListDueApprovalsRow, error) {
+	rows, err := q.db.Query(ctx, listDueApprovals, batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDueApprovalsRow
+	for rows.Next() {
+		var i ListDueApprovalsRow
+		if err := rows.Scan(&i.ID, &i.TeamID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingApprovalsBySession = `-- name: ListPendingApprovalsBySession :many
-SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other FROM approvals a
+SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other, a.told_at FROM approvals a
 JOIN runs r ON r.id = a.root_run_id
 WHERE r.session_id = $1 AND a.status = 'pending'
 ORDER BY a.created_at, a.id
@@ -535,6 +566,7 @@ func (q *Queries) ListPendingApprovalsBySession(ctx context.Context, sessionID u
 			&i.UsedAt,
 			&i.CreatedAt,
 			&i.RequireOther,
+			&i.ToldAt,
 		); err != nil {
 			return nil, err
 		}
@@ -547,7 +579,7 @@ func (q *Queries) ListPendingApprovalsBySession(ctx context.Context, sessionID u
 }
 
 const listRunApprovals = `-- name: ListRunApprovals :many
-SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other FROM approvals WHERE run_id = $1 ORDER BY created_at, id
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals WHERE run_id = $1 ORDER BY created_at, id
 `
 
 // Every request a run made, for a resume to tell which of its open calls a
@@ -583,6 +615,58 @@ func (q *Queries) ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]Appr
 			&i.UsedAt,
 			&i.CreatedAt,
 			&i.RequireOther,
+			&i.ToldAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUntoldApprovals = `-- name: ListUntoldApprovals :many
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals
+WHERE run_id = $1 AND status <> 'pending' AND told_at IS NULL
+ORDER BY created_at, id
+`
+
+// What a run's requests came to that its model has not yet been told, in the
+// order they were made: a resume acts on each, then tells it.
+func (q *Queries) ListUntoldApprovals(ctx context.Context, runID uuid.UUID) ([]Approval, error) {
+	rows, err := q.db.Query(ctx, listUntoldApprovals, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.RunID,
+			&i.RootRunID,
+			&i.CallID,
+			&i.Tool,
+			&i.Class,
+			&i.Arguments,
+			&i.Summary,
+			&i.Status,
+			&i.Code,
+			&i.RequestedFor,
+			&i.DecidedBy,
+			&i.DecidedVia,
+			&i.DecisionScope,
+			&i.Reason,
+			&i.ExpiresAt,
+			&i.DecidedAt,
+			&i.UsedAt,
+			&i.CreatedAt,
+			&i.RequireOther,
+			&i.ToldAt,
 		); err != nil {
 			return nil, err
 		}
@@ -595,7 +679,7 @@ func (q *Queries) ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]Appr
 }
 
 const lockApproval = `-- name: LockApproval :one
-SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other FROM approvals WHERE id = $1 AND team_id = $2 FOR UPDATE
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals WHERE id = $1 AND team_id = $2 FOR UPDATE
 `
 
 type LockApprovalParams struct {
@@ -630,6 +714,77 @@ func (q *Queries) LockApproval(ctx context.Context, arg LockApprovalParams) (App
 		&i.UsedAt,
 		&i.CreatedAt,
 		&i.RequireOther,
+		&i.ToldAt,
 	)
 	return i, err
+}
+
+const markApprovalsTold = `-- name: MarkApprovalsTold :exec
+UPDATE approvals SET told_at = now()
+WHERE id = ANY($1::uuid[]) AND status <> 'pending' AND told_at IS NULL
+`
+
+func (q *Queries) MarkApprovalsTold(ctx context.Context, ids []uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markApprovalsTold, ids)
+	return err
+}
+
+const supersedeApprovals = `-- name: SupersedeApprovals :many
+UPDATE approvals SET status = 'cancelled', decided_by = $1::uuid,
+                     decided_via = $2::text, decided_at = now()
+WHERE root_run_id = $3::uuid AND status = 'pending'
+  AND requested_for = $1::uuid
+RETURNING id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at
+`
+
+type SupersedeApprovalsParams struct {
+	UserID    uuid.UUID
+	Via       string
+	RootRunID uuid.UUID
+}
+
+// A person who writes again before answering has moved on from what they
+// were asked: their own requests in the tree end, answered by them, and the
+// run reads what they wrote instead. Other people's requests stand.
+func (q *Queries) SupersedeApprovals(ctx context.Context, arg SupersedeApprovalsParams) ([]Approval, error) {
+	rows, err := q.db.Query(ctx, supersedeApprovals, arg.UserID, arg.Via, arg.RootRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.RunID,
+			&i.RootRunID,
+			&i.CallID,
+			&i.Tool,
+			&i.Class,
+			&i.Arguments,
+			&i.Summary,
+			&i.Status,
+			&i.Code,
+			&i.RequestedFor,
+			&i.DecidedBy,
+			&i.DecidedVia,
+			&i.DecisionScope,
+			&i.Reason,
+			&i.ExpiresAt,
+			&i.DecidedAt,
+			&i.UsedAt,
+			&i.CreatedAt,
+			&i.RequireOther,
+			&i.ToldAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

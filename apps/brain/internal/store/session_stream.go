@@ -33,7 +33,8 @@ func (s *Store) AppendRunEvent(ctx context.Context, arg db.AppendRunEventParams)
 
 // RequestRunCancel cancels a queued or waiting run at once, with every child
 // it left running or waiting, and flags a running one for its worker. Each run it ends says so
-// with a finished event, since no worker is there to write one.
+// with a finished event, since no worker is there to write one, and what a
+// cancelled tree still asked is cancelled with it.
 func (s *Store) RequestRunCancel(ctx context.Context, id uuid.UUID) (db.Run, error) {
 	var run db.Run
 	err := s.InTx(ctx, func(q *db.Queries) error {
@@ -50,6 +51,11 @@ func (s *Store) RequestRunCancel(ctx context.Context, id uuid.UUID) (db.Run, err
 		}
 		if err := q.AppendFinishedEvents(ctx, ended); err != nil {
 			return fmt.Errorf("record the end of the runs cancelled with %s: %w", id, err)
+		}
+		if row.Status == "cancelled" && row.ParentRunID == nil {
+			if err := endApprovals(ctx, q, id); err != nil {
+				return err
+			}
 		}
 		run, err = q.GetRun(ctx, id)
 		return err

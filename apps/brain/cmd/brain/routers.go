@@ -231,6 +231,11 @@ func (s runStore) StartRun(ctx context.Context, arg runs.StartArgs) (db.Run, err
 				if err := q.AddSteer(ctx, db.AddSteerParams{RunID: active, Text: arg.Input}); err != nil {
 					return fmt.Errorf("steer run %s: %w", active, err)
 				}
+				// Queued again if this gave up what it waited for them
+				// to approve; the handler hands it back to the workers.
+				if _, err := gateway.Supersede(ctx, q, active, arg.UserID, "cli"); err != nil {
+					return err
+				}
 				run, err = q.GetRun(ctx, active)
 				return err
 			case !errors.Is(err, pgx.ErrNoRows):

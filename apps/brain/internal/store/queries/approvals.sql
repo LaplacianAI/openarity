@@ -67,25 +67,30 @@ JOIN runs r ON r.id = a.root_run_id
 WHERE r.session_id = $1 AND a.status = 'pending'
 ORDER BY a.created_at, a.id;
 
--- One sweep's worth of requests past their time. SKIP LOCKED so a request
--- someone is deciding right now is left to them, and two sweeps never take
--- the same row.
--- name: ExpireDueApprovals :many
-WITH due AS (
-    SELECT id FROM approvals
-    WHERE status = 'pending' AND expires_at <= now()
-    ORDER BY expires_at
-    LIMIT sqlc.arg('batch')
-    FOR UPDATE SKIP LOCKED
-)
-UPDATE approvals a SET status = 'expired', decided_via = 'sweep', decided_at = now()
-FROM due WHERE a.id = due.id
-RETURNING a.*;
+-- One sweep's worth of requests past their time, read without a lock: each
+-- is then expired the way a late answer expires it, the session taken first
+-- and the request after, so the sweep and a person deciding take the two
+-- locks in the same order and never deadlock.
+-- name: ListDueApprovals :many
+SELECT id, team_id FROM approvals
+WHERE status = 'pending' AND expires_at <= now()
+ORDER BY expires_at
+LIMIT sqlc.arg('batch');
 
--- A cancelled run's requests are no longer anyone's to answer.
+-- A run that ended, however it ended, leaves nothing to answer.
 -- name: CancelRunApprovals :many
 UPDATE approvals SET status = 'cancelled', decided_via = 'sweep', decided_at = now()
 WHERE root_run_id = $1 AND status = 'pending'
+RETURNING *;
+
+-- A person who writes again before answering has moved on from what they
+-- were asked: their own requests in the tree end, answered by them, and the
+-- run reads what they wrote instead. Other people's requests stand.
+-- name: SupersedeApprovals :many
+UPDATE approvals SET status = 'cancelled', decided_by = sqlc.arg('user_id')::uuid,
+                     decided_via = sqlc.arg('via')::text, decided_at = now()
+WHERE root_run_id = sqlc.arg('root_run_id')::uuid AND status = 'pending'
+  AND requested_for = sqlc.arg('user_id')::uuid
 RETURNING *;
 
 -- An approval for the rest of the run: this tool, any arguments, granted on
@@ -104,3 +109,22 @@ SELECT * FROM approvals WHERE run_id = $1 ORDER BY created_at, id;
 -- Whether anything of a run tree still waits for a person.
 -- name: CountPendingApprovals :one
 SELECT count(*) FROM approvals WHERE root_run_id = $1 AND status = 'pending';
+
+-- A call asked for again while it waits, in the same run and with the same
+-- arguments, is the request already made: asked once, answered once.
+-- name: FindPendingRequest :one
+SELECT * FROM approvals
+WHERE run_id = sqlc.arg('run_id') AND tool = sqlc.arg('tool') AND status = 'pending'
+  AND arguments = sqlc.arg('arguments')::jsonb
+LIMIT 1;
+
+-- What a run's requests came to that its model has not yet been told, in the
+-- order they were made: a resume acts on each, then tells it.
+-- name: ListUntoldApprovals :many
+SELECT * FROM approvals
+WHERE run_id = $1 AND status <> 'pending' AND told_at IS NULL
+ORDER BY created_at, id;
+
+-- name: MarkApprovalsTold :exec
+UPDATE approvals SET told_at = now()
+WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND status <> 'pending' AND told_at IS NULL;

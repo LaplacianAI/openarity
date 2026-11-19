@@ -57,6 +57,11 @@ func (s *Store) FinishRunWithEvent(
 		if _, err = q.AppendRunEvent(ctx, event); err != nil {
 			return err
 		}
+		if top {
+			if err := endApprovals(ctx, q, run.ID); err != nil {
+				return err
+			}
+		}
 		switch {
 		case !top || finish.Status == "cancelled":
 			return nil
@@ -141,4 +146,25 @@ func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.Fin
 		return uuid.Nil, fmt.Errorf("write the reply to run %s: %w", run.ID, err)
 	}
 	return followUp, nil
+}
+
+// endApprovals cancels what a run tree that has ended still asks, and says so
+// on each asking run, so a channel can take its prompt down. The caller
+// holds the tree's session.
+func endApprovals(ctx context.Context, q *db.Queries, root uuid.UUID) error {
+	ended, err := q.CancelRunApprovals(ctx, root)
+	if err != nil {
+		return fmt.Errorf("cancel what run %s still asks: %w", root, err)
+	}
+	if len(ended) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, len(ended))
+	for i, a := range ended {
+		ids[i] = a.ID
+	}
+	if err := q.AppendDecidedEvents(ctx, ids); err != nil {
+		return fmt.Errorf("record the end of what run %s asked: %w", root, err)
+	}
+	return nil
 }

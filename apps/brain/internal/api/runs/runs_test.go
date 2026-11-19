@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -317,9 +318,17 @@ func (s *fakeStore) touched() int {
 }
 
 type fakeStarter struct {
-	mu  sync.Mutex
-	ids []uuid.UUID
-	err error
+	mu      sync.Mutex
+	ids     []uuid.UUID
+	resumed []string
+	err     error
+}
+
+func (f *fakeStarter) Resume(_ context.Context, id uuid.UUID, attempt int32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumed = append(f.resumed, fmt.Sprintf("%s:%d", id, attempt))
+	return f.err
 }
 
 func (f *fakeStarter) Enqueue(_ context.Context, id uuid.UUID) error {
@@ -1706,6 +1715,29 @@ func TestStartingARunInABusySessionAnswersWithTheRunItSteered(t *testing.T) {
 	}
 	if len(w.starter.ids) != 0 {
 		t.Errorf("enqueued %v; a steer starts nothing", w.starter.ids)
+	}
+}
+
+// A steer that gave up what the run waited for its writer to approve comes
+// back with the run queued again, at its next attempt; the handler hands that
+// attempt to the workers. A running run that was only steered is not.
+func TestASteerThatQueuedTheRunAgainHandsItBack(t *testing.T) {
+	w := newWorld(t)
+	group := w.session("group", nil)
+	waited := db.Run{
+		ID: uuid.New(), TeamID: w.team, SessionID: group, AgentName: "triage",
+		Status: "queued", Attempt: 2, Input: "email the invoice", CreatedAt: time.Now(),
+	}
+	waited.RootRunID = waited.ID
+	w.store.working = &waited
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), start("send it to Bob instead", &group))
+
+	if rec.Code != http.StatusOK || decodeRun(t, rec).ID != waited.ID {
+		t.Fatalf("status %d (%s), want 200 with the steered run", rec.Code, rec.Body)
+	}
+	if want := []string{waited.ID.String() + ":2"}; !slices.Equal(w.starter.resumed, want) || len(w.starter.ids) != 0 {
+		t.Errorf("resumed %v, enqueued %v; want %v and nothing new", w.starter.resumed, w.starter.ids, want)
 	}
 }
 

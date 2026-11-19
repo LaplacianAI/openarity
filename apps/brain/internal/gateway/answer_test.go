@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // answering is an Inbox over a fake store whose enqueuer and log the test can
@@ -298,6 +301,53 @@ func TestAMessageMidRunIsSteeredIntoIt(t *testing.T) {
 	}
 	if got := a.store.steers[running]; len(got) != 1 || got[0] != "Asha: it was the nightly one" {
 		t.Errorf("steers = %q, want the message with its sender's name", got)
+	}
+}
+
+// Writing to a run that waits on you, instead of answering, gives up your
+// request: the run is queued again to read what you wrote, and handed back to
+// the workers once the message commits. Someone else's request stands, and
+// their message is only a steer.
+func TestWritingToARunThatWaitsOnYouGivesUpYourRequest(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	first := delivery("m-1", "email the invoice to Alice")
+	if err := a.deliver(t, first); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	waiting := a.store.created[0].ID
+	other := uuid.New()
+	a.store.asking = []db.Approval{
+		{ID: uuid.New(), RootRunID: waiting, RequestedFor: &other},
+		{ID: uuid.New(), RootRunID: waiting, RequestedFor: &first.UserID},
+	}
+	a.store.requeued = &db.RequeueAnsweredRow{ID: waiting, Attempt: 1}
+
+	stranger := delivery("m-2", "what is the weather")
+	stranger.UserID = other
+	stranger.Author.DisplayName = "Bo"
+	if err := a.deliver(t, stranger); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(a.store.decided) != 1 || len(a.store.asking) != 1 || len(a.runs.resumed) != 0 {
+		t.Fatalf("decided %v, left %v, resumed %v; want Bo's own request given up, Asha's standing, nothing resumed",
+			a.store.decided, a.store.asking, a.runs.resumed)
+	}
+
+	again := delivery("m-3", "wait, send it to Bob instead")
+	again.UserID = first.UserID
+	if err := a.deliver(t, again); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if want := []db.RequeueAnsweredRow{{ID: waiting, Attempt: 1}}; !slices.Equal(a.runs.resumed, want) || a.runs.early {
+		t.Errorf("resumed %v (early %v), want %v after the commit", a.runs.resumed, a.runs.early, want)
+	}
+	if got := a.store.superseded; len(got) != 2 || got[1].UserID != first.UserID || got[1].Via != "channel" {
+		t.Errorf("superseded %+v, want Asha's, via the channel", got)
+	}
+	if len(a.store.created) != 1 {
+		t.Errorf("started %d runs, want none beyond the waiting one", len(a.store.created))
 	}
 }
 

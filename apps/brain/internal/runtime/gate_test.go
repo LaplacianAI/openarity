@@ -22,7 +22,6 @@ type desk struct {
 	byCall   map[string]db.Approval
 	runScope *db.Approval
 	clashes  int // how many inserts refuse their code first
-	claimed  int
 	noted    []string
 }
 
@@ -52,21 +51,9 @@ func (d *desk) InsertApproval(_ context.Context, a db.InsertApprovalParams) (db.
 	return row, nil
 }
 
-func (d *desk) GetApprovalByCall(_ context.Context, a db.GetApprovalByCallParams) (db.Approval, error) {
-	row, ok := d.byCall[a.CallID]
-	if !ok {
-		return db.Approval{}, pgx.ErrNoRows
-	}
-	return row, nil
-}
-
-func (d *desk) ClaimApprovalUse(_ context.Context, id uuid.UUID) (db.Approval, error) {
-	for k, row := range d.byCall {
-		if row.ID == id && row.Status == "approved" && row.UsedAt == nil {
-			now := time.Now()
-			row.UsedAt = &now
-			d.byCall[k] = row
-			d.claimed++
+func (d *desk) FindPendingRequest(_ context.Context, a db.FindPendingRequestParams) (db.Approval, error) {
+	for _, row := range d.byCall {
+		if row.Tool == a.Tool && row.Status == "pending" && string(row.Arguments) == string(a.Arguments) {
 			return row, nil
 		}
 	}
@@ -78,13 +65,6 @@ func (d *desk) FindRunScopedApproval(context.Context, db.FindRunScopedApprovalPa
 		return db.Approval{}, pgx.ErrNoRows
 	}
 	return *d.runScope, nil
-}
-
-func (d *desk) set(call, status, args string, reason *string) {
-	row := d.byCall[call]
-	row.ID, row.CallID, row.Status, row.Reason = uuid.New(), call, status, reason
-	row.Arguments = json.RawMessage(args)
-	d.byCall[call] = row
 }
 
 // sending is a tool that counts the times it was really made.
@@ -114,10 +94,11 @@ func callAs(t *testing.T, tool agent.Tool, call, args string) (agent.ToolResult,
 	return r, err
 }
 
-// The first time, a request is made with a code, the run's events say so,
-// and the run is suspended; asked again while it waits, it suspends again
-// and asks nothing new. The tool is not made either time.
-func TestACallThatAsksIsRequestedOnceAndSuspends(t *testing.T) {
+// Asking makes nothing: a request is made, with a code, the run's events say
+// so, and the model is told to say it in its own words and end its turn. The
+// same call asked again while it waits, by another call id, is the same
+// request. A delegate's words reach the person through the agent above it.
+func TestACallThatAsksIsRequestedOnceAndTheModelSaysSo(t *testing.T) {
 	t.Parallel()
 
 	d := &desk{byCall: map[string]db.Approval{}, clashes: 2}
@@ -127,10 +108,11 @@ func TestACallThatAsksIsRequestedOnceAndSuspends(t *testing.T) {
 		t.Fatalf("refused: %+v", refused)
 	}
 
-	for range 2 {
-		if _, err := callAs(t, gated, "c1", `{"to":"a@example.com"}`); !errors.Is(err, agent.ErrSuspended) {
-			t.Fatalf("err = %v, want a suspension", err)
-		}
+	if _, err := callAs(t, gated, "c1", `{"to":"a@example.com"}`); err == nil || err.Error() != askedTop {
+		t.Fatalf("err = %v, want the model told to say so", err)
+	}
+	if _, err := callAs(t, gated, "c2", `{"to":"a@example.com"}`); err == nil || err.Error() != askedAgain {
+		t.Fatalf("asked again: %v, want the request already made", err)
 	}
 	if made != 0 || len(d.byCall) != 1 || len(d.noted) != 1 || d.noted[0] != "approval_requested" {
 		t.Fatalf("made %d, requests %d, noted %v; want 0, 1 and one approval_requested", made, len(d.byCall), d.noted)
@@ -142,64 +124,17 @@ func TestACallThatAsksIsRequestedOnceAndSuspends(t *testing.T) {
 	if row.Summary != "to: a@example.com" || row.Tool != "mail__send" || row.Class != "destructive" {
 		t.Errorf("request = %+v", row)
 	}
-}
 
-// Each answer, acted on when the run returns: only an approval for exactly
-// these arguments makes the call, and only once.
-func TestAnAnsweredCallIsActedOnAsAnswered(t *testing.T) {
-	t.Parallel()
-
-	reason := "not\nto that customer, ever"
-	for _, c := range []struct {
-		status, args string
-		reason       *string
-		made         int
-		says         string
-	}{
-		{"approved", `{"to":"a"}`, nil, 1, ""},
-		{"approved", `{"to":"b"}`, nil, 0, "not the arguments that were approved"},
-		{"denied", `{"to":"a"}`, &reason, 0, `They said: "not to that customer, ever"`},
-		{"denied", `{"to":"a"}`, nil, 0, "A person declined this call"},
-		{"expired", `{"to":"a"}`, nil, 0, "Nobody answered in time"},
-		{"cancelled", `{"to":"a"}`, nil, 0, "was cancelled"},
-	} {
-		d := &desk{byCall: map[string]db.Approval{}}
-		d.set("c1", c.status, `{"to": "a"}`, c.reason)
-		var made int
-		gated, _ := gatedBy(d, approval.Writes, approval.Actor{CanSelf: true}).gate(sending(&made), mailTarget)
-		r, err := callAs(t, gated, "c1", c.args)
-
-		if made != c.made {
-			t.Errorf("%s %s: made %d time(s), want %d", c.status, c.args, made, c.made)
-		}
-		if c.says == "" {
-			if err != nil || r.Output != "sent" {
-				t.Errorf("%s: %v, %q", c.status, err, r.Output)
-			}
-			continue
-		}
-		if err == nil || !strings.Contains(err.Error(), c.says) || errors.Is(err, agent.ErrSuspended) {
-			t.Errorf("%s %s: err = %v, want one saying %q", c.status, c.args, err, c.says)
-		}
+	other := &desk{byCall: map[string]db.Approval{}}
+	child := gatedBy(other, approval.Writes, approval.Actor{CanSelf: true})
+	parent := uuid.New()
+	child.run.ParentRunID = &parent
+	delegated, _ := child.gate(sending(&made), mailTarget)
+	if _, err := callAs(t, delegated, "c1", `{}`); err == nil || err.Error() != askedDeep {
+		t.Errorf("delegated: %v, want its words sent up", err)
 	}
-}
-
-// An approval is spent by the call it was for. Made again, after a crash in
-// the middle of it, the call is not made a second time.
-func TestAnApprovalIsSpentOnce(t *testing.T) {
-	t.Parallel()
-
-	d := &desk{byCall: map[string]db.Approval{}}
-	d.set("c1", "approved", `{}`, nil)
-	var made int
-	gated, _ := gatedBy(d, approval.Writes, approval.Actor{CanSelf: true}).gate(sending(&made), mailTarget)
-
-	if _, err := callAs(t, gated, "c1", `{}`); err != nil {
-		t.Fatal(err)
-	}
-	_, err := callAs(t, gated, "c1", `{}`)
-	if made != 1 || err == nil || !strings.Contains(err.Error(), "not known whether it was made") {
-		t.Errorf("made %d, second call %v; want made once, and the second not known", made, err)
+	if made != 0 || len(other.byCall) != 1 {
+		t.Errorf("made %d, requests %d; want one request and nothing made", made, len(other.byCall))
 	}
 }
 
@@ -247,16 +182,39 @@ func TestTheVerdictShapesTheTool(t *testing.T) {
 		t.Errorf("ReWOO: %+v", refused)
 	}
 
-	child := gatedBy(d, approval.Writes, approval.Actor{CanSelf: true})
-	parent := uuid.New()
-	child.run.ParentRunID = &parent
-	delegated, _ := child.gate(tool, mailTarget)
-	if _, err := callAs(t, delegated, "c1", `{}`); err == nil || errors.Is(err, agent.ErrSuspended) ||
-		!strings.Contains(err.Error(), "delegated agent cannot wait") {
-		t.Errorf("delegated: %v", err)
+	if made != 0 {
+		t.Errorf("made %d", made)
 	}
-	if made != 0 || len(d.byCall) != 0 {
-		t.Errorf("made %d, requests %d; want neither", made, len(d.byCall))
+}
+
+// An answer that makes nothing reads as what it was: a no with the person's
+// words, no answer in time, a request that ended with its run, or one its
+// person gave up by writing again, which a delegate hands back up.
+func TestAnAnswerThatMakesNothingSaysWhatItWas(t *testing.T) {
+	t.Parallel()
+
+	sam, parent := uuid.New(), uuid.New()
+	top, deep := db.Run{}, db.Run{ParentRunID: &parent}
+	said := "wrong customer"
+	for _, c := range []struct {
+		run  db.Run
+		a    db.Approval
+		want string
+	}{
+		{top, db.Approval{Status: "denied", Reason: &said}, declined + ` They said: "wrong customer"`},
+		{top, db.Approval{Status: "expired"}, expiredCall},
+		{top, db.Approval{Status: "cancelled"}, cancelledCall},
+		{top, db.Approval{Status: "cancelled", DecidedBy: &sam}, supersededCall},
+		{deep, db.Approval{Status: "cancelled", DecidedBy: &sam}, supersededDeep},
+		{deep, db.Approval{Status: "cancelled"}, cancelledCall},
+	} {
+		got, err := (&Executor{}).answered(t.Context(), c.run, Built{}, c.a)
+		if err != nil || got != c.want {
+			t.Errorf("%s by %v, delegated %v: %q, %v; want %q", c.a.Status, c.a.DecidedBy, c.run.ParentRunID != nil, got, err, c.want)
+		}
+	}
+	if _, err := (&Executor{}).answered(t.Context(), top, Built{}, db.Approval{Status: "pending"}); err == nil {
+		t.Error("a pending request was acted on")
 	}
 }
 
@@ -282,37 +240,6 @@ func TestOnlyThoseWhoMayAnswerARequestDo(t *testing.T) {
 		if got := mayAnswer(c.a, c.req); !errors.Is(got, c.want) {
 			t.Errorf("%+v answering %+v = %v, want %v", c.a, c.req, got, c.want)
 		}
-	}
-}
-
-func TestAResumeMakesWhatAPersonAnsweredAndClosesTheRest(t *testing.T) {
-	t.Parallel()
-
-	turn := agent.Message{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{
-		{ID: "c1", Name: "read"}, {ID: "c2", Name: "mail__send"}, {ID: "c3", Name: "post"},
-	}}
-	files := agent.Message{Role: agent.RoleUser, Attached: true, Content: []agent.Content{{Type: agent.ContentText, Text: "f"}}}
-	result := agent.Message{Role: agent.RoleTool, ToolCallID: "c1", Content: []agent.Content{{Type: agent.ContentText, Text: "ok"}}}
-	msgs := []agent.Message{{Role: agent.RoleUser}, turn, result, files}
-
-	// Suspended at c2: c2 and the c3 it never reached stay open.
-	unspent := []db.Approval{{CallID: "c2", Status: "approved"}}
-	if got := closeCalls(msgs, keptOpen(msgs, unspent)); len(got) != len(msgs) {
-		t.Errorf("a turn suspended at c2 became %d messages, want it left for the run to finish", len(got))
-	}
-
-	// Crashed inside c2 after its approval was spent: c3 is closed, before
-	// the turn's files, and c2 is left to the gate, which knows.
-	now := time.Now()
-	spent := []db.Approval{{CallID: "c2", Status: "approved", UsedAt: &now}}
-	got := closeCalls(msgs, keptOpen(msgs, spent))
-	if len(got) != 5 || got[3].ToolCallID != "c3" || got[3].Text() != endedMidCall || !got[4].Attached {
-		t.Errorf("after a crash in c2: %+v", got[2:])
-	}
-
-	// Nothing was asked: every open call is closed, as before approvals.
-	if got := closeCalls(msgs, keptOpen(msgs, nil)); len(got) != 6 || !got[5].Attached {
-		t.Errorf("with nothing asked: %d messages", len(got))
 	}
 }
 

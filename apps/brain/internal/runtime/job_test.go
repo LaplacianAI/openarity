@@ -449,6 +449,14 @@ func (f *execFixture) anotherRun(t *testing.T) uuid.UUID {
 
 type sweepRows struct{ unstarted []db.ListUnstartedRunsRow }
 
+func (*sweepRows) ListDueApprovals(context.Context, int32) ([]db.ListDueApprovalsRow, error) {
+	return nil, nil
+}
+
+func (*sweepRows) InTx(context.Context, func(*db.Queries) error) error {
+	return errors.New("the sweep has nothing to expire here")
+}
+
 func (*sweepRows) TakeOverStaleRuns(context.Context, float64) ([]uuid.UUID, error) { return nil, nil }
 
 func (s *sweepRows) ListUnstartedRuns(context.Context, float64) ([]db.ListUnstartedRunsRow, error) {
