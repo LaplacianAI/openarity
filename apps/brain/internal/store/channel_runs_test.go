@@ -26,6 +26,14 @@ func newConversation(t *testing.T, s *Store, name string) conversation {
 	t.Helper()
 
 	ch, team := sessionFixture(t, s, name)
+	// A custom channel answers only at a reply URL of its own.
+	url := "https://replies.example/" + name
+	ch, err := s.UpdateChannel(t.Context(), db.UpdateChannelParams{
+		SetReplyUrl: true, ReplyUrl: &url, ID: ch.ID, TeamID: team,
+	})
+	if err != nil {
+		t.Fatalf("UpdateChannel: %v", err)
+	}
 	return conversation{
 		team:    team,
 		channel: ch,
@@ -262,6 +270,41 @@ func TestOnlyAChannelRunWritesAReply(t *testing.T) {
 
 	if _, err := s.InsertReply(t.Context(), db.InsertReplyParams{RunID: dash, Kind: "answer", Text: "hi"}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("InsertReply for a dashboard run err = %v, want pgx.ErrNoRows", err)
+	}
+}
+
+// A custom channel with no reply URL takes messages in and has nowhere to
+// post back to: its run's answer, and its steps, are written nowhere, rather
+// than written to be given up.
+func TestAChannelWithNowhereToReplyIsWrittenNoReply(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	c := newConversation(t, s, "inbound")
+	if _, err := s.UpdateChannel(t.Context(), db.UpdateChannelParams{
+		SetReplyUrl: true, ReplyUrl: nil, ID: c.channel.ID, TeamID: c.team,
+	}); err != nil {
+		t.Fatalf("UpdateChannel: %v", err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE channels SET reply_mode = 'events' WHERE id = $1`, c.channel.ID); err != nil {
+		t.Fatal(err)
+	}
+	m := c.says(t, s, "m-1", "label added")
+	r, err := c.startRun(t, s.Queries, &m, "label added")
+	if err != nil {
+		t.Fatalf("CreateChannelRun: %v", err)
+	}
+	running(t, s, r.ID)
+
+	if shows, err := s.RunShowsEvents(t.Context(), r.ID); err != nil || shows {
+		t.Errorf("RunShowsEvents = %v, %v; want no steps told", shows, err)
+	}
+	if n, err := s.InsertEventReply(t.Context(), db.InsertEventReplyParams{RunID: r.ID, EventSeq: 1, Text: "step"}); err != nil || n != 0 {
+		t.Errorf("InsertEventReply = %d, %v; want nothing written", n, err)
+	}
+	endChannelRun(t, s, r.ID, "succeeded", "Reviewed.", "")
+	if got := repliesTo(t, s, r.ID); len(got) != 0 {
+		t.Errorf("replies = %+v, want none", got)
 	}
 }
 

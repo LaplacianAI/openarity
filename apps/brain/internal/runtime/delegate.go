@@ -20,7 +20,6 @@ const (
 	DelegateToolName = "delegate"
 	maxDepth         = 3
 	maxBrief         = 100 << 10
-	maxTreeTokens    = 1_000_000
 	maxTreeRuns      = 50
 )
 
@@ -76,14 +75,17 @@ func DelegateTool(deps DelegateDeps, caller db.Agent, run db.Run, l Lineage) age
 			if err != nil {
 				return "", err
 			}
-			target, left, err := checkDelegation(ctx, deps.Store, caller, run, l, name)
+			target, err := checkDelegation(ctx, deps.Store, caller, run, l, name)
 			if err != nil {
 				return "", err
 			}
 
 			child, err := deps.Run.Delegate(ctx, Delegation{
 				Parent: run, Agent: target, Brief: brief, CallID: agent.ToolCallID(ctx), Lineage: l,
-				Budget: min(budgetOf(target.TokenBudget), left),
+				// A child starts from nothing on its own budget: what it
+				// spends is its own, and the parent pays only for reading
+				// its report.
+				Budget: budgetOf(target.TokenBudget),
 			})
 			if err != nil {
 				return "", err
@@ -136,38 +138,37 @@ func parseDelegateArgs(raw json.RawMessage) (string, string, error) {
 	return strings.TrimSpace(a.Agent), brief, nil
 }
 
-// checkDelegation returns the agent to start and the tokens the tree has left.
+// checkDelegation returns the agent to start, within what a task may do: its
+// runs and its hours. Tokens are each run's own.
 func checkDelegation(ctx context.Context, s DelegateStore, caller db.Agent, run db.Run, l Lineage,
 	name string,
-) (db.Agent, int64, error) {
+) (db.Agent, error) {
 	target, err := s.GetAgentByName(ctx, db.GetAgentByNameParams{TeamID: run.TeamID, Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.Agent{}, 0, fmt.Errorf("no agent in this team is named %q", name)
+		return db.Agent{}, fmt.Errorf("no agent in this team is named %q", name)
 	}
 	if err != nil {
-		return db.Agent{}, 0, fmt.Errorf("looking up the agent %q: %w", name, err)
+		return db.Agent{}, fmt.Errorf("looking up the agent %q: %w", name, err)
 	}
 
 	if err := reaches(ctx, s, caller, target); err != nil {
-		return db.Agent{}, 0, err
+		return db.Agent{}, err
 	}
 	if slices.Contains(l.Chain, target.ID) {
-		return db.Agent{}, 0, fmt.Errorf("%q is already working on this, above you", target.Name)
+		return db.Agent{}, fmt.Errorf("%q is already working on this, above you", target.Name)
 	}
 
 	used, err := s.TreeUsage(ctx, run.RootRunID)
 	if err != nil {
-		return db.Agent{}, 0, fmt.Errorf("reading what the task has used: %w", err)
+		return db.Agent{}, fmt.Errorf("reading what the task has used: %w", err)
 	}
 	switch {
-	case used.Tokens >= maxTreeTokens:
-		return db.Agent{}, 0, errors.New("the task has used its 1,000,000 tokens")
 	case used.ElapsedSeconds >= maxWallClock.Seconds():
-		return db.Agent{}, 0, errors.New("the task has used its 6 hours")
+		return db.Agent{}, errors.New("the task has used its 6 hours")
 	case used.Runs >= maxTreeRuns:
-		return db.Agent{}, 0, errors.New("the task has used its 50 runs")
+		return db.Agent{}, errors.New("the task has used its 50 runs")
 	}
-	return target, maxTreeTokens - used.Tokens, nil
+	return target, nil
 }
 
 func reaches(ctx context.Context, s DelegateStore, caller, target db.Agent) error {

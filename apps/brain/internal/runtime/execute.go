@@ -75,7 +75,7 @@ type Delegation struct {
 	Brief   string
 	CallID  string
 	Lineage Lineage
-	// Budget is the child's token budget: its agent's, cut to what the tree has left.
+	// Budget is the child's token budget: its agent's, or the default.
 	Budget int64
 }
 

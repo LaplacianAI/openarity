@@ -156,6 +156,7 @@ JOIN channels ch ON ch.id = s.channel_id
 WHERE r.id = $3::uuid
   AND r.reply_to_channel
   AND ch.reply_mode = 'events'
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
 `
 
@@ -186,7 +187,9 @@ SELECT r.team_id, r.id, r.session_id, s.channel_id,
        $2::text, $3::text
 FROM runs r
 JOIN sessions s ON s.id = r.session_id
-WHERE r.id = $4::uuid AND r.reply_to_channel AND s.channel_id IS NOT NULL
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = $4::uuid AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq
 `
 
@@ -204,7 +207,9 @@ type InsertReplyParams struct {
 // the first such steer was written, keeps this reply from quoting it. A message
 // and its steer share a transaction, so they share now(). A run that does not
 // answer a channel, or whose session came from none, inserts nothing and the
-// caller gets pgx.ErrNoRows.
+// caller gets pgx.ErrNoRows. So does a custom channel with no reply URL: it
+// takes messages in and has nowhere to post back to, and a reply written for
+// it could only be given up.
 func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply, error) {
 	row := q.db.QueryRow(ctx, insertReply,
 		arg.UnreadSince,
@@ -354,7 +359,8 @@ SELECT EXISTS (
     JOIN channels ch ON ch.id = s.channel_id
     WHERE r.id = $1::uuid
       AND r.reply_to_channel
-      AND ch.reply_mode = 'events')::bool
+      AND ch.reply_mode = 'events'
+      AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL))::bool
 `
 
 // Whether a run's steps are sent to its conversation as they happen: a run

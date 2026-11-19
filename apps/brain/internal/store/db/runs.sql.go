@@ -1533,8 +1533,7 @@ func (q *Queries) TakeOverStaleRuns(ctx context.Context, staleSeconds float64) (
 }
 
 const treeUsage = `-- name: TreeUsage :one
-SELECT coalesce(sum(r.input_tokens + r.output_tokens), 0)::bigint AS tokens,
-       count(*)::bigint AS runs,
+SELECT count(*)::bigint AS runs,
        coalesce((SELECT extract(epoch FROM now() - root.started_at) - root.waited_seconds
                  FROM runs root WHERE root.id = $1::uuid), 0)::float8 AS elapsed_seconds
 FROM runs r
@@ -1542,7 +1541,6 @@ WHERE r.root_run_id = $1::uuid
 `
 
 type TreeUsageRow struct {
-	Tokens         int64
 	Runs           int64
 	ElapsedSeconds float64
 }
@@ -1553,6 +1551,6 @@ type TreeUsageRow struct {
 func (q *Queries) TreeUsage(ctx context.Context, rootID uuid.UUID) (TreeUsageRow, error) {
 	row := q.db.QueryRow(ctx, treeUsage, rootID)
 	var i TreeUsageRow
-	err := row.Scan(&i.Tokens, &i.Runs, &i.ElapsedSeconds)
+	err := row.Scan(&i.Runs, &i.ElapsedSeconds)
 	return i, err
 }

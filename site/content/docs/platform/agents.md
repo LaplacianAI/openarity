@@ -80,6 +80,12 @@ never widens what an agent can reach. Delegation stops three levels down: a
 run that deep is given no `delegate`. The team's [hub](hub.md) may delegate to
 any agent it finds in the graph.
 
+A child starts from nothing, on its own agent's `token_budget`, with its own
+context and its own compaction; the parent spends only what it takes to read
+the child's report. Tokens are not shared across a task. What a task does
+share is a limit for a runaway: at most 50 runs and six hours, not counting
+time spent waiting for a person.
+
 ## Not built
 
 - **A run's tools are its agent's grants**, not chosen per task by walking the

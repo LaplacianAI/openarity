@@ -2,7 +2,6 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"testing"
 
@@ -380,26 +379,20 @@ func TestTreeUsageCountsTheWholeTreeAndNoOther(t *testing.T) {
 	age(t, s, root.ID, "started_at", 120)
 	clerk := insertAgent(t, s, f.team, "clerk")
 	child := mustStartChild(t, s, root, clerk, "c1")
-	grandchild := mustStartChild(t, s, child, f.agent, "c2")
-	sibling := createRun(t, s, f)
-
-	for id, n := range map[uuid.UUID]int64{root.ID: 100, child.ID: 20, grandchild.ID: 3, sibling.ID: 9000} {
-		exec(t, s, `UPDATE runs SET input_tokens = `+itoa(n)+`, output_tokens = 1 WHERE id = '`+id.String()+`'`)
-	}
+	mustStartChild(t, s, child, f.agent, "c2")
+	createRun(t, s, f) // another tree's root, not counted
 
 	u, err := s.TreeUsage(t.Context(), root.ID)
 	if err != nil {
 		t.Fatalf("TreeUsage: %v", err)
 	}
-	if u.Tokens != 126 || u.Runs != 3 {
-		t.Errorf("tokens %d runs %d, want 126 over 3 runs", u.Tokens, u.Runs)
+	if u.Runs != 3 {
+		t.Errorf("runs %d, want the root, its child and its grandchild", u.Runs)
 	}
 	if u.ElapsedSeconds < 119 || u.ElapsedSeconds > 180 {
 		t.Errorf("elapsed %.0fs, want about 120 from the root's start", u.ElapsedSeconds)
 	}
 }
-
-func itoa(n int64) string { return fmt.Sprint(n) }
 
 // --- after a crash ---
 
