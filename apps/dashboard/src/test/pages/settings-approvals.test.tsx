@@ -245,3 +245,68 @@ it("is read-only without team:settings: the rules are listed, nothing is offered
   expect(within(rules).queryByRole("button", { name: "Add rule" })).toBeNull();
   expect(within(rules).queryByRole("button", { name: /Remove the rule/ })).toBeNull();
 });
+
+it("finds the built-in tools by a tool's name", async () => {
+  brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    // As the brain does: the servers whose name holds what was typed.
+    "GET /teams/{id}/mcp-servers": (seen) => {
+      const q = new URL(seen.path, "http://brain.test").searchParams.get("q") ?? "";
+      const items = ROUTES["GET /teams/{id}/mcp-servers"].body.items;
+      return { body: { items: items.filter((s) => s.name.includes(q)) } };
+    },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("table", { name: "Tool approval rules" });
+
+  await userEvent.click(within(section).getByRole("button", { name: /server$/ }));
+  await userEvent.type(await screen.findByRole("combobox", { name: "Search server" }), "fetch");
+  await waitFor(() => expect(screen.queryByRole("option", { name: "github" })).toBeNull());
+  expect(screen.getByRole("option", { name: "Built-in tools" })).toBeInTheDocument();
+});
+
+it("tries a server's tools again when they could not be read", async () => {
+  let failed = false;
+  brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "GET /teams/{id}/mcp-servers/srv-sh/tools": () => {
+      if (!failed) {
+        failed = true;
+        return { status: 500, body: { error: "the server went away" } };
+      }
+      return { body: { items: [{ name: "run", description: "", input_schema: {} }] } };
+    },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("table", { name: "Tool approval rules" });
+
+  await chooseServer(section, "shell");
+  await userEvent.click(await within(section).findByRole("button", { name: "Try again" }));
+  const tool = within(section).getByLabelText("Tool");
+  await waitFor(() => expect(tool).toBeEnabled());
+  expect(within(tool).getByRole("option", { name: "run" })).toHaveValue("shell__run");
+});
+
+it("names a server by its name in a server rule", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "POST /teams/{id}/approval-rules": { body: { ...RULE, id: "ru4" } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("table", { name: "Tool approval rules" });
+
+  await userEvent.selectOptions(within(section).getByLabelText("Applies to"), "server");
+  await chooseServer(section, "shell");
+  await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
+    target_kind: "server",
+    target: "shell",
+  });
+});

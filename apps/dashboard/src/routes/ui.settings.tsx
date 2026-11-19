@@ -1102,14 +1102,19 @@ const RULE_WORDS: Record<ApprovalRuleMode, string> = {
 
 /** The brain's own tools a rule may name: those the approval gate stands before. */
 const BUILT_INS = ["web_search", "web_fetch"] as const;
-const BUILT_IN: Picked = { id: "built-in", name: "Built-in tools" };
+// Not a UUID, so no server's id can be it.
+const BUILT_IN: Picked = { id: ":built-in", name: "Built-in tools" };
 
 /** The servers a rule may name, searched by name; a tool rule may also name a built-in. */
 async function ruleServers(teamId: string, q: string, builtIns: boolean) {
   const page = await listMCPServers(teamId, null, { q, limit: PICK_PAGE });
   const items: Picked[] = page.items.map((s) => ({ id: s.id, name: s.name }));
   const wanted = q.trim().toLowerCase();
-  if (builtIns && (wanted === "" || "built-in tools".includes(wanted))) items.unshift(BUILT_IN);
+  const matches =
+    wanted === "" ||
+    "built-in tools".includes(wanted) ||
+    BUILT_INS.some((name) => name.includes(wanted.replaceAll(" ", "_")));
+  if (builtIns && matches) items.unshift(BUILT_IN);
   return { items, more: Boolean(page.next_cursor) };
 }
 
@@ -1134,33 +1139,46 @@ function RuleTool({
     queryFn: () => listMCPTools(teamId, server?.id as string),
     enabled: Boolean(server) && !builtIn,
   });
-  const names: string[] = builtIn
-    ? [...BUILT_INS]
-    : (tools.data?.items ?? []).map((t) => `${server?.name}__${t.name}`);
-  const hint = !server
-    ? "Choose a server first."
-    : builtIn
-      ? "The brain's own tools."
-      : tools.isPending
-        ? "Reading the server's tools…"
-        : tools.isError
-          ? "Couldn't read this server's tools. Try again from its page."
-          : names.length === 0
-            ? "This server has said it has no tools."
-            : undefined;
+  // Each option carries its target and its label, so neither is cut from the other.
+  const options: { value: string; label: string }[] = builtIn
+    ? BUILT_INS.map((n) => ({ value: n, label: n }))
+    : (tools.data?.items ?? []).map((t) => ({
+        value: `${server?.name}__${t.name}`,
+        label: t.name,
+      }));
+  const hint = !server ? (
+    "Choose a server first."
+  ) : builtIn ? (
+    "Tools every agent has, such as reading a web page."
+  ) : tools.isPending ? (
+    "Reading the server's tools…"
+  ) : tools.isError ? (
+    <>
+      Couldn't read this server's tools.{" "}
+      <button
+        type="button"
+        className="underline underline-offset-2 hover:text-foreground"
+        onClick={() => void tools.refetch()}
+      >
+        Try again
+      </button>
+    </>
+  ) : options.length === 0 ? (
+    "This server has said it has no tools."
+  ) : undefined;
   return (
     <Field label="Tool" htmlFor="rule-target" hint={hint}>
       <select
         id="rule-target"
         className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
         value={value}
-        disabled={names.length === 0}
+        disabled={options.length === 0}
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">Choose a tool</option>
-        {names.map((n) => (
-          <option key={n} value={n}>
-            {builtIn ? n : n.slice((server?.name.length ?? 0) + 2)}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>
@@ -1289,7 +1307,7 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
           <div
             className={
               kind === "tool"
-                ? "grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)_minmax(0,1fr)_12rem]"
+                ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-[8rem_minmax(0,1fr)_minmax(0,1fr)_12rem]"
                 : "grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)_12rem]"
             }
           >
@@ -1309,6 +1327,10 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
               </select>
             </Field>
             <div className="min-w-0 space-y-1.5">
+              {/* The picker names itself to a screen reader; this is for the eye. */}
+              <p aria-hidden className="text-sm font-medium">
+                Server
+              </p>
               <Picker
                 label="Server"
                 noun="server"

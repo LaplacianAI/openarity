@@ -60,7 +60,13 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/lib/media";
 import { isActive } from "@/lib/nav";
-import { useApprovalNotices, useNotifySwitch, useWaitingTitle } from "@/lib/notify";
+import {
+  BADGE_POLL_MS,
+  NOTIFY_POLL_MS,
+  useApprovalNotices,
+  useNotifySwitch,
+  useWaitingTitle,
+} from "@/lib/notify";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -169,9 +175,8 @@ export function useOffersDeletedTeams(): boolean {
  * nobody is, and when the reader may not see the queue: the brain leaves the
  * count out for them rather than saying zero.
  */
-function useWaiting(teamId: string | null): string | null {
-  const n = useTeamSummary(teamId).data?.waiting_senders;
-  return n ? String(n) : null;
+function useWaiting(teamId: string | null, every: number): number | null {
+  return useTeamSummary(teamId, every).data?.waiting_senders ?? null;
 }
 
 /**
@@ -179,18 +184,19 @@ function useWaiting(teamId: string | null): string | null {
  * when there is more than a page. Null for none, and for a reader who may not
  * see them: the brain refuses, and a badge that says zero would be a guess.
  */
-function usePendingRequests(teamId: string | null): string | null {
+function usePendingRequests(teamId: string | null, every: number) {
   const perms = usePermissions(teamId);
   const pending = useQuery({
     queryKey: ["approvals", teamId, "pending-count"],
     queryFn: ({ signal }) =>
       listToolApprovals(teamId as string, { status: ["pending"] }, null, signal),
     enabled: Boolean(teamId) && !perms.isPending && perms.can("approval:read"),
-    staleTime: 30_000,
-    refetchInterval: 60_000,
+    staleTime: Math.min(every, 30_000),
+    refetchInterval: every,
   });
   const n = pending.data?.items.length ?? 0;
-  return n === 0 ? null : `${n}${pending.data?.next_cursor ? "+" : ""}`;
+  const more = Boolean(pending.data?.next_cursor);
+  return { n, more, items: pending.data?.items };
 }
 
 /** The entry a path belongs to: the longest that matches, so a nested page lights only itself. */
@@ -249,12 +255,25 @@ function Shell({ pathname }: { pathname: string }) {
   const layout: Layout = wide ? "full" : tablet ? "rail" : "phone";
   const { teamId } = useCurrentTeam();
   const groups = navGroups(useOffersDeletedTeams());
-  const senders = useWaiting(teamId);
-  const requests = usePendingRequests(teamId);
-  const waiting: Badges = { [APPROVALS.to]: senders, [REQUESTS.to]: requests };
+  // While notifications are on, the badges ask twice as often: the notices
+  // are read from what they bring.
+  const every = useNotifySwitch().state === "on" ? NOTIFY_POLL_MS : BADGE_POLL_MS;
+  const senders = useWaiting(teamId, every);
+  const requests = usePendingRequests(teamId, every);
+  const requestsBadge = requests.n === 0 ? null : `${requests.n}${requests.more ? "+" : ""}`;
+  const waiting: Badges = {
+    [APPROVALS.to]: senders ? String(senders) : null,
+    [REQUESTS.to]: requestsBadge,
+  };
   const perms = usePermissions(teamId);
-  useApprovalNotices(teamId, perms.can, useMe(), !perms.isPending && perms.can("approval:read"));
-  useWaitingTitle(countOf(senders) + countOf(requests));
+  useApprovalNotices({
+    teamId,
+    can: perms.can,
+    me: useMe(),
+    pending: requests.items,
+    waiting: senders,
+  });
+  useWaitingTitle(titleCount(senders ?? 0, requests.n, requests.more));
   const [finding, setFinding] = useState(false);
   const find = useCallback(() => setFinding(true), []);
   useCommandKey(find);
@@ -485,9 +504,10 @@ function usePrincipal(): string {
   return p?.email ?? p?.subject ?? "…";
 }
 
-/** A badge's count as a number: "50+" counts as 50, no badge as none. */
-function countOf(badge: string | null): number {
-  return badge ? Number.parseInt(badge, 10) || 0 : 0;
+/** The title's count: senders and requests together, "+" when the requests ran past a page. */
+function titleCount(senders: number, requests: number, more: boolean): string | null {
+  const n = senders + requests;
+  return n === 0 ? null : `${n}${more ? "+" : ""}`;
 }
 
 /** The menu's notifications item: on, off, or why it cannot be. */

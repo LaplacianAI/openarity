@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ToolApproval } from "@/api/types";
-import { answerable, fresh, requestNotice, sendersNotice } from "@/lib/notify";
+import { answerable, fresh, requestNotice, requestsNotice, sendersNotice } from "@/lib/notify";
 
 function request(id: string, extra: Partial<ToolApproval> = {}): ToolApproval {
   return {
@@ -77,7 +77,7 @@ describe("what a notification says", () => {
   it("names the tool and its server, and the request's summary", () => {
     expect(requestNotice(request("a"))).toEqual({
       title: "An agent asks before create_issue on github",
-      body: "title: a",
+      body: "Open Tool approvals to answer.",
     });
   });
 
@@ -87,10 +87,16 @@ describe("what a notification says", () => {
     );
   });
 
-  it("cuts a long summary", () => {
-    const body = requestNotice(request("a", { summary: "x".repeat(300) })).body;
-    expect(body).toHaveLength(140);
-    expect(body.endsWith("…")).toBe(true);
+  it("never carries the summary, which is drawn from the call's arguments", () => {
+    const n = requestNotice(request("a", { summary: "token: s3cr3t" }));
+    expect(`${n.title} ${n.body}`).not.toContain("s3cr3t");
+  });
+
+  it("tells of a burst as one", () => {
+    expect(requestsNotice(4)).toEqual({
+      title: "Agents ask before acting",
+      body: "4 new requests wait for your answer.",
+    });
   });
 
   it("counts the people waiting to be let in", () => {
