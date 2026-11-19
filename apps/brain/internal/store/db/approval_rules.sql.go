@@ -96,3 +96,37 @@ func (q *Queries) ListApprovalRules(ctx context.Context, teamID uuid.UUID) ([]Ap
 	}
 	return items, nil
 }
+
+const updateApprovalRule = `-- name: UpdateApprovalRule :one
+UPDATE approval_rules SET mode = $1, require_other = $2
+WHERE id = $3 AND team_id = $4
+RETURNING id, team_id, target_kind, target, mode, require_other, created_at
+`
+
+type UpdateApprovalRuleParams struct {
+	Mode         string
+	RequireOther bool
+	ID           uuid.UUID
+	TeamID       uuid.UUID
+}
+
+// A rule a blueprint made stricter, in place.
+func (q *Queries) UpdateApprovalRule(ctx context.Context, arg UpdateApprovalRuleParams) (ApprovalRule, error) {
+	row := q.db.QueryRow(ctx, updateApprovalRule,
+		arg.Mode,
+		arg.RequireOther,
+		arg.ID,
+		arg.TeamID,
+	)
+	var i ApprovalRule
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.TargetKind,
+		&i.Target,
+		&i.Mode,
+		&i.RequireOther,
+		&i.CreatedAt,
+	)
+	return i, err
+}

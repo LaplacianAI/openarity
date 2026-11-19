@@ -292,3 +292,68 @@ func wantEnded(t *testing.T, s *Store, f runFixture, a db.Approval, asker uuid.U
 		t.Errorf("the asking run's events %v hold no approval_decided", events)
 	}
 }
+
+// A request reaches no further than its run: a direct conversation's are
+// its person's and a moderator's; a group's are the team's. Status and run
+// filters narrow, and the page goes newest first, after its cursor.
+func TestARequestIsSeenWhereItsRunIs(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newRunFixture(t, s, "visible")
+	sam, ana := insertUser(t, s, "dev", "sam"), insertUser(t, s, "dev", "ana")
+	var direct uuid.UUID
+	if err := s.pool.QueryRow(t.Context(),
+		`INSERT INTO sessions (team_id, kind, user_id) VALUES ($1, 'direct', $2) RETURNING id`, f.team, sam).Scan(&direct); err != nil {
+		t.Fatal(err)
+	}
+	groupRun := mustInsertRun(t, s, inState(f.root(), "running"))
+	samsRun := f.root()
+	samsRun.session = direct
+	samsRun = inState(samsRun, "running")
+	mustInsertRun(t, s, samsRun)
+
+	open := mustAsk(t, s, asking(f, groupRun, groupRun, "c1", "GRPA"))
+	answered := approve(t, s, mustAsk(t, s, asking(f, groupRun, groupRun, "c2", "GRPB")))
+	private := mustAsk(t, s, asking(f, samsRun.id, samsRun.id, "c1", "SAMA"))
+
+	list := func(viewer uuid.UUID, moderator bool, statuses []string, root *uuid.UUID) []uuid.UUID {
+		t.Helper()
+		rows, err := s.ListVisibleApprovals(t.Context(), db.ListVisibleApprovalsParams{
+			TeamID: f.team, Viewer: viewer, Moderator: moderator, Statuses: statuses, RootRunID: root, PageSize: 10,
+		})
+		if err != nil {
+			t.Fatalf("ListVisibleApprovals: %v", err)
+		}
+		ids := make([]uuid.UUID, len(rows))
+		for i, r := range rows {
+			ids[i] = r.ID
+		}
+		return ids
+	}
+	if got := list(ana, false, nil, nil); !slices.Equal(got, []uuid.UUID{answered.ID, open.ID}) {
+		t.Errorf("ana sees %v, want the group's two, newest first", got)
+	}
+	if got := list(sam, false, nil, nil); len(got) != 3 {
+		t.Errorf("sam sees %d, want the group's and their own", len(got))
+	}
+	if got := list(ana, true, nil, nil); len(got) != 3 {
+		t.Errorf("a moderator sees %d, want all three", len(got))
+	}
+	if got := list(ana, false, []string{"pending"}, nil); !slices.Equal(got, []uuid.UUID{open.ID}) {
+		t.Errorf("pending = %v", got)
+	}
+	if got := list(sam, false, nil, &samsRun.id); !slices.Equal(got, []uuid.UUID{private.ID}) {
+		t.Errorf("under sam's run = %v", got)
+	}
+
+	for viewer, want := range map[uuid.UUID]error{sam: nil, ana: pgx.ErrNoRows} {
+		_, err := s.GetVisibleApproval(t.Context(), db.GetVisibleApprovalParams{ID: private.ID, TeamID: f.team, Viewer: viewer})
+		if !errors.Is(err, want) && (want != nil || err != nil) {
+			t.Errorf("GetVisibleApproval as %s: %v, want %v", viewer, err, want)
+		}
+	}
+	if _, err := s.GetVisibleApproval(t.Context(), db.GetVisibleApprovalParams{ID: open.ID, TeamID: uuid.New(), Viewer: ana}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("another team's id: %v, want no row", err)
+	}
+}

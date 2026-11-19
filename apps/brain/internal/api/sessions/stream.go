@@ -173,8 +173,39 @@ func eventOf(row db.ListSessionEventsRow) (stream.Event, error) {
 		return e, nil
 	case "consumed":
 		return decode[stream.MessageConsumed](row.Payload)
+	case "approval_requested":
+		var p struct {
+			stream.ApprovalRequested
+			CallID string `json:"call_id"`
+		}
+		if err := json.Unmarshal(row.Payload, &p); err != nil {
+			return nil, err
+		}
+		p.ToolCallID = p.CallID
+		return p.ApprovalRequested, nil
+	case "approval_decided":
+		var p struct {
+			stream.ApprovalDecided
+			By    *string `json:"by"`
+			Via   *string `json:"via"`
+			Scope *string `json:"scope"`
+		}
+		if err := json.Unmarshal(row.Payload, &p); err != nil {
+			return nil, err
+		}
+		p.ApprovalDecided.By, p.ApprovalDecided.Via, p.ApprovalDecided.Scope = orEmpty(p.By), orEmpty(p.Via), orEmpty(p.Scope)
+		return p.ApprovalDecided, nil
+	case "waiting":
+		return decode[stream.RunWaiting](row.Payload)
 	}
 	return stream.Custom{Name: row.Kind, Value: row.Payload}, nil
+}
+
+func orEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // messageID names the model call a piece of writing came from. A row recorded

@@ -53,6 +53,8 @@ tags:
     description: Finding a user's id
   - name: settings
     description: A team's model, web search, learning and compaction
+  - name: approvals
+    description: What agents ask a person before acting, and when they ask
 
 security:
   - bearerAuth: []
@@ -1410,6 +1412,9 @@ paths:
         `text_message_chunk` and thinking as `reasoning_message_chunk`, each
         named by the model call it came from in `message_id`, and
         `run_finished` carries the whole answer.
+        A run that asks a person before a call says so in
+        `approval_requested`, waits in `run_waiting` with what it told them,
+        and hears the answer in `approval_decided`.
         Events the catalog has no kind for are `custom`, named by the kind
         the run recorded. The stream does not end: it follows the
         conversation until the client leaves, with a `: keep-alive` comment
@@ -2824,6 +2829,272 @@ paths:
                 type: string
                 examples: ["the secret store is unavailable"]
 
+  /teams/{id}/approvals:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listApprovals
+      tags: [approvals]
+      summary: List what a team's agents asked a person
+      description: |
+        Requires `approval:read` in this team. Newest first. A request shows
+        only to someone who may read its run: a direct conversation's are
+        its person's, and those of anyone who holds `session:read_all`.
+        Its summary and arguments quote the call, so they reach no further
+        than the run does.
+
+        A value outside a filter's set is a 400. A cursor is only meaningful
+        with the filters it was issued under.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          description: Only requests in one of these states. Repeat it for more than one.
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/ApprovalStatus"
+        - name: run
+          in: query
+          description: Only requests asked under this top-level run, by any agent in its tree.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: A page of requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/approvals/{approvalID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ApprovalID"
+    get:
+      operationId: getApproval
+      tags: [approvals]
+      summary: Read one request
+      description: |
+        Requires `approval:read` in this team, and that the caller may read
+        the request's run.
+      responses:
+        "200":
+          description: The request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/approvals/{approvalID}/decision:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ApprovalID"
+    post:
+      operationId: decideApproval
+      tags: [approvals]
+      summary: Answer a request
+      description: |
+        Requires `approval:self` in this team, and that the caller may read
+        the request's run. Who may answer is decided from the caller's role
+        as it stands now: anyone who holds `approval:decide`, or the person
+        the request was made for, unless a rule wants someone else to answer
+        it (`require_other`).
+
+        A yes with `scope: run` approves this tool, any arguments, for the
+        rest of the run. A no is for this call only. Once nothing in the
+        run's tree waits, the run is queued again: an approved call is made
+        then, by the brain, with exactly the arguments that were approved,
+        and the agent is told the answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecision"
+      responses:
+        "200":
+          description: Answered, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: The caller may not answer this request; nothing changed.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["you may not answer this request"]
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Already answered, or answered after it expired: the request as it
+            now stands. An expired request is marked so here, and its run
+            carries on to say nobody answered in time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+
+  /teams/{id}/approval-settings:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getApprovalSettings
+      tags: [approvals]
+      summary: Read when a team's agents ask a person
+      description: |
+        Any member may read them. A team made before approvals that never
+        chose reads `off`; a team made since starts at `writes`.
+      responses:
+        "200":
+          description: The settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: saveApprovalSettings
+      tags: [approvals]
+      summary: Change when a team's agents ask a person
+      description: Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalSettings"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/approval-rules:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listApprovalRules
+      tags: [approvals]
+      summary: List a team's standing answers
+      description: |
+        Any member may read them. A rule names one tool
+        (`<server>__<tool>`, or a built-in's own name) or every tool of a
+        server, and answers for it whatever the team's mode: the most
+        specific rule wins.
+      responses:
+        "200":
+          description: Every rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRulePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createApprovalRule
+      tags: [approvals]
+      summary: Add a standing answer
+      description: Requires `team:settings` in this team. A target has one rule; remove it to change it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalRuleRequest"
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: That target already has a rule.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["that target already has a rule; remove it first"]
+
+  /teams/{id}/approval-rules/{ruleID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: ruleID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: deleteApprovalRule
+      tags: [approvals]
+      summary: Remove a standing answer
+      description: Requires `team:settings` in this team. The team's mode decides for the target again.
+      responses:
+        "204":
+          description: Removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/mcp-servers:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -3113,6 +3384,45 @@ paths:
               schema:
                 type: string
                 examples: ["the server did not answer in time"]
+
+  /teams/{id}/mcp-servers/{serverID}/trust-hints:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ServerID"
+    put:
+      operationId: setMCPServerTrustHints
+      tags: [mcp-servers]
+      summary: Believe, or stop believing, a server's hints about its tools
+      description: |
+        Requires `team:settings` in this team, not `tool:write`: a server
+        that says its tools only read is believed when a call is classed for
+        approval, which can let its tools past every approval. Nothing else
+        about the server changes, and it is not discovered again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trust]
+              properties:
+                trust:
+                  type: boolean
+      responses:
+        "200":
+          description: Saved, the server as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPServer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /teams/{id}/mcp-servers/{serverID}/oauth:
     parameters:
@@ -3491,6 +3801,14 @@ components:
       in: path
       required: true
       description: The MCP server
+      schema:
+        type: string
+        format: uuid
+    ApprovalID:
+      name: approvalID
+      in: path
+      required: true
+      description: The request
       schema:
         type: string
         format: uuid
@@ -4927,6 +5245,76 @@ components:
           type: string
         error:
           type: string
+    SessionEventApprovalRequested:
+      type: object
+      description: |
+        The data of an `approval_requested` frame on a session's stream. A run asking a person before a call: the call is not made, and the run says why in its own words and waits.
+      required: [approval_id, tool_call_id, tool, class, summary, code, expires_at]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        approval_id:
+          type: string
+        tool_call_id:
+          type: string
+        tool:
+          type: string
+        class:
+          type: string
+          enum: [read, write, destructive]
+        summary:
+          type: string
+        code:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    SessionEventApprovalDecided:
+      type: object
+      description: |
+        The data of an `approval_decided` frame on a session's stream. A request answered by a person, expired with nobody answering, or cancelled: with its run, or because the person wrote again instead (`superseded`).
+      required: [approval_id, decision]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        approval_id:
+          type: string
+        decision:
+          type: string
+          enum: [approved, denied, expired, cancelled]
+        by:
+          type: string
+        via:
+          type: string
+        scope:
+          type: string
+          enum: [once, run]
+        superseded:
+          type: boolean
+    SessionEventRunWaiting:
+      type: object
+      description: |
+        The data of a `run_waiting` frame on a session's stream. A run that stopped for a person's answer rather than finishing; `said` is what it told them, in its own words.
+      required: [reason]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        said:
+          type: string
     SessionEventCustom:
       type: object
       description: |
@@ -5246,6 +5634,9 @@ components:
         bare:
           type: boolean
           description: Tools reach the model as `<tool>` rather than `<name>__<tool>`
+        trust_hints:
+          type: boolean
+          description: Whether the server's own read-only and destructive hints are believed when a call is classed for approval. Set with the trust-hints route.
         discovered_at:
           type: string
           format: date-time
@@ -5762,6 +6153,46 @@ components:
           maxItems: 50
           items:
             $ref: "#/components/schemas/BlueprintAgent"
+        approvals:
+          $ref: "#/components/schemas/BlueprintApprovals"
+
+    BlueprintApprovals:
+      type: object
+      additionalProperties: false
+      description: |
+        Standing answers for the team's tools. A blueprint can only make a
+        team stricter: a rule asks or denies, never allows, and a rule the
+        team holds may be made stricter (allow to ask to deny, or someone
+        else to answer) but never looser. A rule the blueprint does not name
+        is left as it is. Applying one needs `team:settings`. An export
+        carries the rules that ask or deny.
+      properties:
+        rules:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/BlueprintApprovalRule"
+
+    BlueprintApprovalRule:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      description: Exactly one of `tool` and `server`.
+      properties:
+        tool:
+          type: string
+          maxLength: 200
+          description: "`<server>__<tool>`, or a built-in's own name."
+        server:
+          type: string
+          maxLength: 200
+          description: Every tool of this MCP server.
+        mode:
+          type: string
+          enum: [ask, deny]
+        require_other:
+          type: boolean
+          description: The person a call is for may not approve it themselves.
 
     BlueprintMCPServer:
       type: object
@@ -5910,7 +6341,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [mcp_server, skill, agent]
+          enum: [mcp_server, skill, agent, approval_rule]
         name:
           type: string
         action:
@@ -5932,7 +6363,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [mcp_server, skill, agent]
+          enum: [mcp_server, skill, agent, approval_rule]
         name:
           type: string
           description: The item's name, or "#n" for a skill whose files name none
@@ -6299,12 +6730,212 @@ components:
             start a conversation with it at `POST /teams/{id}/sessions` with
             `builder`.
 
+    ApprovalStatus:
+      type: string
+      enum: [pending, approved, denied, expired, cancelled]
+      description: |
+        Where a request stands. `pending` waits for a person; `expired` is
+        one nobody answered in time; `cancelled` ended with its run, or was
+        given up by its person writing again instead of answering.
+
+    Approval:
+      type: object
+      description: One call an agent asked a person about before making it.
+      required:
+        - id
+        - run_id
+        - root_run_id
+        - call_id
+        - tool
+        - class
+        - arguments
+        - summary
+        - code
+        - status
+        - requested_for
+        - require_other
+        - decided_by
+        - decided_via
+        - scope
+        - reason
+        - expires_at
+        - decided_at
+        - used_at
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+          description: The run that asked, which may be a delegate's.
+        root_run_id:
+          type: string
+          format: uuid
+          description: The top-level run its tree waits under.
+        call_id:
+          type: string
+        tool:
+          type: string
+          description: "`<server>__<tool>`, or a built-in's own name."
+        class:
+          type: string
+          enum: [read, write, destructive]
+        arguments:
+          type: object
+          additionalProperties: true
+          description: The call's arguments, exactly as they will be made if approved.
+        summary:
+          type: string
+          description: The arguments as a person reads them, a few fields long.
+        code:
+          type: string
+          description: Four characters a person can type back into a chat to name this request.
+        status:
+          $ref: "#/components/schemas/ApprovalStatus"
+        requested_for:
+          type: string
+          format: uuid
+          nullable: true
+          description: The person the run works for, who may approve their own when their role allows.
+        require_other:
+          type: boolean
+          description: A rule wants someone other than `requested_for` to answer.
+        decided_by:
+          type: string
+          format: uuid
+          nullable: true
+        decided_via:
+          type: string
+          nullable: true
+          description: dashboard, channel, cli, or sweep when the brain answered.
+        scope:
+          type: string
+          nullable: true
+          enum: [once, run, null]
+        reason:
+          type: string
+          nullable: true
+          description: What the person said with their answer.
+        expires_at:
+          type: string
+          format: date-time
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When an approved call was made.
+        created_at:
+          type: string
+          format: date-time
+
+    ApprovalPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Approval"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ApprovalDecision:
+      type: object
+      required: [approve]
+      properties:
+        approve:
+          type: boolean
+        scope:
+          type: string
+          enum: [once, run]
+          description: Absent is once. Only a yes may be for the rest of the run.
+        reason:
+          type: string
+          description: Told to the agent with the answer; at most 1,000 characters are kept.
+        via:
+          type: string
+          enum: [dashboard, cli]
+          description: Where the person answered. Absent is dashboard. A record, never a permission.
+
+    ApprovalSettings:
+      type: object
+      required: [mode, ttl_minutes]
+      properties:
+        mode:
+          type: string
+          enum: ["off", writes, destructive, all]
+          description: |
+            Which calls ask: none, every call that is not a read, only those
+            that destroy, or every call. A guest's calls, and those of a run
+            nobody is present for, are held to more.
+        ttl_minutes:
+          type: integer
+          format: int32
+          minimum: 5
+          maximum: 1440
+          description: How long a request waits before it expires.
+
+    ApprovalRule:
+      type: object
+      required: [id, target_kind, target, mode, require_other, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        target_kind:
+          type: string
+          enum: [tool, server]
+        target:
+          type: string
+        mode:
+          type: string
+          enum: [allow, ask, deny]
+        require_other:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    ApprovalRuleRequest:
+      type: object
+      required: [target_kind, target, mode]
+      properties:
+        target_kind:
+          type: string
+          enum: [tool, server]
+        target:
+          type: string
+          minLength: 1
+          maxLength: 200
+        mode:
+          type: string
+          enum: [allow, ask, deny]
+        require_other:
+          type: boolean
+
+    ApprovalRulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalRule"
+
     RunStatus:
       type: string
-      enum: [queued, running, succeeded, failed, cancelled]
+      enum: [queued, running, waiting, succeeded, failed, cancelled]
       description: |
-        Where a run stands. `queued` and `running` are live; the other three
-        are final.
+        Where a run stands. `queued` and `running` are live; `waiting` is a
+        run that stopped for a person's answer, holding nothing, and carries
+        on when it is answered; the other three are final.
 
     Run:
       type: object

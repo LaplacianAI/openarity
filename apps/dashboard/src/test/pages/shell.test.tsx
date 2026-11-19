@@ -65,7 +65,7 @@ describe("the navigation on a wide screen", () => {
           .map((a) => a.textContent),
       ]);
     expect(groups).toEqual([
-      ["Work", ["Home", "Runs", "Sessions", "Approvals"]],
+      ["Work", ["Home", "Runs", "Sessions", "Approvals", "Requests"]],
       ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint"]],
       ["Understand", ["Graph"]],
       ["Team", ["Team settings", "Teams"]],

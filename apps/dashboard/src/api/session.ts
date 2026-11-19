@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 
 import { onSessionExpired } from "./client";
-import { fetchAuthConfig, listTeams } from "./index";
+import { fetchAuthConfig, fetchWhoami, listTeams } from "./index";
 import { refreshSession } from "./oidc";
 import { getSession, getToken, setSession, subscribeToken } from "./token";
 
@@ -118,4 +118,11 @@ export function useCurrentTeam() {
   }, []);
 
   return { teamId: known, teams: items, isPending: teams.isPending, choose };
+}
+
+/** The signed-in user's id, from /whoami, which the shell reads already. */
+export function useMe(): string | null {
+  const whoami = useQuery({ queryKey: ["whoami"], queryFn: ({ signal }) => fetchWhoami(signal) });
+  const id = (whoami.data as { id?: unknown } | undefined)?.id;
+  return typeof id === "string" ? id : null;
 }

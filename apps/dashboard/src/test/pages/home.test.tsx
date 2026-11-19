@@ -150,7 +150,7 @@ describe("what Home says first", () => {
     home(quiet);
     const day = await screen.findByRole("region", { name: "Runs in the last 24 hours" });
     const items = within(day).getAllByRole("listitem");
-    expect(items).toHaveLength(5);
+    expect(items).toHaveLength(6);
     for (const item of items) expect(within(item).getByRole("link")).toBeInTheDocument();
     expect(day.querySelector("dt, dd")).toBeNull();
   });

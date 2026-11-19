@@ -10,3 +10,9 @@ SELECT * FROM approval_rules WHERE team_id = $1 ORDER BY target_kind, lower(targ
 
 -- name: DeleteApprovalRule :execrows
 DELETE FROM approval_rules WHERE id = $1 AND team_id = $2;
+
+-- A rule a blueprint made stricter, in place.
+-- name: UpdateApprovalRule :one
+UPDATE approval_rules SET mode = sqlc.arg('mode'), require_other = sqlc.arg('require_other')
+WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
+RETURNING *;

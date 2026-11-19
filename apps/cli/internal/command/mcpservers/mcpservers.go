@@ -16,7 +16,10 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 )
 
-const writePermission = "tool:write"
+const (
+	writePermission    = "tool:write"
+	settingsPermission = "team:settings"
+)
 
 func New(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
@@ -46,6 +49,7 @@ func New(opts *cli.Options) *cobra.Command {
 		newConnectCmd(opts),
 		newDisconnectCmd(opts),
 		newSecretCmd(opts),
+		newTrustHintsCmd(opts),
 	)
 	return cmd
 }
@@ -515,6 +519,9 @@ func printServer(opts *cli.Options, s *client.MCPServer, did string) error {
 				}
 			}
 			table.Row("discovered", discovered(*s), "")
+			if s.TrustHints != nil && *s.TrustHints {
+				table.Row("trust hints", opts.Styles.Warn.Render("on"), "")
+			}
 			if s.LastDiscoveryError != nil && s.LastDiscoveryAt != nil {
 				table.Row("failed", cli.Safe(*s.LastDiscoveryError), s.LastDiscoveryAt.UTC().Format("2006-01-02 15:04"))
 			}

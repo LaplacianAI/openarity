@@ -255,3 +255,95 @@ describe("worked", () => {
     expect(worked(c, c.runs.r1 as never, 0).ms).toBeNull();
   });
 });
+
+const asked = (run: string, id = "a1"): SessionEvent => ({
+  kind: "approval_requested",
+  data: {
+    at,
+    run_id: run,
+    approval_id: id,
+    tool_call_id: "c1",
+    tool: "github__create_issue",
+    class: "write",
+    summary: "title: Bug",
+    code: "K7QX",
+    expires_at: "2026-11-13T11:00:00Z",
+  },
+});
+const waits = (run: string, said = "I want to open an issue."): SessionEvent => ({
+  kind: "run_waiting",
+  data: { at, run_id: run, reason: "approval", said },
+});
+const decided = (
+  id: string,
+  decision: "approved" | "denied" | "expired" | "cancelled",
+  extra: Record<string, unknown> = {},
+): SessionEvent =>
+  ({
+    kind: "approval_decided",
+    data: { at, run_id: "r1", approval_id: id, decision, ...extra },
+  }) as SessionEvent;
+
+describe("fold: approvals", () => {
+  it("shows a request the run made, and the run waiting with its own words", () => {
+    const c = all(frames(started("r1"), step("r1", 1), asked("r1"), waits("r1")));
+    expect(c.requests.a1).toMatchObject({
+      tool: "github__create_issue",
+      class: "write",
+      code: "K7QX",
+      status: "pending",
+      superseded: false,
+    });
+    expect(c.runs.r1).toMatchObject({
+      status: "waiting",
+      requests: ["a1"],
+      waiting: { reason: "approval", said: "I want to open an issue." },
+    });
+  });
+
+  it("settles a request when it is answered, saying who and where", () => {
+    const c = all(
+      frames(
+        started("r1"),
+        asked("r1"),
+        waits("r1"),
+        decided("a1", "approved", { by: "u2", via: "dashboard", scope: "run" }),
+      ),
+    );
+    expect(c.requests.a1).toMatchObject({
+      status: "approved",
+      by: "u2",
+      via: "dashboard",
+      scope: "run",
+    });
+  });
+
+  it("marks a request set aside because the person wrote again", () => {
+    const c = all(
+      frames(started("r1"), asked("r1"), decided("a1", "cancelled", { superseded: true })),
+    );
+    expect(c.requests.a1).toMatchObject({ status: "cancelled", superseded: true });
+  });
+
+  it("ignores an answer to a request it never saw", () => {
+    const c = all(frames(started("r1"), decided("nope", "approved")));
+    expect(c.requests).toEqual({});
+  });
+
+  it("does not show a request twice when a frame is read again", () => {
+    const envs = frames(started("r1"), asked("r1"), waits("r1"));
+    const once = all(envs);
+    expect(all(envs, once)).toBe(once);
+    expect(all(frames(asked("r1")), once).runs.r1?.requests).toEqual(["a1"]);
+  });
+
+  it("runs again once its next step starts, and the wait is over", () => {
+    const c = all(frames(started("r1"), asked("r1"), waits("r1"), step("r1", 2)));
+    expect(c.runs.r1).toMatchObject({ status: "running", waiting: null });
+  });
+
+  it("ends a waiting run that is cancelled", () => {
+    const c = all(frames(started("r1"), waits("r1"), finished("r1", "", "cancelled" as never)));
+    expect(c.runs.r1).toMatchObject({ status: "cancelled", waiting: null });
+  });
+});

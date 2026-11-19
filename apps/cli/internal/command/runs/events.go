@@ -68,6 +68,19 @@ type payload struct {
 	After   int    `json:"after"`
 	Left    int64  `json:"left"`
 	Summary string `json:"summary"`
+
+	// An approval's request, its answer, and the wait that follows.
+	ApprovalID string `json:"approval_id"`
+	Tool       string `json:"tool"`
+	Class      string `json:"class"`
+	Code       string `json:"code"`
+	ExpiresAt  string `json:"expires_at"`
+	Decision   string `json:"decision"`
+	By         string `json:"by"`
+	Via        string `json:"via"`
+	Scope      string `json:"scope"`
+	Superseded bool   `json:"superseded"`
+	Said       string `json:"said"`
 }
 
 // planEntry is one step of the hub's plan, as its plan event carries it.
@@ -175,7 +188,7 @@ func followRun(ctx context.Context, opts *cli.Options, team, run uuid.UUID, team
 func finish(ctx context.Context, shown *transcript, api *client.ClientWithResponses,
 	team, run uuid.UUID, teamRef, status, failure string,
 ) error {
-	if client.RunStatus(status) != client.Succeeded {
+	if client.RunStatus(status) != client.RunStatusSucceeded {
 		return shown.finish(status, failure, nil, "")
 	}
 	got, err := cli.Result(api.GetRunWithResponse(ctx, team, run))
@@ -202,17 +215,20 @@ func resume(teamRef string, run uuid.UUID, last string) string {
 // follows a run is waiting to know whether it worked.
 func ended(status, failure, teamRef string, run uuid.UUID) error {
 	switch client.RunStatus(status) {
-	case client.Succeeded:
+	case client.RunStatusSucceeded:
 		return nil
-	case client.Failed:
+	case client.RunStatusFailed:
 		if failure != "" {
 			return fmt.Errorf("the run failed: %s", cli.Safe(clip(failure)))
 		}
 		return fmt.Errorf("the run failed — `oa runs get %s %s` says why", teamRef, run)
-	case client.Cancelled:
+	case client.RunStatusCancelled:
 		return errors.New("the run was cancelled")
-	case client.Queued, client.Running:
+	case client.RunStatusQueued, client.RunStatusRunning:
 		return fmt.Errorf("the stream ended with the run still %s", status)
+	case client.RunStatusWaiting:
+		return fmt.Errorf("the run is waiting for a person to answer — `oa approvals list %s --run %s` shows what",
+			teamRef, run)
 	default:
 		return fmt.Errorf("the run ended with a status this oa does not know: %s", cli.Safe(status))
 	}

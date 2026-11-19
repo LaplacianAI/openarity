@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var RunStatuses = []string{"queued", "running", "succeeded", "failed", "cancelled"}
+var RunStatuses = []string{"queued", "running", "waiting", "succeeded", "failed", "cancelled"}
 
 var SessionStatuses = []string{"open", "closed"}
 

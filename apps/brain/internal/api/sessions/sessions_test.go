@@ -1350,7 +1350,7 @@ func TestABadSessionFilterIsRefused(t *testing.T) {
 
 	for name, tc := range map[string]struct{ query, says string }{
 		"an unknown status":            {"?status=archived", "status must be one of open, closed"},
-		"an unknown run status":        {"?run_status=done", "run_status must be one of queued, running, succeeded, failed, cancelled"},
+		"an unknown run status":        {"?run_status=done", "run_status must be one of queued, running, waiting, succeeded, failed, cancelled"},
 		"a channel that is not a uuid": {"?channel_id=support", "channel_id must be a uuid"},
 	} {
 		f := newFixture(t)

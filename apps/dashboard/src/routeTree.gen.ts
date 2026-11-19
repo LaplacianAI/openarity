@@ -19,6 +19,7 @@ import { Route as UiBuildRouteImport } from './routes/ui.build'
 import { Route as UiCallbackRouteImport } from './routes/ui.callback'
 import { Route as UiComposeRouteImport } from './routes/ui.compose'
 import { Route as UiGraphRouteImport } from './routes/ui.graph'
+import { Route as UiRequestsRouteImport } from './routes/ui.requests'
 import { Route as UiSettingsRouteImport } from './routes/ui.settings'
 import { Route as UiAgentsIndexRouteImport } from './routes/ui.agents.index'
 import { Route as UiAgentsAgentIdRouteImport } from './routes/ui.agents.$agentId'
@@ -80,6 +81,11 @@ const UiComposeRoute = UiComposeRouteImport.update({
 const UiGraphRoute = UiGraphRouteImport.update({
   id: '/graph',
   path: '/graph',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiRequestsRoute = UiRequestsRouteImport.update({
+  id: '/requests',
+  path: '/requests',
   getParentRoute: () => UiRoute,
 } as any)
 const UiSettingsRoute = UiSettingsRouteImport.update({
@@ -153,6 +159,7 @@ export interface FileRoutesByFullPath {
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
   '/ui/graph': typeof UiGraphRoute
+  '/ui/requests': typeof UiRequestsRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
@@ -176,6 +183,7 @@ export interface FileRoutesByTo {
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
   '/ui/graph': typeof UiGraphRoute
+  '/ui/requests': typeof UiRequestsRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
@@ -201,6 +209,7 @@ export interface FileRoutesById {
   '/ui/callback': typeof UiCallbackRoute
   '/ui/compose': typeof UiComposeRoute
   '/ui/graph': typeof UiGraphRoute
+  '/ui/requests': typeof UiRequestsRoute
   '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | '/ui/callback'
     | '/ui/compose'
     | '/ui/graph'
+    | '/ui/requests'
     | '/ui/settings'
     | '/ui/'
     | '/ui/agents/$agentId'
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
     | '/ui/callback'
     | '/ui/compose'
     | '/ui/graph'
+    | '/ui/requests'
     | '/ui/settings'
     | '/ui'
     | '/ui/agents/$agentId'
@@ -274,6 +285,7 @@ export interface FileRouteTypes {
     | '/ui/callback'
     | '/ui/compose'
     | '/ui/graph'
+    | '/ui/requests'
     | '/ui/settings'
     | '/ui/'
     | '/ui/agents/$agentId'
@@ -364,6 +376,13 @@ declare module '@tanstack/react-router' {
       path: '/graph'
       fullPath: '/ui/graph'
       preLoaderRoute: typeof UiGraphRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/requests': {
+      id: '/ui/requests'
+      path: '/requests'
+      fullPath: '/ui/requests'
+      preLoaderRoute: typeof UiRequestsRouteImport
       parentRoute: typeof UiRoute
     }
     '/ui/settings': {
@@ -461,6 +480,7 @@ interface UiRouteChildren {
   UiCallbackRoute: typeof UiCallbackRoute
   UiComposeRoute: typeof UiComposeRoute
   UiGraphRoute: typeof UiGraphRoute
+  UiRequestsRoute: typeof UiRequestsRoute
   UiSettingsRoute: typeof UiSettingsRoute
   UiIndexRoute: typeof UiIndexRoute
   UiAgentsAgentIdRoute: typeof UiAgentsAgentIdRoute
@@ -484,6 +504,7 @@ const UiRouteChildren: UiRouteChildren = {
   UiCallbackRoute: UiCallbackRoute,
   UiComposeRoute: UiComposeRoute,
   UiGraphRoute: UiGraphRoute,
+  UiRequestsRoute: UiRequestsRoute,
   UiSettingsRoute: UiSettingsRoute,
   UiIndexRoute: UiIndexRoute,
   UiAgentsAgentIdRoute: UiAgentsAgentIdRoute,

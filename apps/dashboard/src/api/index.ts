@@ -12,6 +12,11 @@ import type {
   Agent,
   AgentRequest,
   Approval,
+  ApprovalDecision,
+  ApprovalRule,
+  ApprovalRuleRequest,
+  ApprovalSettings,
+  ApprovalStatus,
   ApprovedSender,
   Attachment,
   AuthConfig,
@@ -54,6 +59,7 @@ import type {
   TeamSettings,
   TeamSettingsRequest,
   TeamSummary,
+  ToolApproval,
   UpdateChannelRequest,
   User,
 } from "./types";
@@ -400,6 +406,9 @@ const SESSION_KINDS = new Set([
   "tool_call_chunk",
   "tool_call_result",
   "run_finished",
+  "approval_requested",
+  "approval_decided",
+  "run_waiting",
 ]);
 
 /**
@@ -850,4 +859,88 @@ function planIn(err: ApiError): BlueprintPlan | null {
   } catch {
     return null;
   }
+}
+
+/* ---------------------------------------------------------- tool approvals */
+
+/** Newest first. Needs approval:read; a request shows only where its run does. */
+export function listToolApprovals(
+  teamId: string,
+  filter: { status?: ApprovalStatus[]; run?: string } = {},
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<Page<ToolApproval>> {
+  const params = new URLSearchParams();
+  for (const s of filter.status ?? []) params.append("status", s);
+  if (filter.run) params.set("run", filter.run);
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return request<Page<ToolApproval>>(
+    `/teams/${teamId}/approvals${query ? `?${query}` : ""}`,
+    signal ? { signal } : {},
+  );
+}
+
+export function getToolApproval(
+  teamId: string,
+  approvalId: string,
+  signal?: AbortSignal,
+): Promise<ToolApproval> {
+  return request<ToolApproval>(
+    `/teams/${teamId}/approvals/${approvalId}`,
+    signal ? { signal } : {},
+  );
+}
+
+/** A 409 carries the request as it now stands, as JSON in the error's message. */
+export function decideToolApproval(
+  teamId: string,
+  approvalId: string,
+  decision: ApprovalDecision,
+): Promise<ToolApproval> {
+  return request<ToolApproval>(`/teams/${teamId}/approvals/${approvalId}/decision`, {
+    method: "POST",
+    body: decision,
+  });
+}
+
+export function getApprovalSettings(teamId: string): Promise<ApprovalSettings> {
+  return request<ApprovalSettings>(`/teams/${teamId}/approval-settings`);
+}
+
+export function saveApprovalSettings(
+  teamId: string,
+  settings: ApprovalSettings,
+): Promise<ApprovalSettings> {
+  return request<ApprovalSettings>(`/teams/${teamId}/approval-settings`, {
+    method: "PUT",
+    body: settings,
+  });
+}
+
+export function listApprovalRules(teamId: string): Promise<{ items: ApprovalRule[] }> {
+  return request<{ items: ApprovalRule[] }>(`/teams/${teamId}/approval-rules`);
+}
+
+export function createApprovalRule(
+  teamId: string,
+  rule: ApprovalRuleRequest,
+): Promise<ApprovalRule> {
+  return request<ApprovalRule>(`/teams/${teamId}/approval-rules`, { method: "POST", body: rule });
+}
+
+export function deleteApprovalRule(teamId: string, ruleId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/approval-rules/${ruleId}`, { method: "DELETE" });
+}
+
+/** Whether the server's own read-only hints may let its tools past approvals. */
+export function setServerTrustHints(
+  teamId: string,
+  serverId: string,
+  trust: boolean,
+): Promise<MCPServer> {
+  return request<MCPServer>(`/teams/${teamId}/mcp-servers/${serverId}/trust-hints`, {
+    method: "PUT",
+    body: { trust },
+  });
 }

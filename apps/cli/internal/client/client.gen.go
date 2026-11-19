@@ -39,6 +39,213 @@ func (e AnswersIn) Valid() bool {
 	}
 }
 
+// Defines values for ApprovalClass.
+const (
+	ApprovalClassDestructive ApprovalClass = "destructive"
+	ApprovalClassRead        ApprovalClass = "read"
+	ApprovalClassWrite       ApprovalClass = "write"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalClass enum.
+func (e ApprovalClass) Valid() bool {
+	switch e {
+	case ApprovalClassDestructive:
+		return true
+	case ApprovalClassRead:
+		return true
+	case ApprovalClassWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalScope.
+const (
+	ApprovalScopeLessThanNil ApprovalScope = "<nil>"
+	ApprovalScopeOnce        ApprovalScope = "once"
+	ApprovalScopeRun         ApprovalScope = "run"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalScope enum.
+func (e ApprovalScope) Valid() bool {
+	switch e {
+	case ApprovalScopeLessThanNil:
+		return true
+	case ApprovalScopeOnce:
+		return true
+	case ApprovalScopeRun:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalDecisionScope.
+const (
+	ApprovalDecisionScopeOnce ApprovalDecisionScope = "once"
+	ApprovalDecisionScopeRun  ApprovalDecisionScope = "run"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalDecisionScope enum.
+func (e ApprovalDecisionScope) Valid() bool {
+	switch e {
+	case ApprovalDecisionScopeOnce:
+		return true
+	case ApprovalDecisionScopeRun:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalDecisionVia.
+const (
+	Cli       ApprovalDecisionVia = "cli"
+	Dashboard ApprovalDecisionVia = "dashboard"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalDecisionVia enum.
+func (e ApprovalDecisionVia) Valid() bool {
+	switch e {
+	case Cli:
+		return true
+	case Dashboard:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalRuleMode.
+const (
+	ApprovalRuleModeAllow ApprovalRuleMode = "allow"
+	ApprovalRuleModeAsk   ApprovalRuleMode = "ask"
+	ApprovalRuleModeDeny  ApprovalRuleMode = "deny"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalRuleMode enum.
+func (e ApprovalRuleMode) Valid() bool {
+	switch e {
+	case ApprovalRuleModeAllow:
+		return true
+	case ApprovalRuleModeAsk:
+		return true
+	case ApprovalRuleModeDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalRuleTargetKind.
+const (
+	ApprovalRuleTargetKindServer ApprovalRuleTargetKind = "server"
+	ApprovalRuleTargetKindTool   ApprovalRuleTargetKind = "tool"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalRuleTargetKind enum.
+func (e ApprovalRuleTargetKind) Valid() bool {
+	switch e {
+	case ApprovalRuleTargetKindServer:
+		return true
+	case ApprovalRuleTargetKindTool:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalRuleRequestMode.
+const (
+	ApprovalRuleRequestModeAllow ApprovalRuleRequestMode = "allow"
+	ApprovalRuleRequestModeAsk   ApprovalRuleRequestMode = "ask"
+	ApprovalRuleRequestModeDeny  ApprovalRuleRequestMode = "deny"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalRuleRequestMode enum.
+func (e ApprovalRuleRequestMode) Valid() bool {
+	switch e {
+	case ApprovalRuleRequestModeAllow:
+		return true
+	case ApprovalRuleRequestModeAsk:
+		return true
+	case ApprovalRuleRequestModeDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalRuleRequestTargetKind.
+const (
+	ApprovalRuleRequestTargetKindServer ApprovalRuleRequestTargetKind = "server"
+	ApprovalRuleRequestTargetKindTool   ApprovalRuleRequestTargetKind = "tool"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalRuleRequestTargetKind enum.
+func (e ApprovalRuleRequestTargetKind) Valid() bool {
+	switch e {
+	case ApprovalRuleRequestTargetKindServer:
+		return true
+	case ApprovalRuleRequestTargetKindTool:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalSettingsMode.
+const (
+	ApprovalSettingsModeAll         ApprovalSettingsMode = "all"
+	ApprovalSettingsModeDestructive ApprovalSettingsMode = "destructive"
+	ApprovalSettingsModeOff         ApprovalSettingsMode = "off"
+	ApprovalSettingsModeWrites      ApprovalSettingsMode = "writes"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalSettingsMode enum.
+func (e ApprovalSettingsMode) Valid() bool {
+	switch e {
+	case ApprovalSettingsModeAll:
+		return true
+	case ApprovalSettingsModeDestructive:
+		return true
+	case ApprovalSettingsModeOff:
+		return true
+	case ApprovalSettingsModeWrites:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApprovalStatus.
+const (
+	ApprovalStatusApproved  ApprovalStatus = "approved"
+	ApprovalStatusCancelled ApprovalStatus = "cancelled"
+	ApprovalStatusDenied    ApprovalStatus = "denied"
+	ApprovalStatusExpired   ApprovalStatus = "expired"
+	ApprovalStatusPending   ApprovalStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalStatus enum.
+func (e ApprovalStatus) Valid() bool {
+	switch e {
+	case ApprovalStatusApproved:
+		return true
+	case ApprovalStatusCancelled:
+		return true
+	case ApprovalStatusDenied:
+		return true
+	case ApprovalStatusExpired:
+		return true
+	case ApprovalStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuthConfigEnvironment.
 const (
 	Development AuthConfigEnvironment = "development"
@@ -57,6 +264,24 @@ func (e AuthConfigEnvironment) Valid() bool {
 	case Staging:
 		return true
 	case Test:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BlueprintApprovalRuleMode.
+const (
+	BlueprintApprovalRuleModeAsk  BlueprintApprovalRuleMode = "ask"
+	BlueprintApprovalRuleModeDeny BlueprintApprovalRuleMode = "deny"
+)
+
+// Valid indicates whether the value is a known member of the BlueprintApprovalRuleMode enum.
+func (e BlueprintApprovalRuleMode) Valid() bool {
+	switch e {
+	case BlueprintApprovalRuleModeAsk:
+		return true
+	case BlueprintApprovalRuleModeDeny:
 		return true
 	default:
 		return false
@@ -86,15 +311,18 @@ func (e BlueprintChangeAction) Valid() bool {
 
 // Defines values for BlueprintChangeKind.
 const (
-	BlueprintChangeKindAgent     BlueprintChangeKind = "agent"
-	BlueprintChangeKindMcpServer BlueprintChangeKind = "mcp_server"
-	BlueprintChangeKindSkill     BlueprintChangeKind = "skill"
+	BlueprintChangeKindAgent        BlueprintChangeKind = "agent"
+	BlueprintChangeKindApprovalRule BlueprintChangeKind = "approval_rule"
+	BlueprintChangeKindMcpServer    BlueprintChangeKind = "mcp_server"
+	BlueprintChangeKindSkill        BlueprintChangeKind = "skill"
 )
 
 // Valid indicates whether the value is a known member of the BlueprintChangeKind enum.
 func (e BlueprintChangeKind) Valid() bool {
 	switch e {
 	case BlueprintChangeKindAgent:
+		return true
+	case BlueprintChangeKindApprovalRule:
 		return true
 	case BlueprintChangeKindMcpServer:
 		return true
@@ -107,15 +335,18 @@ func (e BlueprintChangeKind) Valid() bool {
 
 // Defines values for BlueprintRefusalKind.
 const (
-	BlueprintRefusalKindAgent     BlueprintRefusalKind = "agent"
-	BlueprintRefusalKindMcpServer BlueprintRefusalKind = "mcp_server"
-	BlueprintRefusalKindSkill     BlueprintRefusalKind = "skill"
+	BlueprintRefusalKindAgent        BlueprintRefusalKind = "agent"
+	BlueprintRefusalKindApprovalRule BlueprintRefusalKind = "approval_rule"
+	BlueprintRefusalKindMcpServer    BlueprintRefusalKind = "mcp_server"
+	BlueprintRefusalKindSkill        BlueprintRefusalKind = "skill"
 )
 
 // Valid indicates whether the value is a known member of the BlueprintRefusalKind enum.
 func (e BlueprintRefusalKind) Valid() bool {
 	switch e {
 	case BlueprintRefusalKindAgent:
+		return true
+	case BlueprintRefusalKindApprovalRule:
 		return true
 	case BlueprintRefusalKindMcpServer:
 		return true
@@ -407,25 +638,28 @@ func (e ProposalState) Valid() bool {
 
 // Defines values for RunStatus.
 const (
-	Cancelled RunStatus = "cancelled"
-	Failed    RunStatus = "failed"
-	Queued    RunStatus = "queued"
-	Running   RunStatus = "running"
-	Succeeded RunStatus = "succeeded"
+	RunStatusCancelled RunStatus = "cancelled"
+	RunStatusFailed    RunStatus = "failed"
+	RunStatusQueued    RunStatus = "queued"
+	RunStatusRunning   RunStatus = "running"
+	RunStatusSucceeded RunStatus = "succeeded"
+	RunStatusWaiting   RunStatus = "waiting"
 )
 
 // Valid indicates whether the value is a known member of the RunStatus enum.
 func (e RunStatus) Valid() bool {
 	switch e {
-	case Cancelled:
+	case RunStatusCancelled:
 		return true
-	case Failed:
+	case RunStatusFailed:
 		return true
-	case Queued:
+	case RunStatusQueued:
 		return true
-	case Running:
+	case RunStatusRunning:
 		return true
-	case Succeeded:
+	case RunStatusSucceeded:
+		return true
+	case RunStatusWaiting:
 		return true
 	default:
 		return false
@@ -789,6 +1023,145 @@ type AgentSummary struct {
 // run, steers none, and queues and tells no stranger.
 type AnswersIn string
 
+// Approval One call an agent asked a person about before making it.
+type Approval struct {
+	// Arguments The call's arguments, exactly as they will be made if approved.
+	Arguments map[string]interface{} `json:"arguments" yaml:"arguments"`
+	CallID    string                 `json:"call_id" yaml:"call_id"`
+	Class     ApprovalClass          `json:"class" yaml:"class"`
+
+	// Code Four characters a person can type back into a chat to name this request.
+	Code      string             `json:"code" yaml:"code"`
+	CreatedAt time.Time          `json:"created_at" yaml:"created_at"`
+	DecidedAt time.Time          `json:"decided_at" yaml:"decided_at"`
+	DecidedBy openapi_types.UUID `json:"decided_by" yaml:"decided_by"`
+
+	// DecidedVia dashboard, channel, cli, or sweep when the brain answered.
+	DecidedVia string             `json:"decided_via" yaml:"decided_via"`
+	ExpiresAt  time.Time          `json:"expires_at" yaml:"expires_at"`
+	ID         openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Reason What the person said with their answer.
+	Reason string `json:"reason" yaml:"reason"`
+
+	// RequestedFor The person the run works for, who may approve their own when their role allows.
+	RequestedFor openapi_types.UUID `json:"requested_for" yaml:"requested_for"`
+
+	// RequireOther A rule wants someone other than `requested_for` to answer.
+	RequireOther bool `json:"require_other" yaml:"require_other"`
+
+	// RootRunID The top-level run its tree waits under.
+	RootRunID openapi_types.UUID `json:"root_run_id" yaml:"root_run_id"`
+
+	// RunID The run that asked, which may be a delegate's.
+	RunID openapi_types.UUID `json:"run_id" yaml:"run_id"`
+	Scope ApprovalScope      `json:"scope" yaml:"scope"`
+
+	// Status Where a request stands. `pending` waits for a person; `expired` is
+	// one nobody answered in time; `cancelled` ended with its run, or was
+	// given up by its person writing again instead of answering.
+	Status ApprovalStatus `json:"status" yaml:"status"`
+
+	// Summary The arguments as a person reads them, a few fields long.
+	Summary string `json:"summary" yaml:"summary"`
+
+	// Tool `<server>__<tool>`, or a built-in's own name.
+	Tool string `json:"tool" yaml:"tool"`
+
+	// UsedAt When an approved call was made.
+	UsedAt time.Time `json:"used_at" yaml:"used_at"`
+}
+
+// ApprovalClass defines model for Approval.Class.
+type ApprovalClass string
+
+// ApprovalScope defines model for Approval.Scope.
+type ApprovalScope string
+
+// ApprovalDecision defines model for ApprovalDecision.
+type ApprovalDecision struct {
+	Approve bool `json:"approve" yaml:"approve"`
+
+	// Reason Told to the agent with the answer; at most 1,000 characters are kept.
+	Reason *string `json:"reason,omitempty" yaml:"reason,omitempty"`
+
+	// Scope Absent is once. Only a yes may be for the rest of the run.
+	Scope *ApprovalDecisionScope `json:"scope,omitempty" yaml:"scope,omitempty"`
+
+	// Via Where the person answered. Absent is dashboard. A record, never a permission.
+	Via *ApprovalDecisionVia `json:"via,omitempty" yaml:"via,omitempty"`
+}
+
+// ApprovalDecisionScope Absent is once. Only a yes may be for the rest of the run.
+type ApprovalDecisionScope string
+
+// ApprovalDecisionVia Where the person answered. Absent is dashboard. A record, never a permission.
+type ApprovalDecisionVia string
+
+// ApprovalPage defines model for ApprovalPage.
+type ApprovalPage struct {
+	Items []Approval `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// ApprovalRule defines model for ApprovalRule.
+type ApprovalRule struct {
+	CreatedAt    time.Time              `json:"created_at" yaml:"created_at"`
+	ID           openapi_types.UUID     `json:"id" yaml:"id"`
+	Mode         ApprovalRuleMode       `json:"mode" yaml:"mode"`
+	RequireOther bool                   `json:"require_other" yaml:"require_other"`
+	Target       string                 `json:"target" yaml:"target"`
+	TargetKind   ApprovalRuleTargetKind `json:"target_kind" yaml:"target_kind"`
+}
+
+// ApprovalRuleMode defines model for ApprovalRule.Mode.
+type ApprovalRuleMode string
+
+// ApprovalRuleTargetKind defines model for ApprovalRule.TargetKind.
+type ApprovalRuleTargetKind string
+
+// ApprovalRulePage defines model for ApprovalRulePage.
+type ApprovalRulePage struct {
+	Items []ApprovalRule `json:"items" yaml:"items"`
+}
+
+// ApprovalRuleRequest defines model for ApprovalRuleRequest.
+type ApprovalRuleRequest struct {
+	Mode         ApprovalRuleRequestMode       `json:"mode" yaml:"mode"`
+	RequireOther *bool                         `json:"require_other,omitempty" yaml:"require_other,omitempty"`
+	Target       string                        `json:"target" yaml:"target"`
+	TargetKind   ApprovalRuleRequestTargetKind `json:"target_kind" yaml:"target_kind"`
+}
+
+// ApprovalRuleRequestMode defines model for ApprovalRuleRequest.Mode.
+type ApprovalRuleRequestMode string
+
+// ApprovalRuleRequestTargetKind defines model for ApprovalRuleRequest.TargetKind.
+type ApprovalRuleRequestTargetKind string
+
+// ApprovalSettings defines model for ApprovalSettings.
+type ApprovalSettings struct {
+	// Mode Which calls ask: none, every call that is not a read, only those
+	// that destroy, or every call. A guest's calls, and those of a run
+	// nobody is present for, are held to more.
+	Mode ApprovalSettingsMode `json:"mode" yaml:"mode"`
+
+	// TTLMinutes How long a request waits before it expires.
+	TTLMinutes int32 `json:"ttl_minutes" yaml:"ttl_minutes"`
+}
+
+// ApprovalSettingsMode Which calls ask: none, every call that is not a read, only those
+// that destroy, or every call. A guest's calls, and those of a run
+// nobody is present for, are held to more.
+type ApprovalSettingsMode string
+
+// ApprovalStatus Where a request stands. `pending` waits for a person; `expired` is
+// one nobody answered in time; `cancelled` ended with its run, or was
+// given up by its person writing again instead of answering.
+type ApprovalStatus string
+
 // ApproveSenderRequest Exactly one of `user_id` and `new`.
 type ApproveSenderRequest struct {
 	// New The sender let in as someone new, with a user of their own.
@@ -857,7 +1230,15 @@ type AuthConfigEnvironment string
 // Blueprint What a team should hold. Items refer to each other, and to the team's
 // own, by name. At most 50 of each kind.
 type Blueprint struct {
-	Agents     *[]BlueprintAgent     `json:"agents,omitempty" yaml:"agents,omitempty"`
+	Agents *[]BlueprintAgent `json:"agents,omitempty" yaml:"agents,omitempty"`
+
+	// Approvals Standing answers for the team's tools. A blueprint can only make a
+	// team stricter: a rule asks or denies, never allows, and a rule the
+	// team holds may be made stricter (allow to ask to deny, or someone
+	// else to answer) but never looser. A rule the blueprint does not name
+	// is left as it is. Applying one needs `team:settings`. An export
+	// carries the rules that ask or deny.
+	Approvals  *BlueprintApprovals   `json:"approvals,omitempty" yaml:"approvals,omitempty"`
 	McpServers *[]BlueprintMCPServer `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
 	Skills     *[]BlueprintSkill     `json:"skills,omitempty" yaml:"skills,omitempty"`
 }
@@ -919,6 +1300,33 @@ type BlueprintApply struct {
 	//
 	// Examples: sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 	PlanDigest string `json:"plan_digest" yaml:"plan_digest"`
+}
+
+// BlueprintApprovalRule Exactly one of `tool` and `server`.
+type BlueprintApprovalRule struct {
+	Mode BlueprintApprovalRuleMode `json:"mode" yaml:"mode"`
+
+	// RequireOther The person a call is for may not approve it themselves.
+	RequireOther *bool `json:"require_other,omitempty" yaml:"require_other,omitempty"`
+
+	// Server Every tool of this MCP server.
+	Server *string `json:"server,omitempty" yaml:"server,omitempty"`
+
+	// Tool `<server>__<tool>`, or a built-in's own name.
+	Tool *string `json:"tool,omitempty" yaml:"tool,omitempty"`
+}
+
+// BlueprintApprovalRuleMode defines model for BlueprintApprovalRule.Mode.
+type BlueprintApprovalRuleMode string
+
+// BlueprintApprovals Standing answers for the team's tools. A blueprint can only make a
+// team stricter: a rule asks or denies, never allows, and a rule the
+// team holds may be made stricter (allow to ask to deny, or someone
+// else to answer) but never looser. A rule the blueprint does not name
+// is left as it is. Applying one needs `team:settings`. An export
+// carries the rules that ask or deny.
+type BlueprintApprovals struct {
+	Rules *[]BlueprintApprovalRule `json:"rules,omitempty" yaml:"rules,omitempty"`
 }
 
 // BlueprintChange defines model for BlueprintChange.
@@ -1747,7 +2155,10 @@ type MCPServer struct {
 	// OauthScopes The scopes a sign-in asks for. Absent, the ones the server's metadata offers.
 	OauthScopes *[]string          `json:"oauth_scopes,omitempty" yaml:"oauth_scopes,omitempty"`
 	TeamID      openapi_types.UUID `json:"team_id" yaml:"team_id"`
-	UpdatedAt   time.Time          `json:"updated_at" yaml:"updated_at"`
+
+	// TrustHints Whether the server's own read-only and destructive hints are believed when a call is classed for approval. Set with the trust-hints route.
+	TrustHints *bool     `json:"trust_hints,omitempty" yaml:"trust_hints,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at" yaml:"updated_at"`
 
 	// URL A remote server, spoken to over streamable HTTP
 	//
@@ -2195,8 +2606,9 @@ type Run struct {
 	// StartedAt When a worker first took it, null while queued
 	StartedAt *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
 
-	// Status Where a run stands. `queued` and `running` are live; the other three
-	// are final.
+	// Status Where a run stands. `queued` and `running` are live; `waiting` is a
+	// run that stopped for a person's answer, holding nothing, and carries
+	// on when it is answered; the other three are final.
 	Status RunStatus `json:"status" yaml:"status"`
 }
 
@@ -2241,8 +2653,9 @@ type RunRequest struct {
 	SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
 }
 
-// RunStatus Where a run stands. `queued` and `running` are live; the other three
-// are final.
+// RunStatus Where a run stands. `queued` and `running` are live; `waiting` is a
+// run that stopped for a person's answer, holding nothing, and carries
+// on when it is answered; the other three are final.
 type RunStatus string
 
 // Said defines model for Said.
@@ -2859,6 +3272,9 @@ type WhoamiKind string
 // AgentID defines model for AgentID.
 type AgentID = openapi_types.UUID
 
+// ApprovalID defines model for ApprovalID.
+type ApprovalID = openapi_types.UUID
+
 // ChannelID defines model for ChannelID.
 type ChannelID = openapi_types.UUID
 
@@ -2922,6 +3338,24 @@ type ListAgentsParams struct {
 	// it are dropped, and an empty one lists everything. A cursor from a
 	// search goes on within the same search.
 	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
+}
+
+// ListApprovalsParams defines parameters for ListApprovals.
+type ListApprovalsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Status Only requests in one of these states. Repeat it for more than one.
+	Status *[]ApprovalStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
+
+	// Run Only requests asked under this top-level run, by any agent in its tree.
+	Run *openapi_types.UUID `form:"run,omitempty" json:"run,omitempty" yaml:"run,omitempty"`
 }
 
 // ExportBlueprintParams defines parameters for ExportBlueprint.
@@ -3008,6 +3442,11 @@ type ListMCPServersParams struct {
 	// it are dropped, and an empty one lists everything. A cursor from a
 	// search goes on within the same search.
 	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
+}
+
+// SetMCPServerTrustHintsJSONBody defines parameters for SetMCPServerTrustHints.
+type SetMCPServerTrustHintsJSONBody struct {
+	Trust bool `json:"trust" yaml:"trust"`
 }
 
 // ListTeamMembersParams defines parameters for ListTeamMembers.
@@ -3194,6 +3633,15 @@ type CreateAgentJSONRequestBody = AgentRequest
 // ReplaceAgentJSONRequestBody defines body for ReplaceAgent for application/json ContentType.
 type ReplaceAgentJSONRequestBody = AgentRequest
 
+// CreateApprovalRuleJSONRequestBody defines body for CreateApprovalRule for application/json ContentType.
+type CreateApprovalRuleJSONRequestBody = ApprovalRuleRequest
+
+// SaveApprovalSettingsJSONRequestBody defines body for SaveApprovalSettings for application/json ContentType.
+type SaveApprovalSettingsJSONRequestBody = ApprovalSettings
+
+// DecideApprovalJSONRequestBody defines body for DecideApproval for application/json ContentType.
+type DecideApprovalJSONRequestBody = ApprovalDecision
+
 // ApplyBlueprintJSONRequestBody defines body for ApplyBlueprint for application/json ContentType.
 type ApplyBlueprintJSONRequestBody = BlueprintApply
 
@@ -3220,6 +3668,9 @@ type CreateMCPServerJSONRequestBody = MCPServerRequest
 
 // UpdateMCPServerJSONRequestBody defines body for UpdateMCPServer for application/json ContentType.
 type UpdateMCPServerJSONRequestBody = MCPServerRequest
+
+// SetMCPServerTrustHintsJSONRequestBody defines body for SetMCPServerTrustHints for application/json ContentType.
+type SetMCPServerTrustHintsJSONRequestBody SetMCPServerTrustHintsJSONBody
 
 // AddTeamMemberJSONRequestBody defines body for AddTeamMember for application/json ContentType.
 type AddTeamMemberJSONRequestBody = AddMemberRequest
@@ -3512,6 +3963,127 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 	ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListApprovalRules List a team's standing answers
+	//
+	// Any member may read them. A rule names one tool
+	// (`<server>__<tool>`, or a built-in's own name) or every tool of a
+	// server, and answers for it whatever the team's mode: the most
+	// specific rule wins.
+	//
+	// Corresponds with GET /teams/{id}/approval-rules (the `ListApprovalRules` operationId).
+	ListApprovalRules(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateApprovalRuleWithBody Add a standing answer
+	//
+	// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+	CreateApprovalRuleWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateApprovalRule Add a standing answer
+	//
+	// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+	CreateApprovalRule(ctx context.Context, id TeamID, body CreateApprovalRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteApprovalRule Remove a standing answer
+	//
+	// Requires `team:settings` in this team. The team's mode decides for the target again.
+	//
+	// Corresponds with DELETE /teams/{id}/approval-rules/{ruleID} (the `DeleteApprovalRule` operationId).
+	DeleteApprovalRule(ctx context.Context, id TeamID, ruleID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetApprovalSettings Read when a team's agents ask a person
+	//
+	// Any member may read them. A team made before approvals that never
+	// chose reads `off`; a team made since starts at `writes`.
+	//
+	// Corresponds with GET /teams/{id}/approval-settings (the `GetApprovalSettings` operationId).
+	GetApprovalSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveApprovalSettingsWithBody Change when a team's agents ask a person
+	//
+	// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+	SaveApprovalSettingsWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveApprovalSettings Change when a team's agents ask a person
+	//
+	// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+	SaveApprovalSettings(ctx context.Context, id TeamID, body SaveApprovalSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListApprovals List what a team's agents asked a person
+	//
+	// Requires `approval:read` in this team. Newest first. A request shows
+	// only to someone who may read its run: a direct conversation's are
+	// its person's, and those of anyone who holds `session:read_all`.
+	// Its summary and arguments quote the call, so they reach no further
+	// than the run does.
+	//
+	// A value outside a filter's set is a 400. A cursor is only meaningful
+	// with the filters it was issued under.
+	//
+	// Corresponds with GET /teams/{id}/approvals (the `ListApprovals` operationId).
+	ListApprovals(ctx context.Context, id TeamID, params *ListApprovalsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetApproval Read one request
+	//
+	// Requires `approval:read` in this team, and that the caller may read
+	// the request's run.
+	//
+	// Corresponds with GET /teams/{id}/approvals/{approvalID} (the `GetApproval` operationId).
+	GetApproval(ctx context.Context, id TeamID, approvalID ApprovalID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideApprovalWithBody Answer a request
+	//
+	// Requires `approval:self` in this team, and that the caller may read
+	// the request's run. Who may answer is decided from the caller's role
+	// as it stands now: anyone who holds `approval:decide`, or the person
+	// the request was made for, unless a rule wants someone else to answer
+	// it (`require_other`).
+	//
+	// A yes with `scope: run` approves this tool, any arguments, for the
+	// rest of the run. A no is for this call only. Once nothing in the
+	// run's tree waits, the run is queued again: an approved call is made
+	// then, by the brain, with exactly the arguments that were approved,
+	// and the agent is told the answer.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+	DecideApprovalWithBody(ctx context.Context, id TeamID, approvalID ApprovalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideApproval Answer a request
+	//
+	// Requires `approval:self` in this team, and that the caller may read
+	// the request's run. Who may answer is decided from the caller's role
+	// as it stands now: anyone who holds `approval:decide`, or the person
+	// the request was made for, unless a rule wants someone else to answer
+	// it (`require_other`).
+	//
+	// A yes with `scope: run` approves this tool, any arguments, for the
+	// rest of the run. A no is for this call only. Once nothing in the
+	// run's tree waits, the run is queued again: an approved call is made
+	// then, by the brain, with exactly the arguments that were approved,
+	// and the agent is told the answer.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+	DecideApproval(ctx context.Context, id TeamID, approvalID ApprovalID, body DecideApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExportBlueprint The team as a blueprint
 	//
@@ -4170,6 +4742,30 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/mcp-servers/{serverID}/tools (the `ListMCPTools` operationId).
 	ListMCPTools(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SetMCPServerTrustHintsWithBody Believe, or stop believing, a server's hints about its tools
+	//
+	// Requires `team:settings` in this team, not `tool:write`: a server
+	// that says its tools only read is believed when a call is classed for
+	// approval, which can let its tools past every approval. Nothing else
+	// about the server changes, and it is not discovered again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+	SetMCPServerTrustHintsWithBody(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetMCPServerTrustHints Believe, or stop believing, a server's hints about its tools
+	//
+	// Requires `team:settings` in this team, not `tool:write`: a server
+	// that says its tools only read is believed when a call is classed for
+	// approval, which can let its tools past every approval. Nothing else
+	// about the server changes, and it is not discovered again.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+	SetMCPServerTrustHints(ctx context.Context, id TeamID, serverID ServerID, body SetMCPServerTrustHintsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListTeamMembers List a team's members
 	//
 	// A read, so seeing the team is enough — no action is required.
@@ -4630,6 +5226,9 @@ type ClientInterface interface {
 	// `text_message_chunk` and thinking as `reasoning_message_chunk`, each
 	// named by the model call it came from in `message_id`, and
 	// `run_finished` carries the whole answer.
+	// A run that asks a person before a call says so in
+	// `approval_requested`, waits in `run_waiting` with what it told them,
+	// and hears the answer in `approval_decided`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -5287,6 +5886,237 @@ func (c *Client) ReplaceAgentWithBody(ctx context.Context, id TeamID, agentID Ag
 // Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 func (c *Client) ReplaceAgent(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReplaceAgentRequest(c.Server, id, agentID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListApprovalRules List a team's standing answers
+//
+// Any member may read them. A rule names one tool
+// (`<server>__<tool>`, or a built-in's own name) or every tool of a
+// server, and answers for it whatever the team's mode: the most
+// specific rule wins.
+//
+// Corresponds with GET /teams/{id}/approval-rules (the `ListApprovalRules` operationId).
+func (c *Client) ListApprovalRules(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListApprovalRulesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateApprovalRuleWithBody Add a standing answer
+//
+// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+func (c *Client) CreateApprovalRuleWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateApprovalRuleRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateApprovalRule Add a standing answer
+//
+// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+func (c *Client) CreateApprovalRule(ctx context.Context, id TeamID, body CreateApprovalRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateApprovalRuleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteApprovalRule Remove a standing answer
+//
+// Requires `team:settings` in this team. The team's mode decides for the target again.
+//
+// Corresponds with DELETE /teams/{id}/approval-rules/{ruleID} (the `DeleteApprovalRule` operationId).
+func (c *Client) DeleteApprovalRule(ctx context.Context, id TeamID, ruleID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteApprovalRuleRequest(c.Server, id, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetApprovalSettings Read when a team's agents ask a person
+//
+// Any member may read them. A team made before approvals that never
+// chose reads `off`; a team made since starts at `writes`.
+//
+// Corresponds with GET /teams/{id}/approval-settings (the `GetApprovalSettings` operationId).
+func (c *Client) GetApprovalSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetApprovalSettingsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveApprovalSettingsWithBody Change when a team's agents ask a person
+//
+// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+func (c *Client) SaveApprovalSettingsWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveApprovalSettingsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveApprovalSettings Change when a team's agents ask a person
+//
+// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+func (c *Client) SaveApprovalSettings(ctx context.Context, id TeamID, body SaveApprovalSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveApprovalSettingsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListApprovals List what a team's agents asked a person
+//
+// Requires `approval:read` in this team. Newest first. A request shows
+// only to someone who may read its run: a direct conversation's are
+// its person's, and those of anyone who holds `session:read_all`.
+// Its summary and arguments quote the call, so they reach no further
+// than the run does.
+//
+// A value outside a filter's set is a 400. A cursor is only meaningful
+// with the filters it was issued under.
+//
+// Corresponds with GET /teams/{id}/approvals (the `ListApprovals` operationId).
+func (c *Client) ListApprovals(ctx context.Context, id TeamID, params *ListApprovalsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListApprovalsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetApproval Read one request
+//
+// Requires `approval:read` in this team, and that the caller may read
+// the request's run.
+//
+// Corresponds with GET /teams/{id}/approvals/{approvalID} (the `GetApproval` operationId).
+func (c *Client) GetApproval(ctx context.Context, id TeamID, approvalID ApprovalID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetApprovalRequest(c.Server, id, approvalID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideApprovalWithBody Answer a request
+//
+// Requires `approval:self` in this team, and that the caller may read
+// the request's run. Who may answer is decided from the caller's role
+// as it stands now: anyone who holds `approval:decide`, or the person
+// the request was made for, unless a rule wants someone else to answer
+// it (`require_other`).
+//
+// A yes with `scope: run` approves this tool, any arguments, for the
+// rest of the run. A no is for this call only. Once nothing in the
+// run's tree waits, the run is queued again: an approved call is made
+// then, by the brain, with exactly the arguments that were approved,
+// and the agent is told the answer.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+func (c *Client) DecideApprovalWithBody(ctx context.Context, id TeamID, approvalID ApprovalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideApprovalRequestWithBody(c.Server, id, approvalID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideApproval Answer a request
+//
+// Requires `approval:self` in this team, and that the caller may read
+// the request's run. Who may answer is decided from the caller's role
+// as it stands now: anyone who holds `approval:decide`, or the person
+// the request was made for, unless a rule wants someone else to answer
+// it (`require_other`).
+//
+// A yes with `scope: run` approves this tool, any arguments, for the
+// rest of the run. A no is for this call only. Once nothing in the
+// run's tree waits, the run is queued again: an approved call is made
+// then, by the brain, with exactly the arguments that were approved,
+// and the agent is told the answer.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+func (c *Client) DecideApproval(ctx context.Context, id TeamID, approvalID ApprovalID, body DecideApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideApprovalRequest(c.Server, id, approvalID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6314,6 +7144,50 @@ func (c *Client) ListMCPTools(ctx context.Context, id TeamID, serverID ServerID,
 	return c.Client.Do(req)
 }
 
+// SetMCPServerTrustHintsWithBody Believe, or stop believing, a server's hints about its tools
+//
+// Requires `team:settings` in this team, not `tool:write`: a server
+// that says its tools only read is believed when a call is classed for
+// approval, which can let its tools past every approval. Nothing else
+// about the server changes, and it is not discovered again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+func (c *Client) SetMCPServerTrustHintsWithBody(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetMCPServerTrustHintsRequestWithBody(c.Server, id, serverID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetMCPServerTrustHints Believe, or stop believing, a server's hints about its tools
+//
+// Requires `team:settings` in this team, not `tool:write`: a server
+// that says its tools only read is believed when a call is classed for
+// approval, which can let its tools past every approval. Nothing else
+// about the server changes, and it is not discovered again.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+func (c *Client) SetMCPServerTrustHints(ctx context.Context, id TeamID, serverID ServerID, body SetMCPServerTrustHintsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetMCPServerTrustHintsRequest(c.Server, id, serverID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListTeamMembers List a team's members
 //
 // A read, so seeing the team is enough — no action is required.
@@ -7025,6 +7899,9 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // `text_message_chunk` and thinking as `reasoning_message_chunk`, each
 // named by the model call it came from in `message_id`, and
 // `run_finished` carries the whole answer.
+// A run that asks a person before a call says so in
+// `approval_requested`, waits in `run_waiting` with what it told them,
+// and hears the answer in `approval_decided`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment
@@ -8165,6 +9042,401 @@ func NewReplaceAgentRequestWithBody(server string, id TeamID, agentID AgentID, c
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListApprovalRulesRequest constructs an http.Request for the ListApprovalRules method
+func NewListApprovalRulesRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approval-rules", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateApprovalRuleRequest calls the generic CreateApprovalRule builder with application/json body
+func NewCreateApprovalRuleRequest(server string, id TeamID, body CreateApprovalRuleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateApprovalRuleRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateApprovalRuleRequestWithBody constructs an http.Request for the CreateApprovalRule method, with any body, and a specified content type
+func NewCreateApprovalRuleRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approval-rules", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteApprovalRuleRequest constructs an http.Request for the DeleteApprovalRule method
+func NewDeleteApprovalRuleRequest(server string, id TeamID, ruleID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "ruleID", ruleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approval-rules/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetApprovalSettingsRequest constructs an http.Request for the GetApprovalSettings method
+func NewGetApprovalSettingsRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approval-settings", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSaveApprovalSettingsRequest calls the generic SaveApprovalSettings builder with application/json body
+func NewSaveApprovalSettingsRequest(server string, id TeamID, body SaveApprovalSettingsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSaveApprovalSettingsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSaveApprovalSettingsRequestWithBody constructs an http.Request for the SaveApprovalSettings method, with any body, and a specified content type
+func NewSaveApprovalSettingsRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approval-settings", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListApprovalsRequest constructs an http.Request for the ListApprovals method
+func NewListApprovalsRequest(server string, id TeamID, params *ListApprovalsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approvals", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Run != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "run", *params.Run, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetApprovalRequest constructs an http.Request for the GetApproval method
+func NewGetApprovalRequest(server string, id TeamID, approvalID ApprovalID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "approvalID", approvalID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approvals/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDecideApprovalRequest calls the generic DecideApproval builder with application/json body
+func NewDecideApprovalRequest(server string, id TeamID, approvalID ApprovalID, body DecideApprovalJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDecideApprovalRequestWithBody(server, id, approvalID, "application/json", bodyReader)
+}
+
+// NewDecideApprovalRequestWithBody constructs an http.Request for the DecideApproval method, with any body, and a specified content type
+func NewDecideApprovalRequestWithBody(server string, id TeamID, approvalID ApprovalID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "approvalID", approvalID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/approvals/%s/decision", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -9627,6 +10899,60 @@ func NewListMCPToolsRequest(server string, id TeamID, serverID ServerID) (*http.
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewSetMCPServerTrustHintsRequest calls the generic SetMCPServerTrustHints builder with application/json body
+func NewSetMCPServerTrustHintsRequest(server string, id TeamID, serverID ServerID, body SetMCPServerTrustHintsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetMCPServerTrustHintsRequestWithBody(server, id, serverID, "application/json", bodyReader)
+}
+
+// NewSetMCPServerTrustHintsRequestWithBody constructs an http.Request for the SetMCPServerTrustHints method, with any body, and a specified content type
+func NewSetMCPServerTrustHintsRequestWithBody(server string, id TeamID, serverID ServerID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "serverID", serverID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/mcp-servers/%s/trust-hints", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -11955,6 +13281,137 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /teams/{id}/agents/{agentID} (the `ReplaceAgent` operationId).
 	ReplaceAgentWithResponse(ctx context.Context, id TeamID, agentID AgentID, body ReplaceAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentResponse, error)
 
+	// ListApprovalRulesWithResponse List a team's standing answers
+	//
+	// Any member may read them. A rule names one tool
+	// (`<server>__<tool>`, or a built-in's own name) or every tool of a
+	// server, and answers for it whatever the team's mode: the most
+	// specific rule wins.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/approval-rules (the `ListApprovalRules` operationId).
+	ListApprovalRulesWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*ListApprovalRulesResponse, error)
+
+	// CreateApprovalRuleWithBodyWithResponse Add a standing answer
+	//
+	// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+	CreateApprovalRuleWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApprovalRuleResponse, error)
+
+	// CreateApprovalRuleWithResponse Add a standing answer
+	//
+	// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+	CreateApprovalRuleWithResponse(ctx context.Context, id TeamID, body CreateApprovalRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApprovalRuleResponse, error)
+
+	// DeleteApprovalRuleWithResponse Remove a standing answer
+	//
+	// Requires `team:settings` in this team. The team's mode decides for the target again.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/approval-rules/{ruleID} (the `DeleteApprovalRule` operationId).
+	DeleteApprovalRuleWithResponse(ctx context.Context, id TeamID, ruleID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteApprovalRuleResponse, error)
+
+	// GetApprovalSettingsWithResponse Read when a team's agents ask a person
+	//
+	// Any member may read them. A team made before approvals that never
+	// chose reads `off`; a team made since starts at `writes`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/approval-settings (the `GetApprovalSettings` operationId).
+	GetApprovalSettingsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetApprovalSettingsResponse, error)
+
+	// SaveApprovalSettingsWithBodyWithResponse Change when a team's agents ask a person
+	//
+	// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+	SaveApprovalSettingsWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveApprovalSettingsResponse, error)
+
+	// SaveApprovalSettingsWithResponse Change when a team's agents ask a person
+	//
+	// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+	SaveApprovalSettingsWithResponse(ctx context.Context, id TeamID, body SaveApprovalSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveApprovalSettingsResponse, error)
+
+	// ListApprovalsWithResponse List what a team's agents asked a person
+	//
+	// Requires `approval:read` in this team. Newest first. A request shows
+	// only to someone who may read its run: a direct conversation's are
+	// its person's, and those of anyone who holds `session:read_all`.
+	// Its summary and arguments quote the call, so they reach no further
+	// than the run does.
+	//
+	// A value outside a filter's set is a 400. A cursor is only meaningful
+	// with the filters it was issued under.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/approvals (the `ListApprovals` operationId).
+	ListApprovalsWithResponse(ctx context.Context, id TeamID, params *ListApprovalsParams, reqEditors ...RequestEditorFn) (*ListApprovalsResponse, error)
+
+	// GetApprovalWithResponse Read one request
+	//
+	// Requires `approval:read` in this team, and that the caller may read
+	// the request's run.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/approvals/{approvalID} (the `GetApproval` operationId).
+	GetApprovalWithResponse(ctx context.Context, id TeamID, approvalID ApprovalID, reqEditors ...RequestEditorFn) (*GetApprovalResponse, error)
+
+	// DecideApprovalWithBodyWithResponse Answer a request
+	//
+	// Requires `approval:self` in this team, and that the caller may read
+	// the request's run. Who may answer is decided from the caller's role
+	// as it stands now: anyone who holds `approval:decide`, or the person
+	// the request was made for, unless a rule wants someone else to answer
+	// it (`require_other`).
+	//
+	// A yes with `scope: run` approves this tool, any arguments, for the
+	// rest of the run. A no is for this call only. Once nothing in the
+	// run's tree waits, the run is queued again: an approved call is made
+	// then, by the brain, with exactly the arguments that were approved,
+	// and the agent is told the answer.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+	DecideApprovalWithBodyWithResponse(ctx context.Context, id TeamID, approvalID ApprovalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideApprovalResponse, error)
+
+	// DecideApprovalWithResponse Answer a request
+	//
+	// Requires `approval:self` in this team, and that the caller may read
+	// the request's run. Who may answer is decided from the caller's role
+	// as it stands now: anyone who holds `approval:decide`, or the person
+	// the request was made for, unless a rule wants someone else to answer
+	// it (`require_other`).
+	//
+	// A yes with `scope: run` approves this tool, any arguments, for the
+	// rest of the run. A no is for this call only. Once nothing in the
+	// run's tree waits, the run is queued again: an approved call is made
+	// then, by the brain, with exactly the arguments that were approved,
+	// and the agent is told the answer.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+	DecideApprovalWithResponse(ctx context.Context, id TeamID, approvalID ApprovalID, body DecideApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideApprovalResponse, error)
+
 	// ExportBlueprintWithResponse The team as a blueprint
 	//
 	// A read, so belonging to the team is enough. Says the team's MCP
@@ -12648,6 +14105,30 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/mcp-servers/{serverID}/tools (the `ListMCPTools` operationId).
 	ListMCPToolsWithResponse(ctx context.Context, id TeamID, serverID ServerID, reqEditors ...RequestEditorFn) (*ListMCPToolsResponse, error)
 
+	// SetMCPServerTrustHintsWithBodyWithResponse Believe, or stop believing, a server's hints about its tools
+	//
+	// Requires `team:settings` in this team, not `tool:write`: a server
+	// that says its tools only read is believed when a call is classed for
+	// approval, which can let its tools past every approval. Nothing else
+	// about the server changes, and it is not discovered again.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+	SetMCPServerTrustHintsWithBodyWithResponse(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetMCPServerTrustHintsResponse, error)
+
+	// SetMCPServerTrustHintsWithResponse Believe, or stop believing, a server's hints about its tools
+	//
+	// Requires `team:settings` in this team, not `tool:write`: a server
+	// that says its tools only read is believed when a call is classed for
+	// approval, which can let its tools past every approval. Nothing else
+	// about the server changes, and it is not discovered again.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+	SetMCPServerTrustHintsWithResponse(ctx context.Context, id TeamID, serverID ServerID, body SetMCPServerTrustHintsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMCPServerTrustHintsResponse, error)
+
 	// ListTeamMembersWithResponse List a team's members
 	//
 	// A read, so seeing the team is enough — no action is required.
@@ -13138,6 +14619,9 @@ type ClientWithResponsesInterface interface {
 	// `text_message_chunk` and thinking as `reasoning_message_chunk`, each
 	// named by the model call it came from in `message_id`, and
 	// `run_finished` carries the whole answer.
+	// A run that asks a person before a call says so in
+	// `approval_requested`, waits in `run_waiting` with what it told them,
+	// and hears the answer in `approval_decided`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -14042,6 +15526,390 @@ func (r ReplaceAgentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReplaceAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListApprovalRulesResponse401Headers the declared response headers of an HTTP 401 response for ListApprovalRules
+type ListApprovalRulesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListApprovalRulesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ApprovalRulePage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListApprovalRulesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListApprovalRulesResponse) GetJSON200() *ApprovalRulePage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListApprovalRulesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListApprovalRulesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListApprovalRulesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListApprovalRulesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateApprovalRuleResponse401Headers the declared response headers of an HTTP 401 response for CreateApprovalRule
+type CreateApprovalRuleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateApprovalRuleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ApprovalRule
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateApprovalRuleResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateApprovalRuleResponse) GetJSON201() *ApprovalRule {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateApprovalRuleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateApprovalRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateApprovalRuleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateApprovalRuleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteApprovalRuleResponse401Headers the declared response headers of an HTTP 401 response for DeleteApprovalRule
+type DeleteApprovalRuleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteApprovalRuleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteApprovalRuleResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteApprovalRuleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteApprovalRuleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteApprovalRuleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteApprovalRuleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetApprovalSettingsResponse401Headers the declared response headers of an HTTP 401 response for GetApprovalSettings
+type GetApprovalSettingsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetApprovalSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ApprovalSettings
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetApprovalSettingsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetApprovalSettingsResponse) GetJSON200() *ApprovalSettings {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetApprovalSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetApprovalSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetApprovalSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetApprovalSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SaveApprovalSettingsResponse401Headers the declared response headers of an HTTP 401 response for SaveApprovalSettings
+type SaveApprovalSettingsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SaveApprovalSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ApprovalSettings
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SaveApprovalSettingsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SaveApprovalSettingsResponse) GetJSON200() *ApprovalSettings {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r SaveApprovalSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SaveApprovalSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SaveApprovalSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SaveApprovalSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListApprovalsResponse401Headers the declared response headers of an HTTP 401 response for ListApprovals
+type ListApprovalsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListApprovalsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ApprovalPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListApprovalsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListApprovalsResponse) GetJSON200() *ApprovalPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListApprovalsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListApprovalsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListApprovalsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListApprovalsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetApprovalResponse401Headers the declared response headers of an HTTP 401 response for GetApproval
+type GetApprovalResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetApprovalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Approval
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetApprovalResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetApprovalResponse) GetJSON200() *Approval {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetApprovalResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetApprovalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetApprovalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetApprovalResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DecideApprovalResponse401Headers the declared response headers of an HTTP 401 response for DecideApproval
+type DecideApprovalResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DecideApprovalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Approval
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Approval
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DecideApprovalResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DecideApprovalResponse) GetJSON200() *Approval {
+	return r.JSON200
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DecideApprovalResponse) GetJSON409() *Approval {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r DecideApprovalResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DecideApprovalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DecideApprovalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DecideApprovalResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -15309,6 +17177,54 @@ func (r ListMCPToolsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListMCPToolsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SetMCPServerTrustHintsResponse401Headers the declared response headers of an HTTP 401 response for SetMCPServerTrustHints
+type SetMCPServerTrustHintsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SetMCPServerTrustHintsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MCPServer
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SetMCPServerTrustHintsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetMCPServerTrustHintsResponse) GetJSON200() *MCPServer {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r SetMCPServerTrustHintsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetMCPServerTrustHintsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetMCPServerTrustHintsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetMCPServerTrustHintsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -17386,6 +19302,203 @@ func (c *ClientWithResponses) ReplaceAgentWithResponse(ctx context.Context, id T
 	return ParseReplaceAgentResponse(rsp)
 }
 
+// ListApprovalRulesWithResponse List a team's standing answers
+//
+// Any member may read them. A rule names one tool
+// (`<server>__<tool>`, or a built-in's own name) or every tool of a
+// server, and answers for it whatever the team's mode: the most
+// specific rule wins.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/approval-rules (the `ListApprovalRules` operationId).
+func (c *ClientWithResponses) ListApprovalRulesWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*ListApprovalRulesResponse, error) {
+	rsp, err := c.ListApprovalRules(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListApprovalRulesResponse(rsp)
+}
+
+// CreateApprovalRuleWithBodyWithResponse Add a standing answer
+//
+// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+func (c *ClientWithResponses) CreateApprovalRuleWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApprovalRuleResponse, error) {
+	rsp, err := c.CreateApprovalRuleWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateApprovalRuleResponse(rsp)
+}
+
+// CreateApprovalRuleWithResponse Add a standing answer
+//
+// Requires `team:settings` in this team. A target has one rule; remove it to change it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/approval-rules (the `CreateApprovalRule` operationId).
+func (c *ClientWithResponses) CreateApprovalRuleWithResponse(ctx context.Context, id TeamID, body CreateApprovalRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApprovalRuleResponse, error) {
+	rsp, err := c.CreateApprovalRule(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateApprovalRuleResponse(rsp)
+}
+
+// DeleteApprovalRuleWithResponse Remove a standing answer
+//
+// Requires `team:settings` in this team. The team's mode decides for the target again.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/approval-rules/{ruleID} (the `DeleteApprovalRule` operationId).
+func (c *ClientWithResponses) DeleteApprovalRuleWithResponse(ctx context.Context, id TeamID, ruleID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteApprovalRuleResponse, error) {
+	rsp, err := c.DeleteApprovalRule(ctx, id, ruleID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteApprovalRuleResponse(rsp)
+}
+
+// GetApprovalSettingsWithResponse Read when a team's agents ask a person
+//
+// Any member may read them. A team made before approvals that never
+// chose reads `off`; a team made since starts at `writes`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/approval-settings (the `GetApprovalSettings` operationId).
+func (c *ClientWithResponses) GetApprovalSettingsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetApprovalSettingsResponse, error) {
+	rsp, err := c.GetApprovalSettings(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetApprovalSettingsResponse(rsp)
+}
+
+// SaveApprovalSettingsWithBodyWithResponse Change when a team's agents ask a person
+//
+// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+func (c *ClientWithResponses) SaveApprovalSettingsWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveApprovalSettingsResponse, error) {
+	rsp, err := c.SaveApprovalSettingsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveApprovalSettingsResponse(rsp)
+}
+
+// SaveApprovalSettingsWithResponse Change when a team's agents ask a person
+//
+// Requires `team:settings` in this team. Runs already started keep the settings they were built with.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/approval-settings (the `SaveApprovalSettings` operationId).
+func (c *ClientWithResponses) SaveApprovalSettingsWithResponse(ctx context.Context, id TeamID, body SaveApprovalSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveApprovalSettingsResponse, error) {
+	rsp, err := c.SaveApprovalSettings(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveApprovalSettingsResponse(rsp)
+}
+
+// ListApprovalsWithResponse List what a team's agents asked a person
+//
+// Requires `approval:read` in this team. Newest first. A request shows
+// only to someone who may read its run: a direct conversation's are
+// its person's, and those of anyone who holds `session:read_all`.
+// Its summary and arguments quote the call, so they reach no further
+// than the run does.
+//
+// A value outside a filter's set is a 400. A cursor is only meaningful
+// with the filters it was issued under.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/approvals (the `ListApprovals` operationId).
+func (c *ClientWithResponses) ListApprovalsWithResponse(ctx context.Context, id TeamID, params *ListApprovalsParams, reqEditors ...RequestEditorFn) (*ListApprovalsResponse, error) {
+	rsp, err := c.ListApprovals(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListApprovalsResponse(rsp)
+}
+
+// GetApprovalWithResponse Read one request
+//
+// Requires `approval:read` in this team, and that the caller may read
+// the request's run.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/approvals/{approvalID} (the `GetApproval` operationId).
+func (c *ClientWithResponses) GetApprovalWithResponse(ctx context.Context, id TeamID, approvalID ApprovalID, reqEditors ...RequestEditorFn) (*GetApprovalResponse, error) {
+	rsp, err := c.GetApproval(ctx, id, approvalID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetApprovalResponse(rsp)
+}
+
+// DecideApprovalWithBodyWithResponse Answer a request
+//
+// Requires `approval:self` in this team, and that the caller may read
+// the request's run. Who may answer is decided from the caller's role
+// as it stands now: anyone who holds `approval:decide`, or the person
+// the request was made for, unless a rule wants someone else to answer
+// it (`require_other`).
+//
+// A yes with `scope: run` approves this tool, any arguments, for the
+// rest of the run. A no is for this call only. Once nothing in the
+// run's tree waits, the run is queued again: an approved call is made
+// then, by the brain, with exactly the arguments that were approved,
+// and the agent is told the answer.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+func (c *ClientWithResponses) DecideApprovalWithBodyWithResponse(ctx context.Context, id TeamID, approvalID ApprovalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideApprovalResponse, error) {
+	rsp, err := c.DecideApprovalWithBody(ctx, id, approvalID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideApprovalResponse(rsp)
+}
+
+// DecideApprovalWithResponse Answer a request
+//
+// Requires `approval:self` in this team, and that the caller may read
+// the request's run. Who may answer is decided from the caller's role
+// as it stands now: anyone who holds `approval:decide`, or the person
+// the request was made for, unless a rule wants someone else to answer
+// it (`require_other`).
+//
+// A yes with `scope: run` approves this tool, any arguments, for the
+// rest of the run. A no is for this call only. Once nothing in the
+// run's tree waits, the run is queued again: an approved call is made
+// then, by the brain, with exactly the arguments that were approved,
+// and the agent is told the answer.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/approvals/{approvalID}/decision (the `DecideApproval` operationId).
+func (c *ClientWithResponses) DecideApprovalWithResponse(ctx context.Context, id TeamID, approvalID ApprovalID, body DecideApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideApprovalResponse, error) {
+	rsp, err := c.DecideApproval(ctx, id, approvalID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideApprovalResponse(rsp)
+}
+
 // ExportBlueprintWithResponse The team as a blueprint
 //
 // A read, so belonging to the team is enough. Says the team's MCP
@@ -18295,6 +20408,42 @@ func (c *ClientWithResponses) ListMCPToolsWithResponse(ctx context.Context, id T
 	return ParseListMCPToolsResponse(rsp)
 }
 
+// SetMCPServerTrustHintsWithBodyWithResponse Believe, or stop believing, a server's hints about its tools
+//
+// Requires `team:settings` in this team, not `tool:write`: a server
+// that says its tools only read is believed when a call is classed for
+// approval, which can let its tools past every approval. Nothing else
+// about the server changes, and it is not discovered again.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+func (c *ClientWithResponses) SetMCPServerTrustHintsWithBodyWithResponse(ctx context.Context, id TeamID, serverID ServerID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetMCPServerTrustHintsResponse, error) {
+	rsp, err := c.SetMCPServerTrustHintsWithBody(ctx, id, serverID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetMCPServerTrustHintsResponse(rsp)
+}
+
+// SetMCPServerTrustHintsWithResponse Believe, or stop believing, a server's hints about its tools
+//
+// Requires `team:settings` in this team, not `tool:write`: a server
+// that says its tools only read is believed when a call is classed for
+// approval, which can let its tools past every approval. Nothing else
+// about the server changes, and it is not discovered again.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/mcp-servers/{serverID}/trust-hints (the `SetMCPServerTrustHints` operationId).
+func (c *ClientWithResponses) SetMCPServerTrustHintsWithResponse(ctx context.Context, id TeamID, serverID ServerID, body SetMCPServerTrustHintsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMCPServerTrustHintsResponse, error) {
+	rsp, err := c.SetMCPServerTrustHints(ctx, id, serverID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetMCPServerTrustHintsResponse(rsp)
+}
+
 // ListTeamMembersWithResponse List a team's members
 //
 // A read, so seeing the team is enough — no action is required.
@@ -18936,6 +21085,9 @@ func (c *ClientWithResponses) GetSessionAttachmentWithResponse(ctx context.Conte
 // `text_message_chunk` and thinking as `reasoning_message_chunk`, each
 // named by the model call it came from in `message_id`, and
 // `run_finished` carries the whole answer.
+// A run that asks a person before a call says so in
+// `approval_requested`, waits in `run_waiting` with what it told them,
+// and hears the answer in `approval_decided`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment
@@ -19796,6 +21948,315 @@ func ParseReplaceAgentResponse(rsp *http.Response) (*ReplaceAgentResponse, error
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ReplaceAgentResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListApprovalRulesResponse parses an HTTP response from a ListApprovalRulesWithResponse call
+func ParseListApprovalRulesResponse(rsp *http.Response) (*ListApprovalRulesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListApprovalRulesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApprovalRulePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListApprovalRulesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateApprovalRuleResponse parses an HTTP response from a CreateApprovalRuleWithResponse call
+func ParseCreateApprovalRuleResponse(rsp *http.Response) (*CreateApprovalRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateApprovalRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ApprovalRule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateApprovalRuleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteApprovalRuleResponse parses an HTTP response from a DeleteApprovalRuleWithResponse call
+func ParseDeleteApprovalRuleResponse(rsp *http.Response) (*DeleteApprovalRuleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteApprovalRuleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteApprovalRuleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetApprovalSettingsResponse parses an HTTP response from a GetApprovalSettingsWithResponse call
+func ParseGetApprovalSettingsResponse(rsp *http.Response) (*GetApprovalSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetApprovalSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApprovalSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetApprovalSettingsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSaveApprovalSettingsResponse parses an HTTP response from a SaveApprovalSettingsWithResponse call
+func ParseSaveApprovalSettingsResponse(rsp *http.Response) (*SaveApprovalSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SaveApprovalSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApprovalSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SaveApprovalSettingsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListApprovalsResponse parses an HTTP response from a ListApprovalsWithResponse call
+func ParseListApprovalsResponse(rsp *http.Response) (*ListApprovalsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListApprovalsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApprovalPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListApprovalsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetApprovalResponse parses an HTTP response from a GetApprovalWithResponse call
+func ParseGetApprovalResponse(rsp *http.Response) (*GetApprovalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetApprovalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Approval
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetApprovalResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDecideApprovalResponse parses an HTTP response from a DecideApprovalWithResponse call
+func ParseDecideApprovalResponse(rsp *http.Response) (*DecideApprovalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DecideApprovalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Approval
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Approval
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DecideApprovalResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
@@ -20805,6 +23266,45 @@ func ParseListMCPToolsResponse(rsp *http.Response) (*ListMCPToolsResponse, error
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListMCPToolsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSetMCPServerTrustHintsResponse parses an HTTP response from a SetMCPServerTrustHintsWithResponse call
+func ParseSetMCPServerTrustHintsResponse(rsp *http.Response) (*SetMCPServerTrustHintsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetMCPServerTrustHintsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MCPServer
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SetMCPServerTrustHintsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

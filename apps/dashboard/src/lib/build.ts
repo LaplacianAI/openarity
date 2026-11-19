@@ -17,7 +17,7 @@ export type Turn = { run: Run; proposal: Proposal | null };
 
 /** A run is live until it ends; the chat polls while one is. */
 export function isLive(run: Run): boolean {
-  return run.status === "queued" || run.status === "running";
+  return run.status === "queued" || run.status === "running" || run.status === "waiting";
 }
 
 /**

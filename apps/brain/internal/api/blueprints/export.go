@@ -94,7 +94,42 @@ func exportOf(t team, agentNames, serverNames []string) (Blueprint, error) {
 		}
 		bp.Agents = append(bp.Agents, a)
 	}
+	bp.Approvals = rulesOf(t, all, servers)
 	return bp, nil
+}
+
+// rulesOf is the team's approval rules a blueprint can carry: those that ask
+// or deny, every one in a whole export, and in a partial one those for the
+// servers exported and their tools. An allow is an admin's own, kept in the
+// team's settings, and never in a file.
+func rulesOf(t team, all bool, servers []string) *approvalsSpec {
+	var out []ruleSpec
+	for _, name := range slices.Sorted(maps.Keys(t.rules)) {
+		r := t.rules[name]
+		if r.Mode == "allow" || !all && !forServers(r, servers) {
+			continue
+		}
+		spec := ruleSpec{Mode: r.Mode, RequireOther: r.RequireOther}
+		if r.TargetKind == "server" {
+			spec.Server = r.Target
+		} else {
+			spec.Tool = r.Target
+		}
+		out = append(out, spec)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return &approvalsSpec{Rules: out}
+}
+
+func forServers(r db.ApprovalRule, servers []string) bool {
+	for _, s := range servers {
+		if strings.EqualFold(r.Target, s) || r.TargetKind == "tool" && strings.HasPrefix(strings.ToLower(r.Target), strings.ToLower(s)+"__") {
+			return true
+		}
+	}
+	return false
 }
 
 // serverOf says a server's references relative to the team, as a blueprint

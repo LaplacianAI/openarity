@@ -1,11 +1,23 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useId, useState } from "react";
 
-import { getTeamSettings, listAgents, saveTeamSettings } from "@/api";
+import {
+  createApprovalRule,
+  deleteApprovalRule,
+  getApprovalSettings,
+  getTeamSettings,
+  listAgents,
+  listApprovalRules,
+  saveApprovalSettings,
+  saveTeamSettings,
+} from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type {
+  ApprovalMode,
+  ApprovalRuleMode,
+  ApprovalSettings,
   SandboxProvider,
   SearchProvider,
   TeamSettings,
@@ -744,6 +756,325 @@ function SettingsForm({
           onCheckedChange={(learning) => set("learning", { learning })}
         />
       </Section>
+
+      <ApprovalSections teamId={teamId} canWrite={canWrite} />
     </div>
+  );
+}
+
+/* ---------------------------------------------------------- tool approvals */
+
+const APPROVAL_MODES: { value: ApprovalMode; label: string; about: string }[] = [
+  { value: "off", label: "Off", about: "Agents never ask. Every call is made." },
+  {
+    value: "writes",
+    label: "Writes and destructive calls",
+    about: "Agents ask before any call that is not a read.",
+  },
+  {
+    value: "destructive",
+    label: "Destructive calls only",
+    about: "Agents ask only before a call that destroys something.",
+  },
+  { value: "all", label: "Every call", about: "Agents ask before every call, reads too." },
+];
+
+const TTL_MIN = 5;
+const TTL_MAX = 1440;
+
+/**
+ * When the team's agents ask a person, and the standing answers that decide
+ * for one tool or one server. Both have routes of their own, apart from the
+ * rest of the settings, so they save on their own.
+ */
+function ApprovalSections({ teamId, canWrite }: { teamId: string; canWrite: boolean }) {
+  const stored = useQuery({
+    queryKey: ["approval-settings", teamId],
+    queryFn: () => getApprovalSettings(teamId),
+  });
+  return (
+    <>
+      {stored.isError ? (
+        <section className="border-t border-rule py-6">
+          <ErrorState
+            what="the approval settings"
+            error={stored.error}
+            onRetry={() => stored.refetch()}
+            retrying={stored.isRefetching}
+          />
+        </section>
+      ) : stored.data ? (
+        <ApprovalModeSection teamId={teamId} stored={stored.data} canWrite={canWrite} />
+      ) : (
+        <Skeleton className="mt-6 h-24 w-full" role="status" aria-label="Loading approvals" />
+      )}
+      <ApprovalRulesSection teamId={teamId} canWrite={canWrite} />
+    </>
+  );
+}
+
+function ApprovalModeSection({
+  teamId,
+  stored,
+  canWrite,
+}: {
+  teamId: string;
+  stored: ApprovalSettings;
+  canWrite: boolean;
+}) {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<ApprovalMode>(stored.mode);
+  const [ttl, setTtl] = useState(String(stored.ttl_minutes));
+  const [saved, setSaved] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const minutes = Number(ttl);
+  const valid = Number.isInteger(minutes) && minutes >= TTL_MIN && minutes <= TTL_MAX;
+  const dirty =
+    mode !== stored.mode ||
+    (valid ? minutes !== stored.ttl_minutes : ttl !== String(stored.ttl_minutes));
+
+  const save = useMutation({
+    mutationFn: (s: ApprovalSettings) => saveApprovalSettings(teamId, s),
+    onSuccess: (next) => {
+      qc.setQueryData(["approval-settings", teamId], next);
+      setSaved(true);
+    },
+    onError: (err: Error) => setProblem(err.message),
+  });
+
+  return (
+    <Section
+      title="Approvals"
+      about="When the team's agents ask a person before making a call. Runs already started keep the settings they began with."
+      canWrite={canWrite}
+      dirty={dirty}
+      saved={saved && !dirty}
+      problem={problem}
+      pending={save.isPending}
+      busy={false}
+      onSave={() => {
+        if (!valid) {
+          setProblem(`Wait between ${TTL_MIN} and ${TTL_MAX} minutes.`);
+          return;
+        }
+        setProblem(null);
+        save.mutate({ mode, ttl_minutes: minutes });
+      }}
+    >
+      <Field
+        label="Ask before"
+        htmlFor="settings-approval-mode"
+        hint={APPROVAL_MODES.find((m) => m.value === mode)?.about}
+      >
+        <select
+          id="settings-approval-mode"
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+          value={mode}
+          onChange={(e) => {
+            setMode(e.target.value as ApprovalMode);
+            setSaved(false);
+            setProblem(null);
+          }}
+        >
+          {APPROVAL_MODES.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field
+        label="Minutes a request waits"
+        htmlFor="settings-approval-ttl"
+        hint={`${TTL_MIN} to ${TTL_MAX}. After that it expires and the run carries on without it.`}
+      >
+        <Input
+          id="settings-approval-ttl"
+          type="number"
+          inputMode="numeric"
+          className="w-32"
+          value={ttl}
+          onChange={(e) => {
+            setTtl(e.target.value);
+            setSaved(false);
+            setProblem(null);
+          }}
+        />
+      </Field>
+    </Section>
+  );
+}
+
+const RULE_WORDS: Record<ApprovalRuleMode, string> = {
+  allow: "Allow without asking",
+  ask: "Always ask",
+  deny: "Never allow",
+};
+
+function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: boolean }) {
+  const qc = useQueryClient();
+  const rules = useQuery({
+    queryKey: ["approval-rules", teamId],
+    queryFn: () => listApprovalRules(teamId),
+  });
+  const [kind, setKind] = useState<"tool" | "server">("tool");
+  const [target, setTarget] = useState("");
+  const [mode, setMode] = useState<ApprovalRuleMode>("ask");
+  const [other, setOther] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const refresh = () => qc.invalidateQueries({ queryKey: ["approval-rules", teamId] });
+  const add = useMutation({
+    mutationFn: () =>
+      createApprovalRule(teamId, {
+        target_kind: kind,
+        target: target.trim(),
+        mode,
+        require_other: other,
+      }),
+    onSuccess: () => {
+      setTarget("");
+      setOther(false);
+      setProblem(null);
+      void refresh();
+    },
+    onError: (err: Error) => setProblem(err.message),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteApprovalRule(teamId, id),
+    onSuccess: () => {
+      setProblem(null);
+      void refresh();
+    },
+    onError: (err: Error) => setProblem(err.message),
+  });
+  const items = rules.data?.items ?? [];
+
+  return (
+    <Section
+      title="Approval rules"
+      about="A standing answer for one tool or every tool of a server, whatever the mode. The most specific rule wins."
+      canWrite={canWrite}
+      dirty={false}
+      saved={false}
+      problem={problem}
+      pending={false}
+      busy={false}
+      onSave={() => {
+        if (target.trim() === "") {
+          setProblem("Name the tool or server the rule is for.");
+          return;
+        }
+        add.mutate();
+      }}
+    >
+      {rules.isError ? (
+        <ErrorState
+          what="the approval rules"
+          error={rules.error}
+          onRetry={() => rules.refetch()}
+          retrying={rules.isRefetching}
+        />
+      ) : rules.isPending ? (
+        <Skeleton className="h-12 w-full" role="status" aria-label="Loading rules" />
+      ) : items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No rules. The mode above decides for every call.
+        </p>
+      ) : (
+        <table className="w-full text-sm" aria-label="Approval rules">
+          <thead className="text-left text-xs text-muted-foreground">
+            <tr>
+              <th className="py-1 pr-3 font-normal">Applies to</th>
+              <th className="py-1 pr-3 font-normal">Target</th>
+              <th className="py-1 pr-3 font-normal">Answer</th>
+              <th className="py-1 pr-3 font-normal">Someone else answers</th>
+              <th className="py-1">
+                <span className="sr-only">Remove</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((r) => (
+              <tr key={r.id} data-rule={r.target} className="border-t border-rule">
+                <td className="py-2 pr-3">{r.target_kind === "tool" ? "A tool" : "A server"}</td>
+                <td className="py-2 pr-3 font-mono text-xs break-all">{r.target}</td>
+                <td className="py-2 pr-3">{RULE_WORDS[r.mode]}</td>
+                <td className="py-2 pr-3">{r.require_other ? "Yes" : "No"}</td>
+                <td className="py-2 text-right">
+                  {canWrite ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={remove.isPending}
+                      aria-label={`Remove the rule for ${r.target}`}
+                      onClick={() => remove.mutate(r.id)}
+                    >
+                      Remove
+                    </Button>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {canWrite ? (
+        <div className="space-y-3 border-t border-rule pt-4">
+          <div className="grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)_12rem]">
+            <Field label="Applies to" htmlFor="rule-kind">
+              <select
+                id="rule-kind"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={kind}
+                onChange={(e) => setKind(e.target.value as "tool" | "server")}
+              >
+                <option value="tool">A tool</option>
+                <option value="server">A server</option>
+              </select>
+            </Field>
+            <Field
+              label="Target"
+              htmlFor="rule-target"
+              hint={
+                kind === "tool" ? "server__tool, or a built-in's own name." : "The server's name."
+              }
+            >
+              <Input
+                id="rule-target"
+                spellCheck={false}
+                maxLength={200}
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+              />
+            </Field>
+            <Field label="Answer" htmlFor="rule-mode">
+              <select
+                id="rule-mode"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={mode}
+                onChange={(e) => setMode(e.target.value as ApprovalRuleMode)}
+              >
+                {(Object.keys(RULE_WORDS) as ApprovalRuleMode[]).map((m) => (
+                  <option key={m} value={m}>
+                    {RULE_WORDS[m]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <SwitchField
+            label="Someone else must answer"
+            description="The person the run works for may not approve their own request."
+            checked={other}
+            onCheckedChange={setOther}
+          />
+          <Button type="submit" size="sm" variant="outline" loading={add.isPending}>
+            Add rule
+          </Button>
+        </div>
+      ) : null}
+    </Section>
   );
 }

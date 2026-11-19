@@ -30,6 +30,7 @@ type team struct {
 	skills   map[string]db.Skill
 	files    map[uuid.UUID]map[string][]byte // a skill's files: path to SHA-256
 	grants   map[uuid.UUID]held              // an agent's, by its id
+	rules    map[string]db.ApprovalRule      // the team's approval rules, by ruleName
 	declared map[Kind]map[string]bool        // what the blueprint names, refused or not
 }
 
@@ -47,9 +48,12 @@ var permissionOf = map[Kind]string{
 	KindMCPServer: "tool:write",
 	KindSkill:     "skill:write",
 	KindAgent:     "agent:write",
+	KindRule:      "team:settings",
 }
 
-var nounOf = map[Kind]string{KindMCPServer: "an MCP server", KindSkill: "a skill", KindAgent: "an agent"}
+var nounOf = map[Kind]string{
+	KindMCPServer: "an MCP server", KindSkill: "a skill", KindAgent: "an agent", KindRule: "an approval rule",
+}
 
 // planned is a plan and the writes that applying it makes, in order.
 type planned struct {
@@ -58,6 +62,7 @@ type planned struct {
 	servers []serverStep
 	skills  []skillStep
 	agents  []agentStep
+	rules   []ruleStep
 	refused map[Kind]bool  // a missing permission, said once per kind
 	written []db.McpServer // the servers an apply wrote, as written
 }
@@ -72,6 +77,15 @@ type skillStep struct {
 	change int
 	id     uuid.UUID
 	dir    skill.Directory
+}
+
+type ruleStep struct {
+	change int
+	id     uuid.UUID // zero for a new rule
+	kind   string    // tool or server
+	target string
+	mode   string
+	other  bool
 }
 
 type agentStep struct {
@@ -89,9 +103,77 @@ func planOf(t team, bp Blueprint, loops []string, m may) planned {
 	p.planServers(t, bp.MCPServers, m)
 	p.planSkills(t, bp.Skills, m)
 	p.planAgents(t, bp.Agents, loops, m)
+	if bp.Approvals != nil {
+		p.planRules(t, bp.Approvals.Rules, m)
+	}
 
 	p.Digest = digest(p.Changes, p.Refusals)
 	return p
+}
+
+// strictness orders a rule's answers: a blueprint may move a rule up, never
+// down.
+var strictness = map[string]int{"allow": 0, "ask": 1, "deny": 2}
+
+// ruleName is how a plan names a rule: its kind and its target, the target
+// in lower case as the team's one rule per target is.
+func ruleName(kind, target string) string { return kind + ":" + strings.ToLower(target) }
+
+// planRules plans the blueprint's approval rules against the team's. A rule
+// may be added, or made stricter (allow to ask to deny, or a second person
+// required); never allowed, loosened, or removed: a rule the blueprint does
+// not name is left as it is.
+func (p *planned) planRules(t team, specs []ruleSpec, m may) {
+	seen := map[string]bool{}
+	for _, r := range specs {
+		kind, target := "tool", strings.TrimSpace(r.Tool)
+		if server := strings.TrimSpace(r.Server); server != "" {
+			kind, target = "server", server
+		}
+		name := ruleName(kind, target)
+		switch {
+		case (r.Tool == "") == (r.Server == ""):
+			p.refuse(KindRule, name, "a rule names exactly one of tool and server")
+			continue
+		case target == "" || len(target) > maxRuleTarget:
+			p.refuse(KindRule, name, "a rule's target is between 1 and 200 characters")
+			continue
+		case r.Mode == "allow":
+			p.refuse(KindRule, name, "a blueprint may not allow a call; an admin allows one in the team's settings")
+			continue
+		case r.Mode != "ask" && r.Mode != "deny":
+			p.refuse(KindRule, name, "mode is ask or deny")
+			continue
+		case seen[name]:
+			p.refuse(KindRule, name, "named twice")
+			continue
+		}
+		seen[name] = true
+
+		cur, exists := t.rules[name]
+		if !exists {
+			p.rules = append(p.rules, ruleStep{
+				change: p.note(KindRule, name, nil, nil, m), kind: kind, target: target, mode: r.Mode, other: r.RequireOther,
+			})
+			continue
+		}
+		if strictness[r.Mode] < strictness[cur.Mode] || cur.RequireOther && !r.RequireOther {
+			p.refuse(KindRule, name, fmt.Sprintf("the team's rule is stricter (%s%s); a blueprint may only make a rule stricter",
+				cur.Mode, map[bool]string{true: ", someone else answers", false: ""}[cur.RequireOther]))
+			continue
+		}
+		var fields []string
+		if r.Mode != cur.Mode {
+			fields = append(fields, "mode")
+		}
+		if r.RequireOther != cur.RequireOther {
+			fields = append(fields, "require_other")
+		}
+		i := p.note(KindRule, name, fields, &cur.ID, m)
+		if len(fields) > 0 {
+			p.rules = append(p.rules, ruleStep{change: i, id: cur.ID, kind: kind, target: target, mode: r.Mode, other: r.RequireOther})
+		}
+	}
 }
 
 func (p *planned) refuse(k Kind, name, msg string) {
@@ -385,6 +467,9 @@ func (t team) existing(k Kind, name string) (uuid.UUID, bool) {
 	case KindAgent:
 		a, ok := t.agents[name]
 		return a.ID, ok
+	case KindRule:
+		r, ok := t.rules[name]
+		return r.ID, ok
 	default:
 		return uuid.Nil, false
 	}

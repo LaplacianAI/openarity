@@ -56,6 +56,7 @@ type fakeStore struct {
 	committed int
 	marked    []db.MarkMCPServerDiscoveredParams
 	failures  []db.RecordMCPServerDiscoveryFailureParams
+	trusted   []db.SetServerTrustHintsParams
 
 	reads      int
 	created    []db.CreateMCPServerParams
@@ -92,6 +93,22 @@ func (s *fakeStore) InTx(_ context.Context, fn func(Queries) error) error {
 
 // RecordMCPServerDiscoveryFailure keeps the error only on the version that
 // was read, as the real query's guard does.
+func (s *fakeStore) SetServerTrustHints(_ context.Context, arg db.SetServerTrustHintsParams) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trusted = append(s.trusted, arg)
+	if s.updateErr != nil {
+		return 0, s.updateErr
+	}
+	row, ok := s.servers[arg.ID]
+	if !ok || row.TeamID != arg.TeamID {
+		return 0, nil
+	}
+	row.TrustHints = arg.TrustHints
+	s.servers[arg.ID] = row
+	return 1, nil
+}
+
 func (s *fakeStore) RecordMCPServerDiscoveryFailure(_ context.Context, arg db.RecordMCPServerDiscoveryFailureParams) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,7 +216,8 @@ func (s *fakeStore) touched() bool {
 }
 
 func (s *fakeStore) wrote() bool {
-	return len(s.created) != 0 || len(s.updated) != 0 || len(s.deleted) != 0 || len(s.marked) != 0 || s.committed != 0
+	return len(s.created) != 0 || len(s.updated) != 0 || len(s.deleted) != 0 || len(s.marked) != 0 ||
+		len(s.trusted) != 0 || s.committed != 0
 }
 
 func (s *fakeStore) CreateMCPServer(_ context.Context, arg db.CreateMCPServerParams) (db.McpServer, error) {
@@ -353,6 +371,8 @@ func serverRoutes(t *testing.T) authz.Routes {
 	add("GET", "/teams/{id}/mcp-servers/{serverID}/tools", "member", nil)
 	add("POST", "/teams/{id}/mcp-servers/{serverID}/discover", "team", &write)
 	add("PUT", "/teams/{id}/mcp-secrets/{name}", "team", &write)
+	settings := "team:settings"
+	add("PUT", "/teams/{id}/mcp-servers/{serverID}/trust-hints", "team", &settings)
 	return rs
 }
 
@@ -625,7 +645,7 @@ func wantKeys(t *testing.T, what string, got map[string]bool, want ...string) {
 	}
 }
 
-var commonKeys = []string{"id", "team_id", "name", "env", "auth_kind", "connection", "oauth_registration", "bare", "discovered_at", "last_discovery_error", "last_discovery_at", "created_at", "updated_at"}
+var commonKeys = []string{"id", "team_id", "name", "env", "auth_kind", "connection", "oauth_registration", "bare", "trust_hints", "discovered_at", "last_discovery_error", "last_discovery_at", "created_at", "updated_at"}
 
 // The wire shape is a contract. A server shows its own transport's fields and
 // never the other's, and discovered_at is present as null until discovery
@@ -821,6 +841,38 @@ func TestGetDescribesTheServer(t *testing.T) {
 	}
 }
 
+// Believing a server's hints is set on its own, and shown on the server;
+// nothing else about it changes. A body that does not say true or false is
+// refused before anything is read.
+func TestTrustingAServersHintsChangesOnlyThat(t *testing.T) {
+	t.Parallel()
+
+	row := aURLServer(uuid.New(), "github")
+	s := newFakeStore(row)
+	admin := &fakeAuthz{allowed: true}
+	rec := call(t, s, admin, memberOf(row.TeamID), http.MethodPut, one(row.TeamID, row.ID)+"/trust-hints",
+		map[string]any{"trust": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body)
+	}
+	if got := decodeServer(t, rec); !got.TrustHints || got.Name != "github" {
+		t.Errorf("got %+v, want github with its hints trusted", got)
+	}
+	if slices.Contains(admin.asked, "tool:write") || !slices.Contains(admin.asked, "team:settings") {
+		t.Errorf("asked %v; want team:settings, not tool:write", admin.asked)
+	}
+	if after := s.servers[row.ID]; !after.TrustHints || after.UpdatedAt != row.UpdatedAt || after.Name != row.Name {
+		t.Errorf("stored %+v; want only trust_hints changed", after)
+	}
+
+	for _, body := range []any{map[string]any{}, map[string]any{"trust": "yes"}} {
+		rec := call(t, s, admin, memberOf(row.TeamID), http.MethodPut, one(row.TeamID, row.ID)+"/trust-hints", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("body %v: status %d, want 400", body, rec.Code)
+		}
+	}
+}
+
 // A server id from another team is answered exactly as one that does not
 // exist, and nothing is written, whatever the verb.
 func TestAnotherTeamsServerIsNotFound(t *testing.T) {
@@ -837,6 +889,7 @@ func TestAnotherTeamsServerIsNotFound(t *testing.T) {
 		"delete":   {http.MethodDelete, one(mine, theirs.ID), nil},
 		"tools":    {http.MethodGet, toolsOf(mine, theirs.ID), nil},
 		"discover": {http.MethodPost, discoverOf(mine, theirs.ID), nil},
+		"trust":    {http.MethodPut, one(mine, theirs.ID) + "/trust-hints", map[string]any{"trust": true}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

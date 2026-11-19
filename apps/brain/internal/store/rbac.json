@@ -290,6 +290,52 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/approvals",
+      "scope": "team",
+      "permission": "approval:read"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/approvals/{approvalID}",
+      "scope": "team",
+      "permission": "approval:read"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/approvals/{approvalID}/decision",
+      "scope": "team",
+      "permission": "approval:self"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/approval-settings",
+      "scope": "member"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/approval-settings",
+      "scope": "team",
+      "permission": "team:settings"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/approval-rules",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/approval-rules",
+      "scope": "team",
+      "permission": "team:settings"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/approval-rules/{ruleID}",
+      "scope": "team",
+      "permission": "team:settings"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/channels",
       "scope": "member"
     },
@@ -498,6 +544,12 @@
       "path": "/teams/{id}/mcp-servers/{serverID}/discover",
       "scope": "team",
       "permission": "tool:write"
+    },
+    {
+      "method": "PUT",
+      "path": "/teams/{id}/mcp-servers/{serverID}/trust-hints",
+      "scope": "team",
+      "permission": "team:settings"
     },
     {
       "method": "DELETE",

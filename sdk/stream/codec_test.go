@@ -27,6 +27,12 @@ func samples() []Event {
 		Usage{Model: "m", InputTokens: 1, OutputTokens: 2, CachedInputTokens: 3},
 		Compacted{Reason: "tokens", Cleared: 1, Folded: 2, Before: 3, After: 4, Summary: "s", Error: "e"},
 		RunFinished{Status: StatusFailed, Output: "o", Error: "e"},
+		ApprovalRequested{
+			ApprovalID: "a1", ToolCallID: "c1", Tool: "mail__send", Class: "write", Summary: "to: a",
+			Code: "ABCD", ExpiresAt: time.Date(2026, 11, 13, 11, 0, 0, 0, time.UTC),
+		},
+		ApprovalDecided{ApprovalID: "a1", Decision: "cancelled", By: "u1", Via: "channel", Scope: "once", Superseded: true},
+		RunWaiting{Reason: "approval", Said: "May I send it?"},
 		Custom{Name: "wrap_up", Value: json.RawMessage(`{"left":40}`)},
 	}
 }

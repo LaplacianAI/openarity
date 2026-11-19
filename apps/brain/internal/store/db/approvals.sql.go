@@ -343,6 +343,58 @@ func (q *Queries) GetApprovalByCall(ctx context.Context, arg GetApprovalByCallPa
 	return i, err
 }
 
+const getVisibleApproval = `-- name: GetVisibleApproval :one
+SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other, a.told_at FROM approvals a
+JOIN runs r ON r.id = a.root_run_id
+JOIN sessions s ON s.id = r.session_id
+WHERE a.id = $1 AND a.team_id = $2
+  AND (s.kind <> 'direct' OR $3::bool OR s.user_id = $4::uuid)
+`
+
+type GetVisibleApprovalParams struct {
+	ID        uuid.UUID
+	TeamID    uuid.UUID
+	Moderator bool
+	Viewer    uuid.UUID
+}
+
+// One request, as ListVisibleApprovals would show it; another team's, or
+// one whose run the person may not read, is no row.
+func (q *Queries) GetVisibleApproval(ctx context.Context, arg GetVisibleApprovalParams) (Approval, error) {
+	row := q.db.QueryRow(ctx, getVisibleApproval,
+		arg.ID,
+		arg.TeamID,
+		arg.Moderator,
+		arg.Viewer,
+	)
+	var i Approval
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RunID,
+		&i.RootRunID,
+		&i.CallID,
+		&i.Tool,
+		&i.Class,
+		&i.Arguments,
+		&i.Summary,
+		&i.Status,
+		&i.Code,
+		&i.RequestedFor,
+		&i.DecidedBy,
+		&i.DecidedVia,
+		&i.DecisionScope,
+		&i.Reason,
+		&i.ExpiresAt,
+		&i.DecidedAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+		&i.RequireOther,
+		&i.ToldAt,
+	)
+	return i, err
+}
+
 const insertApproval = `-- name: InsertApproval :one
 INSERT INTO approvals (
     team_id, run_id, root_run_id, call_id, tool, class,
@@ -418,76 +470,6 @@ func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) 
 		&i.ToldAt,
 	)
 	return i, err
-}
-
-const listApprovals = `-- name: ListApprovals :many
-SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals a
-WHERE a.team_id = $1
-  AND (COALESCE(cardinality($2::text[]), 0) = 0
-   OR a.status = ANY($2::text[]))
-  AND (NOT $3::bool
-   OR (a.created_at, a.id) < ($4::timestamptz, $5::uuid))
-ORDER BY a.created_at DESC, a.id DESC
-LIMIT $6
-`
-
-type ListApprovalsParams struct {
-	TeamID         uuid.UUID
-	Statuses       []string
-	UseCursor      bool
-	AfterCreatedAt time.Time
-	AfterID        uuid.UUID
-	PageSize       int32
-}
-
-func (q *Queries) ListApprovals(ctx context.Context, arg ListApprovalsParams) ([]Approval, error) {
-	rows, err := q.db.Query(ctx, listApprovals,
-		arg.TeamID,
-		arg.Statuses,
-		arg.UseCursor,
-		arg.AfterCreatedAt,
-		arg.AfterID,
-		arg.PageSize,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Approval
-	for rows.Next() {
-		var i Approval
-		if err := rows.Scan(
-			&i.ID,
-			&i.TeamID,
-			&i.RunID,
-			&i.RootRunID,
-			&i.CallID,
-			&i.Tool,
-			&i.Class,
-			&i.Arguments,
-			&i.Summary,
-			&i.Status,
-			&i.Code,
-			&i.RequestedFor,
-			&i.DecidedBy,
-			&i.DecidedVia,
-			&i.DecisionScope,
-			&i.Reason,
-			&i.ExpiresAt,
-			&i.DecidedAt,
-			&i.UsedAt,
-			&i.CreatedAt,
-			&i.RequireOther,
-			&i.ToldAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const listDueApprovals = `-- name: ListDueApprovals :many
@@ -637,6 +619,91 @@ ORDER BY created_at, id
 // order they were made: a resume acts on each, then tells it.
 func (q *Queries) ListUntoldApprovals(ctx context.Context, runID uuid.UUID) ([]Approval, error) {
 	rows, err := q.db.Query(ctx, listUntoldApprovals, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.RunID,
+			&i.RootRunID,
+			&i.CallID,
+			&i.Tool,
+			&i.Class,
+			&i.Arguments,
+			&i.Summary,
+			&i.Status,
+			&i.Code,
+			&i.RequestedFor,
+			&i.DecidedBy,
+			&i.DecidedVia,
+			&i.DecisionScope,
+			&i.Reason,
+			&i.ExpiresAt,
+			&i.DecidedAt,
+			&i.UsedAt,
+			&i.CreatedAt,
+			&i.RequireOther,
+			&i.ToldAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVisibleApprovals = `-- name: ListVisibleApprovals :many
+SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other, a.told_at FROM approvals a
+JOIN runs r ON r.id = a.root_run_id
+JOIN sessions s ON s.id = r.session_id
+WHERE a.team_id = $1
+  AND (s.kind <> 'direct' OR $2::bool OR s.user_id = $3::uuid)
+  AND (COALESCE(cardinality($4::text[]), 0) = 0
+   OR a.status = ANY($4::text[]))
+  AND ($5::uuid IS NULL OR a.root_run_id = $5::uuid)
+  AND (NOT $6::bool
+   OR (a.created_at, a.id) < ($7::timestamptz, $8::uuid))
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $9
+`
+
+type ListVisibleApprovalsParams struct {
+	TeamID         uuid.UUID
+	Moderator      bool
+	Viewer         uuid.UUID
+	Statuses       []string
+	RootRunID      *uuid.UUID
+	UseCursor      bool
+	AfterCreatedAt time.Time
+	AfterID        uuid.UUID
+	PageSize       int32
+}
+
+// A team's requests, newest first, as a person may see them: only those
+// whose run they may read, by the rule GetRunVisible keeps (a direct
+// conversation's are its person's, and a moderator's). A request's summary
+// and arguments quote the call, so they reach no further than the run does.
+// Filtered by status, and by the run tree they were asked under.
+func (q *Queries) ListVisibleApprovals(ctx context.Context, arg ListVisibleApprovalsParams) ([]Approval, error) {
+	rows, err := q.db.Query(ctx, listVisibleApprovals,
+		arg.TeamID,
+		arg.Moderator,
+		arg.Viewer,
+		arg.Statuses,
+		arg.RootRunID,
+		arg.UseCursor,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

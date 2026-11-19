@@ -694,3 +694,41 @@ describe("editing a server", () => {
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("may not carry a password");
   });
 });
+
+describe("trusting a server's hints", () => {
+  async function detail(actions: string[], trusted = false) {
+    const seen = brain({
+      ...team(actions),
+      "GET /teams/{id}/mcp-servers": { body: { items: [{ ...github, trust_hints: trusted }] } },
+      "GET /teams/{id}/mcp-servers/{sid}/tools": { body: { items: [] } },
+      "GET /teams/{id}/summary": { body: summary },
+      "PUT /teams/{id}/mcp-servers/{sid}/trust-hints": {
+        body: { ...github, trust_hints: !trusted },
+      },
+    });
+    showServers();
+    await userEvent.click(await screen.findByRole("button", { name: "github" }));
+    return seen;
+  }
+
+  it("warns what it lets through, and sends the choice to its own route", async () => {
+    const seen = await detail(["team:settings", "tool:write"]);
+    const toggle = await screen.findByRole("switch", { name: "Trust this server's tool hints" });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/past approvals on its word alone/)).toBeInTheDocument();
+    await userEvent.click(toggle);
+    await waitFor(() => expect(seen.some((s) => s.method === "PUT")).toBe(true));
+    const put = seen.find((s) => s.method === "PUT");
+    expect(put?.path).toMatch(/\/mcp-servers\/m1\/trust-hints$/);
+    expect(JSON.parse(String(put?.body))).toEqual({ trust: true });
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
+  it("shows a trusted server as trusted, and cannot be changed without team:settings", async () => {
+    await detail(["tool:write"], true);
+    const toggle = await screen.findByRole("switch", { name: "Trust this server's tool hints" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.getByText("team:settings")).toBeInTheDocument();
+  });
+});

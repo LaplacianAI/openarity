@@ -59,6 +59,7 @@ Blueprints:
   - egress lists every host and port it connects to, [{"host": "imap.gmail.com", "port": 993}], and nothing else. A server that installs a package as it starts (npx, uvx) needs its registry too: registry.npmjs.org or pypi.org and files.pythonhosted.org, port 443.
   - If team says the sandbox is none, the server cannot run until someone chooses one in the team's settings: tell the person.
 - A skill: files [{path, text}], one of them SKILL.md, starting with front matter that names it and describes when to use it.
+- approvals: {rules: [{tool or server, mode, require_other}]}. When the team's settings say so, its agents already ask a person before any call that writes. Add a rule only where the request needs more: ask before a tool that reads something sensitive, deny a tool no agent should ever call, require_other where the person a call is for should not approve it themselves. A rule names one tool as <server>__<tool>, or every tool of a server. mode is ask or deny: a blueprint never allows a call or loosens a rule, so if the person wants fewer questions, tell them an admin changes that in the team's settings.
 
 Never:
 - Ask for, write or repeat a secret's value. If someone pastes one, do not use it, and tell them to rotate it.
@@ -300,7 +301,15 @@ var proposeSchema = json.RawMessage(`{
           "files": {"type": "array", "items": {"type": "object", "properties": {
             "path": {"type": "string"}, "text": {"type": "string"}}, "required": ["path", "text"]}}},
           "required": ["files"]}},
-        "agents": {"type": "array", "items": {"type": "object"}}
+        "agents": {"type": "array", "items": {"type": "object"}},
+        "approvals": {"type": "object", "properties": {
+          "rules": {"type": "array", "items": {"type": "object", "properties": {
+            "tool": {"type": "string", "description": "<server>__<tool>, or a built-in's own name"},
+            "server": {"type": "string", "description": "every tool of this MCP server"},
+            "mode": {"type": "string", "enum": ["ask", "deny"]},
+            "require_other": {"type": "boolean"}},
+            "required": ["mode"], "additionalProperties": false}}},
+          "additionalProperties": false}
       },
       "additionalProperties": false
     }

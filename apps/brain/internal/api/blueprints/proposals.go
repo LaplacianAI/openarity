@@ -124,10 +124,14 @@ func (ws *Workshop) Propose(ctx context.Context, run db.Run, raw json.RawMessage
 	if err != nil {
 		return Proposed{}, fmt.Errorf("%w: %w", ErrProposal, err)
 	}
-	if len(bp.MCPServers) > maxItems || len(bp.Skills) > maxItems || len(bp.Agents) > maxItems {
+	rules := 0
+	if bp.Approvals != nil {
+		rules = len(bp.Approvals.Rules)
+	}
+	if len(bp.MCPServers) > maxItems || len(bp.Skills) > maxItems || len(bp.Agents) > maxItems || rules > maxItems {
 		return Proposed{}, fmt.Errorf("%w: at most %d of each kind", ErrProposal, maxItems)
 	}
-	if len(bp.MCPServers)+len(bp.Skills)+len(bp.Agents) == 0 {
+	if len(bp.MCPServers)+len(bp.Skills)+len(bp.Agents)+rules == 0 {
 		return Proposed{}, fmt.Errorf("%w: the blueprint names nothing", ErrProposal)
 	}
 
@@ -135,7 +139,7 @@ func (ws *Workshop) Propose(ctx context.Context, run db.Run, raw json.RawMessage
 	if err != nil {
 		return Proposed{}, err
 	}
-	p := planOf(t, bp, ws.loops, may{KindMCPServer: true, KindSkill: true, KindAgent: true})
+	p := planOf(t, bp, ws.loops, may{KindMCPServer: true, KindSkill: true, KindAgent: true, KindRule: true})
 
 	stored, err := json.Marshal(bp)
 	if err != nil {
@@ -179,23 +183,25 @@ type proposalSkill struct {
 
 // blueprintFields is every field a proposal's items may hold, said when one
 // holds another, so the model fixes it in one go rather than one field a try.
-const blueprintFields = "Write only these fields. An MCP server: name, url, auth_secret, command, env, bare. " +
+const blueprintFields = "Write only these fields. An MCP server: name, url, auth_secret, command, vars, env, egress, bare. " +
 	"A skill: files [{path, text}] and nothing else; its name and description go in SKILL.md's front matter. " +
 	"An agent: name, description, instructions, model {name, max_tokens}, pattern, max_steps, mcp_servers " +
-	"[{name, allow}], skills, delegation, delegates, web, token_budget, output_schema. No other field, such as a reason, anywhere."
+	"[{name, allow}], skills, delegation, delegates, web, token_budget, output_schema. " +
+	"approvals: {rules: [{tool or server, mode ask or deny, require_other}]}. No other field, such as a reason, anywhere."
 
 func fromProposal(raw json.RawMessage) (Blueprint, error) {
 	var in struct {
 		MCPServers []serverSpec    `json:"mcp_servers"`
 		Skills     []proposalSkill `json:"skills"`
 		Agents     []agentSpec     `json:"agents"`
+		Approvals  *approvalsSpec  `json:"approvals"`
 	}
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
 		return Blueprint{}, fmt.Errorf("the blueprint does not read: %w. %s", err, blueprintFields)
 	}
-	bp := Blueprint{MCPServers: in.MCPServers, Agents: in.Agents}
+	bp := Blueprint{MCPServers: in.MCPServers, Agents: in.Agents, Approvals: in.Approvals}
 	for _, s := range in.Skills {
 		var spec skillSpec
 		for _, f := range s.Files {

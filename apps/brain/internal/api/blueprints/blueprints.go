@@ -24,6 +24,7 @@ var uploaded = skills.Origin{Source: "upload"}
 const (
 	codeUniqueViolation = "23505"
 	maxItems            = 50
+	maxRuleTarget       = 200
 	// Skills travel as base64, a third larger than their bytes.
 	maxBodyBytes = 64 << 20
 )
@@ -44,6 +45,8 @@ type Queries interface {
 	CreateProposal(ctx context.Context, arg db.CreateProposalParams) (db.Proposal, error)
 	CreateMCPServer(ctx context.Context, arg db.CreateMCPServerParams) (db.McpServer, error)
 	UpdateMCPServer(ctx context.Context, arg db.UpdateMCPServerParams) (db.McpServer, error)
+	CreateApprovalRule(ctx context.Context, arg db.CreateApprovalRuleParams) (db.ApprovalRule, error)
+	UpdateApprovalRule(ctx context.Context, arg db.UpdateApprovalRuleParams) (db.ApprovalRule, error)
 }
 
 type handler struct {
@@ -132,7 +135,8 @@ func (h *handler) apply(w http.ResponseWriter, r *http.Request) {
 }
 
 func withinLimits(w http.ResponseWriter, bp Blueprint) bool {
-	if len(bp.MCPServers) > maxItems || len(bp.Skills) > maxItems || len(bp.Agents) > maxItems {
+	if len(bp.MCPServers) > maxItems || len(bp.Skills) > maxItems || len(bp.Agents) > maxItems ||
+		bp.Approvals != nil && len(bp.Approvals.Rules) > maxItems {
 		http.Error(w, fmt.Sprintf("a blueprint holds at most %d of each kind", maxItems), http.StatusBadRequest)
 		return false
 	}
@@ -175,7 +179,7 @@ func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned, also 
 		keys[i] = k
 	}
 
-	ids := map[Kind]map[string]uuid.UUID{KindMCPServer: {}, KindSkill: {}, KindAgent: {}}
+	ids := map[Kind]map[string]uuid.UUID{KindMCPServer: {}, KindSkill: {}, KindAgent: {}, KindRule: {}}
 	for _, c := range p.Changes {
 		if c.ID != nil {
 			ids[c.Kind][c.Name] = *c.ID
@@ -191,6 +195,9 @@ func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned, also 
 			return err
 		}
 		if err := writeAgents(ctx, q, p, ids); err != nil {
+			return err
+		}
+		if err := writeRules(ctx, q, teamID, p, ids); err != nil {
 			return err
 		}
 		if also == nil {
@@ -279,6 +286,27 @@ func writeAgents(ctx context.Context, q Queries, p *planned, ids map[Kind]map[st
 		if err := agents.Regrant(ctx, q, rows[i], req); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func writeRules(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, ids map[Kind]map[string]uuid.UUID) error {
+	for _, r := range p.rules {
+		var row db.ApprovalRule
+		var err error
+		if r.id == uuid.Nil {
+			row, err = q.CreateApprovalRule(ctx, db.CreateApprovalRuleParams{
+				TeamID: teamID, TargetKind: r.kind, Target: r.target, Mode: r.mode, RequireOther: r.other,
+			})
+		} else {
+			row, err = q.UpdateApprovalRule(ctx, db.UpdateApprovalRuleParams{
+				ID: r.id, TeamID: teamID, Mode: r.mode, RequireOther: r.other,
+			})
+		}
+		if err != nil {
+			return err
+		}
+		p.made(r.change, row.ID, ids)
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import {
   Radio,
   Server,
   Settings,
+  ShieldQuestion,
   Sparkles,
   Sun,
   Users,
@@ -24,7 +25,7 @@ import {
 } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useState } from "react";
-import { fetchWhoami, listDeletedTeams } from "@/api";
+import { fetchWhoami, listDeletedTeams, listToolApprovals } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useToken } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
@@ -80,6 +81,12 @@ const SESSIONS: NavItem = {
   exact: false,
 };
 const APPROVALS: NavItem = { to: "/ui/approvals", label: "Approvals", icon: Inbox, exact: false };
+const REQUESTS: NavItem = {
+  to: "/ui/requests",
+  label: "Requests",
+  icon: ShieldQuestion,
+  exact: false,
+};
 const TEAMS: NavItem = { to: "/ui/teams", label: "Teams", icon: Users, exact: false };
 const DELETED_TEAMS: NavItem = {
   to: "/ui/teams/deleted",
@@ -87,6 +94,9 @@ const DELETED_TEAMS: NavItem = {
   icon: ArchiveRestore,
   exact: false,
 };
+
+/** The count beside a navigation entry that has one, by its path. */
+type Badges = Readonly<Record<string, string | null>>;
 
 type NavGroup = { label: string; items: readonly NavItem[] };
 
@@ -96,7 +106,7 @@ type NavGroup = { label: string; items: readonly NavItem[] };
  */
 export function navGroups(superAdmin: boolean): readonly NavGroup[] {
   return [
-    { label: "Work", items: [HOME, RUNS, SESSIONS, APPROVALS] },
+    { label: "Work", items: [HOME, RUNS, SESSIONS, APPROVALS, REQUESTS] },
     {
       label: "Build",
       items: [
@@ -156,6 +166,25 @@ function useWaiting(teamId: string | null): string | null {
   return n ? String(n) : null;
 }
 
+/**
+ * What agents are waiting to ask a person, across the team: a count, or "50+"
+ * when there is more than a page. Null for none, and for a reader who may not
+ * see them: the brain refuses, and a badge that says zero would be a guess.
+ */
+function usePendingRequests(teamId: string | null): string | null {
+  const perms = usePermissions(teamId);
+  const pending = useQuery({
+    queryKey: ["approvals", teamId, "pending-count"],
+    queryFn: ({ signal }) =>
+      listToolApprovals(teamId as string, { status: ["pending"] }, null, signal),
+    enabled: Boolean(teamId) && !perms.isPending && perms.can("approval:read"),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const n = pending.data?.items.length ?? 0;
+  return n === 0 ? null : `${n}${pending.data?.next_cursor ? "+" : ""}`;
+}
+
 /** The entry a path belongs to: the longest that matches, so a nested page lights only itself. */
 function activeOf(items: readonly NavItem[], pathname: string): string | undefined {
   return items.filter((i) => isActive(pathname, i)).sort((a, b) => b.to.length - a.to.length)[0]
@@ -212,7 +241,9 @@ function Shell({ pathname }: { pathname: string }) {
   const layout: Layout = wide ? "full" : tablet ? "rail" : "phone";
   const { teamId } = useCurrentTeam();
   const groups = navGroups(useOffersDeletedTeams());
-  const waiting = useWaiting(teamId);
+  const senders = useWaiting(teamId);
+  const requests = usePendingRequests(teamId);
+  const waiting: Badges = { [APPROVALS.to]: senders, [REQUESTS.to]: requests };
   const [finding, setFinding] = useState(false);
   const find = useCallback(() => setFinding(true), []);
   useCommandKey(find);
@@ -312,12 +343,12 @@ function NavLink({
 }: {
   item: NavItem;
   current: boolean;
-  waiting: string | null;
+  waiting: Badges;
   rail?: boolean;
   onPick?: () => void;
 }) {
   const Icon = item.icon;
-  const count = item === APPROVALS ? waiting : null;
+  const count = waiting[item.to] ?? null;
   const link = (
     <Link
       to={item.to}
@@ -366,7 +397,7 @@ function Nav({
 }: {
   groups: readonly NavGroup[];
   pathname: string;
-  waiting: string | null;
+  waiting: Badges;
   rail?: boolean;
   onPick?: () => void;
 }) {
@@ -501,7 +532,7 @@ function QuickBar({
 }: {
   groups: readonly NavGroup[];
   pathname: string;
-  waiting: string | null;
+  waiting: Badges;
 }) {
   const [open, setOpen] = useState(false);
   const quick = [HOME, RUNS, APPROVALS];
@@ -520,7 +551,7 @@ function QuickBar({
       {quick.map((item) => {
         const Icon = item.icon;
         const current = item.to === active;
-        const count = item === APPROVALS ? waiting : null;
+        const count = waiting[item.to] ?? null;
         return (
           <Link
             key={item.to}

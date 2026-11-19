@@ -35,6 +35,7 @@ function gmail(connection: MCPServer["connection"]): MCPServer {
     oauth_scopes: ["gmail.readonly"],
     connection,
     bare: false,
+    trust_hints: false,
     discovered_at: null,
     last_discovery_at: null,
     last_discovery_error: null,

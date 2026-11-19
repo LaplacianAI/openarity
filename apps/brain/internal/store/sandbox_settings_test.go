@@ -144,12 +144,13 @@ func TestTheSandboxImageBecomesAnE2BTemplate(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	downTo(t, s, beforeSandboxTemplate)
-	e2b, daytona := mustCreate(t, s, "e2b-team"), mustCreate(t, s, "daytona-team")
+	// Made as teams were then, before a team's settings came with it.
+	e2b, daytona := bareTeam(t, s, "e2b-team"), bareTeam(t, s, "daytona-team")
 	key := uuid.New()
 	for _, tc := range []struct {
 		team     uuid.UUID
 		provider string
-	}{{e2b.ID, "e2b"}, {daytona.ID, "daytona"}} {
+	}{{e2b, "e2b"}, {daytona, "daytona"}} {
 		if _, err := s.pool.Exec(t.Context(), `INSERT INTO team_settings
 			(team_id, search_provider, learning, compaction_messages, sandbox_provider, sandbox_secret_id, sandbox_image)
 			VALUES ($1, 'none', false, 100, $2, $3, 'their-image')`, tc.team, tc.provider, key); err != nil {
@@ -160,10 +161,10 @@ func TestTheSandboxImageBecomesAnE2BTemplate(t *testing.T) {
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1 AND sandbox_template = 'their-image'`, e2b.ID); n != 1 {
+	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1 AND sandbox_template = 'their-image'`, e2b); n != 1 {
 		t.Error("the E2B team's template was lost")
 	}
-	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1 AND sandbox_template IS NULL`, daytona.ID); n != 1 {
+	if n := count(t, s, `SELECT count(*) FROM team_settings WHERE team_id = $1 AND sandbox_template IS NULL`, daytona); n != 1 {
 		t.Error("the Daytona team kept an image the brain now chooses")
 	}
 

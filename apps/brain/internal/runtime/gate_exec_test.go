@@ -130,9 +130,23 @@ func TestACallWaitsForAPersonAndIsMadeOnceTheySayYes(t *testing.T) {
 	if req := f.request(t); req.Status != "approved" || req.UsedAt == nil || req.ToldAt == nil {
 		t.Errorf("request after the call = %s, used %v, told %v; want approved, spent and told", req.Status, req.UsedAt, req.ToldAt)
 	}
-	got := kinds(f.events(t))
+	after := f.events(t)
+	got := kinds(after)
 	if !slices.Contains(got, "approval_decided") || !slices.Contains(got, "resumed") || got[len(got)-1] != "finished" {
 		t.Errorf("events = %v", got)
+	}
+	// The call the brain made on the resume is in the trace as any call is.
+	made := -1
+	for i := len(after) - 1; i >= 0 && made < 0; i-- {
+		if after[i].Kind == "tool_result" && payload[toolResultPayload](t, after[i]).ID == "c1" {
+			made = i
+		}
+	}
+	if made < 0 || after[made-1].Kind != "tool_call" {
+		t.Fatalf("events = %v, want the approved call's tool_call and tool_result", got)
+	}
+	if r := payload[toolResultPayload](t, after[made]); r.Name != "mail__send" || r.Error != "" || r.Output == "" {
+		t.Errorf("the approved call's result = %+v", r)
 	}
 	calls = f.model.requests()
 	if len(calls) != 3 {

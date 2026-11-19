@@ -145,6 +145,31 @@ func TestAProposalIsWrittenOnlyWhenAPersonAppliesIt(t *testing.T) {
 	}
 }
 
+// The builder may propose approval rules alone, planned as the person who
+// applies would see them: a new rule, nothing refused.
+func TestAProposalMayBeApprovalRulesAlone(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	run := w.builderRun(t, "group", nil)
+
+	got, err := w.propose(t, run, map[string]any{"approvals": map[string]any{
+		"rules": []map[string]any{{"server": "github", "mode": "ask", "require_other": true}},
+	}})
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	if got.Changes != 1 || got.Refusals != 0 {
+		t.Fatalf("proposed = %+v, want one rule and nothing refused", got)
+	}
+	p, _ := w.proposal(t, got.ID)
+	if rec := w.applyProposal(t, got.ID, p.Plan.Digest); rec.Code != http.StatusOK {
+		t.Fatalf("apply: %d %s", rec.Code, rec.Body)
+	}
+	if n := w.count(t, "SELECT count(*) FROM approval_rules WHERE team_id = $1 AND mode = 'ask' AND require_other"); n != 1 {
+		t.Errorf("%d rules after apply, want github's ask", n)
+	}
+}
+
 func TestANewerProposalSupersedesTheOpenOne(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)

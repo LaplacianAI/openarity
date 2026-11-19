@@ -34,6 +34,7 @@ type Store interface {
 	DeleteOAuthConnection(ctx context.Context, serverID uuid.UUID) (int64, error)
 	ListMCPToolsByServer(ctx context.Context, mcpServerID uuid.UUID) ([]db.McpTool, error)
 	RecordMCPServerDiscoveryFailure(ctx context.Context, arg db.RecordMCPServerDiscoveryFailureParams) (int64, error)
+	SetServerTrustHints(ctx context.Context, arg db.SetServerTrustHintsParams) (int64, error)
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
 
@@ -75,6 +76,7 @@ func New(logger *slog.Logger, s Store, d Discoverer, w SecretWriter, e Ending) *
 	r.Delete("/{id}/mcp-servers/{serverID}/oauth", h.disconnect)
 	r.Get("/{id}/mcp-servers/{serverID}/tools", h.tools)
 	r.Post("/{id}/mcp-servers/{serverID}/discover", h.discover)
+	r.Put("/{id}/mcp-servers/{serverID}/trust-hints", h.trustHints)
 	r.Put("/{id}/mcp-secrets/{name}", h.putSecret)
 
 	return r
@@ -131,6 +133,39 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.write(w, r, u, http.StatusOK, row)
+}
+
+// trustHints is whether the server's own word that a tool only reads, or
+// destroys, is believed when a call is classed for approval. Believing it
+// can let a server's tools past every approval, so it is a setting of the
+// team's (rbac.json), not an edit of the server, and nothing else changes.
+func (h *handler) trustHints(w http.ResponseWriter, r *http.Request) {
+	u := api.Caller(r)
+
+	teamID, ok := api.RequireTeam(w, r, h.logger)
+	if !ok {
+		return
+	}
+	var req trustRequest
+	if !api.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Trust == nil {
+		http.Error(w, "trust is required: true or false", http.StatusBadRequest)
+		return
+	}
+	row, ok := h.find(w, r, u, teamID)
+	if !ok {
+		return
+	}
+	if _, err := h.store.SetServerTrustHints(r.Context(), db.SetServerTrustHintsParams{
+		ID: row.ID, TeamID: teamID, TrustHints: *req.Trust,
+	}); err != nil {
+		api.Fail(w, h.logger, u, "failed to save whether the server's hints are trusted", err)
+		return
+	}
+	row.TrustHints = *req.Trust
 	h.write(w, r, u, http.StatusOK, row)
 }
 
@@ -404,7 +439,7 @@ func view(row db.McpServer) (server, error) {
 
 	return server{
 		ID: row.ID, TeamID: row.TeamID, Name: row.Name, URL: row.Url, Command: row.Command, Env: env, Vars: vars, Egress: egress,
-		AuthSecretRef: row.AuthSecretRef, Bare: row.Bare, DiscoveredAt: row.DiscoveredAt,
+		AuthSecretRef: row.AuthSecretRef, Bare: row.Bare, TrustHints: row.TrustHints, DiscoveredAt: row.DiscoveredAt,
 		AuthKind: row.AuthKind, OAuthClientID: row.OauthClientID, OAuthClientSecret: row.OauthClientSecretRef, OAuthScopes: row.OauthScopes,
 		LastDiscoveryError: row.LastDiscoveryError, LastDiscoveryAt: row.LastDiscoveryAt,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,

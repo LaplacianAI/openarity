@@ -17,6 +17,7 @@ package stream
 import (
 	"encoding/json"
 	"strconv"
+	"time"
 )
 
 // Kind names an event on the wire: an SSE frame's event field.
@@ -34,6 +35,9 @@ const (
 	KindUsage            Kind = "usage"
 	KindCompacted        Kind = "compacted"
 	KindRunFinished      Kind = "run_finished"
+	KindApprovalRequest  Kind = "approval_requested"
+	KindApprovalDecided  Kind = "approval_decided"
+	KindRunWaiting       Kind = "run_waiting"
 	KindCustom           Kind = "custom"
 )
 
@@ -42,7 +46,8 @@ func Kinds() []Kind {
 	return []Kind{
 		KindMessage, KindMessageConsumed, KindRunStarted, KindStepStarted,
 		KindTextMessageChunk, KindReasoningChunk, KindToolCallChunk, KindToolCallResult,
-		KindUsage, KindCompacted, KindRunFinished, KindCustom,
+		KindUsage, KindCompacted, KindRunFinished,
+		KindApprovalRequest, KindApprovalDecided, KindRunWaiting, KindCustom,
 	}
 }
 
@@ -192,6 +197,40 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
+// ApprovalRequested is a run asking a person before it makes a call. The
+// call is not made; the run says why in its own words and waits. Code is
+// what a person can type back into a chat to name this request, and the
+// request expires, unanswered, at ExpiresAt.
+type ApprovalRequested struct {
+	ApprovalID string    `json:"approval_id"`
+	ToolCallID string    `json:"tool_call_id"`
+	Tool       string    `json:"tool"`
+	Class      string    `json:"class"`
+	Summary    string    `json:"summary"`
+	Code       string    `json:"code"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+// ApprovalDecided is a request answered: approved or denied by a person,
+// expired with nobody answering, or cancelled, with the run that asked or
+// because the person wrote again instead (Superseded).
+type ApprovalDecided struct {
+	ApprovalID string `json:"approval_id"`
+	Decision   string `json:"decision"`
+	By         string `json:"by,omitempty"`
+	Via        string `json:"via,omitempty"`
+	Scope      string `json:"scope,omitempty"`
+	Superseded bool   `json:"superseded,omitempty"`
+}
+
+// RunWaiting is a run that stopped for a person's answer rather than
+// finishing: it holds nothing, and carries on when it is answered. Said is
+// what it told them, in its own words.
+type RunWaiting struct {
+	Reason string `json:"reason"`
+	Said   string `json:"said,omitempty"`
+}
+
 // Custom is an event the catalog has no kind for: a server's own, named.
 type Custom struct {
 	Name  string          `json:"name"`
@@ -206,16 +245,19 @@ type Unknown struct {
 	Data json.RawMessage
 }
 
-func (Message) Kind() Kind          { return KindMessage }
-func (MessageConsumed) Kind() Kind  { return KindMessageConsumed }
-func (RunStarted) Kind() Kind       { return KindRunStarted }
-func (StepStarted) Kind() Kind      { return KindStepStarted }
-func (TextMessageChunk) Kind() Kind { return KindTextMessageChunk }
-func (ReasoningChunk) Kind() Kind   { return KindReasoningChunk }
-func (ToolCallChunk) Kind() Kind    { return KindToolCallChunk }
-func (ToolCallResult) Kind() Kind   { return KindToolCallResult }
-func (Usage) Kind() Kind            { return KindUsage }
-func (Compacted) Kind() Kind        { return KindCompacted }
-func (RunFinished) Kind() Kind      { return KindRunFinished }
-func (Custom) Kind() Kind           { return KindCustom }
-func (u Unknown) Kind() Kind        { return u.Of }
+func (Message) Kind() Kind           { return KindMessage }
+func (MessageConsumed) Kind() Kind   { return KindMessageConsumed }
+func (RunStarted) Kind() Kind        { return KindRunStarted }
+func (StepStarted) Kind() Kind       { return KindStepStarted }
+func (TextMessageChunk) Kind() Kind  { return KindTextMessageChunk }
+func (ReasoningChunk) Kind() Kind    { return KindReasoningChunk }
+func (ToolCallChunk) Kind() Kind     { return KindToolCallChunk }
+func (ToolCallResult) Kind() Kind    { return KindToolCallResult }
+func (Usage) Kind() Kind             { return KindUsage }
+func (Compacted) Kind() Kind         { return KindCompacted }
+func (RunFinished) Kind() Kind       { return KindRunFinished }
+func (ApprovalRequested) Kind() Kind { return KindApprovalRequest }
+func (ApprovalDecided) Kind() Kind   { return KindApprovalDecided }
+func (RunWaiting) Kind() Kind        { return KindRunWaiting }
+func (Custom) Kind() Kind            { return KindCustom }
+func (u Unknown) Kind() Kind         { return u.Of }

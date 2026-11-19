@@ -102,6 +102,29 @@ func TestEveryRecordedKindBecomesItsEvent(t *testing.T) {
 		{eventRow(12, "consumed", &run, `{"message_ids":["`+msg.String()+`"]}`), stream.MessageConsumed{MessageIDs: []string{msg.String()}}},
 		{eventRow(13, "delegated", &run, `{"agent":"billing"}`), stream.Custom{Name: "delegated", Value: json.RawMessage(`{"agent":"billing"}`)}},
 		{eventRow(14, "wrap_up", &run, `{"reason":"budget","left":40}`), stream.Custom{Name: "wrap_up", Value: json.RawMessage(`{"reason":"budget","left":40}`)}},
+		// The runtime names the call call_id; the catalog, tool_call_id.
+		{
+			eventRow(17, "approval_requested", &run, `{"approval_id":"a1","call_id":"c1","tool":"mail__send","class":"write",`+
+				`"summary":"to: a","code":"ABCD","expires_at":"2026-11-13T11:00:00Z","run":"`+run.String()+`"}`),
+			stream.ApprovalRequested{
+				ApprovalID: "a1", ToolCallID: "c1", Tool: "mail__send", Class: "write", Summary: "to: a",
+				Code: "ABCD", ExpiresAt: time.Date(2026, 11, 13, 11, 0, 0, 0, time.UTC),
+			},
+		},
+		// A person's answer, and the brain's: by and via are null when nobody answered.
+		{
+			eventRow(18, "approval_decided", &run, `{"approval_id":"a1","decision":"approved","by":"u1","via":"dashboard","scope":"run"}`),
+			stream.ApprovalDecided{ApprovalID: "a1", Decision: "approved", By: "u1", Via: "dashboard", Scope: "run"},
+		},
+		{
+			eventRow(19, "approval_decided", &run, `{"approval_id":"a2","decision":"expired","by":null,"via":"sweep","scope":null}`),
+			stream.ApprovalDecided{ApprovalID: "a2", Decision: "expired", Via: "sweep"},
+		},
+		{
+			eventRow(20, "approval_decided", &run, `{"approval_id":"a3","decision":"cancelled","by":"u1","via":"channel","superseded":true}`),
+			stream.ApprovalDecided{ApprovalID: "a3", Decision: "cancelled", By: "u1", Via: "channel", Superseded: true},
+		},
+		{eventRow(21, "waiting", &run, `{"reason":"approval","said":"May I send it?"}`), stream.RunWaiting{Reason: "approval", Said: "May I send it?"}},
 	}
 	for _, c := range cases {
 		t.Run(c.row.Kind, func(t *testing.T) {
@@ -137,6 +160,8 @@ func TestARowThatCannotBeReadIsAnError(t *testing.T) {
 		"a broken text":      eventRow(5, "text", &run, `[`),
 		"a broken reasoning": eventRow(7, "reasoning", &run, `[`),
 		"a broken finish":    eventRow(6, "finished", &run, `[`),
+		"a broken request":   eventRow(8, "approval_requested", &run, `[`),
+		"a broken decision":  eventRow(9, "approval_decided", &run, `[`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := envelopeOf(row); err == nil {

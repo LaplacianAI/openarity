@@ -28,7 +28,8 @@ func New(opts *cli.Options) *cobra.Command {
 		Use:   "runs",
 		Short: "Start an agent on a task, and follow what it does",
 		Long: "A run is one agent working through one input: it is queued, it starts,\n" +
-			"and it ends succeeded, failed or cancelled. Every run belongs\n" +
+			"it may wait for a person to answer an approval, and it ends succeeded,\n" +
+			"failed or cancelled. Every run belongs\n" +
 			"to a conversation — name one with --session, or the run gets a direct\n" +
 			"session of its own.\n\n" +
 			"A run is visible where its session is. Starting or cancelling one needs\n" +
@@ -364,13 +365,13 @@ func newCancelCmd(opts *cli.Options) *cobra.Command {
 			}
 
 			did := "cancelled"
-			if run.Status != client.Cancelled {
+			if run.Status != client.RunStatusCancelled {
 				did = "cancelling"
 			}
 			if err := printRun(opts, run, did, args[0]); err != nil {
 				return err
 			}
-			if run.Status != client.Cancelled {
+			if run.Status != client.RunStatusCancelled {
 				opts.Out.Note(opts.Styles.Muted.Render(
 					"it stops within 15 seconds — `oa runs events " + args[0] + " " + id.String() + "` shows it end"))
 			}
@@ -441,12 +442,14 @@ func printRun(opts *cli.Options, r *client.Run, did, teamRef string) error {
 
 func status(opts *cli.Options, s string) string {
 	switch client.RunStatus(s) {
-	case client.Succeeded:
+	case client.RunStatusSucceeded:
 		return opts.Styles.OK.Render(s)
-	case client.Failed, client.Cancelled:
+	case client.RunStatusFailed, client.RunStatusCancelled:
 		return opts.Styles.Err.Render(s)
-	case client.Queued, client.Running:
+	case client.RunStatusQueued, client.RunStatusRunning:
 		return opts.Styles.Muted.Render(s)
+	case client.RunStatusWaiting:
+		return opts.Styles.Warn.Render(s)
 	default:
 		return cli.Safe(s)
 	}
