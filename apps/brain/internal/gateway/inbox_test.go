@@ -1000,3 +1000,25 @@ func TestAFailedTeamLockIsReported(t *testing.T) {
 		t.Errorf("wrote %d messages and tombstoned %v after a failed lock", len(f.stored), f.reserved)
 	}
 }
+
+// The inbox's own tests ask nothing; a conversation with no request waiting
+// takes every yes and no as an ordinary message.
+func (f *inboxStore) ListPendingApprovalsBySession(context.Context, uuid.UUID) ([]db.Approval, error) {
+	return nil, nil
+}
+
+func (f *inboxStore) GetApproval(context.Context, db.GetApprovalParams) (db.Approval, error) {
+	return db.Approval{}, pgx.ErrNoRows
+}
+
+func (f *inboxStore) GetOwnApprovalByCode(context.Context, db.GetOwnApprovalByCodeParams) (db.Approval, error) {
+	return db.Approval{}, pgx.ErrNoRows
+}
+
+func (f *inboxStore) DecideApproval(context.Context, db.DecideApprovalParams) (db.Approval, error) {
+	return db.Approval{}, pgx.ErrNoRows
+}
+
+func (f *inboxStore) InsertNotice(context.Context, db.InsertNoticeParams) (int64, error) {
+	return 0, nil
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -85,13 +86,8 @@ func Decide(ctx context.Context, s TxStore, r Resumer, a Answer) (db.Approval, e
 // call the agent was already allowed to make, so there is no ceiling to check.
 func mayAnswer(a Answer, req db.Approval) error {
 	own := req.RequestedFor != nil && *req.RequestedFor == a.By
-	switch {
-	case own && req.RequireOther:
+	if !approval.MayAnswer(own, req.RequireOther, a.MayDecide, a.MaySelf) {
 		return ErrNotAllowed
-	case a.MayDecide:
-		return nil
-	case own && a.MaySelf:
-		return nil
 	}
-	return ErrNotAllowed
+	return nil
 }

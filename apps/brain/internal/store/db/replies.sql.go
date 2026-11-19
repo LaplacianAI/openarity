@@ -36,9 +36,9 @@ WITH claimed AS (
         ORDER BY d.next_attempt_at, d.id
         LIMIT $5
         FOR UPDATE SKIP LOCKED)
-    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq
+    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq, r.detail
 )
-SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq,
+SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq, c.detail,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -67,6 +67,7 @@ type ClaimDueRepliesRow struct {
 	Attempts    int32
 	PartsSent   int32
 	EventSeq    *int32
+	Detail      []byte
 	Provider    string
 	ReplyUrl    *string
 	SessionRef  *string
@@ -112,6 +113,7 @@ func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams
 			&i.Attempts,
 			&i.PartsSent,
 			&i.EventSeq,
+			&i.Detail,
 			&i.Provider,
 			&i.ReplyUrl,
 			&i.SessionRef,
@@ -147,6 +149,47 @@ func (q *Queries) GiveUpReply(ctx context.Context, arg GiveUpReplyParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const insertApprovalPrompt = `-- name: InsertApprovalPrompt :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text, event_seq, detail)
+SELECT r.team_id, r.id, r.session_id, s.channel_id,
+       (SELECT m.id FROM messages m WHERE m.session_id = r.session_id
+        ORDER BY m.received_at DESC, m.id DESC LIMIT 1),
+       'approval', $1::text, $2::integer, $3::jsonb
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = $4::uuid AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
+`
+
+type InsertApprovalPromptParams struct {
+	Text     string
+	EventSeq int32
+	Detail   []byte
+	RunID    uuid.UUID
+}
+
+// A run that waits for a person asks them in its conversation: what the
+// agent said and the brain's footer, with detail naming the requests for the
+// platform's buttons. Keyed by the waiting event, so a run that asks again
+// later asks again, and a park written twice is one prompt. Only a top-level
+// run answers a channel; one whose session came from none, or a custom
+// channel with no reply URL (nowhere to post), inserts nothing.
+// It answers the newest message the run read, as its answer will.
+func (q *Queries) InsertApprovalPrompt(ctx context.Context, arg InsertApprovalPromptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertApprovalPrompt,
+		arg.Text,
+		arg.EventSeq,
+		arg.Detail,
+		arg.RunID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertEventReply = `-- name: InsertEventReply :execrows
 INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
 SELECT r.team_id, r.id, r.session_id, s.channel_id, 'event', $1::text, $2::integer
@@ -156,6 +199,7 @@ JOIN channels ch ON ch.id = s.channel_id
 WHERE r.id = $3::uuid
   AND r.reply_to_channel
   AND ch.reply_mode = 'events'
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
 `
 
@@ -177,6 +221,47 @@ func (q *Queries) InsertEventReply(ctx context.Context, arg InsertEventReplyPara
 	return result.RowsAffected(), nil
 }
 
+const insertNotice = `-- name: InsertNotice :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text, detail)
+SELECT $1::uuid, $2::uuid, $3::uuid,
+       ch.id, $4::uuid, 'notice', $5::text,
+       $6::jsonb
+FROM channels ch
+WHERE ch.id = $7::uuid
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (in_reply_to) WHERE kind = 'notice' DO NOTHING
+`
+
+type InsertNoticeParams struct {
+	TeamID    uuid.UUID
+	RunID     uuid.UUID
+	SessionID uuid.UUID
+	MessageID uuid.UUID
+	Text      string
+	Detail    []byte
+	ChannelID uuid.UUID
+}
+
+// The brain's short word on an answer given in the chat, on the run that
+// asked, answering the message (or the tap) it is about: one at most for
+// each, so a delivery the platform repeats is told once. A custom channel
+// with no reply URL is told nothing, as InsertReply: it has nowhere to post.
+func (q *Queries) InsertNotice(ctx context.Context, arg InsertNoticeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertNotice,
+		arg.TeamID,
+		arg.RunID,
+		arg.SessionID,
+		arg.MessageID,
+		arg.Text,
+		arg.Detail,
+		arg.ChannelID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertReply = `-- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
@@ -186,8 +271,10 @@ SELECT r.team_id, r.id, r.session_id, s.channel_id,
        $2::text, $3::text
 FROM runs r
 JOIN sessions s ON s.id = r.session_id
-WHERE r.id = $4::uuid AND r.reply_to_channel AND s.channel_id IS NOT NULL
-RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = $4::uuid AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq, detail
 `
 
 type InsertReplyParams struct {
@@ -204,7 +291,9 @@ type InsertReplyParams struct {
 // the first such steer was written, keeps this reply from quoting it. A message
 // and its steer share a transaction, so they share now(). A run that does not
 // answer a channel, or whose session came from none, inserts nothing and the
-// caller gets pgx.ErrNoRows.
+// caller gets pgx.ErrNoRows. So does a custom channel with no reply URL: it
+// takes messages in and has nowhere to post back to, and a reply written for
+// it could only be given up.
 func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply, error) {
 	row := q.db.QueryRow(ctx, insertReply,
 		arg.UnreadSince,
@@ -230,6 +319,7 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 		&i.SentAt,
 		&i.PartsSent,
 		&i.EventSeq,
+		&i.Detail,
 	)
 	return i, err
 }
@@ -237,7 +327,7 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 const listRunReplies = `-- name: ListRunReplies :many
 SELECT run_id, kind, status, attempts, last_error, sent_at, next_attempt_at
 FROM replies
-WHERE run_id = ANY($1::uuid[]) AND event_seq IS NULL
+WHERE run_id = ANY($1::uuid[]) AND kind IN ('answer', 'apology')
 `
 
 type ListRunRepliesRow struct {
@@ -354,7 +444,8 @@ SELECT EXISTS (
     JOIN channels ch ON ch.id = s.channel_id
     WHERE r.id = $1::uuid
       AND r.reply_to_channel
-      AND ch.reply_mode = 'events')::bool
+      AND ch.reply_mode = 'events'
+      AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL))::bool
 `
 
 // Whether a run's steps are sent to its conversation as they happen: a run

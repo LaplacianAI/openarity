@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 )
 
@@ -176,5 +177,80 @@ func TestTheProviderHoldsAConnectionAndTakesNoWebhook(t *testing.T) {
 	}
 	if _, err := p.Parse(gateway.WebhookRequest{Body: []byte(`{}`)}, nil); err == nil {
 		t.Error("a webhook parsed")
+	}
+}
+
+func approvalOut(reqs ...approval.PromptRequest) gateway.Outbound {
+	out := answer("I'd like to make a call that needs approval first.\n\ncreate_issue on github · reply yes 7K2F or no 7K2F")
+	out.Kind, out.Prompt = "approval", &approval.Prompt{Requests: reqs}
+	return out
+}
+
+func TestAnApprovalIsFollowedByAPollForEachRequestAskedHere(t *testing.T) {
+	ps := parts(t, approvalOut(
+		approval.PromptRequest{ID: "a", Code: "7K2F", Tool: "github__create_issue", Ask: true},
+		approval.PromptRequest{ID: "b", Code: "9ZZZ", Tool: "shell", Ask: false},
+		approval.PromptRequest{ID: "c", Code: "3MQ8", Tool: "bash", Ask: true},
+	))
+	if len(ps) != 3 || ps[0].Text == "" || ps[0].Poll != nil {
+		t.Fatalf("parts %+v; want the text, then two polls", ps)
+	}
+	for i, want := range []struct{ id, question, code string }{
+		{"run-1:1", "Allow create_issue on github? (7K2F)", "7K2F"},
+		{"run-1:2", "Allow bash? (3MQ8)", "3MQ8"},
+	} {
+		p := ps[i+1]
+		if p.ID != want.id || p.Text != "" || p.Poll == nil || p.Poll.Question != want.question ||
+			!reflect.DeepEqual(p.Poll.Options, gateway.PollOptions(want.code)) {
+			t.Errorf("part %d = %+v; want poll %+v", i+1, p, want)
+		}
+	}
+}
+
+func TestAnApprovalNobodyHereMayAnswerGetsNoPoll(t *testing.T) {
+	ps := parts(t, approvalOut(approval.PromptRequest{ID: "b", Tool: "shell", Ask: false}))
+	if len(ps) != 1 || ps[0].Poll != nil {
+		t.Fatalf("parts %+v; want the text alone", ps)
+	}
+}
+
+func TestAnAnswerWithAPromptNotKindApprovalGetsNoPoll(t *testing.T) {
+	out := approvalOut(approval.PromptRequest{ID: "a", Code: "7K2F", Tool: "shell", Ask: true})
+	out.Kind = "answer"
+	if ps := parts(t, out); len(ps) != 1 {
+		t.Fatalf("parts %+v", ps)
+	}
+}
+
+// WhatsApp can neither answer privately nor remove a poll, so a notice is
+// said in the chat as any message is.
+func TestANoticeForAVoteIsPlainTextInTheChat(t *testing.T) {
+	out := answer("Approved.")
+	out.Kind, out.Notice = "notice", &gateway.ReplyNotice{Private: true, Settled: true}
+	ps := parts(t, out)
+	if len(ps) != 1 || ps[0].Text != "Approved." || ps[0].Poll != nil {
+		t.Fatalf("parts %+v", ps)
+	}
+}
+
+func TestAPartNeedsTextOrAPollNotBothNorNeither(t *testing.T) {
+	for name, p := range map[string]Part{
+		"neither":    {ID: "r:0", To: "1@s.whatsapp.net"},
+		"both":       {ID: "r:0", To: "1@s.whatsapp.net", Text: "x", Poll: &Poll{Question: "q", Options: []string{"a", "b"}}},
+		"one option": {ID: "r:0", To: "1@s.whatsapp.net", Poll: &Poll{Question: "q", Options: []string{"a"}}},
+	} {
+		req, err := request(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadPart(req); err == nil {
+			t.Errorf("%s: read as a part", name)
+		}
+	}
+}
+
+func TestALongToolNameKeepsThePollQuestionShort(t *testing.T) {
+	if q := PollQuestion(strings.Repeat("x", 1000), "7K2F"); utf8.RuneCountInString(q) > 230 {
+		t.Errorf("question has %d characters", utf8.RuneCountInString(q))
 	}
 }

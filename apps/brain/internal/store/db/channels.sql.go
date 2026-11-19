@@ -185,6 +185,47 @@ func (q *Queries) ListChannelsByTeam(ctx context.Context, arg ListChannelsByTeam
 	return items, nil
 }
 
+const listLiveChannelsOf = `-- name: ListLiveChannelsOf :many
+SELECT c.id, c.team_id, c.provider, c.name, c.created_at, c.updated_at, c.reply_url, c.notify_strangers, c.reply_mode, c.answers_in, c.trigger_word FROM channels c
+JOIN teams t ON t.id = c.team_id AND t.deleted_at IS NULL
+WHERE c.provider = ANY($1::text[])
+ORDER BY c.created_at, c.id
+`
+
+// Every channel of these providers in a team not deleted, for pointing each
+// at its channel again when the brain starts.
+func (q *Queries) ListLiveChannelsOf(ctx context.Context, providers []string) ([]Channel, error) {
+	rows, err := q.db.Query(ctx, listLiveChannelsOf, providers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.Provider,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReplyUrl,
+			&i.NotifyStrangers,
+			&i.ReplyMode,
+			&i.AnswersIn,
+			&i.TriggerWord,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateChannel = `-- name: UpdateChannel :one
 UPDATE channels
 SET reply_url = CASE WHEN $1::bool THEN $2 ELSE reply_url END,

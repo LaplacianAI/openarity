@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -30,21 +31,26 @@ type TxStore interface {
 	InTx(ctx context.Context, fn func(*db.Queries) error) error
 }
 
-// parkRun parks a run whose turn ended waiting: its waiting event, then the
-// run set waiting with no worker, what it said as its output. A decision can land before the run has parked; if
-// nothing of the tree is pending any more, the root is queued again in the
-// same transaction rather than left waiting for an answer already given. A
-// delegate is parked the same way and never queued: its parent's call takes
-// it up again, and the root is what is queued. Parked is false when this
-// worker no longer held the run.
-func parkRun(ctx context.Context, s TxStore, runID uuid.UUID, worker string, child bool, said *string, payload []byte) (parked bool, again *Resumed, err error) {
+// parkAndAsk parks a run whose turn ended waiting: its waiting event, then
+// the run set waiting with no worker, what it said as its output. A decision
+// can land before the run has parked; if nothing of the tree is pending any
+// more, the root is queued again in the same transaction rather than left
+// waiting for an answer already given. A delegate is parked the same way and
+// never queued: its parent's call takes it up again, and the root is what is
+// queued. Parked is false when this worker no longer held the run.
+//
+// A top-level run that now waits asks its conversation in the same
+// transaction: asked is the waiting event's seq when a prompt was queued,
+// which names it to the reply sender, and 0 when none was.
+func parkAndAsk(ctx context.Context, s TxStore, runID uuid.UUID, worker string, child bool, said *string, payload []byte) (parked bool, again *Resumed, asked int32, err error) {
 	err = s.InTx(ctx, func(q *db.Queries) error {
 		if _, err := q.LockRunSession(ctx, runID); err != nil {
 			return fmt.Errorf("lock the session of run %s: %w", runID, err)
 		}
-		if _, err := q.AppendRunEvent(ctx, db.AppendRunEventParams{
+		seq, err := q.AppendRunEvent(ctx, db.AppendRunEventParams{
 			RunID: runID, Worker: worker, Kind: "waiting", Payload: payload,
-		}); errors.Is(err, pgx.ErrNoRows) {
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil // no longer ours
 		} else if err != nil {
 			return fmt.Errorf("record that run %s is waiting: %w", runID, err)
@@ -63,16 +69,74 @@ func parkRun(ctx context.Context, s TxStore, runID uuid.UUID, worker string, chi
 			return nil
 		}
 		row, err := q.RequeueAnswered(ctx, runID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		switch {
+		case err == nil:
+			again = &row
 			return nil
-		}
-		if err != nil {
+		case !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("queue run %s again: %w", runID, err)
 		}
-		again = &row
-		return nil
+		text := ""
+		if said != nil {
+			text = *said
+		}
+		ok, err := ask(ctx, q, runID, seq, text)
+		if ok {
+			asked = seq
+		}
+		return err
 	})
-	return parked, again, err
+	return parked, again, asked, err
+}
+
+// ask queues the prompt a waiting top-level run's conversation is sent: what
+// the run said, then the brain's footer for each request its tree still
+// asks. Its person is asked to answer in the chat only where they may approve
+// their own; otherwise the chat is told an approver was asked. A run that
+// answers no channel inserts nothing.
+func ask(ctx context.Context, q *db.Queries, runID uuid.UUID, seq int32, said string) (bool, error) {
+	pending, err := q.ListTreePending(ctx, runID)
+	if err != nil {
+		return false, fmt.Errorf("list what run %s asks: %w", runID, err)
+	}
+	// Never empty: a run that has just parked goes back to the queue, and
+	// asks nothing, exactly when nothing of its tree is pending.
+	maySelf := map[uuid.UUID]bool{}
+	reqs := make([]approval.PromptRequest, len(pending))
+	for i, a := range pending {
+		self := false
+		if a.RequestedFor != nil {
+			may, seen := maySelf[*a.RequestedFor]
+			if !seen {
+				if may, err = q.MemberMay(ctx, db.MemberMayParams{
+					TeamID: a.TeamID, UserID: *a.RequestedFor, Action: "approval:self",
+				}); err != nil {
+					return false, fmt.Errorf("may %s approve their own: %w", *a.RequestedFor, err)
+				}
+				maySelf[*a.RequestedFor] = may
+			}
+			self = may
+		}
+		r := approval.PromptRequest{
+			ID: a.ID.String(), Tool: a.Tool, Summary: a.Summary, ExpiresAt: a.ExpiresAt,
+			Ask: approval.AsksInChat(a.RequireOther, self),
+		}
+		if r.Ask {
+			r.Code = a.Code
+		}
+		reqs[i] = r
+	}
+	detail, err := json.Marshal(approval.Prompt{Requests: reqs})
+	if err != nil {
+		return false, fmt.Errorf("encode the prompt: %w", err)
+	}
+	n, err := q.InsertApprovalPrompt(ctx, db.InsertApprovalPromptParams{
+		RunID: runID, EventSeq: seq, Text: approval.PromptText(said, reqs, time.Now()), Detail: detail,
+	})
+	if err != nil {
+		return false, fmt.Errorf("ask run %s's conversation: %w", runID, err)
+	}
+	return n > 0, nil
 }
 
 // A decision is one person's answer to one request, as it is written.

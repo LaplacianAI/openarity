@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 )
 
 const (
@@ -200,10 +203,36 @@ type Outbound struct {
 	// InReplyTo is the provider's id for the message it answers. Empty when it
 	// answers several that came in while the team was working.
 	InReplyTo string
-	// Kind is "answer", "apology" when the run failed, or "event": one step
-	// of a run still working, sent before its answer and quoting nothing.
+	// Kind is "answer", "apology" when the run failed, "event": one step
+	// of a run still working, sent before its answer and quoting nothing,
+	// "approval": a run asking its person, or "notice": the brain's short
+	// word on an answer given in the chat.
 	Kind string
 	Text string
+	// Prompt is an approval's requests, for the platform's buttons: those
+	// with Ask set are its person's to answer here. Text already says how
+	// to answer by typing, so a platform with no controls sends Text alone.
+	Prompt *approval.Prompt
+	// Notice is a notice's detail, for answering a tap where it was made.
+	Notice *ReplyNotice
+}
+
+// ReplyNotice is what a platform needs to send a notice the way the answer
+// it is about was given.
+type ReplyNotice struct {
+	// Handle is the tap's, as the platform gave it in Answer.Handle: empty
+	// for a typed reply, which is answered with Text in the conversation.
+	Handle json.RawMessage `json:"handle,omitempty"`
+	// Private is a word for the one person who tapped (only Sam can answer
+	// this): Slack sends it ephemeral, Telegram as an alert, and a platform
+	// that cannot, in the conversation.
+	Private bool `json:"private,omitempty"`
+	// Settled is a tap that decided its request: the prompt's controls are
+	// replaced by Text, so an old prompt cannot be tapped again.
+	Settled bool `json:"settled,omitempty"`
+	// Form asks for the reason before declining: the request a form the
+	// platform opens is for. Only for DeclineAsk.
+	Form *approval.PromptRequest `json:"form,omitempty"`
 }
 
 type Registry struct {

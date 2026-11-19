@@ -343,6 +343,56 @@ func (q *Queries) GetApprovalByCall(ctx context.Context, arg GetApprovalByCallPa
 	return i, err
 }
 
+const getOwnApprovalByCode = `-- name: GetOwnApprovalByCode :one
+SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other, a.told_at FROM approvals a
+JOIN runs r ON r.id = a.root_run_id
+WHERE r.session_id = $1::uuid
+  AND a.code = $2::text
+  AND a.requested_for = $3::uuid
+ORDER BY (a.status = 'pending') DESC, a.created_at DESC, a.id DESC
+LIMIT 1
+`
+
+type GetOwnApprovalByCodeParams struct {
+	SessionID    uuid.UUID
+	Code         string
+	RequestedFor uuid.UUID
+}
+
+// The sender's own request in a conversation that a typed code names: the
+// waiting one first, else the newest answered (a code is unique only among
+// what a tree is waiting on, so an old one can come round again). A code that
+// names none of theirs is no answer, only what they wrote.
+func (q *Queries) GetOwnApprovalByCode(ctx context.Context, arg GetOwnApprovalByCodeParams) (Approval, error) {
+	row := q.db.QueryRow(ctx, getOwnApprovalByCode, arg.SessionID, arg.Code, arg.RequestedFor)
+	var i Approval
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RunID,
+		&i.RootRunID,
+		&i.CallID,
+		&i.Tool,
+		&i.Class,
+		&i.Arguments,
+		&i.Summary,
+		&i.Status,
+		&i.Code,
+		&i.RequestedFor,
+		&i.DecidedBy,
+		&i.DecidedVia,
+		&i.DecisionScope,
+		&i.Reason,
+		&i.ExpiresAt,
+		&i.DecidedAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+		&i.RequireOther,
+		&i.ToldAt,
+	)
+	return i, err
+}
+
 const getVisibleApproval = `-- name: GetVisibleApproval :one
 SELECT a.id, a.team_id, a.run_id, a.root_run_id, a.call_id, a.tool, a.class, a.arguments, a.summary, a.status, a.code, a.requested_for, a.decided_by, a.decided_via, a.decision_scope, a.reason, a.expires_at, a.decided_at, a.used_at, a.created_at, a.require_other, a.told_at FROM approvals a
 JOIN runs r ON r.id = a.root_run_id
@@ -568,6 +618,57 @@ SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summar
 // decision is waiting to be acted on.
 func (q *Queries) ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]Approval, error) {
 	rows, err := q.db.Query(ctx, listRunApprovals, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Approval
+	for rows.Next() {
+		var i Approval
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.RunID,
+			&i.RootRunID,
+			&i.CallID,
+			&i.Tool,
+			&i.Class,
+			&i.Arguments,
+			&i.Summary,
+			&i.Status,
+			&i.Code,
+			&i.RequestedFor,
+			&i.DecidedBy,
+			&i.DecidedVia,
+			&i.DecisionScope,
+			&i.Reason,
+			&i.ExpiresAt,
+			&i.DecidedAt,
+			&i.UsedAt,
+			&i.CreatedAt,
+			&i.RequireOther,
+			&i.ToldAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTreePending = `-- name: ListTreePending :many
+SELECT id, team_id, run_id, root_run_id, call_id, tool, class, arguments, summary, status, code, requested_for, decided_by, decided_via, decision_scope, reason, expires_at, decided_at, used_at, created_at, require_other, told_at FROM approvals
+WHERE root_run_id = $1 AND status = 'pending'
+ORDER BY created_at, id
+`
+
+// What a tree still asks, for the prompt its conversation is sent when it
+// parks: every request the brain has not ended, oldest first.
+func (q *Queries) ListTreePending(ctx context.Context, rootRunID uuid.UUID) ([]Approval, error) {
+	rows, err := q.db.Query(ctx, listTreePending, rootRunID)
 	if err != nil {
 		return nil, err
 	}
