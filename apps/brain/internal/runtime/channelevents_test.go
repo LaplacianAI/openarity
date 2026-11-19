@@ -97,9 +97,11 @@ func feedTelling(t *testing.T, h heldRun, events ...agent.Event) []told {
 	return l.all()
 }
 
-// What a step says before it calls a tool is told, then the call, each named
-// by the run event it came from. The step that ends the run says the answer,
-// which goes as the answer, not as a step.
+// A call a person would follow is told, named by the run event it came from.
+// What the step wrote before it is not: "Grants are empty; try listing
+// root." is the model's note to itself. It is still written as the step's
+// text, for the trace. The step that ends the run says the answer, which goes
+// as the answer, not as a step.
 func TestAStepIsToldAfterTheEventItComesFrom(t *testing.T) {
 	t.Parallel()
 	h := newHeldRun(t)
@@ -107,7 +109,7 @@ func TestAStepIsToldAfterTheEventItComesFrom(t *testing.T) {
 	got := feedTelling(t, h,
 		agent.StepEvent{Step: 1},
 		agent.ReasoningEvent{Delta: "Need the logs."},
-		agent.TextEvent{Delta: "Let me check "}, agent.TextEvent{Delta: "the logs."},
+		agent.TextEvent{Delta: "Grants are empty; "}, agent.TextEvent{Delta: "try listing root."},
 		agent.ToolCallEvent{ID: "c1", Name: "read_logs", Arguments: json.RawMessage(`{}`)},
 		agent.ToolCallEvent{ID: "c2", Name: GraphToolName, Arguments: json.RawMessage(`{}`)},
 		agent.ToolCallEvent{ID: "c3", Name: DelegateToolName, Arguments: json.RawMessage(`{"agent":"billing"}`)},
@@ -117,38 +119,24 @@ func TestAStepIsToldAfterTheEventItComesFrom(t *testing.T) {
 	)
 
 	seqOf := map[string]int32{}
+	var texts []string
 	for _, e := range h.events(t) {
 		switch e.Kind {
 		case "text":
-			seqOf[payload[textPayload](t, e).Text] = e.Seq
+			texts = append(texts, payload[textPayload](t, e).Text)
 		case "tool_call":
 			seqOf[payload[toolCallPayload](t, e).ID] = e.Seq
 		}
 	}
 	want := []told{
-		{seqOf["Let me check the logs."], "Let me check the logs."},
 		{seqOf["c1"], "Using `read_logs`…"},
 		{seqOf["c3"], "Asking `billing`…"},
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("told %+v, want %+v", got, want)
 	}
-}
-
-// A step's text with no call after it in the same step is not carried into
-// the next step's call.
-func TestANewStepForgetsWhatTheLastOneSaid(t *testing.T) {
-	t.Parallel()
-	h := newHeldRun(t)
-
-	got := feedTelling(t, h,
-		agent.StepEvent{Step: 1},
-		agent.TextEvent{Delta: "Thinking aloud."},
-		agent.StepEvent{Step: 2},
-		agent.ToolCallEvent{ID: "c1", Name: "read_logs", Arguments: json.RawMessage(`{}`)},
-	)
-	if len(got) != 1 || got[0].text != "Using `read_logs`…" {
-		t.Errorf("told %+v, want the call alone", got)
+	if wantTexts := []string{"Grants are empty; try listing root.", "It timed out."}; !slices.Equal(texts, wantTexts) {
+		t.Errorf("text events %q, want %q", texts, wantTexts)
 	}
 }
 

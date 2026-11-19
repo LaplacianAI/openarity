@@ -953,6 +953,15 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   already are. The reasoning itself stays in the transcript through the SDK's
   store, and goes back to the model that wrote it: DeepSeek refuses a request
   with tools whose history leaves it out.
+- **A chat is told the calls, not what the model wrote on the way to one.**
+  A channel sending each step sends "Using `<tool>`…" and "Asking
+  `<agent>`…", then the answer, never the text a step wrote before its call.
+  That text streams before the model decides to call, so nothing can mark it
+  as it arrives, and it is as often a note to itself ("Grants are empty; try
+  listing root.") as words to the person. It is still the step's `text`
+  event, so the trace and the session stream show it. A run that waits for
+  approval says what it wants in its turn's last text, with no call after
+  it, so that is its output and reaches the chat as the reply.
 - **An MCP secret is written whole, and never read back.** `PUT
   /teams/{id}/mcp-secrets/{name}` takes every key of the secret and writes
   them with one `PutAll`: an OpenBao write replaces the keys a path held, so

@@ -127,7 +127,6 @@ func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, l
 				r.flush()
 				if s, isStep := e.(agent.StepEvent); isStep {
 					r.step = s.Step
-					r.said.Reset()
 				}
 				if !r.lost {
 					seq, err := recordOne(ctx, s, runID, worker, lines, e)
@@ -159,24 +158,18 @@ type recorder struct {
 	step   int    // the step the model call writing is in
 	lost   bool
 
-	// tell, when set, sends a step to the conversation; said is the text the
-	// current step has written, and textSeq the event that last held it.
-	tell    func(seq int32, text string)
-	said    strings.Builder
-	textSeq int32
+	// tell, when set, sends a step to the conversation.
+	tell func(seq int32, text string)
 }
 
-// told tells the conversation what a step said before it called a tool, once,
-// and then the call, if it is one a person would follow. The step's text with
-// no call after it is the answer, which goes as the answer.
+// told tells the conversation of a call a person would follow. What the step
+// wrote before it is not told: the model writes it before it knows it will
+// call, and it is as often a note to itself as words to the person. The
+// step's text with no call after it is the answer, which goes as the answer.
 func (r *recorder) told(call agent.ToolCallEvent, seq int32) {
 	if r.tell == nil {
 		return
 	}
-	if text := strings.TrimSpace(r.said.String()); text != "" && r.textSeq > 0 {
-		r.tell(r.textSeq, text)
-	}
-	r.said.Reset()
 	if line, ok := spoken(call); ok {
 		r.tell(seq, line)
 	}
@@ -199,9 +192,6 @@ func (r *recorder) gather(kind, delta string) {
 		r.kind = kind
 	}
 	r.text.WriteString(delta)
-	if kind == kindText && r.tell != nil {
-		r.said.WriteString(delta)
-	}
 	if r.text.Len() >= textFlushBytes {
 		r.flush()
 	}
@@ -217,11 +207,7 @@ func (r *recorder) flush() {
 	if r.lost {
 		return
 	}
-	seq, err := appendEventSeq(r.ctx, r.s, r.runID, r.worker, r.kind, textPayload{Text: text, Truncated: cut, Step: r.step})
-	r.failed(err)
-	if err == nil && r.kind == kindText {
-		r.textSeq = seq
-	}
+	r.failed(appendEvent(r.ctx, r.s, r.runID, r.worker, r.kind, textPayload{Text: text, Truncated: cut, Step: r.step}))
 }
 
 // failed stops the run on a write that failed; a run another worker holds

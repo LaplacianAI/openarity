@@ -284,9 +284,9 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			"has let in is told: that they are waiting, once, and that they are in.\n" +
 			"Telegram channels only.\n\n" +
 			"--reply-mode final sends a run's answer alone; --reply-mode events sends\n" +
-			"each step a person would follow first (what the agent says before it\n" +
-			"calls a tool, \"Using <tool>…\", \"Asking <agent>…\"), each a message of\n" +
-			"its own that stays. Not the dashboard channel, whose stream is every step.\n\n" +
+			"each step a person would follow first (\"Using <tool>…\", \"Asking\n" +
+			"<agent>…\"), each a message of its own that stays. Not the dashboard\n" +
+			"channel, whose stream is every step.\n\n" +
 			"--answers-in says where it answers: everywhere (direct chats, and groups\n" +
 			"where it is mentioned), groups, or direct. Outside it a message asks\n" +
 			"nothing: no answer, and no stranger queued or told.\n\n" +
