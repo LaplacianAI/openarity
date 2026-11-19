@@ -353,10 +353,13 @@ func (p httpPoster) Post(ctx context.Context, _ uuid.UUID, out OutboundRequest) 
 		return fmt.Errorf("posting the reply: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, replyReadLimit))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, replyReadLimit))
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("the reply URL answered %d", resp.StatusCode)
+	}
+	if out.Accepted != nil {
+		return out.Accepted(resp.StatusCode, body)
 	}
 	return nil
 }

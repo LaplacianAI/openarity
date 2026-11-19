@@ -28,6 +28,8 @@ internal/gateway/
   job.go            the reply queue, the kick a finished run sends, the sweep
   providertest/     the conformance suite every adapter runs
   custom/           the generic adapter, and the reference implementation
+  markdown/         an answer cut into messages a platform takes, and rewritten outside code
+  slack/            a Slack app: v0 signatures in, markdown_text out in threads, auth.test at setup
   telegram/         a Telegram bot: secret_token in, rich messages out, getMe at setup, files by getFile
   whatsapp/         a number linked as a device: pure Map and Reply; the connection is internal/whatsapp's
   <provider>/       one package per platform
@@ -255,6 +257,13 @@ step a person would follow first, a reply of kind `event` with its own id
 takes the mode; `telegram` and `custom` are. The runtime decides which steps
 are told and in what words, and writes each after its run event.
 
+A provider that says no inside a 2xx, as Slack's `"ok": false` does, sets
+`Accepted` on the `OutboundRequest` it builds: the poster and the download
+hand it the answer, and its error is the request's, retried unless it wraps
+`ErrUnsendable`. A `SecretIssuer` is a provider whose platform issues the
+signing secret (Slack's app settings), so a channel is refused without one
+rather than given one the brain made.
+
 A channel takes a `reply_url` only when its provider is a `URLReplier`, which
 posts to an address the channel names. `custom` is; `telegram` replies into
 the chat itself, so it can reply and takes no URL.
@@ -317,4 +326,4 @@ message — the team would be answering itself.
 ## Decisions
 
 The decisions worth not relitigating, each with its reason, are in [DECISIONS.md](DECISIONS.md). Read it before changing a design, a boundary, or anything a convention above protects.
-Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session, why a reply is built here and sent there, Telegram, WhatsApp.
+Topics: the result of a delivery (`Result{}`), `Validate` on `Inbound`, sessions and messages, attachments fetched later, who may read a direct session, why a reply is built here and sent there, Telegram, Slack, WhatsApp.

@@ -1,8 +1,10 @@
 package channels
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -86,7 +88,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 func newCreateCmd(opts *cli.Options) *cobra.Command {
 	var provider, replyURL, answersIn, triggerWord string
 	var secretStdin, noNotify bool
-	var credentialStdin string
+	var credentialStdin, secretFile string
 
 	cmd := &cobra.Command{
 		Use:   "create <team> <name>",
@@ -96,16 +98,21 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"By default the brain generates the signing secret and prints it once.\n" +
 			"That is what you want for a custom integration, where the scheme is\n" +
 			"ours and there is nothing to match.\n\n" +
-			"When the provider issues its own — Slack's Signing Secret, Meta's App\n" +
-			"Secret — pass --secret-stdin and pipe it in:\n\n" +
-			"    printf %s \"$SLACK_SIGNING_SECRET\" | oa channels create platform slack \\\n" +
-			"        --provider slack --secret-stdin\n\n" +
+			"When the provider issues its own, such as Meta's App Secret, pass\n" +
+			"--secret-stdin and pipe it in:\n\n" +
+			"    printf %s \"$APP_SECRET\" | oa channels create platform hooks \\\n" +
+			"        --provider custom --secret-stdin\n\n" +
 			"A provider that needs a credential of its own, such as Telegram's bot\n" +
 			"token, takes it with --credential-stdin NAME, which reads that one\n" +
 			"value from stdin:\n\n" +
 			"    printf %s \"$BOT_TOKEN\" | oa channels create platform bot \\\n" +
 			"        --provider telegram --credential-stdin bot_token\n\n" +
-			"It cannot be combined with --secret-stdin: there is one stdin.\n\n" +
+			"It cannot be combined with --secret-stdin: there is one stdin. A\n" +
+			"provider that needs both, as Slack does, takes the signing secret\n" +
+			"from a file with --secret-file instead:\n\n" +
+			"    printf %s \"$SLACK_BOT_TOKEN\" | oa channels create platform acme \\\n" +
+			"        --provider slack --credential-stdin bot_token \\\n" +
+			"        --secret-file <(printf %s \"$SLACK_SIGNING_SECRET\")\n\n" +
 			"There is deliberately no --secret flag. Arguments are readable by\n" +
 			"every process on the machine through ps, and they land in shell\n" +
 			"history.\n\n" +
@@ -168,8 +175,18 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 				}
 				body.Credentials = &map[string]string{credName: value}
 			}
+			if secretStdin && secretFile != "" {
+				return fmt.Errorf("--secret-stdin and --secret-file both give the signing secret — pass only one")
+			}
 			if secretStdin {
 				secret, err := readSecret(cmd.InOrStdin())
+				if err != nil {
+					return err
+				}
+				body.SigningSecret = &secret
+			}
+			if secretFile != "" {
+				secret, err := readSecretFile(secretFile)
 				if err != nil {
 					return err
 				}
@@ -205,6 +222,9 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			case ch.Provider == "telegram" && ch.HookURL != nil && ch.SigningSecret != nil:
 				// The brain had no public https address to point the bot at.
 				opts.Out.Note(telegramHint(*ch.HookURL, *ch.SigningSecret))
+			case ch.Provider == "slack" && ch.HookURL != nil:
+				// Slack has no API to set it: the person pastes it.
+				opts.Out.Note(slackHint(*ch.HookURL))
 			}
 			// The brain's sentence about how the provider's account is set up,
 			// such as a Telegram bot whose privacy mode hides group messages.
@@ -232,6 +252,8 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 		"which adapter parses this channel's webhooks, for example custom")
 	cmd.Flags().BoolVar(&secretStdin, "secret-stdin", false,
 		"read the provider's own signing secret from stdin instead of generating one")
+	cmd.Flags().StringVar(&secretFile, "secret-file", "",
+		"read the provider's own signing secret from this file, for a provider that also needs --credential-stdin")
 	cmd.Flags().StringVar(&credentialStdin, "credential-stdin", "",
 		"read the value of the named credential, such as bot_token, from stdin")
 	cmd.Flags().StringVar(&answersIn, "answers-in", "", "where it answers: everywhere, groups or direct")
@@ -426,22 +448,45 @@ func telegramHint(hookURL, secret string) string {
 		"    -d 'allowed_updates=[\"message\"]'"
 }
 
+// slackHint is the one step Slack leaves to the person: saving the Request
+// URL in the app's settings, which Slack checks at once.
+func slackHint(hookURL string) string {
+	return "One step left in Slack: in the app's Event Subscriptions, turn events on and\n" +
+		"set the Request URL to\n\n  " + hookURL + "\n\n" +
+		"Slack checks it straight away and shows Verified. Then Save Changes."
+}
+
 func readSecret(in io.Reader) (string, error) {
 	return readStdin(in, "the signing secret", "pipe the secret in, or drop --secret-stdin to have one generated")
 }
 
+// readSecretFile reads the signing secret from a file, or from a process
+// substitution, which is how it stays out of ps and shell history.
+func readSecretFile(path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // G304: the person names the file their secret is in
+	if err != nil {
+		return "", fmt.Errorf("open the signing secret file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	return readFrom(f, "the signing secret", "the file is empty", "in "+path)
+}
+
 func readStdin(in io.Reader, what, advice string) (string, error) {
+	return readFrom(in, what, "nothing arrived on stdin — "+advice, "on stdin")
+}
+
+func readFrom(in io.Reader, what, empty, where string) (string, error) {
 	raw, err := io.ReadAll(io.LimitReader(in, maxSecretBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("read %s from stdin: %w", what, err)
+		return "", fmt.Errorf("read %s %s: %w", what, where, err)
 	}
 	if len(raw) > maxSecretBytes {
-		return "", fmt.Errorf("%s on stdin is over %d bytes — is that the right pipe?", what, maxSecretBytes)
+		return "", fmt.Errorf("%s %s is over %d bytes — is that the right pipe?", what, where, maxSecretBytes)
 	}
 
 	value := strings.TrimRight(string(raw), "\r\n")
 	if strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("nothing arrived on stdin — %s", advice)
+		return "", errors.New(empty)
 	}
 	return value, nil
 }

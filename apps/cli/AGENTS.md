@@ -83,7 +83,7 @@ apps/cli/
     context/           oa context list|use|create|rename|delete
     teams/             oa teams list|create|delete|restore, oa teams members list|add|remove,
                        oa teams settings show|set
-    channels/          oa channels list|create|update|delete|pair (pair draws a WhatsApp QR or shows a code and waits until linked; create takes --secret-stdin or --credential-stdin NAME, --answers-in, --trigger-word and --no-notify-strangers; update takes --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers, --reply-mode, --answers-in and --trigger-word), oa channels senders …
+    channels/          oa channels list|create|update|delete|pair (pair draws a WhatsApp QR or shows a code and waits until linked; create takes --secret-stdin or --secret-file PATH, --credential-stdin NAME, --answers-in, --trigger-word and --no-notify-strangers; update takes --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers, --reply-mode, --answers-in and --trigger-word), oa channels senders …
     sessions/          oa sessions list|get|read — the conversations, and their messages
     runs/              oa runs start|list|get|events|cancel — events is an SSE stream
     users/             oa users list — who has logged in, and their id

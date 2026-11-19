@@ -172,9 +172,9 @@ asks it in plain words, it proposes a blueprint and writes nothing, and
 
 A message on a channel starts a hub run, or steers the one already answering
 its conversation, and the answer goes back to the channel: into the chat for
-Telegram, to a signed reply URL for `custom`, a generic webhook.
+Telegram and Slack, to a signed reply URL for `custom`, a generic webhook.
 
-Not built yet: Slack and Discord adapters; the seam they plug into is.
+Not built yet: a Discord adapter; the seam it plugs into is.
 Learnings are not in the graph, and there is no sandbox for model-written code.
 A run whose granted tools are too many to send finds them instead: it searches
 the graph, reads a found tool's schema with `describe_tools` and runs it with
@@ -441,17 +441,17 @@ listener, and accepts a delivery only if it carries a fresh timestamp and an
 HMAC of the raw body under that secret. Nothing is stored until a sender has
 been approved.
 
-When the provider issues its own secret rather than accepting ours — Slack's
-Signing Secret, Meta's App Secret — pipe it in. There is deliberately no
-`--secret` flag: arguments are readable by every process on the machine through
-`ps`, and they land in shell history.
+When the provider issues its own secret rather than accepting ours, such as
+Meta's App Secret, pipe it in. There is deliberately no `--secret` flag:
+arguments are readable by every process on the machine through `ps`, and they
+land in shell history.
 
 ```sh
-printf %s "$SLACK_SIGNING_SECRET" |
-    oa channels create platform slack --provider slack --secret-stdin
+printf %s "$APP_SECRET" |
+    oa channels create platform hooks --provider custom --secret-stdin
 ```
 
-A channel's provider is `custom` or `telegram`. A Telegram channel takes the
+A channel's provider is `custom`, `slack` or `telegram`. A Telegram channel takes the
 bot token from `@BotFather`, checks it with Telegram, and keeps it in the secret
 store. Its replies go back into the chat itself, so it takes no reply URL. The
 token is a credential, so it arrives on stdin and never as a flag:
@@ -472,6 +472,25 @@ signing secret filled in and your bot token left for you to put in place of
 curl https://api.telegram.org/bot<bot token>/setWebhook \
   -d url=<hook url> -d secret_token=<signing secret> -d 'allowed_updates=["message"]'
 ```
+
+A Slack channel is a Slack app of your own, made from a manifest. The
+dashboard's Connect sheet has a button that opens Slack with it filled in;
+install the app, then give the brain its Bot User OAuth Token (`xoxb-…`) and
+its Signing Secret. The brain checks the token with Slack (`auth.test`). Slack
+has no API to set where it posts, so the last step is yours: paste the hook URL
+into the app's Event Subscriptions as the Request URL, and Slack verifies it at
+once. From the CLI, the token comes on stdin and the signing secret from a file:
+
+```sh
+printf %s "$SLACK_BOT_TOKEN" |
+    oa channels create platform acme --provider slack --credential-stdin bot_token \
+        --secret-file <(printf %s "$SLACK_SIGNING_SECRET")
+```
+
+The bot answers a direct message in place, and a mention at the top of a
+channel in a thread under it. A reply in that thread from someone let in is
+kept for the agent to read, and asks it again only when it mentions the bot.
+Chatter at the top of a channel that names no bot is never stored.
 
 Who may speak through a channel is a separate decision from connecting it, and
 a separate permission: an `approver` may let senders in without being able to
@@ -511,7 +530,7 @@ oa channels update platform support --reply-url https://support.example.com/open
 oa channels update platform support --no-reply-url
 ```
 
-On a Telegram channel a sender nobody has approved is told so, once, the first
+On a Telegram or Slack channel a sender nobody has approved is told so, once, the first
 time they ask the bot: "I can't answer you yet, someone on the team has to let
 you in first". When they are let in it says so, and asks them to send their
 message again. In a group both messages tag them by name. It is on by default;

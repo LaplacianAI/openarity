@@ -584,11 +584,12 @@ paths:
         "400":
           description: |
             The body is malformed, the name is empty or over 200 characters,
-            `provider` names no adapter, `signing_secret` was supplied blank,
+            `provider` names no adapter, `signing_secret` was supplied blank
+            or left out for a provider that issues its own (`slack`),
             `reply_url` is refused (see `updateChannel`), a credential the
             provider asks for is missing or one it does not ask for is
-            given, or the provider refused the credentials (Telegram does
-            not know the bot token).
+            given, or the provider refused the credentials (Telegram or
+            Slack does not know the bot token).
           content:
             text/plain:
               schema:
@@ -3948,7 +3949,7 @@ components:
           type: string
           description: |
             The adapter that parses this channel's webhooks, lower case and
-            matched exactly: `custom` or `telegram`.
+            matched exactly: `custom`, `slack` or `telegram`.
           examples: ["custom"]
         name:
           type: string
@@ -3972,15 +3973,15 @@ components:
           type: boolean
           description: |
             Whether replies go to an address the channel names. `custom`
-            posts to `reply_url`; `telegram` replies in the chat a message
-            came from and takes none. Offer `reply_url` only when this is
+            posts to `reply_url`; `telegram` and `slack` reply in the
+            conversation a message came from and take none. Offer `reply_url` only when this is
             true; it is refused otherwise.
         can_notify:
           type: boolean
           description: |
             Whether this channel's provider tells a sender nobody has let in
             that they are waiting, and later that they are in. `telegram`
-            does; `custom` does not. Offer `notify_strangers` only when this
+            and `slack` do; `custom` does not. Offer `notify_strangers` only when this
             is true; it is refused otherwise.
         notify_strangers:
           type: boolean
@@ -3995,7 +3996,7 @@ components:
           type: boolean
           description: |
             Whether this channel's provider sends a run's steps as messages
-            of their own. `telegram` and `custom` do; the dashboard channel
+            of their own. `telegram`, `slack` and `custom` do; the dashboard channel
             does not, since its stream is already every step. Offer
             `reply_mode` only when this is true; it is refused otherwise.
         reply_mode:
@@ -4088,7 +4089,9 @@ components:
           description: |
             The provider's own signing secret, when the provider issues one.
             Omit it to have the server generate a strong one and return it
-            once.
+            once. Required for `slack`, which signs with the Signing Secret
+            in the app's Basic Information: one the server made would refuse
+            every delivery.
         reply_url:
           type: string
           format: uri

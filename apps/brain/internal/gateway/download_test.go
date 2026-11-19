@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -208,5 +209,38 @@ func TestADownloadThatCannotConnectLeaksNoToken(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "connect") && !strings.Contains(log.String(), "refused") {
 		t.Errorf("the log does not say why: %s", log)
+	}
+}
+
+// signInProvider downloads as Slack does when a token may not read a file:
+// a 200 whose body is a page, which its Accepted refuses.
+type signInProvider struct{ *downloadProvider }
+
+func (d signInProvider) DownloadRequest(ref string, prev []byte, c Credentials) (OutboundRequest, bool, error) {
+	out, final, err := d.downloadProvider.DownloadRequest(ref, prev, c)
+	if final {
+		out.Accepted = func(_ int, body []byte) error {
+			if bytes.HasPrefix(body, []byte("<html")) {
+				return errors.New("a sign-in page, not the file")
+			}
+			return nil
+		}
+	}
+	return out, final, err
+}
+
+// A file the provider's own check refuses is not kept and is said, though it
+// came with a 200; the check passing keeps it.
+func TestADownloadTheProviderRefusesIsNotKept(t *testing.T) {
+	t.Parallel()
+
+	g, p, store, _ := downloading(t, map[string][]byte{"page": []byte("<html>sign in</html>"), "photo": pngBytes})
+	stored, missed := g.Fetch(t.Context(), signInProvider{p}, WebhookRequest{}, nil, uuid.New(),
+		[]Attachment{claim("page", "a.pdf"), claim("photo", "b.png")})
+	if len(stored) != 1 || stored[0].Filename != "b.png" || len(store.put) != 1 {
+		t.Errorf("stored %+v, want the photo alone", stored)
+	}
+	if len(missed) != 1 || missed[0] != "a.pdf could not be fetched" {
+		t.Errorf("missed %q", missed)
 	}
 }

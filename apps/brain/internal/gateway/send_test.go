@@ -849,3 +849,47 @@ func TestAPosterSendsEachPartForItsChannel(t *testing.T) {
 		t.Errorf("gave up %d, retried %d; want an unsendable part given up at once", len(s2.store.gaveUp), len(s2.store.retried))
 	}
 }
+
+// A provider that says no inside a 200, as Slack does, reads its own answer:
+// Accepted is handed the body of a 2xx and its error is the post's, so a
+// refusal it calls final gives up and any other is retried. A non-2xx never
+// reaches it, and a request without one takes every 2xx.
+func TestAPostReadsTheAnswerOfAProviderThatSaysNoInA200(t *testing.T) {
+	t.Parallel()
+
+	status, answer := http.StatusOK, `{"ok":false,"error":"not_in_channel"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(answer))
+	}))
+	t.Cleanup(srv.Close)
+	poster := HTTPPoster(&http.Client{Transport: &http.Transport{}})
+
+	var read []string
+	check := func(code int, body []byte) error {
+		read = append(read, fmt.Sprint(code, " ", string(body)))
+		if strings.Contains(string(body), `"ok":false`) {
+			return fmt.Errorf("%w: refused", ErrUnsendable)
+		}
+		return nil
+	}
+	err := poster.Post(t.Context(), uuid.New(), OutboundRequest{URL: srv.URL, Accepted: check})
+	if !errors.Is(err, ErrUnsendable) || len(read) != 1 || read[0] != "200 "+answer {
+		t.Errorf("Post = %v after reading %q, want the refusal from the answer", err, read)
+	}
+
+	answer = `{"ok":true}`
+	if err := poster.Post(t.Context(), uuid.New(), OutboundRequest{URL: srv.URL, Accepted: check}); err != nil {
+		t.Errorf("an accepted post failed: %v", err)
+	}
+
+	status, answer, read = http.StatusInternalServerError, `{"ok":false}`, nil
+	if err := poster.Post(t.Context(), uuid.New(), OutboundRequest{URL: srv.URL, Accepted: check}); err == nil || len(read) != 0 {
+		t.Errorf("a 500 = %v, read %q; want it failed without asking the provider", err, read)
+	}
+
+	status, answer = http.StatusOK, `{"ok":false}`
+	if err := poster.Post(t.Context(), uuid.New(), OutboundRequest{URL: srv.URL}); err != nil {
+		t.Errorf("with nothing to read the answer, a 200 failed: %v", err)
+	}
+}

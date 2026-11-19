@@ -966,6 +966,11 @@ func (p providers) HoldsConnection(name string) bool {
 	return ok
 }
 
+func (p providers) IssuesSigningSecret(name string) bool {
+	_, ok := p[name].(gateway.SecretIssuer)
+	return ok
+}
+
 // pairingOf is the store's pairing when it keeps one, and a store with no
 // accounts otherwise, so a test that never pairs needs nothing for it.
 func pairingOf(s any) PairingStore {

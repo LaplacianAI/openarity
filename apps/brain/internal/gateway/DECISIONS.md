@@ -223,8 +223,9 @@ no-redirect rule and the error text that reaches `last_error` in one place,
 and makes `Reply` testable the way `Parse` is.
 
 What it costs: a provider that answers 200 with an error in the body (Slack's
-`"ok": false`) needs one more optional method to read the response. Nothing
-needs it yet, so it does not exist.
+`"ok": false`) needs to read the response. It is a field rather than a
+method: `OutboundRequest.Accepted`, set by the pure `Reply` and called by the
+poster with the answer, so the adapter still never holds a client.
 
 Ordering is a claim condition rather than a worker per conversation. The
 tombstone sweep's rule — no ordering, because deletes commute — does not hold
@@ -305,12 +306,56 @@ secret and answers 502 with Telegram's reason: a channel nothing posts to
 looks connected and is not. Deleting a channel calls `deleteWebhook` first,
 best effort, so a person's delete is never held up by Telegram.
 
+## Slack: the Events API, threads, and a URL the person pastes
+
+Slack posts each event to the hook (the Events API), as Telegram does, and
+signs it: `v0=` and an HMAC-SHA256 of `v0:<timestamp>:<raw body>` under the
+app's Signing Secret, with the timestamp refused more than five minutes from
+arrival either way. The secret is Slack's, so the channel takes it
+(`SecretIssuer`) rather than the brain making one. Considered: Socket Mode,
+which needs no public address. Refused for now because it is a held
+connection, the WhatsApp role's shape, and every brain that runs Telegram
+already has the public https address the Events API needs.
+
+The URL check Slack sends when a Request URL is saved goes back through
+`Result.Ack`. Slack has no API to set the Request URL (only the manifest API,
+with a configuration token a person would have to make), so there is no
+`Connector`: the dashboard opens Slack's create-from-manifest page filled in,
+and the person pastes the hook URL into Event Subscriptions last. `auth.test`
+at setup checks the token and gives the bot's user id, which is how a mention
+(`<@U…>` in the text) is told to be ours and our own messages dropped: Slack
+sends a bot what it posts.
+
+A direct message is one conversation, answered in place. In a channel, a
+mention at the top starts a thread (`C…:<ts>`) and the answer goes in it; a
+reply in a thread is that thread's. A message at the top that names no bot is
+dropped in `Parse`, not stored: Slack sends a bot everything said in a channel
+it is in, and no run would ever read the channel-wide session it would land
+in. A reply in the thread from someone let in is kept for `history`, and asks
+again only with a mention, as a Telegram group does. Considered: answering a
+thread the bot has answered in without a mention. Refused for now, to keep one
+rule across providers.
+
+Replies are `chat.postMessage` with `markdown_text`, standard Markdown up to
+12,000 characters, split by the shared `markdown` package, with unfurling off
+so Slack never fetches a link in an answer. Broadcasts are broken outside
+code (`<!here>`, `<!channel>`, `<!everyone>`, `<!subteam^…>`, and the bare
+`@here` words) with an invisible word joiner, so an injected answer cannot
+notify a workspace. Slack says no with a 200, so `Accepted` reads `ok`, and
+gives up at once on a refusal no retry fixes (`not_in_channel`,
+`channel_not_found`, `invalid_auth`, …). A file is one GET of its
+`url_private_download`, only on `files.slack.com`, under the token; the
+sign-in page Slack serves a token without `files:read` is refused as not the
+file. The sender's name is the `user_profile` Slack sends beside a message,
+which is not in its reference, so a message without one is a sender with no
+name.
+
 ## A stranger is told, from an outbox of its own
 
 A sender nobody has let in used to hear nothing, and from their side the bot
 was broken. Now the first time they ask the bot in a wait, it says they are
 waiting, and when they are let in, it says so and asks them to send their
-message again (it was never stored). Telegram only: `Notifier` is optional
+message again (it was never stored). Telegram and Slack only: `Notifier` is optional
 beside `Replier`, and `custom` is left alone because its receivers already
 parse a reply's shape.
 

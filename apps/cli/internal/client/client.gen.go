@@ -1019,7 +1019,7 @@ type Channel struct {
 
 	// CanNotify Whether this channel's provider tells a sender nobody has let in
 	// that they are waiting, and later that they are in. `telegram`
-	// does; `custom` does not. Offer `notify_strangers` only when this
+	// and `slack` do; `custom` does not. Offer `notify_strangers` only when this
 	// is true; it is refused otherwise.
 	CanNotify bool `json:"can_notify" yaml:"can_notify"`
 
@@ -1032,7 +1032,7 @@ type Channel struct {
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
 	// CanShowEvents Whether this channel's provider sends a run's steps as messages
-	// of their own. `telegram` and `custom` do; the dashboard channel
+	// of their own. `telegram`, `slack` and `custom` do; the dashboard channel
 	// does not, since its stream is already every step. Offer
 	// `reply_mode` only when this is true; it is refused otherwise.
 	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
@@ -1070,7 +1070,7 @@ type Channel struct {
 	NotifyStrangers bool `json:"notify_strangers" yaml:"notify_strangers"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
-	// matched exactly: `custom` or `telegram`.
+	// matched exactly: `custom`, `slack` or `telegram`.
 	//
 	//
 	// Examples: custom
@@ -1094,8 +1094,8 @@ type Channel struct {
 	ReplyURL *string `json:"reply_url,omitempty" yaml:"reply_url,omitempty"`
 
 	// TakesReplyURL Whether replies go to an address the channel names. `custom`
-	// posts to `reply_url`; `telegram` replies in the chat a message
-	// came from and takes none. Offer `reply_url` only when this is
+	// posts to `reply_url`; `telegram` and `slack` reply in the
+	// conversation a message came from and take none. Offer `reply_url` only when this is
 	// true; it is refused otherwise.
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
@@ -1255,7 +1255,9 @@ type CreateChannelRequest struct {
 
 	// SigningSecret The provider's own signing secret, when the provider issues one.
 	// Omit it to have the server generate a strong one and return it
-	// once.
+	// once. Required for `slack`, which signs with the Signing Secret
+	// in the app's Basic Information: one the server made would refuse
+	// every delivery.
 	SigningSecret *string `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
 
 	// TriggerWord The word a message must hold to ask the channel, such as `@Fduv`:
@@ -1292,7 +1294,7 @@ type CreatedChannel struct {
 
 	// CanNotify Whether this channel's provider tells a sender nobody has let in
 	// that they are waiting, and later that they are in. `telegram`
-	// does; `custom` does not. Offer `notify_strangers` only when this
+	// and `slack` do; `custom` does not. Offer `notify_strangers` only when this
 	// is true; it is refused otherwise.
 	CanNotify bool `json:"can_notify" yaml:"can_notify"`
 
@@ -1305,7 +1307,7 @@ type CreatedChannel struct {
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
 	// CanShowEvents Whether this channel's provider sends a run's steps as messages
-	// of their own. `telegram` and `custom` do; the dashboard channel
+	// of their own. `telegram`, `slack` and `custom` do; the dashboard channel
 	// does not, since its stream is already every step. Offer
 	// `reply_mode` only when this is true; it is refused otherwise.
 	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
@@ -1350,7 +1352,7 @@ type CreatedChannel struct {
 	NotifyStrangers bool `json:"notify_strangers" yaml:"notify_strangers"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
-	// matched exactly: `custom` or `telegram`.
+	// matched exactly: `custom`, `slack` or `telegram`.
 	//
 	//
 	// Examples: custom
@@ -1386,8 +1388,8 @@ type CreatedChannel struct {
 	SigningSecret *string `json:"signing_secret,omitempty" yaml:"signing_secret,omitempty"`
 
 	// TakesReplyURL Whether replies go to an address the channel names. `custom`
-	// posts to `reply_url`; `telegram` replies in the chat a message
-	// came from and takes none. Offer `reply_url` only when this is
+	// posts to `reply_url`; `telegram` and `slack` reply in the
+	// conversation a message came from and take none. Offer `reply_url` only when this is
 	// true; it is refused otherwise.
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
@@ -1524,7 +1526,7 @@ type ListedChannel struct {
 
 	// CanNotify Whether this channel's provider tells a sender nobody has let in
 	// that they are waiting, and later that they are in. `telegram`
-	// does; `custom` does not. Offer `notify_strangers` only when this
+	// and `slack` do; `custom` does not. Offer `notify_strangers` only when this
 	// is true; it is refused otherwise.
 	CanNotify bool `json:"can_notify" yaml:"can_notify"`
 
@@ -1537,7 +1539,7 @@ type ListedChannel struct {
 	CanReply bool `json:"can_reply" yaml:"can_reply"`
 
 	// CanShowEvents Whether this channel's provider sends a run's steps as messages
-	// of their own. `telegram` and `custom` do; the dashboard channel
+	// of their own. `telegram`, `slack` and `custom` do; the dashboard channel
 	// does not, since its stream is already every step. Offer
 	// `reply_mode` only when this is true; it is refused otherwise.
 	CanShowEvents bool `json:"can_show_events" yaml:"can_show_events"`
@@ -1578,7 +1580,7 @@ type ListedChannel struct {
 	NotifyStrangers bool `json:"notify_strangers" yaml:"notify_strangers"`
 
 	// Provider The adapter that parses this channel's webhooks, lower case and
-	// matched exactly: `custom` or `telegram`.
+	// matched exactly: `custom`, `slack` or `telegram`.
 	//
 	//
 	// Examples: custom
@@ -1605,8 +1607,8 @@ type ListedChannel struct {
 	Sessions24H int64 `json:"sessions_24h" yaml:"sessions_24h"`
 
 	// TakesReplyURL Whether replies go to an address the channel names. `custom`
-	// posts to `reply_url`; `telegram` replies in the chat a message
-	// came from and takes none. Offer `reply_url` only when this is
+	// posts to `reply_url`; `telegram` and `slack` reply in the
+	// conversation a message came from and take none. Offer `reply_url` only when this is
 	// true; it is refused otherwise.
 	TakesReplyURL bool               `json:"takes_reply_url" yaml:"takes_reply_url"`
 	TeamID        openapi_types.UUID `json:"team_id" yaml:"team_id"`
