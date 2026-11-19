@@ -211,7 +211,7 @@ func parseBrowser(name string, raw json.RawMessage) (browserArgs, error) {
 
 // tool is one of the browser's tools over r.
 func (r *runBrowser) tool(name, description string, schema json.RawMessage) agent.Tool {
-	t := agent.Tool{Name: name, Description: description, Schema: schema, Preview: webFetchPreview}
+	t := agent.Tool{Name: name, Description: description, Schema: schema}
 	t.Result = func(ctx context.Context, raw json.RawMessage) (agent.ToolResult, error) {
 		a, err := parseBrowser(name, raw)
 		if err != nil {
