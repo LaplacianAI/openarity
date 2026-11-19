@@ -78,6 +78,65 @@ func (q *Queries) AddSteer(ctx context.Context, arg AddSteerParams) error {
 	return err
 }
 
+const adoptChild = `-- name: AdoptChild :one
+UPDATE runs SET
+    status         = 'running',
+    worker         = $1::text,
+    heartbeat_at   = now(),
+    waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
+    waiting_since  = NULL
+WHERE id = $2::uuid AND status = 'waiting' AND parent_run_id IS NOT NULL
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since
+`
+
+type AdoptChildParams struct {
+	Worker string
+	ID     uuid.UUID
+}
+
+// A waiting child taken up again by its parent's resume, by this worker:
+// whatever it already did stands, and it carries on from its transcript.
+func (q *Queries) AdoptChild(ctx context.Context, arg AdoptChildParams) (Run, error) {
+	row := q.db.QueryRow(ctx, adoptChild, arg.Worker, arg.ID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SessionID,
+		&i.ParentRunID,
+		&i.RootRunID,
+		&i.ParentToolCall,
+		&i.Depth,
+		&i.AgentID,
+		&i.AgentName,
+		&i.UserID,
+		&i.Status,
+		&i.Input,
+		&i.Output,
+		&i.Error,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.Worker,
+		&i.HeartbeatAt,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.TokenBudget,
+		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
+		&i.Builder,
+		&i.Transcript,
+		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
+	)
+	return i, err
+}
+
 const builderCanRun = `-- name: BuilderCanRun :one
 SELECT EXISTS (
     SELECT 1 FROM team_settings s WHERE s.team_id = $1 AND s.model_name IS NOT NULL
@@ -978,6 +1037,67 @@ func (q *Queries) ListUnstartedRuns(ctx context.Context, olderThanSeconds float6
 	return items, nil
 }
 
+const listWaitingChildren = `-- name: ListWaitingChildren :many
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since FROM runs
+WHERE parent_run_id = $1::uuid AND status = 'waiting'
+ORDER BY created_at, id
+`
+
+// A run's children that wait for a person, in the order they were started.
+func (q *Queries) ListWaitingChildren(ctx context.Context, parentID uuid.UUID) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listWaitingChildren, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.SessionID,
+			&i.ParentRunID,
+			&i.RootRunID,
+			&i.ParentToolCall,
+			&i.Depth,
+			&i.AgentID,
+			&i.AgentName,
+			&i.UserID,
+			&i.Status,
+			&i.Input,
+			&i.Output,
+			&i.Error,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.Worker,
+			&i.HeartbeatAt,
+			&i.CancelRequestedAt,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.TokenBudget,
+			&i.Hub,
+			&i.MessageID,
+			&i.ReplyToChannel,
+			&i.Builder,
+			&i.Transcript,
+			&i.TranscriptFrom,
+			&i.Attempt,
+			&i.Unattended,
+			&i.WaitedSeconds,
+			&i.WaitingSince,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const memberMay = `-- name: MemberMay :one
 SELECT EXISTS (
     SELECT 1 FROM team_members tm
@@ -1005,20 +1125,46 @@ func (q *Queries) MemberMay(ctx context.Context, arg MemberMayParams) (bool, err
 	return may, err
 }
 
-const parkRun = `-- name: ParkRun :execrows
-UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now()
-WHERE id = $1 AND worker = $2::text AND status = 'running'
+const parkChild = `-- name: ParkChild :execrows
+UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now(),
+                output = $1
+WHERE id = $2 AND worker = $3::text AND status = 'running'
+  AND parent_run_id IS NOT NULL
 `
 
-type ParkRunParams struct {
+type ParkChildParams struct {
+	Said   *string
 	ID     uuid.UUID
 	Worker string
 }
 
 // A run a tool suspended is parked: no worker holds it while it waits for a
 // person. Only the worker that holds it parks it.
+// A delegated run that waits for a person stops where it stands, as its
+// root does, holding nothing, with what it said about it as its output for
+// the agent that asked it: the resume takes it up again.
+func (q *Queries) ParkChild(ctx context.Context, arg ParkChildParams) (int64, error) {
+	result, err := q.db.Exec(ctx, parkChild, arg.Said, arg.ID, arg.Worker)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const parkRun = `-- name: ParkRun :execrows
+UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now(),
+                output = $1
+WHERE id = $2 AND worker = $3::text AND status = 'running'
+`
+
+type ParkRunParams struct {
+	Said   *string
+	ID     uuid.UUID
+	Worker string
+}
+
 func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, parkRun, arg.ID, arg.Worker)
+	result, err := q.db.Exec(ctx, parkRun, arg.Said, arg.ID, arg.Worker)
 	if err != nil {
 		return 0, err
 	}
@@ -1027,24 +1173,30 @@ func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (int64, error)
 
 const reapChildren = `-- name: ReapChildren :many
 WITH RECURSIVE below AS (
-    SELECT id FROM runs WHERE parent_run_id = $2::uuid
+    SELECT id FROM runs WHERE parent_run_id = $3::uuid
     UNION ALL
     SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
 )
-UPDATE runs SET status = 'failed', error = $1::text, finished_at = now()
-WHERE id IN (SELECT id FROM below) AND status = 'running'
+UPDATE runs SET status = 'failed', error = $1::text, finished_at = now(),
+                waiting_since = NULL
+WHERE id IN (SELECT id FROM below)
+  AND (status = 'running' OR ($2::bool AND status = 'waiting'))
 RETURNING id
 `
 
 type ReapChildrenParams struct {
-	Reason   string
-	ParentID uuid.UUID
+	Reason         string
+	IncludeWaiting bool
+	ParentID       uuid.UUID
 }
 
 // After a crash the resumed parent asks again rather than finding what it
 // asked before, so whatever was still running beneath it fails, at any depth.
+// A child waiting for a person stopped cleanly and is taken up again by the
+// resume, so it is left; a parent that ends takes its waiting children with
+// it (include_waiting).
 func (q *Queries) ReapChildren(ctx context.Context, arg ReapChildrenParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, reapChildren, arg.Reason, arg.ParentID)
+	rows, err := q.db.Query(ctx, reapChildren, arg.Reason, arg.IncludeWaiting, arg.ParentID)
 	if err != nil {
 		return nil, err
 	}
@@ -1194,6 +1346,21 @@ func (q *Queries) RequeueAnswered(ctx context.Context, id uuid.UUID) (RequeueAns
 	var i RequeueAnsweredRow
 	err := row.Scan(&i.ID, &i.Attempt)
 	return i, err
+}
+
+const runAwaits = `-- name: RunAwaits :one
+SELECT (EXISTS (SELECT 1 FROM approvals a WHERE a.run_id = $1::uuid AND a.told_at IS NULL)
+     OR EXISTS (SELECT 1 FROM runs c WHERE c.parent_run_id = $1::uuid AND c.status = 'waiting'))::bool AS awaits
+`
+
+// Whether a run whose turn has ended is waiting rather than finished: a
+// request it made that its model has not been told the answer to, or a child
+// that waits.
+func (q *Queries) RunAwaits(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, runAwaits, id)
+	var awaits bool
+	err := row.Scan(&awaits)
+	return awaits, err
 }
 
 const setTranscriptFrom = `-- name: SetTranscriptFrom :exec
@@ -1368,8 +1535,8 @@ func (q *Queries) TakeOverStaleRuns(ctx context.Context, staleSeconds float64) (
 const treeUsage = `-- name: TreeUsage :one
 SELECT coalesce(sum(r.input_tokens + r.output_tokens), 0)::bigint AS tokens,
        count(*)::bigint AS runs,
-       coalesce(extract(epoch FROM now() - (
-           SELECT started_at FROM runs WHERE id = $1::uuid)), 0)::float8 AS elapsed_seconds
+       coalesce((SELECT extract(epoch FROM now() - root.started_at) - root.waited_seconds
+                 FROM runs root WHERE root.id = $1::uuid), 0)::float8 AS elapsed_seconds
 FROM runs r
 WHERE r.root_run_id = $1::uuid
 `
@@ -1381,7 +1548,8 @@ type TreeUsageRow struct {
 }
 
 // What a tree has spent, for the delegate tool's budget check. Elapsed is on
-// the database's clock, from when the root first started.
+// the database's clock, from when the root first started, less the time the
+// tree spent waiting for a person: that time is not the task's.
 func (q *Queries) TreeUsage(ctx context.Context, rootID uuid.UUID) (TreeUsageRow, error) {
 	row := q.db.QueryRow(ctx, treeUsage, rootID)
 	var i TreeUsageRow

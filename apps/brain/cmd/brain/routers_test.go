@@ -391,6 +391,50 @@ func TestARunStartedInABusySessionSteersTheOneWorkingThere(t *testing.T) {
 	}
 }
 
+// Steering a run that waits on you gives up your request in the same
+// transaction: the run comes back queued at its next attempt, for the handler
+// to hand on, and the request ends answered by you, from the API.
+func TestSteeringARunThatWaitsOnYouQueuesItAgain(t *testing.T) {
+	w := newRunWorld(t)
+	session := w.teamSession
+	first, err := w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: uuid.New(), TeamID: w.team, AgentID: w.agent, UserID: w.user, SessionID: &session, Input: "email the invoice",
+	})
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if _, err := w.raw.Exec(t.Context(), `
+		UPDATE runs SET status = 'waiting', started_at = now(), waiting_since = now() WHERE id = $1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	var asked uuid.UUID
+	if err := w.raw.QueryRow(t.Context(), `
+		INSERT INTO approvals (team_id, run_id, root_run_id, call_id, tool, class, summary, code, requested_for, expires_at)
+		VALUES ($1, $2, $2, 'c1', 'mail__send', 'write', 'to: alice', 'ABCD', $3, now() + interval '1 hour')
+		RETURNING id`, w.team, first.ID, w.user).Scan(&asked); err != nil {
+		t.Fatalf("insert request: %v", err)
+	}
+
+	got, err := w.store.StartRun(t.Context(), runs.StartArgs{
+		ID: uuid.New(), TeamID: w.team, Hub: true, UserID: w.user, SessionID: &session, Input: "send it to Bob instead",
+	})
+	if err != nil {
+		t.Fatalf("StartRun into the waiting session: %v", err)
+	}
+	if got.ID != first.ID || got.Status != "queued" || got.Attempt != 1 {
+		t.Fatalf("StartRun returned %s, %s at attempt %d; want the waiting run queued at 1", got.ID, got.Status, got.Attempt)
+	}
+	var status, via string
+	var by *uuid.UUID
+	if err := w.raw.QueryRow(t.Context(), `SELECT status, decided_via, decided_by FROM approvals WHERE id = $1`, asked).
+		Scan(&status, &via, &by); err != nil {
+		t.Fatal(err)
+	}
+	if status != "cancelled" || via != "cli" || by == nil || *by != w.user {
+		t.Errorf("request %s via %s by %v, want cancelled through the API by the writer", status, via, by)
+	}
+}
+
 // A channel's session answers its chat; a run from the API would take the
 // chat's messages as steers and answer them where the chat never sees.
 func TestARunCannotStartInAChannelsSession(t *testing.T) {

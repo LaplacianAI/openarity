@@ -9,6 +9,7 @@ import (
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -23,11 +24,18 @@ const (
 	sweepCron      = "0 * * * * *"
 	unstartedAfter = 30 * time.Second
 	staleAfter     = 90 * time.Second
+	expireBatch    = 100
 )
+
+// errNotDue is a request the sweep listed that this clock does not yet see
+// past its time.
+var errNotDue = errors.New("the request is not yet past its time")
 
 type SweepStore interface {
 	ListUnstartedRuns(ctx context.Context, olderThanSeconds float64) ([]db.ListUnstartedRunsRow, error)
 	TakeOverStaleRuns(ctx context.Context, staleSeconds float64) ([]uuid.UUID, error)
+	ListDueApprovals(ctx context.Context, batch int32) ([]db.ListDueApprovalsRow, error)
+	TxStore
 }
 
 type Job struct {
@@ -36,6 +44,7 @@ type Job struct {
 	logger    *slog.Logger
 	dbos      dbos.Context
 	restart   func(uuid.UUID, int32) error
+	resume    func(uuid.UUID, int32) error
 	kick      func(dbos.Client, uuid.UUID) error
 	kickEvent func(dbos.Client, uuid.UUID, int32) error
 }
@@ -43,6 +52,7 @@ type Job struct {
 func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
 	j := &Job{executor: e, store: s, logger: logger}
 	j.restart = j.restartRun
+	j.resume = func(id uuid.UUID, attempt int32) error { return enqueue(j.dbos, id, attempt) }
 	return j
 }
 
@@ -114,18 +124,61 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 		j.logger.WarnContext(ctx, "Took over runs whose worker stopped heartbeating", "runs", len(taken))
 	}
 
+	// Expired first: a run its expiry queues again is enqueued here, and
+	// one whose enqueue fails is found below on a later sweep.
+	failed := j.expire(ctx)
+
 	queued, err := j.store.ListUnstartedRuns(ctx, unstartedAfter.Seconds())
 	if err != nil {
-		return fmt.Errorf("listing unstarted runs: %w", err)
+		return errors.Join(append(failed, fmt.Errorf("listing unstarted runs: %w", err))...)
 	}
 
-	var failed []error
 	for _, r := range queued {
 		if err := j.restart(r.ID, r.Attempt); err != nil {
 			failed = append(failed, err)
 		}
 	}
 	return errors.Join(failed...)
+}
+
+// expire ends the requests nobody answered in time, each as a late answer
+// ends one: the session held first, then the request, so the sweep and a
+// person answering never deadlock; and the run resumed to say so. A request
+// the brain's clock does not yet see as due, its clock behind the
+// database's, is left for a later sweep.
+func (j *Job) expire(ctx context.Context) []error {
+	due, err := j.store.ListDueApprovals(ctx, expireBatch)
+	if err != nil {
+		return []error{fmt.Errorf("listing requests past their time: %w", err)}
+	}
+	var failed []error
+	expired := 0
+	for _, a := range due {
+		_, again, err := decideApproval(ctx, j.store, decision{
+			ID: a.ID, TeamID: a.TeamID,
+			Allowed: func(db.Approval) error { return errNotDue },
+		})
+		switch {
+		case errors.Is(err, ErrExpired):
+			expired++
+		case errors.Is(err, errNotDue), errors.Is(err, ErrNotPending), errors.Is(err, pgx.ErrNoRows):
+			// Not yet due by this clock, answered meanwhile, or deleted.
+			continue
+		default:
+			failed = append(failed, fmt.Errorf("expiring request %s: %w", a.ID, err))
+			continue
+		}
+		if again == nil {
+			continue
+		}
+		if err := j.resume(again.ID, again.Attempt); err != nil {
+			failed = append(failed, err)
+		}
+	}
+	if expired > 0 {
+		j.logger.InfoContext(ctx, "Expired requests nobody answered in time", "requests", expired)
+	}
+	return failed
 }
 
 func (j *Job) restartRun(id uuid.UUID, attempt int32) error {

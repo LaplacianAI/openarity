@@ -44,6 +44,7 @@ type Runs interface {
 	BuilderCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 	MarkMessageAsks(ctx context.Context, id uuid.UUID) error
 	ConsumeMessages(ctx context.Context, arg db.ConsumeMessagesParams) (int64, error)
+	Superseding
 }
 
 type Queries interface {
@@ -58,6 +59,8 @@ type Queries interface {
 // queued in Postgres, and the sweep starts it within a minute.
 type Enqueuer interface {
 	Enqueue(ctx context.Context, runID uuid.UUID) error
+	// Resume hands over a run that waited, as its next attempt.
+	Resume(ctx context.Context, runID uuid.UUID, attempt int32) error
 }
 
 // ErrTeamDeleted is a delivery refused because the channel's team was
@@ -106,7 +109,7 @@ func (i *Inbox) DeliverOne(ctx context.Context, ch Channel, m Delivery) (Deliver
 			return tombstone(ctx, q, ch.TeamID, []Delivery{m})
 		}
 		var err error
-		d, out, err = deliverOne(ctx, q, ch, m)
+		d, out, err = deliverOne(ctx, q, ch, m, "dashboard")
 		return err
 	}); err != nil {
 		return Delivered{}, err
@@ -136,7 +139,7 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 				return tombstone(ctx, q, ch.TeamID, msgs[n:])
 			}
 			var err error
-			_, out, err = deliverOne(ctx, q, ch, m)
+			_, out, err = deliverOne(ctx, q, ch, m, "channel")
 			return err
 		}); err != nil {
 			return err
@@ -150,7 +153,8 @@ func (i *Inbox) Deliver(ctx context.Context, ch Channel, msgs []Delivery) error 
 }
 
 // follow acts on what a stored message started, once it is committed: a run
-// goes to the workers, and a message that asked and got no answer says why.
+// goes to the workers, a run it queued again goes back to them, and a message
+// that asked and got no answer says why.
 // Handing a run over before its row commits would let a worker claim a run it
 // cannot find.
 func (i *Inbox) follow(ctx context.Context, ch Channel, m Delivery, out outcome) {
@@ -159,6 +163,11 @@ func (i *Inbox) follow(ctx context.Context, ch Channel, m Delivery, out outcome)
 		if err := i.runs.Enqueue(ctx, out.run); err != nil {
 			i.logger.WarnContext(ctx, "run not enqueued; the sweep will start it",
 				"run", out.run, "err", err)
+		}
+	case out.resumed != nil:
+		if err := i.runs.Resume(ctx, out.resumed.ID, out.resumed.Attempt); err != nil {
+			i.logger.WarnContext(ctx, "run not resumed; the sweep will start it",
+				"run", out.resumed.ID, "err", err)
 		}
 	case out.unanswered != "":
 		i.logger.InfoContext(ctx, "message not answered",
@@ -187,7 +196,7 @@ func tombstone(ctx context.Context, q Queries, teamID uuid.UUID, msgs []Delivery
 	return nil
 }
 
-func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (Delivered, outcome, error) {
+func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery, via string) (Delivered, outcome, error) {
 	session, err := q.EnsureSession(ctx, db.EnsureSessionParams{
 		TeamID:      ch.TeamID,
 		ChannelID:   ch.ID,
@@ -240,7 +249,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery) (Deliver
 	}
 
 	d.Message = messageID
-	out, err := answer(ctx, q, ch, session, m, messageID)
+	out, err := answer(ctx, q, ch, session, m, messageID, via)
 	if err != nil {
 		return Delivered{}, outcome{}, err
 	}

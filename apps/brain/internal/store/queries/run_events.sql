@@ -28,3 +28,22 @@ SELECT * FROM run_events
 WHERE run_id = sqlc.arg('run_id') AND seq > sqlc.arg('after')::int
 ORDER BY seq
 LIMIT sqlc.arg('page_size');
+
+-- An approval_decided event for each of these requests, on the run that
+-- asked, for requests the brain answered itself: ended with their run, or
+-- given up by a person who wrote again. Numbered after the run's last event,
+-- in the order the requests were made. The caller holds the runs' session.
+-- name: AppendDecidedEvents :exec
+INSERT INTO run_events (run_id, seq, kind, payload)
+SELECT a.run_id,
+       coalesce((SELECT max(e.seq) FROM run_events e WHERE e.run_id = a.run_id), 0)
+         + row_number() OVER (PARTITION BY a.run_id ORDER BY a.created_at, a.id),
+       'approval_decided',
+       jsonb_build_object('approval_id', a.id, 'decision', a.status,
+                          'by', a.decided_by, 'via', a.decided_via)
+         || CASE WHEN a.decision_scope IS NULL THEN '{}'::jsonb
+                 ELSE jsonb_build_object('scope', a.decision_scope) END
+         || CASE WHEN a.status = 'cancelled' AND a.decided_by IS NOT NULL
+                 THEN '{"superseded": true}'::jsonb ELSE '{}'::jsonb END
+FROM approvals a
+WHERE a.id = ANY(sqlc.arg('ids')::uuid[]);

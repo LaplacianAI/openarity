@@ -68,22 +68,26 @@ func (f *execFixture) request(t *testing.T) db.Approval {
 	return got[0]
 }
 
-// The whole of it: a call that needs a person parks the run without making
-// it; the person's yes queues the run again as its next attempt; the resumed
-// run makes the call once, with the arguments that were approved, and
-// finishes.
+const askedWords = "I've drafted the notice to billing@acme.example; may I send it?"
+
+// The whole of it: a call that needs a person makes nothing; the model says
+// so in its own words and ends its turn, and the run waits, having said it.
+// The person's yes queues the run again as its next attempt; the resumed run
+// makes the call once, with the arguments that were approved, tells the model
+// what came of it, and finishes.
 func TestACallWaitsForAPersonAndIsMadeOnceTheySayYes(t *testing.T) {
 	f, server, sam := gatedFixture(t, newScripted(
 		callTool("c1", "mail__send", `{"to":"billing@acme.example"}`),
+		answer(askedWords, 10, 5),
 		answer("Sent.", 10, 5),
 	))
 
 	f.mustExecute(t)
 
 	parked := f.row(t)
-	if parked.Status != "waiting" || parked.Worker != nil || parked.WaitingSince == nil {
-		t.Fatalf("after asking the run is %s, worker %v, waiting since %v; want waiting, held by nobody",
-			parked.Status, parked.Worker, parked.WaitingSince)
+	if parked.Status != "waiting" || parked.Worker != nil || parked.WaitingSince == nil || deref(parked.Output) != askedWords {
+		t.Fatalf("after asking the run is %s, worker %v, waiting since %v, said %q; want waiting, held by nobody, in its words",
+			parked.Status, parked.Worker, parked.WaitingSince, deref(parked.Output))
 	}
 	if n := server.calls.Load(); n != 0 {
 		t.Fatalf("the tool was made %d time(s) before anyone answered", n)
@@ -92,8 +96,16 @@ func TestACallWaitsForAPersonAndIsMadeOnceTheySayYes(t *testing.T) {
 	if req.Status != "pending" || req.CallID != "c1" || req.Tool != "mail__send" || req.Summary != "to: billing@acme.example" {
 		t.Fatalf("request = %+v", req)
 	}
-	if got := kinds(f.events(t)); !slices.Contains(got, "approval_requested") || got[len(got)-1] != "waiting" {
+	events := f.events(t)
+	if got := kinds(events); !slices.Contains(got, "approval_requested") || got[len(got)-1] != "waiting" {
 		t.Fatalf("events = %v, want approval_requested and the run ending its attempt waiting", got)
+	}
+	if w := payload[waitingPayload](t, events[len(events)-1]); w.Said != askedWords {
+		t.Errorf("the waiting event said %q, want the model's own words", w.Said)
+	}
+	calls := f.model.requests()
+	if said := textOf(calls[1].Messages); !strings.Contains(said, askedTop) {
+		t.Errorf("the model was not told to say it in its own words:\n%s", said)
 	}
 
 	r := &resumes{}
@@ -115,23 +127,28 @@ func TestACallWaitsForAPersonAndIsMadeOnceTheySayYes(t *testing.T) {
 	if n := server.calls.Load(); n != 1 {
 		t.Errorf("the tool was made %d time(s), want once", n)
 	}
-	if req := f.request(t); req.Status != "approved" || req.UsedAt == nil {
-		t.Errorf("request after the call = %s, used %v; want approved and spent", req.Status, req.UsedAt)
+	if req := f.request(t); req.Status != "approved" || req.UsedAt == nil || req.ToldAt == nil {
+		t.Errorf("request after the call = %s, used %v, told %v; want approved, spent and told", req.Status, req.UsedAt, req.ToldAt)
 	}
 	got := kinds(f.events(t))
 	if !slices.Contains(got, "approval_decided") || !slices.Contains(got, "resumed") || got[len(got)-1] != "finished" {
 		t.Errorf("events = %v", got)
 	}
-	if calls := f.model.requests(); len(calls) != 2 {
-		t.Errorf("the model was asked %d times, want twice: the call, then the answer", len(calls))
+	calls = f.model.requests()
+	if len(calls) != 3 {
+		t.Fatalf("the model was asked %d times, want three: the call, its words, the answer", len(calls))
+	}
+	if said := textOf(calls[2].Messages); !strings.Contains(said, "A person approved it, and it was made. Its result:") {
+		t.Errorf("the model was not told what came of the approved call:\n%s", said)
 	}
 }
 
-// A no is acted on too: the run resumes, the tool is not made, and the model
+// A no is told too: the run resumes, the tool is not made, and the model
 // reads the person's own words.
 func TestACallAPersonDeclinesIsNotMade(t *testing.T) {
 	f, server, sam := gatedFixture(t, newScripted(
 		callTool("c1", "mail__send", `{"to":"a"}`),
+		answer(askedWords, 10, 5),
 		answer("I did not send it.", 10, 5),
 	))
 	f.mustExecute(t)
@@ -158,7 +175,7 @@ func TestACallAPersonDeclinesIsNotMade(t *testing.T) {
 // someone who neither decides the team's requests nor made this one may not
 // answer it.
 func TestARequestIsAnsweredOnceAndOnlyByWhoMay(t *testing.T) {
-	f, _, sam := gatedFixture(t, newScripted(callTool("c1", "mail__send", `{}`)))
+	f, _, sam := gatedFixture(t, newScripted(callTool("c1", "mail__send", `{}`), answer(askedWords, 10, 5)))
 	f.mustExecute(t)
 	req := f.request(t)
 
@@ -197,6 +214,7 @@ func TestARequestIsAnsweredOnceAndOnlyByWhoMay(t *testing.T) {
 func TestALateAnswerExpiresTheRequestAndResumesTheRun(t *testing.T) {
 	f, server, sam := gatedFixture(t, newScripted(
 		callTool("c1", "mail__send", `{}`),
+		answer(askedWords, 10, 5),
 		answer("Nobody answered.", 10, 5),
 	))
 	f.mustExecute(t)

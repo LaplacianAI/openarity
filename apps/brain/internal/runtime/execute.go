@@ -37,6 +37,12 @@ type Store interface {
 	InsertEventReply(ctx context.Context, arg db.InsertEventReplyParams) (int64, error)
 	TxStore
 	ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
+	AdoptChild(ctx context.Context, arg db.AdoptChildParams) (db.Run, error)
+	ListWaitingChildren(ctx context.Context, parentID uuid.UUID) ([]db.Run, error)
+	ListUntoldApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
+	MarkApprovalsTold(ctx context.Context, ids []uuid.UUID) error
+	ClaimApprovalUse(ctx context.Context, id uuid.UUID) (db.Approval, error)
+	RunAwaits(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 const (
@@ -176,7 +182,23 @@ func (e *Executor) Execute(ctx context.Context, runID uuid.UUID, worker string) 
 	return e.hold(bounded, runOf(row), Lineage{Worker: worker, Chain: chainOf(row.AgentID)})
 }
 
+// adopt takes up a child that waited, as its parent resumes: what it did
+// stands, and it carries on from its own transcript to its report, or to
+// waiting again.
+func (e *Executor) adopt(ctx context.Context, child db.Run, l Lineage) (db.Run, error) {
+	row, err := e.store.AdoptChild(ctx, db.AdoptChildParams{ID: child.ID, Worker: l.Worker})
+	if err != nil {
+		return db.Run{}, fmt.Errorf("taking up %s's run %s: %w", child.AgentName, child.ID, err)
+	}
+	if row.AgentID != nil {
+		l.Chain = append(slices.Clone(l.Chain), *row.AgentID)
+	}
+	return e.held(ctx, row, l)
+}
+
 func (e *Executor) Delegate(ctx context.Context, d Delegation) (db.Run, error) {
+	l := Lineage{Worker: d.Lineage.Worker, Chain: append(slices.Clone(d.Lineage.Chain), d.Agent.ID)}
+
 	id := uuid.New()
 	child, err := e.store.StartChildRun(ctx, db.StartChildRunParams{
 		ID: id, ParentID: d.Parent.ID, AgentID: d.Agent.ID, TeamID: d.Parent.TeamID,
@@ -195,7 +217,12 @@ func (e *Executor) Delegate(ctx context.Context, d Delegation) (db.Run, error) {
 		return db.Run{}, errors.Join(err, failed)
 	}
 
-	l := Lineage{Worker: d.Lineage.Worker, Chain: append(slices.Clone(d.Lineage.Chain), d.Agent.ID)}
+	return e.held(ctx, child, l)
+}
+
+// held runs a delegate to its end, or to its wait, and reads what it left:
+// a waiting one's output is what it said about what it waits for.
+func (e *Executor) held(ctx context.Context, child db.Run, l Lineage) (db.Run, error) {
 	if err := e.hold(ctx, child, l); err != nil {
 		return db.Run{}, err
 	}
@@ -227,12 +254,19 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 	if errors.Is(cause, ErrLostRun) {
 		return nil
 	}
-	// A tool asked a person and the run waits for the answer, holding
-	// nothing. A cancel or a limit that came first wins: cause is set.
-	if cause == nil && errors.Is(runErr, agent.ErrSuspended) && row.ParentRunID == nil {
-		return e.park(ctx, row, l)
-	}
 	status, failure := outcome(runErr, cause)
+	// A turn that ended with a person still to answer, or with an answer the
+	// model has not been told, or with a child that waits, is the run
+	// waiting, not finished: it said what it waits for, and holds nothing.
+	if status == "succeeded" {
+		awaits, err := e.store.RunAwaits(context.WithoutCancel(ctx), row.ID)
+		if err != nil {
+			return fmt.Errorf("reading whether run %s waits: %w", row.ID, err)
+		}
+		if awaits {
+			return e.park(ctx, row, l, output)
+		}
+	}
 	if status == "failed" {
 		// The model too: a provider's own words are never kept, so a model
 		// the gateway cannot route reads only as its status.
@@ -300,10 +334,23 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		return "", "", err
 	}
 	if resuming {
+		// What ran beneath the run when its worker stopped is cut off; what
+		// waits for a person is taken up below.
 		if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: row.ID, Reason: reapReason}); err != nil {
 			return "", "", fmt.Errorf("reaping what the run started before its worker stopped: %w", err)
 		}
-		err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)})
+		if err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)}); err != nil {
+			return "", "", err
+		}
+		// While it waited: each child carries on, and each answer is acted
+		// on, then told to the model as its next message.
+		said, err := e.catchUp(ctx, row, built, l)
+		if err != nil {
+			return "", "", err
+		}
+		if said != "" {
+			msgs = append(msgs, agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: said}}})
+		}
 	} else {
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(built.Agent, built.Spec))
 	}
@@ -455,7 +502,7 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 		return nil
 	}
 
-	if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: runID, Reason: endedReason}); err != nil {
+	if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: runID, Reason: endedReason, IncludeWaiting: true}); err != nil {
 		return fmt.Errorf("ending what run %s left running: %w", runID, err)
 	}
 	if followUp != uuid.Nil && e.enqueue != nil {

@@ -23,7 +23,7 @@ internal/gateway/
   receive.go        Receiver: resolve each sender, keep the files, deliver; a webhook's and a socket's alike
   senders.go        ResolveSender, and the display-name cleaning
   sink.go           where a delivery goes; inbox.go is the stand-in
-  answer.go         whether a stored message starts a run, steers one, or is left
+  answer.go         whether a stored message starts a run, steers one (giving up its sender's own requests), or is left
   send.go           the outbox's replies and notices: claim, build through the provider, post, mark
   job.go            the reply queue, the kick a finished run sends, the sweep
   providertest/     the conformance suite every adapter runs

@@ -130,18 +130,19 @@ apps/brain/
     resolve.go         Resolving: the model client that fetches those files' bytes for each request
     history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
-    gate.go            tool-call approvals: each MCP and web tool's verdict when the run is built; a call that asks, suspended until answered
-    approvals.go       parking a suspended run, and answering a request: each one transaction, the session taken first
+    gate.go            tool-call approvals: each MCP and web tool's verdict when the run is built; a call that asks makes nothing, and the model says so in its own words
+    answers.go         a resume's catch-up: waiting children carried on, each answer acted on (an approved call made then) and told to the model
+    approvals.go       parking a waiting run, and answering a request: each one transaction, the session taken first
     decide.go          Decide: the one way a request is answered, from the API or the chat; who may answer
-    park.go            a suspended run parked rather than finished, and queued again if its answer came first
-    delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run
+    park.go            a turn that ended waiting for a person, parked with what it said: a root queued again if its answer came first, a delegate left for its parent's resume
+    delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run; one that waits reported as waiting
     events.go          what a run does, as run_events, within its token budget; its text and reasoning, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish
     transcript.go      where a run starts in its session's transcript, or resumes, and its open calls closed
     graphtool.go       graph(query, kinds, hops, server), bound to every run; how the run finds its MCP tools
     hub.go             the hub: the built-in orchestrator, or the team's chosen agent, reaching the whole team
     builder.go         the builder: team(), find_mcp_servers(), list_mcp_tools() and propose(), nothing that writes; its prompt and its turns
-    job.go             the run queue, the sweep that takes over stale runs, the Enqueuer
+    job.go             the run queue, the sweep that takes over stale runs and expires unanswered requests, the Enqueuer
     narrow.go          a child built with fewer than its grants, for the outfitter
     plan.go            plan(items), the hub's checklist, each change a run event
     report.go          a child's answer, wrapped as data for the parent to read

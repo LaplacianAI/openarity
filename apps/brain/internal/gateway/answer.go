@@ -17,9 +17,15 @@ type outcome struct {
 	run        uuid.UUID // a run started for this message, to hand to the workers
 	steered    uuid.UUID // the run already working, which this message was sent to
 	unanswered string    // why a message that asked for an answer gets none
+	// resumed is the steered run, queued again because the message gave up
+	// what it was waiting for its sender to approve.
+	resumed *db.RequeueAnsweredRow
 }
 
-func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery, messageID uuid.UUID) (outcome, error) {
+// answer is what a stored message does: starts a run, or steers the one
+// already working. via is where it was written, dashboard or channel, as a
+// request it gives up records it.
+func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery, messageID uuid.UUID, via string) (outcome, error) {
 	if !asksUs(ch, s, m) {
 		return outcome{}, nil
 	}
@@ -44,7 +50,11 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 		if err := q.AddSteer(ctx, db.AddSteerParams{RunID: active, Text: steer(m)}); err != nil {
 			return outcome{}, fmt.Errorf("steer run %s: %w", active, err)
 		}
-		return outcome{steered: active}, nil
+		resumed, err := Supersede(ctx, q, active, m.UserID, via)
+		if err != nil {
+			return outcome{}, err
+		}
+		return outcome{steered: active, resumed: resumed}, nil
 	case !errors.Is(err, pgx.ErrNoRows):
 		return outcome{}, fmt.Errorf("active run in session %s: %w", s.ID, err)
 	}
@@ -163,4 +173,46 @@ func inputOf(m Delivery) string {
 		return missed
 	}
 	return said + "\n" + missed
+}
+
+// Superseding is what giving up a request needs: the requests, their events,
+// and the run queued again.
+type Superseding interface {
+	SupersedeApprovals(ctx context.Context, arg db.SupersedeApprovalsParams) ([]db.Approval, error)
+	AppendDecidedEvents(ctx context.Context, ids []uuid.UUID) error
+	RequeueAnswered(ctx context.Context, id uuid.UUID) (db.RequeueAnsweredRow, error)
+}
+
+// Supersede is a person writing to a run that waits on them: writing again
+// before answering is moving on from what they were asked, so every request
+// in the run's tree made for them ends, answered by them, and the run is
+// queued again, once nothing else waits, to read what they wrote. Without
+// this, their words would be read only after the call they were asked about
+// was made. Other people's requests stand. The caller holds the session,
+// and hands the run returned to the workers once it commits.
+func Supersede(ctx context.Context, q Superseding, runID, userID uuid.UUID, via string) (*db.RequeueAnsweredRow, error) {
+	ended, err := q.SupersedeApprovals(ctx, db.SupersedeApprovalsParams{RootRunID: runID, UserID: userID, Via: via})
+	if err != nil {
+		return nil, fmt.Errorf("give up what run %s asked %s: %w", runID, userID, err)
+	}
+	if len(ended) == 0 {
+		return nil, nil
+	}
+	ids := make([]uuid.UUID, len(ended))
+	for i, a := range ended {
+		ids[i] = a.ID
+	}
+	if err := q.AppendDecidedEvents(ctx, ids); err != nil {
+		return nil, fmt.Errorf("record what run %s no longer asks: %w", runID, err)
+	}
+	row, err := q.RequeueAnswered(ctx, runID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Still running, parking or waiting on someone else: its park, or
+		// the last answer, queues it.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("queue run %s again: %w", runID, err)
+	}
+	return &row, nil
 }

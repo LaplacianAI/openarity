@@ -188,25 +188,31 @@ WHERE p.id = sqlc.arg('parent_id')::uuid AND p.team_id = sqlc.arg('team_id')::uu
 RETURNING *;
 
 -- What a tree has spent, for the delegate tool's budget check. Elapsed is on
--- the database's clock, from when the root first started.
+-- the database's clock, from when the root first started, less the time the
+-- tree spent waiting for a person: that time is not the task's.
 -- name: TreeUsage :one
 SELECT coalesce(sum(r.input_tokens + r.output_tokens), 0)::bigint AS tokens,
        count(*)::bigint AS runs,
-       coalesce(extract(epoch FROM now() - (
-           SELECT started_at FROM runs WHERE id = sqlc.arg('root_id')::uuid)), 0)::float8 AS elapsed_seconds
+       coalesce((SELECT extract(epoch FROM now() - root.started_at) - root.waited_seconds
+                 FROM runs root WHERE root.id = sqlc.arg('root_id')::uuid), 0)::float8 AS elapsed_seconds
 FROM runs r
 WHERE r.root_run_id = sqlc.arg('root_id')::uuid;
 
 -- After a crash the resumed parent asks again rather than finding what it
 -- asked before, so whatever was still running beneath it fails, at any depth.
+-- A child waiting for a person stopped cleanly and is taken up again by the
+-- resume, so it is left; a parent that ends takes its waiting children with
+-- it (include_waiting).
 -- name: ReapChildren :many
 WITH RECURSIVE below AS (
     SELECT id FROM runs WHERE parent_run_id = sqlc.arg('parent_id')::uuid
     UNION ALL
     SELECT r.id FROM runs r JOIN below b ON r.parent_run_id = b.id
 )
-UPDATE runs SET status = 'failed', error = sqlc.arg('reason')::text, finished_at = now()
-WHERE id IN (SELECT id FROM below) AND status = 'running'
+UPDATE runs SET status = 'failed', error = sqlc.arg('reason')::text, finished_at = now(),
+                waiting_since = NULL
+WHERE id IN (SELECT id FROM below)
+  AND (status = 'running' OR (sqlc.arg('include_waiting')::bool AND status = 'waiting'))
 RETURNING id;
 
 -- A message starts the run that answers its conversation: the builder's in a
@@ -337,8 +343,43 @@ SELECT EXISTS (
 
 -- A run a tool suspended is parked: no worker holds it while it waits for a
 -- person. Only the worker that holds it parks it.
+-- A delegated run that waits for a person stops where it stands, as its
+-- root does, holding nothing, with what it said about it as its output for
+-- the agent that asked it: the resume takes it up again.
+-- name: ParkChild :execrows
+UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now(),
+                output = sqlc.narg('said')
+WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'running'
+  AND parent_run_id IS NOT NULL;
+
+-- A waiting child taken up again by its parent's resume, by this worker:
+-- whatever it already did stands, and it carries on from its transcript.
+-- name: AdoptChild :one
+UPDATE runs SET
+    status         = 'running',
+    worker         = sqlc.arg('worker')::text,
+    heartbeat_at   = now(),
+    waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
+    waiting_since  = NULL
+WHERE id = sqlc.arg('id')::uuid AND status = 'waiting' AND parent_run_id IS NOT NULL
+RETURNING *;
+
+-- A run's children that wait for a person, in the order they were started.
+-- name: ListWaitingChildren :many
+SELECT * FROM runs
+WHERE parent_run_id = sqlc.arg('parent_id')::uuid AND status = 'waiting'
+ORDER BY created_at, id;
+
+-- Whether a run whose turn has ended is waiting rather than finished: a
+-- request it made that its model has not been told the answer to, or a child
+-- that waits.
+-- name: RunAwaits :one
+SELECT (EXISTS (SELECT 1 FROM approvals a WHERE a.run_id = sqlc.arg('id')::uuid AND a.told_at IS NULL)
+     OR EXISTS (SELECT 1 FROM runs c WHERE c.parent_run_id = sqlc.arg('id')::uuid AND c.status = 'waiting'))::bool AS awaits;
+
 -- name: ParkRun :execrows
-UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now()
+UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now(),
+                output = sqlc.narg('said')
 WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'running';
 
 -- A parked run whose tree waits on nothing more is queued again, under its

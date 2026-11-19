@@ -8,21 +8,31 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
+// waitingPayload is the waiting event: why the run waits, and what it said
+// about it in its own words, for the stream and the channel to show beside
+// the request.
 type waitingPayload struct {
 	Reason string `json:"reason"`
+	Said   string `json:"said,omitempty"`
 }
 
-// park ends a run's attempt without finishing the run: a tool asked a person,
-// the transcript is saved, and the run waits holding no worker. A decision
-// queues it again; one that landed before the park did is seen here, and the
-// run goes straight back to the queue.
-func (e *Executor) park(ctx context.Context, row db.Run, l Lineage) error {
+// park ends a run's attempt without finishing it: its turn ended with a
+// person still to answer, or with an answer it has not been told, or with a
+// child that waits. What it said is kept as its output, the transcript is
+// saved, and it waits holding no worker. A root whose answers all came before
+// it parked goes straight back to the queue; a delegate is left for its
+// parent, which reads what it said as its report and waits in turn.
+func (e *Executor) park(ctx context.Context, row db.Run, l Lineage, said string) error {
 	ctx = context.WithoutCancel(ctx)
-	payload, err := json.Marshal(waitingPayload{Reason: "approval"})
+	payload, err := json.Marshal(waitingPayload{Reason: "approval", Said: said})
 	if err != nil {
 		return fmt.Errorf("encoding the waiting event: %w", err)
 	}
-	parked, again, err := parkRun(ctx, e.store, row.ID, l.Worker, payload)
+	var output *string
+	if said != "" {
+		output = &said
+	}
+	parked, again, err := parkRun(ctx, e.store, row.ID, l.Worker, row.ParentRunID != nil, output, payload)
 	if err != nil {
 		return fmt.Errorf("parking run %s: %w", row.ID, err)
 	}

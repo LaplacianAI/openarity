@@ -61,6 +61,8 @@ type Store interface {
 
 type Starter interface {
 	Enqueue(ctx context.Context, runID uuid.UUID) error
+	// Resume hands over a run that waited, as its next attempt.
+	Resume(ctx context.Context, runID uuid.UUID, attempt int32) error
 }
 
 type handler struct {
@@ -172,6 +174,16 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 
 	if row.ID != args.ID {
 		// A run was already working in the session: the input is its steer.
+		// One it queued again, by giving up what the run waited for this
+		// person to approve, goes back to the workers. Handing over a queued
+		// run's attempt twice is one workflow, so a run that had not started
+		// yet is not started twice.
+		if row.Status == "queued" {
+			if err := h.starter.Resume(r.Context(), row.ID, row.Attempt); err != nil {
+				h.logger.WarnContext(r.Context(), "Resuming a run failed; the sweep will start it",
+					"run_id", row.ID, "error", err)
+			}
+		}
 		api.WriteJSON(w, h.logger, http.StatusOK, view(row, nil, nil))
 		return
 	}
