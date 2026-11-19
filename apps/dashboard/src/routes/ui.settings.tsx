@@ -9,6 +9,8 @@ import {
   getTeamSettings,
   listAgents,
   listApprovalRules,
+  listMCPServers,
+  listMCPTools,
   saveApprovalSettings,
   saveTeamSettings,
 } from "@/api";
@@ -1031,7 +1033,7 @@ function ApprovalModeSection({
 
   return (
     <Section
-      title="Approvals"
+      title="Tool approvals"
       about="When the team's agents ask a person before making a call. Runs already started keep the settings they began with."
       canWrite={canWrite}
       dirty={dirty}
@@ -1098,6 +1100,92 @@ const RULE_WORDS: Record<ApprovalRuleMode, string> = {
   deny: "Never allow",
 };
 
+/** The brain's own tools a rule may name: those the approval gate stands before. */
+const BUILT_INS = ["web_search", "web_fetch"] as const;
+// Not a UUID, so no server's id can be it.
+const BUILT_IN: Picked = { id: ":built-in", name: "Built-in tools" };
+
+/** The servers a rule may name, searched by name; a tool rule may also name a built-in. */
+async function ruleServers(teamId: string, q: string, builtIns: boolean) {
+  const page = await listMCPServers(teamId, null, { q, limit: PICK_PAGE });
+  const items: Picked[] = page.items.map((s) => ({ id: s.id, name: s.name }));
+  const wanted = q.trim().toLowerCase();
+  const matches =
+    wanted === "" ||
+    "built-in tools".includes(wanted) ||
+    BUILT_INS.some((name) => name.includes(wanted.replaceAll(" ", "_")));
+  if (builtIns && matches) items.unshift(BUILT_IN);
+  return { items, more: Boolean(page.next_cursor) };
+}
+
+/**
+ * The tool a rule names, chosen from what its server said it has: a rule's
+ * target is <server>__<tool>, or a built-in's own name.
+ */
+function RuleTool({
+  teamId,
+  server,
+  value,
+  onChange,
+}: {
+  teamId: string;
+  server: Picked | null;
+  value: string;
+  onChange: (target: string) => void;
+}) {
+  const builtIn = server?.id === BUILT_IN.id;
+  const tools = useQuery({
+    queryKey: ["mcp-tools", teamId, server?.id],
+    queryFn: () => listMCPTools(teamId, server?.id as string),
+    enabled: Boolean(server) && !builtIn,
+  });
+  // Each option carries its target and its label, so neither is cut from the other.
+  const options: { value: string; label: string }[] = builtIn
+    ? BUILT_INS.map((n) => ({ value: n, label: n }))
+    : (tools.data?.items ?? []).map((t) => ({
+        value: `${server?.name}__${t.name}`,
+        label: t.name,
+      }));
+  const hint = !server ? (
+    "Choose a server first."
+  ) : builtIn ? (
+    "Tools every agent has, such as reading a web page."
+  ) : tools.isPending ? (
+    "Reading the server's tools…"
+  ) : tools.isError ? (
+    <>
+      Couldn't read this server's tools.{" "}
+      <button
+        type="button"
+        className="underline underline-offset-2 hover:text-foreground"
+        onClick={() => void tools.refetch()}
+      >
+        Try again
+      </button>
+    </>
+  ) : options.length === 0 ? (
+    "This server has said it has no tools."
+  ) : undefined;
+  return (
+    <Field label="Tool" htmlFor="rule-target" hint={hint}>
+      <select
+        id="rule-target"
+        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
+        value={value}
+        disabled={options.length === 0}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Choose a tool</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
 function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: boolean }) {
   const qc = useQueryClient();
   const rules = useQuery({
@@ -1105,6 +1193,8 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
     queryFn: () => listApprovalRules(teamId),
   });
   const [kind, setKind] = useState<"tool" | "server">("tool");
+  // The server a rule names, or whose tool it names: picked, not typed.
+  const [server, setServer] = useState<Picked | null>(null);
   const [target, setTarget] = useState("");
   const [mode, setMode] = useState<ApprovalRuleMode>("ask");
   const [other, setOther] = useState(false);
@@ -1120,6 +1210,7 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
         require_other: other,
       }),
     onSuccess: () => {
+      setServer(null);
       setTarget("");
       setOther(false);
       setProblem(null);
@@ -1139,7 +1230,7 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
 
   return (
     <Section
-      title="Approval rules"
+      title="Tool approval rules"
       about="A standing answer for one tool or every tool of a server, whatever the mode. The most specific rule wins."
       canWrite={canWrite}
       dirty={false}
@@ -1149,7 +1240,11 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
       busy={false}
       onSave={() => {
         if (target.trim() === "") {
-          setProblem("Name the tool or server the rule is for.");
+          setProblem(
+            kind === "tool"
+              ? "Choose the tool the rule is for."
+              : "Choose the server the rule is for.",
+          );
           return;
         }
         add.mutate();
@@ -1169,7 +1264,7 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
           No rules. The mode above decides for every call.
         </p>
       ) : (
-        <table className="w-full text-sm" aria-label="Approval rules">
+        <table className="w-full text-sm" aria-label="Tool approval rules">
           <thead className="text-left text-xs text-muted-foreground">
             <tr>
               <th className="py-1 pr-3 font-normal">Applies to</th>
@@ -1209,33 +1304,50 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
       )}
       {canWrite ? (
         <div className="space-y-3 border-t border-rule pt-4">
-          <div className="grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)_12rem]">
+          <div
+            className={
+              kind === "tool"
+                ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-[8rem_minmax(0,1fr)_minmax(0,1fr)_12rem]"
+                : "grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)_12rem]"
+            }
+          >
             <Field label="Applies to" htmlFor="rule-kind">
               <select
                 id="rule-kind"
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                 value={kind}
-                onChange={(e) => setKind(e.target.value as "tool" | "server")}
+                onChange={(e) => {
+                  setKind(e.target.value as "tool" | "server");
+                  setServer(null);
+                  setTarget("");
+                }}
               >
                 <option value="tool">A tool</option>
                 <option value="server">A server</option>
               </select>
             </Field>
-            <Field
-              label="Target"
-              htmlFor="rule-target"
-              hint={
-                kind === "tool" ? "server__tool, or a built-in's own name." : "The server's name."
-              }
-            >
-              <Input
-                id="rule-target"
-                spellCheck={false}
-                maxLength={200}
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
+            <div className="min-w-0 space-y-1.5">
+              {/* The picker names itself to a screen reader; this is for the eye. */}
+              <p aria-hidden className="text-sm font-medium">
+                Server
+              </p>
+              <Picker
+                label="Server"
+                noun="server"
+                max={1}
+                value={server ? [server] : []}
+                onChange={(next) => {
+                  const picked = next[0] ?? null;
+                  setServer(picked);
+                  setTarget(kind === "server" && picked ? picked.name : "");
+                }}
+                search={(q) => ruleServers(teamId, q, kind === "tool")}
+                searchKey={["rule-servers", teamId, kind]}
               />
-            </Field>
+            </div>
+            {kind === "tool" ? (
+              <RuleTool teamId={teamId} server={server} value={target} onChange={setTarget} />
+            ) : null}
             <Field label="Answer" htmlFor="rule-mode">
               <select
                 id="rule-mode"

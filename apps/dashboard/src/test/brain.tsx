@@ -36,8 +36,13 @@ export type Seen = {
   signal: AbortSignal | null | undefined;
 };
 
-/** "GET /teams/{id}/skills" style keys, with {x} matching one segment. */
-export function brain(routes: Record<string, Reply | ((seen: Seen) => Reply)>): Seen[] {
+/**
+ * "GET /teams/{id}/skills" style keys, with {x} matching one segment. A route
+ * may answer later, with a promise, so a test can hold it.
+ */
+export function brain(
+  routes: Record<string, Reply | ((seen: Seen) => Reply | Promise<Reply>)>,
+): Seen[] {
   const seen: Seen[] = [];
   const compiled = Object.entries(routes).map(([key, reply]) => {
     const [method, pattern] = key.split(" ") as [string, string];
@@ -63,7 +68,7 @@ export function brain(routes: Record<string, Reply | ((seen: Seen) => Reply)>): 
 
       const hit = compiled.find((r) => r.method === method && r.re.test(url.pathname));
       if (!hit) return new Response("no route in the fake brain", { status: 404 });
-      const reply = typeof hit.reply === "function" ? hit.reply(s) : hit.reply;
+      const reply = typeof hit.reply === "function" ? await hit.reply(s) : hit.reply;
       const status = reply.status ?? 200;
       if (reply.stream) return streamed(reply.stream, init?.signal);
       if (status === 204) return new Response(null, { status });
