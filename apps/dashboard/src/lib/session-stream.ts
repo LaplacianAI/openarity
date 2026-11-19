@@ -5,9 +5,34 @@
  * Pure, and idempotent on a frame already seen, so a stream followed again
  * after a drop never shows anything twice.
  */
-import type { SessionEnvelope, SessionEventFile } from "@/api/types";
+import type {
+  ApprovalClass,
+  ApprovalScope,
+  ApprovalStatus,
+  SessionEnvelope,
+  SessionEventFile,
+} from "@/api/types";
 
-export type RunState = "running" | "succeeded" | "failed" | "cancelled";
+export type RunState = "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+
+/** A request the stream showed: what a run asked a person, and how it was answered. */
+export type Request = {
+  id: string;
+  runId: string;
+  toolCallId: string;
+  tool: string;
+  class: ApprovalClass;
+  summary: string;
+  code: string;
+  expiresAt: string;
+  status: ApprovalStatus;
+  /** A user id; absent while pending, and for one the brain answered. */
+  by: string | null;
+  via: string | null;
+  scope: ApprovalScope | null;
+  /** Set aside because the person wrote again instead of answering. */
+  superseded: boolean;
+};
 
 /** Something a person said. */
 export type Said = {
@@ -56,6 +81,10 @@ export type RunTurn = {
   children: string[];
   output: string;
   error: string;
+  /** Why it stopped for a person, and what it told them; null unless it is waiting. */
+  waiting: { reason: string; said: string } | null;
+  /** The requests it made, in order. */
+  requests: string[];
 };
 
 export type Entry = { kind: "said"; id: string } | { kind: "run"; id: string };
@@ -65,11 +94,19 @@ export type Conversation = {
   seen: number | null;
   said: Record<string, Said>;
   runs: Record<string, RunTurn>;
+  /** Every request shown, by id. */
+  requests: Record<string, Request>;
   /** Oldest first. A run handed work by another is in its parent, not here. */
   order: Entry[];
 };
 
-export const empty: Conversation = { seen: null, said: {}, runs: {}, order: [] };
+export const empty: Conversation = {
+  seen: null,
+  said: {},
+  runs: {},
+  requests: {},
+  order: [],
+};
 
 export function fold(c: Conversation, env: SessionEnvelope): Conversation {
   if (c.seen !== null && env.seq <= c.seen) return c;
@@ -133,6 +170,8 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
         children: [],
         output: "",
         error: "",
+        waiting: null,
+        requests: [],
       };
       const runs = { ...c.runs, [run.id]: run };
       if (parent) {
@@ -145,7 +184,11 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
     case "step_started": {
       const d = env.data;
       return withRun(next, d.run_id, (r) =>
-        r.steps.some((s) => s.step === d.step) ? r : { ...r, steps: [...r.steps, newStep(d.step)] },
+        resumed(
+          r.steps.some((s) => s.step === d.step)
+            ? r
+            : { ...r, steps: [...r.steps, newStep(d.step)] },
+        ),
       );
     }
     case "text_message_chunk":
@@ -153,7 +196,7 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
       const d = env.data;
       const part = env.kind === "text_message_chunk" ? "text" : "reasoning";
       return withRun(next, d.run_id, (r) =>
-        onStep(r, stepOf(d.message_id), (s) => ({ ...s, [part]: s[part] + d.delta })),
+        onStep(resumed(r), stepOf(d.message_id), (s) => ({ ...s, [part]: s[part] + d.delta })),
       );
     }
     case "tool_call_chunk": {
@@ -168,7 +211,7 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
     case "tool_call_result": {
       const d = env.data;
       return withRun(next, d.run_id, (r) => ({
-        ...r,
+        ...resumed(r),
         steps: r.steps.map((s) => ({
           ...s,
           tools: s.tools.map((t) =>
@@ -185,10 +228,65 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
         })),
       }));
     }
+    case "approval_requested": {
+      const d = env.data;
+      if (c.requests[d.approval_id]) return next;
+      const request: Request = {
+        id: d.approval_id,
+        runId: d.run_id,
+        toolCallId: d.tool_call_id,
+        tool: d.tool,
+        class: d.class,
+        summary: d.summary,
+        code: d.code,
+        expiresAt: d.expires_at,
+        status: "pending",
+        by: null,
+        via: null,
+        scope: null,
+        superseded: false,
+      };
+      return withRun(
+        { ...next, requests: { ...c.requests, [request.id]: request } },
+        d.run_id,
+        (r) => ({
+          ...r,
+          requests: [...r.requests, request.id],
+        }),
+      );
+    }
+    case "approval_decided": {
+      const d = env.data;
+      const known = c.requests[d.approval_id];
+      if (!known) return next;
+      return {
+        ...next,
+        requests: {
+          ...c.requests,
+          [known.id]: {
+            ...known,
+            status: d.decision,
+            by: d.by ?? null,
+            via: d.via ?? null,
+            scope: d.scope ?? null,
+            superseded: d.superseded === true,
+          },
+        },
+      };
+    }
+    case "run_waiting": {
+      const d = env.data;
+      return withRun(next, d.run_id, (r) => ({
+        ...r,
+        status: "waiting",
+        waiting: { reason: d.reason, said: d.said ?? "" },
+      }));
+    }
     case "run_finished": {
       const d = env.data;
       return withRun(next, d.run_id, (r) => ({
         ...r,
+        waiting: null,
         status: d.status,
         endedAt: d.at,
         output: d.output ?? "",
@@ -198,6 +296,11 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
     case "other":
       return next;
   }
+}
+
+/** A run that carries on after being answered is running again. */
+function resumed(r: RunTurn): RunTurn {
+  return r.status === "waiting" ? { ...r, status: "running", waiting: null } : r;
 }
 
 function newStep(step: number): Step {

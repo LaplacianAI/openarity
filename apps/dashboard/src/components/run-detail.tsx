@@ -50,6 +50,7 @@ import {
   stepsOf,
   type ToolCall,
   type Trace,
+  type TraceDecision,
 } from "@/lib/run-trace";
 import { cn } from "@/lib/utils";
 
@@ -616,6 +617,39 @@ function TraceView({
                 {item.reason}
               </Note>
             );
+          case "requested":
+            return (
+              <Note key={key} kind="approval_requested" warn>
+                <span className="font-medium text-foreground">Asked a person</span> before calling{" "}
+                <span className="font-mono text-foreground">{item.request.tool}</span>
+                {item.request.class ? ` (${item.request.class})` : ""}
+                {item.request.code ? (
+                  <>
+                    , code <span className="font-mono text-foreground">{item.request.code}</span>
+                  </>
+                ) : null}
+                {item.request.summary ? (
+                  <span className="mt-0.5 block whitespace-pre-wrap">{item.request.summary}</span>
+                ) : null}
+              </Note>
+            );
+          case "decided":
+            return (
+              <Note key={key} kind="approval_decided">
+                <span className="font-medium text-foreground">{decidedWords(item.decision)}</span>
+                {decidedWhere(item.decision)}
+              </Note>
+            );
+          case "waiting":
+            return (
+              <Note key={key} kind="waiting">
+                <span className="font-medium text-foreground">Waiting for a person</span>
+                {item.reason ? `: ${item.reason}` : null}
+                {item.said ? (
+                  <span className="mt-0.5 block whitespace-pre-wrap">{item.said}</span>
+                ) : null}
+              </Note>
+            );
           default:
             return (
               <Note key={key} kind={item.event.kind}>
@@ -631,6 +665,27 @@ function TraceView({
       ) : null}
     </ol>
   );
+}
+
+function decidedWords(d: TraceDecision): string {
+  if (d.superseded) return "Request set aside: the person wrote again";
+  switch (d.decision) {
+    case "approved":
+      return d.scope === "run" ? "Approved for this run" : "Approved";
+    case "denied":
+      return "Declined";
+    case "expired":
+      return "Request expired";
+    case "cancelled":
+      return "Request cancelled";
+    default:
+      return `Request ${d.decision}`;
+  }
+}
+
+function decidedWhere(d: TraceDecision): string {
+  const parts = [d.via === "sweep" ? "by the brain" : d.via ? `via ${d.via}` : ""].filter(Boolean);
+  return parts.length > 0 ? `, ${parts.join(" ")}` : "";
 }
 
 /** The failure in a sentence; the brain's own words behind a disclosure, when they differ. */

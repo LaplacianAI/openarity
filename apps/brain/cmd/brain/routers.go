@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/approvals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/authconfig"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/blueprints"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
@@ -78,6 +79,7 @@ func newRouters(
 			mcpservers.NewRefresher(logger, discoverer, mcpStore{dbStore}), runtime.Loops()),
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
+		approvals.New(logger, dbStore, authorizer, decider{store: dbStore, resumer: starter}),
 		teamgraph.New(logger, graphs),
 		teamsummary.New(logger, dbStore, authorizer),
 		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks)),

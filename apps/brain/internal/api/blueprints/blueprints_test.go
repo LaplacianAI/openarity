@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -105,6 +106,10 @@ func (w *world) ListTeamMCPServers(ctx context.Context, id uuid.UUID) ([]db.McpS
 	return w.store.ListTeamMCPServers(ctx, id)
 }
 
+func (w *world) ListApprovalRules(ctx context.Context, id uuid.UUID) ([]db.ApprovalRule, error) {
+	return w.store.ListApprovalRules(ctx, id)
+}
+
 func (w *world) ListTeamSkills(ctx context.Context, id uuid.UUID) ([]db.Skill, error) {
 	return w.store.ListTeamSkills(ctx, id)
 }
@@ -166,7 +171,7 @@ func (s *stored) Put(_ context.Context, _ uuid.UUID, key string, _ []byte) error
 type fakeAuthz struct{ holds map[authz.Action]bool }
 
 func everything() *fakeAuthz {
-	return &fakeAuthz{holds: map[authz.Action]bool{"agent:write": true, "skill:write": true, "tool:write": true}}
+	return &fakeAuthz{holds: map[authz.Action]bool{"agent:write": true, "skill:write": true, "tool:write": true, "team:settings": true}}
 }
 
 func (*fakeAuthz) IsSuperAdmin(*auth.User) bool { return false }
@@ -621,5 +626,145 @@ func TestABlueprintOverTheLimitIsRefusedBeforeItIsRead(t *testing.T) {
 	bp := Blueprint{Agents: make([]agentSpec, maxItems+1)}
 	if rec := w.call(t, "plan", bp); rec.Code != http.StatusBadRequest {
 		t.Errorf("plan: %d, want 400", rec.Code)
+	}
+}
+
+// --- approval rules ---
+
+func (w *world) rules(t *testing.T) map[string]db.ApprovalRule {
+	t.Helper()
+	rows, err := w.store.ListApprovalRules(t.Context(), w.team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]db.ApprovalRule{}
+	for _, r := range rows {
+		out[r.TargetKind+":"+r.Target] = r
+	}
+	return out
+}
+
+func withRules(rules ...ruleSpec) Blueprint {
+	return Blueprint{Approvals: &approvalsSpec{Rules: rules}}
+}
+
+// A blueprint adds rules that ask or deny, and makes a rule the team holds
+// stricter; applied again it changes nothing.
+func TestABlueprintAddsAndTightensApprovalRules(t *testing.T) {
+	w := newWorld(t)
+	if _, err := w.store.CreateApprovalRule(t.Context(), db.CreateApprovalRuleParams{
+		TeamID: w.team, TargetKind: "tool", Target: "mail__send", Mode: "allow",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bp := withRules(
+		ruleSpec{Server: "github", Mode: "deny"},
+		ruleSpec{Tool: "mail__send", Mode: "ask", RequireOther: true},
+	)
+	if rec := w.apply(t, bp); rec.Code != http.StatusOK {
+		t.Fatalf("apply: %d %s", rec.Code, rec.Body)
+	}
+	got := w.rules(t)
+	if r := got["server:github"]; r.Mode != "deny" {
+		t.Errorf("github = %+v, want a new deny", r)
+	}
+	if r := got["tool:mail__send"]; r.Mode != "ask" || !r.RequireOther {
+		t.Errorf("mail__send = %+v, want made stricter: ask, someone else answers", r)
+	}
+
+	again := w.plan(t, bp)
+	for _, c := range again.Changes {
+		if c.Action != ActionUnchanged {
+			t.Errorf("applied twice: %+v", c)
+		}
+	}
+}
+
+// Nothing in a blueprint loosens: an allow, a rule weaker than the team's,
+// or one that drops a second person is refused, and the plan writes nothing.
+func TestABlueprintNeverLoosensAnApproval(t *testing.T) {
+	w := newWorld(t)
+	if _, err := w.store.CreateApprovalRule(t.Context(), db.CreateApprovalRuleParams{
+		TeamID: w.team, TargetKind: "server", Target: "github", Mode: "deny", RequireOther: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, rule := range map[string]ruleSpec{
+		"an allow":         {Tool: "mail__send", Mode: "allow"},
+		"weaker":           {Server: "GitHub", Mode: "ask", RequireOther: true},
+		"no second person": {Server: "github", Mode: "deny"},
+		"both kinds":       {Tool: "a", Server: "b", Mode: "ask"},
+		"neither kind":     {Mode: "ask"},
+		"an unknown mode":  {Tool: "a", Mode: "maybe"},
+	} {
+		p := w.plan(t, withRules(rule))
+		if len(p.Refusals) != 1 || p.Refusals[0].Kind != KindRule {
+			t.Errorf("%s: refusals %+v, want one for the rule", name, p.Refusals)
+		}
+	}
+	if p := w.plan(t, withRules(ruleSpec{Tool: "mail__send", Mode: "allow"})); !strings.Contains(p.Refusals[0].Message, "an admin allows one in the team's settings") {
+		t.Errorf("an allow was refused as %q, want the person told where an allow is made", p.Refusals[0].Message)
+	}
+	twice := w.plan(t, withRules(ruleSpec{Tool: "x", Mode: "ask"}, ruleSpec{Tool: "X", Mode: "deny"}))
+	if len(twice.Refusals) != 1 || twice.Refusals[0].Message != "named twice" {
+		t.Errorf("a target twice, in any case: %+v", twice.Refusals)
+	}
+
+	rec := w.call(t, "apply", applyRequest{
+		Blueprint:  withRules(ruleSpec{Tool: "mail__send", Mode: "allow"}),
+		PlanDigest: w.plan(t, withRules(ruleSpec{Tool: "mail__send", Mode: "allow"})).Digest,
+	})
+	if rec.Code == http.StatusOK {
+		t.Errorf("a refused plan applied: %s", rec.Body)
+	}
+	if got := w.rules(t); len(got) != 1 || got["server:github"].Mode != "deny" {
+		t.Errorf("rules after refusals = %+v, want only github's deny", got)
+	}
+}
+
+// Rules are the team's settings: without team:settings a blueprint that
+// names one is refused for it, whatever else the caller may write.
+func TestARuleNeedsTheTeamsSettings(t *testing.T) {
+	w := newWorld(t)
+	delete(w.authz.holds, "team:settings")
+	p := w.plan(t, withRules(ruleSpec{Server: "github", Mode: "ask"}))
+	if len(p.Refusals) != 1 || !strings.Contains(p.Refusals[0].Message, "team:settings") {
+		t.Errorf("refusals %+v, want team:settings named", p.Refusals)
+	}
+}
+
+// An export carries the rules that ask or deny, never an allow: a file that
+// allowed would be refused on the way back in.
+func TestAnExportCarriesOnlyRulesABlueprintMayHold(t *testing.T) {
+	w := newWorld(t)
+	for _, r := range []db.CreateApprovalRuleParams{
+		{TeamID: w.team, TargetKind: "server", Target: "github", Mode: "deny"},
+		{TeamID: w.team, TargetKind: "tool", Target: "mail__send", Mode: "allow"},
+		{TeamID: w.team, TargetKind: "tool", Target: "github__merge", Mode: "ask", RequireOther: true},
+	} {
+		if _, err := w.store.CreateApprovalRule(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tm, err := load(t.Context(), w, w.team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bp, err := exportOf(tm, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bp.Approvals == nil || len(bp.Approvals.Rules) != 2 {
+		t.Fatalf("exported %+v, want github's two rules and no allow", bp.Approvals)
+	}
+	for _, r := range bp.Approvals.Rules {
+		if r.Mode == "allow" {
+			t.Errorf("an allow was exported: %+v", r)
+		}
+	}
+	if p := planOf(tm, bp, nil, may{KindRule: true}); len(p.Refusals) != 0 {
+		t.Errorf("the export planned back with refusals %+v", p.Refusals)
 	}
 }

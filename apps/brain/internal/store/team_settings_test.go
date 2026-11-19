@@ -77,14 +77,42 @@ func samePaths(got, want []string) bool {
 // No row until the first save, so creating a team writes nothing here and
 // teams that existed before this table need no backfill. The API reads the
 // absence as the defaults.
-func TestATeamHasNoSettingsUntilTheyAreSaved(t *testing.T) {
+// A new team asks before its agents write, and has every other setting at
+// its default. A team from before approvals, made by a bare insert as the
+// old code made them, has no row until it saves, and reads off.
+func TestANewTeamStartsAskingBeforeWrites(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	team := mustCreate(t, s, "unsaved")
+	team := mustCreate(t, s, "fresh")
 
-	if _, err := s.GetTeamSettings(t.Context(), team.ID); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetTeamSettings on a team that never saved: %v, want pgx.ErrNoRows", err)
+	got, err := s.GetTeamSettings(t.Context(), team.ID)
+	if err != nil {
+		t.Fatalf("GetTeamSettings on a new team: %v", err)
+	}
+	if got.ApprovalMode != "writes" || got.ApprovalTtlMinutes != 60 || got.SearchProvider != "none" ||
+		got.Learning || got.CompactionMessages != 100 || got.ModelName != nil {
+		t.Errorf("a new team's settings = %+v; want writes for 60 minutes and every other default", got)
+	}
+
+	old := bareTeam(t, s, "from-before")
+	if _, err := s.GetTeamSettings(t.Context(), old); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetTeamSettings on a team from before approvals: %v, want pgx.ErrNoRows", err)
+	}
+}
+
+// A taken name refuses the team and leaves no settings behind.
+func TestATakenTeamNameMakesNoSettings(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	mustCreate(t, s, "taken")
+	before := countRows(t, s, "team_settings")
+	if _, err := s.CreateTeam(t.Context(), "taken"); err == nil {
+		t.Fatal("a second team took the same name")
+	}
+	if after := countRows(t, s, "team_settings"); after != before {
+		t.Errorf("team_settings went from %d to %d rows for a refused team", before, after)
 	}
 }
 
@@ -92,23 +120,43 @@ func TestTheColumnDefaultsAreTheSpecsDefaults(t *testing.T) {
 	t.Parallel()
 
 	s := queryStore(t)
-	team := mustCreate(t, s, "defaults")
+	team := bareTeam(t, s, "defaults")
 
 	if _, err := s.pool.Exec(t.Context(),
-		`INSERT INTO team_settings (team_id) VALUES ($1)`, team.ID); err != nil {
+		`INSERT INTO team_settings (team_id) VALUES ($1)`, team); err != nil {
 		t.Fatalf("inserting a bare row: %v", err)
 	}
-	got, err := s.GetTeamSettings(t.Context(), team.ID)
+	got, err := s.GetTeamSettings(t.Context(), team)
 	if err != nil {
 		t.Fatalf("GetTeamSettings: %v", err)
 	}
 
 	if got.SearchProvider != "none" || got.Learning || got.CompactionMessages != 100 ||
-		got.ModelName != nil || got.SearchSecretID != nil {
-		t.Errorf("defaults = provider %q, learning %v, compaction %d, model %v, secret %v; "+
-			"want none, false, 100, nil, nil",
-			got.SearchProvider, got.Learning, got.CompactionMessages, got.ModelName, got.SearchSecretID)
+		got.ModelName != nil || got.SearchSecretID != nil || got.ApprovalMode != "off" {
+		t.Errorf("defaults = provider %q, learning %v, compaction %d, model %v, secret %v, approvals %q; "+
+			"want none, false, 100, nil, nil, off",
+			got.SearchProvider, got.Learning, got.CompactionMessages, got.ModelName, got.SearchSecretID, got.ApprovalMode)
 	}
+}
+
+// bareTeam is a team made without its settings, as teams were before
+// approvals.
+func bareTeam(t *testing.T, s *Store, name string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := s.pool.QueryRow(t.Context(), `INSERT INTO teams (name) VALUES ($1) RETURNING id`, name).Scan(&id); err != nil {
+		t.Fatalf("insert team: %v", err)
+	}
+	return id
+}
+
+func countRows(t *testing.T, s *Store, table string) int {
+	t.Helper()
+	var n int
+	if err := s.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func TestUpsertingTwiceKeepsOneRow(t *testing.T) {

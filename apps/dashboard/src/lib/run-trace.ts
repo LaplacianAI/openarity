@@ -74,7 +74,32 @@ export type TraceItem =
   | { type: "compacted"; compaction: Compaction }
   | { type: "wrap_up"; reason: string }
   | { type: "skipped"; what: string; reason: string }
+  | { type: "requested"; request: TraceRequest }
+  | { type: "decided"; decision: TraceDecision }
+  | { type: "waiting"; reason: string; said: string }
   | { type: "other"; event: RunEvent };
+
+/** The run asking a person before a call: the call is not made. */
+export type TraceRequest = {
+  approvalId: string;
+  callId: string;
+  tool: string;
+  class: string;
+  summary: string;
+  code: string;
+  expiresAt: string;
+  /** The run that asked, when it is not this one. */
+  run: string;
+};
+
+export type TraceDecision = {
+  approvalId: string;
+  decision: string;
+  by: string;
+  via: string;
+  scope: string;
+  superseded: boolean;
+};
 
 /** A run setting part of its context aside: old results cleared, turns folded into a summary. */
 export type Compaction = {
@@ -250,6 +275,37 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
         else trace.items.push({ type: "other", event: e });
         break;
       }
+      case "approval_requested":
+        trace.items.push({
+          type: "requested",
+          request: {
+            approvalId: text(d.approval_id),
+            callId: text(d.call_id),
+            tool: text(d.tool),
+            class: text(d.class),
+            summary: text(d.summary),
+            code: text(d.code),
+            expiresAt: text(d.expires_at),
+            run: text(d.run),
+          },
+        });
+        break;
+      case "approval_decided":
+        trace.items.push({
+          type: "decided",
+          decision: {
+            approvalId: text(d.approval_id),
+            decision: text(d.decision),
+            by: text(d.by),
+            via: text(d.via),
+            scope: text(d.scope),
+            superseded: d.superseded === true,
+          },
+        });
+        break;
+      case "waiting":
+        trace.items.push({ type: "waiting", reason: text(d.reason), said: text(d.said) });
+        break;
       case "plan": {
         // Each plan replaces the last; each stays where it was kept.
         const items = planItems(d.items);

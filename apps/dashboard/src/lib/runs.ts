@@ -3,6 +3,7 @@ import type { Run, RunStatus, TeamSummary } from "@/api/types";
 /** Every run status, in the order a reader looks for them. */
 export const RUN_STATUSES: readonly RunStatus[] = [
   "running",
+  "waiting",
   "queued",
   "failed",
   "succeeded",
@@ -11,6 +12,7 @@ export const RUN_STATUSES: readonly RunStatus[] = [
 
 export const STATUS_WORDS: Record<RunStatus, string> = {
   running: "Running",
+  waiting: "Waiting",
   queued: "Queued",
   failed: "Failed",
   succeeded: "Succeeded",

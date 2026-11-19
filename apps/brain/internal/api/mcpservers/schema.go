@@ -26,11 +26,17 @@ type server struct {
 	Connection         *connection        `json:"connection"`
 	Registration       *registration      `json:"oauth_registration"`
 	Bare               bool               `json:"bare"`
+	TrustHints         bool               `json:"trust_hints"`
 	DiscoveredAt       *time.Time         `json:"discovered_at"`
 	LastDiscoveryError *string            `json:"last_discovery_error"`
 	LastDiscoveryAt    *time.Time         `json:"last_discovery_at"`
 	CreatedAt          time.Time          `json:"created_at"`
 	UpdatedAt          time.Time          `json:"updated_at"`
+}
+
+// trustRequest is whether to believe a server's own hints about its tools.
+type trustRequest struct {
+	Trust *bool `json:"trust"`
 }
 
 type Request struct {

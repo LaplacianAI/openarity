@@ -11,7 +11,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   downloadAttachment,
-  fetchWhoami,
   getRun,
   getSession,
   listAttachments,
@@ -21,7 +20,7 @@ import {
 } from "@/api";
 import { ApiError, nextCursorOf } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
-import { useCurrentTeam } from "@/api/session";
+import { useCurrentTeam, useMe } from "@/api/session";
 import type { Attachment, Page, Run, Session } from "@/api/types";
 import { Composer } from "@/components/composer";
 import { ConversationView } from "@/components/conversation-view";
@@ -311,6 +310,7 @@ function Conversation({
         <p className="text-sm text-muted-foreground">Nothing has been said here.</p>
       ) : (
         <ConversationView
+          teamId={teamId}
           conversation={c}
           sessionId={sessionId}
           rows={runs.data?.pages.flatMap((p) => p.items) ?? []}
@@ -384,13 +384,6 @@ function Conversation({
       />
     </section>
   );
-}
-
-/** The signed-in user's id, from /whoami, which the shell reads already. */
-function useMe(): string | null {
-  const whoami = useQuery({ queryKey: ["whoami"], queryFn: ({ signal }) => fetchWhoami(signal) });
-  const id = (whoami.data as { id?: unknown } | undefined)?.id;
-  return typeof id === "string" ? id : null;
 }
 
 const pageEnd = () => document.documentElement.scrollHeight;

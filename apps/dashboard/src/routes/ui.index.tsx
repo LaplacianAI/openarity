@@ -134,9 +134,9 @@ function DayCounts({ summary }: { summary: TeamSummary | undefined }) {
         <p className="text-sm text-muted-foreground">None.</p>
       ) : (
         // Each count links to its runs, and a dl may not wrap its pairs in links.
-        <ul className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-rule sm:grid-cols-5">
+        <ul className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-rule sm:grid-cols-6">
           {RUN_STATUSES.map((status) => (
-            <li key={status} className="bg-card last:col-span-2 sm:last:col-span-1">
+            <li key={status} className="bg-card">
               <Link
                 to="/ui/runs"
                 search={{ status, day: true }}
@@ -144,7 +144,7 @@ function DayCounts({ summary }: { summary: TeamSummary | undefined }) {
               >
                 <StatusPill status={status} />
                 <span className="text-xl font-semibold tabular-nums" data-count={status}>
-                  {summary ? summary.runs_24h[status].toLocaleString("en-US") : "—"}
+                  {summary ? (summary.runs_24h[status] ?? 0).toLocaleString("en-US") : "—"}
                 </span>
               </Link>
             </li>

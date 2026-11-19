@@ -307,7 +307,7 @@ export type Attachment = {
   created_at: string;
 };
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type RunStatus = "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
 
 /** GET /teams/{id}/runs and GET /teams/{id}/sessions/{sessionID}/runs, newest first. */
 export type Run = {
@@ -451,6 +451,34 @@ export type SessionEvent =
         error?: string;
       };
     }
+  | {
+      kind: "approval_requested";
+      data: {
+        at: string;
+        run_id: string;
+        approval_id: string;
+        tool_call_id: string;
+        tool: string;
+        class: ApprovalClass;
+        summary: string;
+        code: string;
+        expires_at: string;
+      };
+    }
+  | {
+      kind: "approval_decided";
+      data: {
+        at: string;
+        run_id: string;
+        approval_id: string;
+        decision: "approved" | "denied" | "expired" | "cancelled";
+        by?: string;
+        via?: string;
+        scope?: ApprovalScope;
+        superseded?: boolean;
+      };
+    }
+  | { kind: "run_waiting"; data: { at: string; run_id: string; reason: string; said?: string } }
   | { kind: "other"; name: string; data: unknown };
 
 export type RunRequest = {
@@ -621,6 +649,8 @@ export type MCPServer = {
   connection?: MCPServerConnection | null;
   /** The client openarity registered, for a server with no client of its own. Never its secret. */
   oauth_registration?: MCPServerOAuthRegistration | null;
+  /** Whether the server's own read-only and destructive hints are believed when a call is classed for approval. */
+  trust_hints: boolean;
   bare: boolean;
   discovered_at?: string | null;
   /** Why the last discovery failed, as the caller was told; null once one works. */
@@ -829,4 +859,78 @@ export type Proposal = {
   /** Present when one proposal is read. */
   blueprint?: Blueprint;
   plan?: BlueprintPlan;
+};
+
+/* -------------------------------------------------------- tool approvals */
+
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+export type ApprovalClass = "read" | "write" | "destructive";
+export type ApprovalScope = "once" | "run";
+
+/**
+ * GET /teams/{id}/approvals. One call an agent asked a person about before
+ * making it. Not the sender `Approval` above, which is a request to let
+ * someone in.
+ */
+export type ToolApproval = {
+  id: string;
+  /** The run that asked, which may be a delegate's. */
+  run_id: string;
+  /** The top-level run its tree waits under. */
+  root_run_id: string;
+  call_id: string;
+  /** `<server>__<tool>`, or a built-in's own name. */
+  tool: string;
+  class: ApprovalClass;
+  /** Exactly as the call will be made if approved. */
+  arguments: Record<string, unknown>;
+  /** A few "field: value" lines. */
+  summary: string;
+  /** Four characters a person can type into a chat to name this request. */
+  code: string;
+  status: ApprovalStatus;
+  requested_for: string | null;
+  require_other: boolean;
+  decided_by: string | null;
+  decided_via: string | null;
+  scope: ApprovalScope | null;
+  reason: string | null;
+  expires_at: string;
+  decided_at: string | null;
+  used_at: string | null;
+  created_at: string;
+};
+
+/** POST /teams/{id}/approvals/{approvalID}/decision */
+export type ApprovalDecision = {
+  approve: boolean;
+  /** Only a yes may be "run". */
+  scope?: ApprovalScope;
+  reason?: string;
+  via?: "dashboard" | "cli";
+};
+
+export type ApprovalMode = "off" | "writes" | "destructive" | "all";
+
+/** GET and PUT /teams/{id}/approval-settings */
+export type ApprovalSettings = { mode: ApprovalMode; ttl_minutes: number };
+
+export type ApprovalRuleMode = "allow" | "ask" | "deny";
+
+/** GET /teams/{id}/approval-rules */
+export type ApprovalRule = {
+  id: string;
+  target_kind: "tool" | "server";
+  target: string;
+  mode: ApprovalRuleMode;
+  require_other: boolean;
+  created_at: string;
+};
+
+/** POST /teams/{id}/approval-rules */
+export type ApprovalRuleRequest = {
+  target_kind: "tool" | "server";
+  target: string;
+  mode: ApprovalRuleMode;
+  require_other?: boolean;
 };

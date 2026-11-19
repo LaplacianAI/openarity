@@ -10,9 +10,26 @@ import (
 // Blueprint is what a team should hold. Everything in it is named, and it
 // refers to its own items and the team's by name, never by id.
 type Blueprint struct {
-	MCPServers []serverSpec `json:"mcp_servers,omitempty"`
-	Skills     []skillSpec  `json:"skills,omitempty"`
-	Agents     []agentSpec  `json:"agents,omitempty"`
+	MCPServers []serverSpec   `json:"mcp_servers,omitempty"`
+	Skills     []skillSpec    `json:"skills,omitempty"`
+	Agents     []agentSpec    `json:"agents,omitempty"`
+	Approvals  *approvalsSpec `json:"approvals,omitempty"`
+}
+
+// approvalsSpec is what a blueprint says about asking a person. It can only
+// make a team stricter: a rule asks or denies, never allows, and never
+// loosens one the team holds. Loosening is an admin's own act in settings.
+type approvalsSpec struct {
+	Rules []ruleSpec `json:"rules,omitempty"`
+}
+
+// ruleSpec is a standing answer for one tool (<server>__<tool>, or a
+// built-in's own name) or for every tool of a server: exactly one of the two.
+type ruleSpec struct {
+	Tool         string `json:"tool,omitempty"`
+	Server       string `json:"server,omitempty"`
+	Mode         string `json:"mode"`
+	RequireOther bool   `json:"require_other,omitempty"`
 }
 
 // serverSpec is an MCP server as the API takes it, with each secret reference
@@ -65,6 +82,7 @@ const (
 	KindMCPServer Kind = "mcp_server"
 	KindSkill     Kind = "skill"
 	KindAgent     Kind = "agent"
+	KindRule      Kind = "approval_rule"
 )
 
 type Action string

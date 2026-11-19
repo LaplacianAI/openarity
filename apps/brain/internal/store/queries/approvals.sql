@@ -49,15 +49,33 @@ UPDATE approvals SET used_at = now()
 WHERE id = $1 AND status = 'approved' AND used_at IS NULL
 RETURNING *;
 
--- name: ListApprovals :many
-SELECT * FROM approvals a
+-- A team's requests, newest first, as a person may see them: only those
+-- whose run they may read, by the rule GetRunVisible keeps (a direct
+-- conversation's are its person's, and a moderator's). A request's summary
+-- and arguments quote the call, so they reach no further than the run does.
+-- Filtered by status, and by the run tree they were asked under.
+-- name: ListVisibleApprovals :many
+SELECT a.* FROM approvals a
+JOIN runs r ON r.id = a.root_run_id
+JOIN sessions s ON s.id = r.session_id
 WHERE a.team_id = sqlc.arg('team_id')
+  AND (s.kind <> 'direct' OR sqlc.arg('moderator')::bool OR s.user_id = sqlc.arg('viewer')::uuid)
   AND (COALESCE(cardinality(sqlc.arg('statuses')::text[]), 0) = 0
    OR a.status = ANY(sqlc.arg('statuses')::text[]))
+  AND (sqlc.narg('root_run_id')::uuid IS NULL OR a.root_run_id = sqlc.narg('root_run_id')::uuid)
   AND (NOT sqlc.arg('use_cursor')::bool
    OR (a.created_at, a.id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
 ORDER BY a.created_at DESC, a.id DESC
 LIMIT sqlc.arg('page_size');
+
+-- One request, as ListVisibleApprovals would show it; another team's, or
+-- one whose run the person may not read, is no row.
+-- name: GetVisibleApproval :one
+SELECT a.* FROM approvals a
+JOIN runs r ON r.id = a.root_run_id
+JOIN sessions s ON s.id = r.session_id
+WHERE a.id = sqlc.arg('id') AND a.team_id = sqlc.arg('team_id')
+  AND (s.kind <> 'direct' OR sqlc.arg('moderator')::bool OR s.user_id = sqlc.arg('viewer')::uuid);
 
 -- What a conversation's runs are waiting on, oldest first, for a reply in
 -- the chat to be matched against by its code.

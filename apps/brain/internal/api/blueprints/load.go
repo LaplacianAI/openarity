@@ -18,6 +18,7 @@ type Reads interface {
 	ListTeamMCPServers(ctx context.Context, teamID uuid.UUID) ([]db.McpServer, error)
 	ListTeamSkills(ctx context.Context, teamID uuid.UUID) ([]db.Skill, error)
 	ListTeamSkillFiles(ctx context.Context, teamID uuid.UUID) ([]db.ListTeamSkillFilesRow, error)
+	ListApprovalRules(ctx context.Context, teamID uuid.UUID) ([]db.ApprovalRule, error)
 }
 
 // load reads everything a plan compares against.
@@ -25,6 +26,7 @@ func load(ctx context.Context, s Reads, teamID uuid.UUID) (team, error) {
 	t := team{
 		id: teamID, agents: map[string]db.Agent{}, servers: map[string]db.McpServer{},
 		skills: map[string]db.Skill{}, files: map[uuid.UUID]map[string][]byte{}, grants: map[uuid.UUID]held{},
+		rules: map[string]db.ApprovalRule{},
 	}
 	nameOf := map[uuid.UUID]string{}
 
@@ -62,6 +64,14 @@ func load(ctx context.Context, s Reads, teamID uuid.UUID) (team, error) {
 		if m, ok := t.files[f.SkillID]; ok {
 			m[f.Path] = f.Sha256
 		}
+	}
+
+	rules, err := s.ListApprovalRules(ctx, teamID)
+	if err != nil {
+		return team{}, err
+	}
+	for _, r := range rules {
+		t.rules[ruleName(r.TargetKind, r.Target)] = r
 	}
 
 	return t, t.loadGrants(ctx, s, nameOf)

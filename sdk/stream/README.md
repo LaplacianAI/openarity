@@ -75,6 +75,9 @@ with the envelope's `at` and `run_id` beside the event's own fields.
 | `usage` | what one model call spent |
 | `compacted` | a run shrinking its context to carry on |
 | `run_finished` | a run ending, with its whole answer |
+| `approval_requested` | a run asking a person before a call: the call is not made, with the code a person can type back |
+| `approval_decided` | the request answered, expired, or cancelled: with its run, or because the person wrote again (`superseded`) |
+| `run_waiting` | a run that stopped for a person's answer rather than finishing, with what it told them in `said` |
 | `custom` | a server's own event, named |
 
 The names follow [AG-UI](https://docs.ag-ui.com/concepts/events)'s, so an

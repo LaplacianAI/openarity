@@ -156,6 +156,45 @@
         "error": { "type": "string" }
       }
     },
+    "approval_requested": {
+      "type": "object",
+      "required": ["approval_id", "tool_call_id", "tool", "class", "summary", "code", "expires_at"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "approval_id": { "type": "string" },
+        "tool_call_id": { "type": "string" },
+        "tool": { "type": "string" },
+        "class": { "type": "string", "enum": ["read", "write", "destructive"] },
+        "summary": { "type": "string" },
+        "code": { "type": "string", "description": "Four characters a person can type back into a chat to name this request." },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "approval_decided": {
+      "type": "object",
+      "required": ["approval_id", "decision"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "approval_id": { "type": "string" },
+        "decision": { "type": "string", "enum": ["approved", "denied", "expired", "cancelled"] },
+        "by": { "type": "string", "description": "The person who answered; absent when nobody did." },
+        "via": { "type": "string", "description": "dashboard, channel, cli, or sweep when the brain answered." },
+        "scope": { "type": "string", "enum": ["once", "run"] },
+        "superseded": { "type": "boolean", "description": "Cancelled because the person wrote again instead of answering." }
+      }
+    },
+    "run_waiting": {
+      "type": "object",
+      "required": ["reason"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "reason": { "type": "string", "description": "What the run waits for: approval." },
+        "said": { "type": "string", "description": "What the run told the person, in its own words." }
+      }
+    },
     "custom": {
       "type": "object",
       "required": ["name"],

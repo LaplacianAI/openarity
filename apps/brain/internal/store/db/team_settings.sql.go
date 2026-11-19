@@ -103,6 +103,17 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 	return i, err
 }
 
+const startTeamSettings = `-- name: StartTeamSettings :exec
+INSERT INTO team_settings (team_id, approval_mode) VALUES ($1, 'writes')
+`
+
+// A new team's settings: it asks before its agents write. Every other
+// column takes its default, as a team that never saved reads them.
+func (q *Queries) StartTeamSettings(ctx context.Context, teamID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, startTeamSettings, teamID)
+	return err
+}
+
 const upsertTeamSettings = `-- name: UpsertTeamSettings :one
 INSERT INTO team_settings (
     team_id,

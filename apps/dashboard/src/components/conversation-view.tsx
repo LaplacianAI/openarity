@@ -23,10 +23,12 @@ import { type ReactNode, useEffect, useState } from "react";
 import type { Run, SessionEventFile } from "@/api/types";
 import { SentChip, SentPicture } from "@/components/file-chip";
 import { Markdown } from "@/components/markdown";
+import { RequestCard } from "@/components/request-card";
 import { duration } from "@/components/run-detail";
 import { HubTag } from "@/components/run-table";
 import { LiveBadge, StatusPill } from "@/components/status";
 import { Mono } from "@/components/ui-bits";
+import { fromStream } from "@/lib/approvals";
 import { isPicture } from "@/lib/attach";
 import { replyLine } from "@/lib/conversation";
 import { absoluteTime } from "@/lib/format";
@@ -55,6 +57,7 @@ export type People = {
 };
 
 export function ConversationView({
+  teamId,
   conversation: c,
   sessionId,
   rows,
@@ -62,6 +65,8 @@ export function ConversationView({
   files,
   afterRun,
 }: {
+  /** The team, for answering the requests its runs make; without it they are shown, not answered. */
+  teamId?: string;
   conversation: Conversation;
   sessionId: string;
   /** The session's runs as listed, for what the stream does not carry: the hub, a reply's fate. */
@@ -88,6 +93,7 @@ export function ConversationView({
           <RunTurnView
             key={e.id}
             run={c.runs[e.id] as RunTurn}
+            teamId={teamId}
             conversation={c}
             row={rows.find((r) => r.id === e.id)}
             sessionId={sessionId}
@@ -221,6 +227,7 @@ function SaidTurn({
 
 function RunTurnView({
   run,
+  teamId,
   conversation: c,
   row,
   sessionId,
@@ -229,6 +236,7 @@ function RunTurnView({
   after,
 }: {
   run: RunTurn;
+  teamId: string | undefined;
   conversation: Conversation;
   row: Run | undefined;
   sessionId: string;
@@ -240,6 +248,7 @@ function RunTurnView({
   const w = worked(c, run, now);
   const live = saying(run);
   // The step whose text is the answer is shown as the answer, not again in the working.
+  const asked = requestsOf(c, run);
   const answerStep = [...run.steps].reverse().find((s) => s.text !== "")?.step ?? null;
   return (
     <li data-turn={run.id} data-status={run.status} className="space-y-2">
@@ -265,7 +274,10 @@ function RunTurnView({
       ) : null}
 
       <div data-answer className="max-w-[75ch] text-sm">
-        {running ? (
+        {run.status === "waiting" ? (
+          // What it told the person, in its own words, as it would say a reply.
+          <Markdown>{run.waiting?.said.trim() || live || "Waiting for your answer."}</Markdown>
+        ) : running ? (
           live ? (
             <p data-live className="whitespace-pre-wrap break-words">
               {live}
@@ -283,6 +295,23 @@ function RunTurnView({
         )}
       </div>
 
+      {teamId && asked.length > 0 ? (
+        <ul aria-label="Requests" className="space-y-2">
+          {asked.map((id) => {
+            const r = c.requests[id];
+            return r ? (
+              <li key={id}>
+                <RequestCard
+                  teamId={teamId}
+                  request={fromStream(r)}
+                  fetchFull
+                  nameOf={(u) => (people.me === u ? "you" : people.nameOf(u))}
+                />
+              </li>
+            ) : null;
+          })}
+        </ul>
+      ) : null}
       {row ? <ReplyStatus run={row} /> : null}
       {after}
       <Link
@@ -298,6 +327,14 @@ function RunTurnView({
       </Link>
     </li>
   );
+}
+
+/** The requests a run made and those of the runs it handed work to, which its working folds away. */
+function requestsOf(c: Conversation, run: RunTurn): string[] {
+  return [
+    ...run.requests,
+    ...run.children.flatMap((id) => (c.runs[id] ? requestsOf(c, c.runs[id]) : [])),
+  ];
 }
 
 function Answer({ run }: { run: RunTurn }) {

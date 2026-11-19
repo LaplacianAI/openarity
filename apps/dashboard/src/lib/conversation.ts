@@ -13,6 +13,8 @@ export function noAnswer(run: Run): string {
       return "Waiting to start.";
     case "running":
       return "Working on it…";
+    case "waiting":
+      return "Waiting for a person's answer.";
     case "failed":
       return run.error ? explainRunError(run.error).said : "It failed before answering.";
     case "cancelled":

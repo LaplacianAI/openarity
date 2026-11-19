@@ -54,3 +54,8 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
 RETURNING *;
+
+-- A new team's settings: it asks before its agents write. Every other
+-- column takes its default, as a team that never saved reads them.
+-- name: StartTeamSettings :exec
+INSERT INTO team_settings (team_id, approval_mode) VALUES ($1, 'writes');

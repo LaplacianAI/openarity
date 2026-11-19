@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -48,7 +49,7 @@ func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Linea
 	}
 	ids := make([]uuid.UUID, 0, len(untold))
 	for _, a := range untold {
-		said, err := e.answered(ctx, row, built, a)
+		said, err := e.answered(ctx, row, built, l.Worker, a)
 		if err != nil {
 			return "", err
 		}
@@ -69,8 +70,10 @@ func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Linea
 	return "While you waited:\n\n" + strings.Join(parts, "\n\n"), nil
 }
 
-// answered acts on one answer and says what came of it.
-func (e *Executor) answered(ctx context.Context, row db.Run, built Built, a db.Approval) (string, error) {
+// answered acts on one answer and says what came of it. An approved call is
+// recorded as any call is, a tool_call and its tool_result, so the trace
+// shows it was made, when, and what it returned.
+func (e *Executor) answered(ctx context.Context, row db.Run, built Built, worker string, a db.Approval) (string, error) {
 	switch a.Status {
 	case "denied":
 		return declinedWith(a.Reason), nil
@@ -99,23 +102,46 @@ func (e *Executor) answered(ctx context.Context, row db.Run, built Built, a db.A
 	} else if err != nil {
 		return "", fmt.Errorf("spending the approval for %s: %w", a.Tool, err)
 	}
+	if err := appendEvent(ctx, e.store, row.ID, worker, "tool_call", toolCallPayload{
+		ID: a.CallID, Name: a.Tool, Arguments: string(a.Arguments),
+	}); err != nil {
+		return "", err
+	}
+	began := time.Now()
 	result, callable, err := tool.Call(agent.WithToolCallID(ctx, a.CallID), a.Arguments)
+	recorded := toolResultPayload{ID: a.CallID, Name: a.Tool, DurationMS: time.Since(began).Milliseconds()}
+	var said string
 	switch {
 	case !callable:
-		return "It was approved, but " + a.Tool + " cannot be called here, so it was not made.", nil
+		recorded.Error = "not callable here"
+		said = "It was approved, but " + a.Tool + " cannot be called here, so it was not made."
 	case err != nil:
-		said, _ := clip(err.Error())
-		return "A person approved it, and it was made, but it failed: " + said, nil
-	}
-	out := result.Output
-	if len(out) > maxAnswered {
-		cut := maxAnswered
-		for cut > 0 && !utf8.RuneStart(out[cut]) {
-			cut--
+		recorded.Error, _ = clip(err.Error())
+		said = "A person approved it, and it was made, but it failed: " + recorded.Error
+	default:
+		out, cut := withinBytes(result.Output, maxAnswered)
+		recorded.Output, recorded.Truncated = out, cut
+		if cut {
+			out += "\n[the result was cut at 32 KiB]"
 		}
-		out = out[:cut] + "\n[the result was cut at 32 KiB]"
+		said = "A person approved it, and it was made. Its result:\n" + out
 	}
-	return "A person approved it, and it was made. Its result:\n" + out, nil
+	if err := appendEvent(ctx, e.store, row.ID, worker, "tool_result", recorded); err != nil {
+		return "", err
+	}
+	return said, nil
+}
+
+// withinBytes is s within limit bytes, cut at a character's start.
+func withinBytes(s string, limit int) (string, bool) {
+	if len(s) <= limit {
+		return s, false
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut], true
 }
 
 func oneLine(s string) string {

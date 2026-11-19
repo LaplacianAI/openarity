@@ -22,6 +22,7 @@ export const SCREENS = [
   { name: "channels", path: "/ui/channels", open: "Connect channel" },
   { name: "runs", path: "/ui/runs" },
   { name: "approvals", path: "/ui/approvals" },
+  { name: "requests", path: "/ui/requests" },
   { name: "sessions", path: "/ui/sessions" },
   {
     name: "session",

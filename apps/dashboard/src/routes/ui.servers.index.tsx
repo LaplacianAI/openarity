@@ -13,6 +13,7 @@ import {
   listMCPTools,
   putMCPSecret,
   replaceMCPServer,
+  setServerTrustHints,
   startMCPServerOAuth,
 } from "@/api";
 import { ApiError, nextCursorOf } from "@/api/client";
@@ -42,6 +43,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SwitchField } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -621,6 +623,8 @@ function ServerDetail({
         )}
       </section>
 
+      <TrustHints teamId={teamId} server={server} onChanged={onChanged} />
+
       {canWrite ? (
         <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-rule pt-4">
           {/* A server that signs in has nothing to say until it is connected:
@@ -641,6 +645,51 @@ function ServerDetail({
         </div>
       ) : null}
     </>
+  );
+}
+
+const TRUST = "team:settings";
+
+/**
+ * Whether the server's own read-only hints are believed when its calls are
+ * classed for approval. A server that calls a tool read-only is taking its own
+ * word for it, so this is a team setting rather than a server edit.
+ */
+function TrustHints({
+  teamId,
+  server,
+  onChanged,
+}: {
+  teamId: string;
+  server: MCPServer;
+  onChanged: () => void;
+}) {
+  const perms = usePermissions(teamId);
+  const may = perms.can(TRUST);
+  const trust = useMutation({
+    mutationFn: (on: boolean) => setServerTrustHints(teamId, server.id, on),
+    onSuccess: () => onChanged(),
+    onError: (err: Error) => toast.error(err.message),
+  });
+  const on = trust.data?.trust_hints ?? server.trust_hints ?? false;
+  return (
+    <section aria-labelledby="server-trust" className="space-y-2">
+      <h3 id="server-trust" className="text-sm font-medium">
+        Approvals
+      </h3>
+      <SwitchField
+        label="Trust this server's tool hints"
+        description="A server marks some of its tools read-only. Trusting that lets those tools past approvals on its word alone, so turn it on only for a server you run or have reviewed."
+        checked={on}
+        disabled={!may || perms.isPending || trust.isPending}
+        onCheckedChange={(v) => trust.mutate(v)}
+      />
+      {!may && !perms.isPending ? (
+        <p className="text-xs text-muted-foreground">
+          Changing it needs <span className="font-mono text-foreground">{TRUST}</span> in the team.
+        </p>
+      ) : null}
+    </section>
   );
 }
 

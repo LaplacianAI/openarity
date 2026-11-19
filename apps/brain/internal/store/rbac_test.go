@@ -610,6 +610,22 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/settings": "member",
 		"PUT /teams/{id}/settings": "team team:settings",
 
+		// A request quotes its call, so reading one is approval:read (no
+		// guest); which ones a person sees follows their run. Answering
+		// needs only approval:self: Decide refuses anyone who neither
+		// decides the team's requests nor made this one. Approval settings,
+		// rules, and believing a server's hints all loosen or tighten what
+		// asks, so they are the team's settings.
+		"GET /teams/{id}/approvals":                          "team approval:read",
+		"GET /teams/{id}/approvals/{approvalID}":             "team approval:read",
+		"POST /teams/{id}/approvals/{approvalID}/decision":   "team approval:self",
+		"GET /teams/{id}/approval-settings":                  "member",
+		"PUT /teams/{id}/approval-settings":                  "team team:settings",
+		"GET /teams/{id}/approval-rules":                     "member",
+		"POST /teams/{id}/approval-rules":                    "team team:settings",
+		"DELETE /teams/{id}/approval-rules/{ruleID}":         "team team:settings",
+		"PUT /teams/{id}/mcp-servers/{serverID}/trust-hints": "team team:settings",
+
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an
 		// agent starts with seeing which exist, and a row holds references,

@@ -183,12 +183,84 @@ func (t *transcript) event(f frame, p payload) error {
 			why = "time nearly up"
 		}
 		t.line(t.paint.warn(t.clip("⚠ wrapping up · " + why)))
+	case "approval_requested":
+		t.approvalRequested(p)
+	case "approval_decided":
+		t.approvalDecided(p)
+	case "waiting":
+		t.waiting(p)
 	case finishedEvent, endEvent:
 	default:
 		t.block()
 		t.line(t.paint.muted(t.clip(strings.TrimSpace(cli.Line(f.event) + " " + cli.Line(f.data)))))
 	}
 	return t.err
+}
+
+// approvalRequested is a call held for a person: what it is, what it would
+// do, the four characters that answer it in a chat, and the command that does.
+func (t *transcript) approvalRequested(p payload) {
+	t.block()
+	t.settle()
+	head := "? approval needed · " + cli.Line(p.Tool)
+	if p.Class != "" {
+		head += " (" + cli.Line(p.Class) + ")"
+	}
+	t.line(t.paint.warn(t.clip(head)))
+	if p.Summary != "" {
+		t.line(elbow + t.clipAfter(elbow, cli.Line(p.Summary)))
+	}
+	if p.Code != "" {
+		t.line(t.paint.muted(t.clip(underElbow + "reply " + cli.Line(p.Code) + " in chat")))
+	}
+	if p.ApprovalID != "" {
+		t.line(t.paint.muted(t.clip(underElbow + "`oa approvals approve " + cli.Line(t.team) + " " + cli.Line(p.ApprovalID) + "`")))
+	}
+	if at, err := time.Parse(time.RFC3339, p.ExpiresAt); err == nil {
+		t.line(t.paint.muted(underElbow + "expires " + at.UTC().Format("2006-01-02 15:04 UTC")))
+	}
+}
+
+// waiting is the run stopping for an answer, with what the agent said about
+// it in its own words. The stream stays open: the run carries on once the
+// answer is in.
+func (t *transcript) waiting(p payload) {
+	t.block()
+	t.line(t.paint.warn("⏸ waiting for a person to answer"))
+	for _, l := range answer(t.paint, p.Said) {
+		t.line(strings.TrimRight("  "+l, " "))
+	}
+}
+
+// approvalDecided says how a request ended: who answered and where, or that
+// nobody did. A decision the brain made for itself carries no person.
+func (t *transcript) approvalDecided(p payload) {
+	t.block()
+	text := cli.Line(p.Decision)
+	switch p.Decision {
+	case "approved", "denied":
+		if p.Scope == "run" {
+			text += " for the rest of the run"
+		}
+		if p.By != "" {
+			text += " by " + cli.Line(p.By)
+		}
+		if p.Via != "" {
+			text += " via " + cli.Line(p.Via)
+		}
+	case "expired":
+		text = "expired, nobody answered in time"
+	case "cancelled":
+		text = "cancelled, the run no longer needs an answer"
+	}
+	if p.Superseded {
+		text += " (superseded)"
+	}
+	style := t.paint.ok
+	if p.Decision != "approved" {
+		style = t.paint.warn
+	}
+	t.line(style(t.clip("◆ " + text)))
 }
 
 // compacted says how much of the run's context was set aside, and with -v the
@@ -664,7 +736,7 @@ func (t *transcript) finish(status, failure string, run *client.Run, unread stri
 	t.block()
 
 	switch client.RunStatus(status) {
-	case client.Succeeded:
+	case client.RunStatusSucceeded:
 		// An answer streamed as it was written is on screen already.
 		streamed := run != nil && run.Output != nil && t.said.Len() > 0 &&
 			strings.TrimSpace(t.said.String()) == strings.TrimSpace(*run.Output)
@@ -682,16 +754,18 @@ func (t *transcript) finish(status, failure string, run *client.Run, unread stri
 			t.line("")
 		}
 		t.line(t.paint.ok(t.clip("✓ succeeded" + t.stats(run))))
-	case client.Failed:
+	case client.RunStatusFailed:
 		text := "✗ failed"
 		if failure != "" {
 			text += ": " + cli.Line(failure)
 		}
 		t.line(t.paint.err(t.clip(text)))
-	case client.Cancelled:
+	case client.RunStatusCancelled:
 		t.line(t.paint.warn("■ cancelled"))
-	case client.Queued, client.Running:
+	case client.RunStatusQueued, client.RunStatusRunning:
 		t.line(t.paint.warn("? the stream ended with the run still " + status))
+	case client.RunStatusWaiting:
+		t.line(t.paint.warn("⏸ the run is waiting for a person to answer"))
 	default:
 		t.line(t.paint.warn(t.clip("? the run ended as " + cli.Line(status))))
 	}

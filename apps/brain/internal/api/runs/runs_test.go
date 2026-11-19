@@ -1354,7 +1354,7 @@ func TestTheRunHistoryPassesEachFilterAsAsked(t *testing.T) {
 // nothing is listed: an ignored filter would answer a different question.
 func TestABadRunHistoryFilterIsRefused(t *testing.T) {
 	for name, tc := range map[string]struct{ query, says string }{
-		"an unknown status":    {"?status=done", "status must be one of queued, running, succeeded, failed, cancelled"},
+		"an unknown status":    {"?status=done", "status must be one of queued, running, waiting, succeeded, failed, cancelled"},
 		"a status in capitals": {"?status=FAILED", "status must be one of"},
 		"one bad among good":   {"?status=failed&status=nope", "status must be one of"},
 		"a date with no time":  {"?since=2026-11-04", "since must be an RFC 3339 time"},

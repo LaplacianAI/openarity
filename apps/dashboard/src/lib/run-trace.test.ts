@@ -614,3 +614,53 @@ describe("fetchedPage", () => {
     expect(fetchedPage('<page url="u" title="t" end="E1">\n</page end="E1">')).toBeNull();
   });
 });
+
+describe("groupTrace: approvals", () => {
+  it("reads a request, the wait, and the answer in the order they happened", () => {
+    const trace = groupTrace([
+      e("step", { step: 1 }),
+      e("approval_requested", {
+        approval_id: "a1",
+        call_id: "c1",
+        tool: "github__create_issue",
+        class: "write",
+        summary: "title: Bug",
+        code: "K7QX",
+        expires_at: "2026-11-13T11:00:00Z",
+        run: "r1",
+      }),
+      e("waiting", { reason: "approval", said: "May I open an issue?" }),
+      e("approval_decided", {
+        approval_id: "a1",
+        decision: "approved",
+        by: "u2",
+        via: "dashboard",
+        scope: "run",
+      }),
+    ]);
+    expect(trace.items.map((i) => i.type)).toEqual(["step", "requested", "waiting", "decided"]);
+    expect(trace.items[1]).toMatchObject({
+      request: { approvalId: "a1", tool: "github__create_issue", code: "K7QX", class: "write" },
+    });
+    expect(trace.items[2]).toMatchObject({ reason: "approval", said: "May I open an issue?" });
+    expect(trace.items[3]).toMatchObject({
+      decision: { decision: "approved", scope: "run", via: "dashboard", superseded: false },
+    });
+  });
+
+  it("keeps a set-aside request marked", () => {
+    const trace = groupTrace([
+      e("approval_decided", { approval_id: "a1", decision: "cancelled", superseded: true }),
+    ]);
+    expect(trace.items[0]).toMatchObject({ type: "decided", decision: { superseded: true } });
+  });
+
+  it("pairs the call made after an approval as an ordinary call", () => {
+    const trace = groupTrace([
+      e("approval_decided", { approval_id: "a1", decision: "approved" }),
+      e("tool_call", { id: "c1", name: "github__create_issue", arguments: "{}" }),
+      e("tool_result", { id: "c1", name: "github__create_issue", output: "ok" }),
+    ]);
+    expect(stepsOf(trace)[0]?.calls[0]?.result?.output).toBe("ok");
+  });
+});

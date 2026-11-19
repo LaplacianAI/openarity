@@ -30,6 +30,10 @@ const LOOKS: Record<string, Look> = {
   // Someone or something waiting on a person.
   waiting: { tone: "text-waiting", icon: Clock },
   pending: { tone: "text-waiting", icon: Clock },
+  // A request an agent made of a person.
+  approved: { tone: "text-succeeded", icon: CheckCircle2 },
+  denied: { tone: "text-failed", icon: XCircle },
+  expired: { tone: "text-cancelled", icon: Clock },
   // An MCP server's last discovery. Never asked is the unknown look.
   answered: { tone: "text-succeeded", icon: CheckCircle2 },
   // A server's sign-in. One never made is the unknown look.
@@ -46,7 +50,7 @@ const LOOKS: Record<string, Look> = {
 const UNKNOWN: Look = { tone: "text-muted-foreground", icon: CircleDashed };
 
 export function isLive(status: string): boolean {
-  return status === "queued" || status === "running";
+  return status === "queued" || status === "running" || status === "waiting";
 }
 
 /**

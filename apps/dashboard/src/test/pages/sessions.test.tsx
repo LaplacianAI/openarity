@@ -2998,3 +2998,91 @@ describe("writing in a conversation", () => {
     expect(screen.queryByRole("button", { name: "Start one on the dashboard" })).toBeNull();
   });
 });
+
+describe("a run that asks a person", () => {
+  const ASK = {
+    approval_id: "a1",
+    tool_call_id: "c1",
+    tool: "github__create_issue",
+    class: "write",
+    summary: "title: Bug",
+    code: "K7QX",
+    expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+  };
+  const asked = () =>
+    conversation(
+      said("m1", "user-ann", "open an issue"),
+      sf("run_started", { run_id: "r1", agent: "hub" }),
+      sf("step_started", { run_id: "r1", step: 1 }),
+      sf("approval_requested", { run_id: "r1", ...ASK }),
+      sf("run_waiting", { run_id: "r1", reason: "approval", said: "I'd like to open an issue." }),
+    );
+  const full = {
+    id: "a1",
+    run_id: "r1",
+    root_run_id: "r1",
+    call_id: "c1",
+    tool: "github__create_issue",
+    class: "write",
+    arguments: { title: "Bug" },
+    summary: "title: Bug",
+    code: "K7QX",
+    status: "pending",
+    requested_for: "me",
+    require_other: false,
+    decided_by: null,
+    decided_via: null,
+    scope: null,
+    reason: null,
+    expires_at: ASK.expires_at,
+    decided_at: null,
+    used_at: null,
+    created_at: STAMP,
+  };
+
+  it("shows its words as a reply and the request under them, answerable by the person it was for", async () => {
+    listed({
+      ...team(["approval:self"]),
+      "GET /whoami": { body: { id: "me", subject: "me" } },
+      [CONVO]: () => asked(),
+      "GET /teams/{id}/approvals/{aid}": { body: full },
+    });
+    await open();
+    const turn = await waitFor(() => {
+      const t = document.querySelector("[data-turn=r1]");
+      if (!t) throw new Error("no turn");
+      return t as HTMLElement;
+    });
+    expect(await within(turn).findByText("I'd like to open an issue.")).toBeInTheDocument();
+    expect(turn).toHaveAttribute("data-status", "waiting");
+    expect(await within(turn).findByText("K7QX")).toBeInTheDocument();
+    expect(await within(turn).findByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+
+  it("reflects the answer when it arrives on the stream, and a set-aside as the person's own", async () => {
+    const live = feed();
+    const frames = [
+      said("m1", "user-ann", "open an issue"),
+      sf("run_started", { run_id: "r1", agent: "hub" }),
+      sf("approval_requested", { run_id: "r1", ...ASK }),
+      sf("run_waiting", { run_id: "r1", reason: "approval", said: "May I?" }),
+    ];
+    for (const f of frames) live.push(f);
+    listed({
+      ...team([]),
+      [CONVO]: () => ({ stream: live.stream }),
+      "GET /teams/{id}/approvals/{aid}": { body: full },
+    });
+    await open();
+    await screen.findByText("K7QX");
+    live.push(
+      sf("approval_decided", {
+        run_id: "r1",
+        approval_id: "a1",
+        decision: "cancelled",
+        superseded: true,
+      }),
+    );
+    expect(await screen.findByText("Set aside: you wrote again")).toBeInTheDocument();
+  });
+});
