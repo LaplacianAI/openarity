@@ -208,7 +208,7 @@ FROM sessions s
 LEFT JOIN channels c ON c.id = s.channel_id
 LEFT JOIN messages m ON m.id = (
     SELECT id FROM messages
-    WHERE session_id = s.id
+    WHERE session_id = s.id AND NOT answer
     ORDER BY received_at DESC, id DESC
     LIMIT 1)
 LEFT JOIN runs lr ON lr.id = (
@@ -323,7 +323,7 @@ FROM sessions s
 LEFT JOIN channels c ON c.id = s.channel_id
 LEFT JOIN messages m ON m.id = (
     SELECT id FROM messages
-    WHERE session_id = s.id
+    WHERE session_id = s.id AND NOT answer
     ORDER BY received_at DESC, id DESC
     LIMIT 1)
 LEFT JOIN runs lr ON lr.id = (

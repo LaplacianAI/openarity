@@ -264,6 +264,8 @@ type Message struct {
 	Asks       bool
 	ConsumedBy *uuid.UUID
 	SenderName string
+	// An answer to a request (a tap, a vote, a typed code), not something said: every read of the conversation must leave it out.
+	Answer bool
 }
 
 type Notice struct {

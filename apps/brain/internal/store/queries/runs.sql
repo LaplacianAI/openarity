@@ -307,6 +307,7 @@ FROM messages m
 LEFT JOIN users u ON u.id = m.user_id
 WHERE m.session_id = sqlc.arg('session_id')::uuid
   AND m.received_at < sqlc.arg('before')::timestamptz
+  AND NOT m.answer
   AND m.id IS DISTINCT FROM sqlc.narg('own_message')::uuid
   AND m.received_at > coalesce((
         SELECT coalesce(p.finished_at, p.created_at) FROM runs p
