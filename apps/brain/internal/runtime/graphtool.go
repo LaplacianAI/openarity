@@ -38,7 +38,7 @@ var graphSchema = json.RawMessage(`{
     "query": {"type": "string", "description": "what you are looking for, in your own words"},
     "kinds": {
       "type": "array",
-      "items": {"type": "string", "enum": ["agents", "tools", "skills", "learnings"]},
+      "items": {"type": "string", "enum": ["agents", "tools", "skills"]},
       "description": "what to return; agents, tools and skills when left out"
     },
     "hops": {"type": "integer", "minimum": 0, "maximum": 3, "description": "how far to walk from each match; 0 when left out"},
@@ -51,8 +51,6 @@ var (
 	allKinds = []graph.Kind{graph.KindAgent, graph.KindTool, graph.KindSkill}
 	kindOf   = map[string]graph.Kind{"agents": graph.KindAgent, "tools": graph.KindTool, "skills": graph.KindSkill}
 )
-
-const kindLearnings = "learnings"
 
 type Searcher interface {
 	Search(ctx context.Context, team uuid.UUID, s graph.Search) ([]graph.Hit, error)
@@ -185,7 +183,7 @@ func graphQuery(a graphArgs) (string, []graph.Kind, int, error) {
 		return query, allKinds, a.Hops, nil
 	}
 	if len(*a.Kinds) == 0 {
-		return "", nil, 0, errors.New("kinds must name at least one of agents, tools, skills, learnings, or be left out")
+		return "", nil, 0, errors.New("kinds must name at least one of agents, tools, skills, or be left out")
 	}
 
 	var kinds []graph.Kind
@@ -197,12 +195,10 @@ func graphQuery(a graphArgs) (string, []graph.Kind, int, error) {
 		seen = append(seen, name)
 
 		k, ok := kindOf[name]
-		switch {
-		case ok:
-			kinds = append(kinds, k)
-		case name != kindLearnings:
-			return "", nil, 0, fmt.Errorf("kinds: %q is not one of agents, tools, skills, learnings", name)
+		if !ok {
+			return "", nil, 0, fmt.Errorf("kinds: %q is not one of agents, tools, skills", name)
 		}
+		kinds = append(kinds, k)
 	}
 	return query, kinds, a.Hops, nil
 }

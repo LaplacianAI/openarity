@@ -45,6 +45,11 @@ const LOOKS: Record<string, Look> = {
   idle: { tone: "text-waiting" },
   closed: { tone: "text-cancelled" },
   paused: { tone: "text-cancelled" },
+  // A proposed improvement.
+  applied: { tone: "text-succeeded", icon: CheckCircle2 },
+  rejected: { tone: "text-failed", icon: XCircle },
+  reverted: { tone: "text-cancelled", icon: Ban },
+  withdrawn: { tone: "text-cancelled", icon: Ban },
 };
 
 const UNKNOWN: Look = { tone: "text-muted-foreground", icon: CircleDashed };

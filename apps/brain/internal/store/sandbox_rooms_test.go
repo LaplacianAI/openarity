@@ -156,7 +156,7 @@ func TestChangingTheSandboxTombstonesTheTeamsRooms(t *testing.T) {
 		"turned off": {func(p *db.UpsertTeamSettingsParams, _ uuid.UUID) {
 			p.SandboxProvider, p.SandboxUrl, p.SandboxSecretID = "none", nil, nil
 		}, true},
-		"a search change": {func(p *db.UpsertTeamSettingsParams, _ uuid.UUID) { p.Learning = true }, false},
+		"a search change": {func(p *db.UpsertTeamSettingsParams, _ uuid.UUID) { p.Improvement = true }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

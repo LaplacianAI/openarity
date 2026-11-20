@@ -12,17 +12,17 @@ import (
 const settingsPath = "/teams/" + teamID + "/settings"
 
 const neverSaved = `{"model":null,"search":{"provider":"none","url":null,"key_set":false},
-  "learning":false,"compaction_messages":100,"compaction_tokens_min":50000,"compaction_tokens_max":60000,
+  "improvement":false,"compaction_messages":100,"compaction_tokens_min":50000,"compaction_tokens_max":60000,
   "updated_at":null}`
 
 const braveSaved = `{"model":{"name":"gpt-5","max_tokens":4096,"temperature":0.2},
   "search":{"provider":"brave","url":null,"key_set":true},
-  "learning":false,"compaction_messages":250,"compaction_tokens_min":80000,"compaction_tokens_max":90000,
+  "improvement":false,"compaction_messages":250,"compaction_tokens_min":80000,"compaction_tokens_max":90000,
   "updated_at":"2026-10-21T09:00:00Z"}`
 
 const ossSaved = `{"model":null,
   "search":{"provider":"firecrawl-oss","url":"http://firecrawl:3002","key_set":true},
-  "learning":false,"compaction_messages":100,"updated_at":"2026-10-21T09:00:00Z"}`
+  "improvement":false,"compaction_messages":100,"updated_at":"2026-10-21T09:00:00Z"}`
 
 func settingsRoutes(t *testing.T, stored string, putStatus int) *clitest.Transcript {
 	t.Helper()
@@ -93,6 +93,21 @@ func TestSettingsShowOfATeamThatNeverSaved(t *testing.T) {
 	}
 }
 
+func TestSettingsShowLabelsSelfImprovementAndTheOldFlagIsGone(t *testing.T) {
+	settingsRoutes(t, braveSaved, http.StatusOK)
+
+	out, err := clitest.Execute(t, commands, "teams", "settings", "show", teamID)
+	if err != nil {
+		t.Fatalf("teams settings show: %v", err)
+	}
+	if !strings.Contains(out, "self-improvement") || strings.Contains(out, "learning") {
+		t.Errorf("the setting is not labelled self-improvement:\n%s", out)
+	}
+	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--learning", "on"); err == nil {
+		t.Error("the old --learning flag is still accepted")
+	}
+}
+
 // json carries what arrived, nothing more: there is no key in it because the
 // brain never sends one.
 func TestSettingsShowAsJSONIsTheBrainsDocument(t *testing.T) {
@@ -119,18 +134,18 @@ func TestSettingsShowAsJSONIsTheBrainsDocument(t *testing.T) {
 // ---------------------------------------------------------------------------
 // set: read, change what was asked, write the whole
 
-// Review Focus 1, from the CLI's side: flipping learning must send everything
+// Review Focus 1, from the CLI's side: flipping improvement must send everything
 // else as it was, and no key, so the brain keeps the stored one.
 func TestSettingsSetChangesOnlyTheFlagsGiven(t *testing.T) {
 	script := settingsRoutes(t, braveSaved, http.StatusOK)
 
-	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--learning", "on"); err != nil {
+	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--improvement", "on"); err != nil {
 		t.Fatalf("teams settings set: %v", err)
 	}
 
 	body := put(t, script)
-	if body["learning"] != true {
-		t.Errorf("learning = %v, want true", body["learning"])
+	if body["improvement"] != true {
+		t.Errorf("improvement = %v, want true", body["improvement"])
 	}
 	if body["compaction_messages"] != float64(250) {
 		t.Errorf("compaction_messages = %v, want the stored 250", body["compaction_messages"])
@@ -281,13 +296,13 @@ func TestNoModelSendsNoModel(t *testing.T) {
 
 func TestSettingsSetRefusesBeforeSending(t *testing.T) {
 	for name, args := range map[string][]string{
-		"no flags at all":             {},
-		"a model and no model":        {"--model", "gpt-5", "--no-model"},
-		"a key and no key":            {"--search-key-stdin", "--no-search-key"},
-		"learning that is not on/off": {"--learning", "maybe"},
-		"two keys on one stdin":       {"--search-key-stdin", "--sandbox-key-stdin"},
-		"a template and no template":  {"--e2b-template", "x", "--no-e2b-template"},
-		"an empty template":           {"--e2b-template", " "},
+		"no flags at all":                {},
+		"a model and no model":           {"--model", "gpt-5", "--no-model"},
+		"a key and no key":               {"--search-key-stdin", "--no-search-key"},
+		"improvement that is not on/off": {"--improvement", "maybe"},
+		"two keys on one stdin":          {"--search-key-stdin", "--sandbox-key-stdin"},
+		"a template and no template":     {"--e2b-template", "x", "--no-e2b-template"},
+		"an empty template":              {"--e2b-template", " "},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := settingsRoutes(t, braveSaved, http.StatusOK)
@@ -307,7 +322,7 @@ func TestSettingsSetRefusesBeforeSending(t *testing.T) {
 func TestSettingsSetNamesThePermissionItNeeded(t *testing.T) {
 	settingsRoutes(t, braveSaved, http.StatusForbidden)
 
-	_, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--learning", "on")
+	_, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--improvement", "on")
 	if err == nil || !strings.Contains(err.Error(), "team:settings") {
 		t.Errorf("err = %v, want it to name team:settings", err)
 	}
@@ -330,7 +345,7 @@ func TestSettingsSetShowsTheBrainsReason(t *testing.T) {
 // the hub
 
 const hubSaved = `{"model":null,"search":{"provider":"none","url":null,"key_set":false},
-  "learning":false,"compaction_messages":100,
+  "improvement":false,"compaction_messages":100,
   "hub":{"id":"11111111-1111-1111-1111-111111111111","name":"triage"},
   "updated_at":"2026-10-21T09:00:00Z"}`
 
@@ -356,7 +371,7 @@ func TestSettingsShowNamesTheHub(t *testing.T) {
 func TestSettingsSetKeepsTheHub(t *testing.T) {
 	script := settingsRoutes(t, hubSaved, http.StatusOK)
 
-	if out, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--learning", "on"); err != nil {
+	if out, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--improvement", "on"); err != nil {
 		t.Fatalf("teams settings set: %v\n%s", err, out)
 	}
 	if got := put(t, script)["hub"]; got != "triage" {

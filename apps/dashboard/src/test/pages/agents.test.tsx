@@ -239,6 +239,11 @@ describe("the PUT for an edit", () => {
     parser_model: { name: "anthropic/claude-haiku-5" },
   } as Agent;
 
+  it("never sends the tool notes an approved improvement left", () => {
+    const noted = { ...current, tool_notes: [{ server: "m1", tool: "search", note: "Quote it." }] };
+    expect(replaceRequest(noted, draftOf(noted))).not.toHaveProperty("tool_notes");
+  });
+
   it("sends an untouched agent back as it is, limits and what the editor does not show", () => {
     expect(replaceRequest(current, draftOf(current))).toEqual({
       name: "triage",
@@ -425,7 +430,7 @@ describe("defining an agent", () => {
         body: {
           model: { name: "anthropic/claude-haiku-5", max_tokens: 1024 },
           search: { provider: "none", url: null, key_set: false },
-          learning: false,
+          improvement: false,
           compaction_messages: 40,
           compaction_tokens_min: 50_000,
           compaction_tokens_max: 60_000,
@@ -776,6 +781,37 @@ describe("editing an agent", () => {
       parser: true,
       parser_model: { name: "anthropic/claude-haiku-5" },
     });
+  });
+
+  it("shows the tool notes under their server, by the server's name, and sends none back", async () => {
+    const { seen } = editing({
+      ...current,
+      tool_notes: [
+        { server: "m1", tool: "search", note: "Quote the repository when searching." },
+        { server: "m1", tool: "create_issue", note: "Always add a label." },
+      ],
+    });
+    await opened();
+
+    const notes = await screen.findByRole("region", { name: "Tool notes" });
+    expect(within(notes).getByText(/come from approved improvements/)).toBeInTheDocument();
+    expect(within(notes).getByText("github")).toBeInTheDocument();
+    expect(within(notes).getByText("Quote the repository when searching.")).toBeInTheDocument();
+    expect(within(notes).getByText("Always add a label.")).toBeInTheDocument();
+    // Read only: there is nothing to type into.
+    expect(within(notes).queryByRole("textbox")).toBeNull();
+
+    // The brain refuses a field it does not know, so the PUT carries none.
+    await touch();
+    const body = await save(seen);
+    expect(body).not.toHaveProperty("tool_notes");
+    expect(body).toEqual({ ...definition, description: "Sorts issues and more" });
+  });
+
+  it("draws no notes for an agent that has none", async () => {
+    editing(current);
+    await opened();
+    expect(screen.queryByRole("region", { name: "Tool notes" })).toBeNull();
   });
 
   it("shows the brain's refusal beside the save", async () => {

@@ -178,6 +178,7 @@ function Editor({ teamId, agent, canWrite }: { teamId: string; agent: Agent; can
           draft={draft}
           set={(patch) => setEdited((d) => ({ ...(d ?? draftOf(agent)), ...patch }))}
           self={agent.id}
+          toolNotes={agent.tool_notes ?? []}
         />
       </fieldset>
 

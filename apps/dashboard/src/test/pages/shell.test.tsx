@@ -68,7 +68,7 @@ describe("the navigation on a wide screen", () => {
       ["Work", ["Home", "Runs", "Sessions", "Sender approvals", "Tool approvals"]],
       ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint"]],
       ["Understand", ["Graph"]],
-      ["Team", ["Team settings", "Teams"]],
+      ["Team", ["Team settings", "Improvements", "Teams"]],
     ]);
   });
 

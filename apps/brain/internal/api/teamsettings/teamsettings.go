@@ -285,7 +285,7 @@ func params(teamID uuid.UUID, req settingsRequest, secretID *uuid.UUID, hub *hub
 		SearchProvider:     req.Search.Provider,
 		SearchUrl:          req.Search.URL,
 		SearchSecretID:     secretID,
-		Learning:           req.Learning,
+		Improvement:        req.Improvement,
 		CompactionMessages: req.CompactionMessages,
 	}
 	if m := req.Model; m != nil {
@@ -311,7 +311,7 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 			KeySet:   row.SandboxSecretID != nil,
 		},
 		Browser:             browserView(row),
-		Learning:            row.Learning,
+		Improvement:         row.Improvement,
 		CompactionMessages:  row.CompactionMessages,
 		CompactionTokensMin: row.CompactionTokensMin,
 		CompactionTokensMax: row.CompactionTokensMax,

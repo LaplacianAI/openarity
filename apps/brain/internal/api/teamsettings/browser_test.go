@@ -16,7 +16,7 @@ func withBrowser(b string) string {
 	if b != "" {
 		s += `"browser":` + b + `,`
 	}
-	return s + `"learning":false,"compaction_messages":100}`
+	return s + `"improvement":false,"compaction_messages":100}`
 }
 
 func (e *env) storedBrowser(provider string, secretID *uuid.UUID, url *string) {
@@ -185,7 +185,7 @@ func TestAFailedSaveDestroysTheBrowserKeyToo(t *testing.T) {
 
 	rec := e.save(t, `{"model":null,"search":{"provider":"brave","api_key":"b"},`+
 		`"sandbox":{"provider":"e2b","api_key":"s"},"browser":{"provider":"kernel","api_key":"k"},`+
-		`"learning":false,"compaction_messages":100}`)
+		`"improvement":false,"compaction_messages":100}`)
 
 	if rec.Code != http.StatusInternalServerError || len(e.secrets.puts) != 3 || len(e.store.recorded) != 3 {
 		t.Fatalf("status %d, puts %+v, recorded %+v; want 500 and all three keys recorded", rec.Code, e.secrets.puts, e.store.recorded)
@@ -204,7 +204,7 @@ func TestABrowserKeyTheStoreRefusesForgetsTheOthers(t *testing.T) {
 
 	rec := e.save(t, `{"model":null,"search":{"provider":"brave","api_key":"b"},`+
 		`"sandbox":{"provider":"e2b","api_key":"s"},"browser":{"provider":"kernel","api_key":"k"},`+
-		`"learning":false,"compaction_messages":100}`)
+		`"improvement":false,"compaction_messages":100}`)
 
 	if rec.Code != http.StatusServiceUnavailable || len(e.store.upserts) != 0 {
 		t.Fatalf("status %d, upserts %d; want 503 and nothing saved", rec.Code, len(e.store.upserts))

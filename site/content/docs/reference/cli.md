@@ -30,8 +30,13 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa teams members list <team>` | List a team's members                                    |
 | `oa teams members add <team> <user>` | Add someone to a team, with `--role` (`member`, `approver` or `admin`) |
 | `oa teams members remove <team> <user>` | Take someone out of a team                      |
-| `oa teams settings show <team>` | Show a team's model, web search, learning, compaction and hub |
+| `oa teams settings show <team>` | Show a team's model, web search, self-improvement, compaction and hub |
 | `oa teams settings set <team>` | Change only the settings named by flags, such as `--compaction-messages`, `--compaction-tokens-min` and `--compaction-tokens-max` (30,000 to 1,000,000, the least never above the most) |
+| `oa improvements list <team>` | List the changes agents propose to themselves: waiting for an approver, applied for everyone else; `--status`, `--agent` and `--query` narrow it |
+| `oa improvements show <team> <proposal>` | Show one proposal: why, what it expects, what it reaches and the change |
+| `oa improvements approve <team> <proposal>` | Apply a waiting change (needs `improvement:approve` and the write it makes) |
+| `oa improvements reject <team> <proposal>` | Refuse a waiting change |
+| `oa improvements revert <team> <proposal>` | Put back what an applied change replaced, if nothing has changed since |
 | `oa channels list <team>`      | List a team's channels                                   |
 | `oa channels create <team> <name>` | Connect a channel: `--provider`, and optionally `--reply-url`, `--secret-stdin`, or `--credential-stdin NAME` for a provider's credential such as Telegram's `bot_token` |
 | `oa channels update <team> <channel>` | Set where a channel's replies go (`--reply-url`), stop them (`--no-reply-url`), switch the notices to waiting senders (`--notify-strangers`, `--no-notify-strangers`), or send each step of a run before its answer (`--reply-mode events`, `--reply-mode final`) |

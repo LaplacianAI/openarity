@@ -67,7 +67,7 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		SearchProvider:      p.SearchProvider,
 		SearchUrl:           p.SearchUrl,
 		SearchSecretID:      p.SearchSecretID,
-		Learning:            p.Learning,
+		Improvement:         p.Improvement,
 		CompactionMessages:  p.CompactionMessages,
 		CompactionTokensMin: p.CompactionTokensMin,
 		CompactionTokensMax: p.CompactionTokensMax,
@@ -270,7 +270,7 @@ type wire struct {
 		URL      *string `json:"url"`
 		KeySet   bool    `json:"key_set"`
 	} `json:"browser"`
-	Learning            bool  `json:"learning"`
+	Improvement         bool  `json:"improvement"`
 	CompactionMessages  int32 `json:"compaction_messages"`
 	CompactionTokensMin int32 `json:"compaction_tokens_min"`
 	CompactionTokensMax int32 `json:"compaction_tokens_max"`
@@ -294,16 +294,16 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder) wire {
 	return w
 }
 
-func body(model, search string, learning bool, compaction int) string {
+func body(model, search string, improvement bool, compaction int) string {
 	if model == "" {
 		model = "null"
 	}
 	l := "false"
-	if learning {
+	if improvement {
 		l = "true"
 	}
 	return `{"model":` + model + `,"search":` + search +
-		`,"learning":` + l + `,"compaction_messages":` + itoa(compaction) + `}`
+		`,"improvement":` + l + `,"compaction_messages":` + itoa(compaction) + `}`
 }
 
 func itoa(n int) string {
@@ -325,9 +325,9 @@ func TestATeamThatNeverSavedReadsTheDefaults(t *testing.T) {
 	got := decode(t, e.get(t))
 
 	if got.Model != nil || got.Search.Provider != "none" || got.Search.URL != nil ||
-		got.Search.KeySet || got.Learning || got.CompactionMessages != 100 || got.UpdatedAt != nil {
+		got.Search.KeySet || got.Improvement || got.CompactionMessages != 100 || got.UpdatedAt != nil {
 		t.Errorf("defaults = %+v; want no model, search none with no url or key, "+
-			"learning off, compaction 100, updated_at null", got)
+			"improvement off, compaction 100, updated_at null", got)
 	}
 }
 
@@ -429,9 +429,9 @@ func TestSavingReturnsWhatWasSaved(t *testing.T) {
 	if got.Search.Provider != "searxng" || got.Search.URL == nil || *got.Search.URL != "http://searxng:8080" {
 		t.Errorf("search = %+v, want searxng at http://searxng:8080", got.Search)
 	}
-	if !got.Learning || got.CompactionMessages != 250 || got.UpdatedAt == nil {
-		t.Errorf("learning %v, compaction %d, updated_at %v; want true, 250, set",
-			got.Learning, got.CompactionMessages, got.UpdatedAt)
+	if !got.Improvement || got.CompactionMessages != 250 || got.UpdatedAt == nil {
+		t.Errorf("improvement %v, compaction %d, updated_at %v; want true, 250, set",
+			got.Improvement, got.CompactionMessages, got.UpdatedAt)
 	}
 	if len(e.store.upserts) != 1 || e.store.upserts[0].TeamID != e.team {
 		t.Errorf("upserts = %+v, want one for team %s", e.store.upserts, e.team)
@@ -481,7 +481,7 @@ func TestEverySavedKeyGetsANewPath(t *testing.T) {
 }
 
 // Review Focus 1. The dashboard cannot send the key back, because it never
-// has it. A save that flips learning must not take search down with it.
+// has it. A save that flips improvement must not take search down with it.
 func TestSavingWithoutAKeyKeepsTheStoredOne(t *testing.T) {
 	e := newEnv()
 	id := uuid.New()
@@ -495,8 +495,8 @@ func TestSavingWithoutAKeyKeepsTheStoredOne(t *testing.T) {
 	if s := e.store.upserts[0].SearchSecretID; s == nil || *s != id {
 		t.Errorf("saved secret id %v, want the stored %s kept", s, id)
 	}
-	if !got.Search.KeySet || !got.Learning {
-		t.Errorf("key_set %v, learning %v; want both true", got.Search.KeySet, got.Learning)
+	if !got.Search.KeySet || !got.Improvement {
+		t.Errorf("key_set %v, improvement %v; want both true", got.Search.KeySet, got.Improvement)
 	}
 }
 
@@ -831,8 +831,20 @@ func TestLinkLocalIsRefusedEvenWhenTheDeploymentAllowsEverything(t *testing.T) {
 func TestAnUnknownFieldIsRefused(t *testing.T) {
 	e := newEnv()
 
-	rec := e.save(t, `{"model":null,"search":{"provider":"none"},"learning":false,`+
+	rec := e.save(t, `{"model":null,"search":{"provider":"none"},"improvement":false,`+
 		`"compaction_messages":100,"web_search":true}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// A client from before the rename still sends learning. It is refused, never
+// read as improvement switched off. The refusal names no field, as none does.
+func TestTheOldLearningKeyIsRefused(t *testing.T) {
+	e := newEnv()
+
+	rec := e.save(t, `{"model":null,"search":{"provider":"none"},"learning":true,"compaction_messages":100}`)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -868,7 +880,7 @@ func TestSelfHostedFirecrawlRunsWithoutAKey(t *testing.T) {
 }
 
 // Leaving the key out keeps it, as for every provider, so the dashboard can
-// save a learning switch without knowing it.
+// save an improvement switch without knowing it.
 func TestSelfHostedFirecrawlKeepsItsKeyWhenLeftOut(t *testing.T) {
 	e := newEnv()
 	id := uuid.New()

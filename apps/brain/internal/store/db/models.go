@@ -68,6 +68,14 @@ type AgentSteer struct {
 	CreatedAt time.Time
 }
 
+type AgentToolNote struct {
+	AgentID     uuid.UUID
+	TeamID      uuid.UUID
+	McpServerID uuid.UUID
+	Tool        string
+	Note        string
+}
+
 type Approval struct {
 	ID            uuid.UUID
 	TeamID        uuid.UUID
@@ -174,6 +182,30 @@ type GraphOutbox struct {
 	CreatedAt     time.Time
 	Attempts      int32
 	LastAttemptAt *time.Time
+}
+
+type ImprovementProposal struct {
+	ID          uuid.UUID
+	TeamID      uuid.UUID
+	AgentID     uuid.UUID
+	SkillID     *uuid.UUID
+	Kind        string
+	Status      string
+	Why         string
+	Hypothesis  string
+	Scope       string
+	Signature   *string
+	RunIds      []uuid.UUID
+	Outsider    bool
+	Marks       []string
+	Before      []byte
+	After       []byte
+	CreatedAt   time.Time
+	DecidedBy   *uuid.UUID
+	DecidedAt   *time.Time
+	RevertedBy  *uuid.UUID
+	RevertedAt  *time.Time
+	WithdrawnBy *uuid.UUID
 }
 
 type McpOauthClient struct {
@@ -482,7 +514,7 @@ type TeamSetting struct {
 	SearchProvider      string
 	SearchUrl           *string
 	SearchSecretID      *uuid.UUID
-	Learning            bool
+	Improvement         bool
 	CompactionMessages  int32
 	UpdatedAt           time.Time
 	HubAgentID          *uuid.UUID

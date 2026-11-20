@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -33,6 +34,7 @@ type BuildStore interface {
 	ListGrantedMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.ListGrantedMCPServersRow, error)
 	ListGrantedMCPTools(ctx context.Context, agentID uuid.UUID) ([]db.ListGrantedMCPToolsRow, error)
 	ListGrantedSkills(ctx context.Context, agentID uuid.UUID) ([]db.Skill, error)
+	ListAgentToolNotes(ctx context.Context, agentID uuid.UUID) ([]db.AgentToolNote, error)
 	ListSkillFiles(ctx context.Context, skillID uuid.UUID) ([]db.SkillFile, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 	CountOtherAgents(ctx context.Context, arg db.CountOtherAgentsParams) (int64, error)
@@ -347,8 +349,25 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 	if err != nil {
 		return catalogue{}, fmt.Errorf("reading the agent's MCP tools: %w", err)
 	}
+	// A note an approved improvement left on a tool is told with the tool,
+	// to this agent only.
+	notes, err := b.store.ListAgentToolNotes(ctx, agentID)
+	if err != nil {
+		return catalogue{}, fmt.Errorf("reading the agent's tool notes: %w", err)
+	}
+	noted := map[uuid.UUID]map[string]string{}
+	for _, n := range notes {
+		if noted[n.McpServerID] == nil {
+			noted[n.McpServerID] = map[string]string{}
+		}
+		noted[n.McpServerID][n.Tool] = n.Note
+	}
+
 	offered := map[uuid.UUID][]db.ListGrantedMCPToolsRow{}
 	for _, r := range rows {
+		if note, ok := noted[r.McpServerID][r.Name]; ok {
+			r.Description = withNote(r.Description, note)
+		}
 		offered[r.McpServerID] = append(offered[r.McpServerID], r)
 	}
 
@@ -490,6 +509,23 @@ func limited(t agent.Tool) agent.Tool {
 		return invoke(ctx, args)
 	}
 	return t
+}
+
+// withNote is a tool's description with this agent's note on it after. The
+// note is model-written, so it is one line of printable text: it cannot open
+// a section of its own inside the description.
+func withNote(description, note string) string {
+	// The same cleaning the improvements API applies before it stores a note.
+	note = strings.Join(strings.FieldsFunc(note, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r)
+	}), " ")
+	if note == "" {
+		return description
+	}
+	if description == "" {
+		return "Note for this agent: " + note
+	}
+	return description + "\n\nNote for this agent: " + note
 }
 
 func (b *Builder) skills(ctx context.Context, teamID, agentID uuid.UUID, n *Narrowing) ([]agent.Skill, error) {

@@ -12,6 +12,7 @@ import {
   FileCode2,
   Home,
   Inbox,
+  Lightbulb,
   LogOut,
   MessagesSquare,
   Moon,
@@ -101,6 +102,12 @@ const REQUESTS: NavItem = {
   icon: ShieldQuestion,
   exact: false,
 };
+const IMPROVEMENTS: NavItem = {
+  to: "/ui/improvements",
+  label: "Improvements",
+  icon: Lightbulb,
+  exact: false,
+};
 const TEAMS: NavItem = { to: "/ui/teams", label: "Teams", icon: Users, exact: false };
 const DELETED_TEAMS: NavItem = {
   to: "/ui/teams/deleted",
@@ -140,6 +147,7 @@ export function navGroups(superAdmin: boolean): readonly NavGroup[] {
       label: "Team",
       items: [
         { to: "/ui/settings", label: "Team settings", icon: Settings, exact: false },
+        IMPROVEMENTS,
         TEAMS,
         ...(superAdmin ? [DELETED_TEAMS] : []),
       ],

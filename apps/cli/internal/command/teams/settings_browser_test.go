@@ -12,7 +12,7 @@ const lightpandaSaved = `{"model":null,
   "search":{"provider":"none","url":null,"key_set":false},
   "sandbox":{"provider":"none","url":null,"key_set":false},
   "browser":{"provider":"lightpanda","url":"ws://lightpanda:9222","key_set":false},
-  "learning":false,"compaction_messages":100,"updated_at":"2026-11-19T09:00:00Z"}`
+  "improvement":false,"compaction_messages":100,"updated_at":"2026-11-19T09:00:00Z"}`
 
 func browser(t *testing.T, body map[string]any) map[string]any {
 	t.Helper()
@@ -29,7 +29,7 @@ func browser(t *testing.T, body map[string]any) map[string]any {
 func TestSettingsSetWithoutBrowserFlagsSendsNoBrowser(t *testing.T) {
 	script := settingsRoutes(t, lightpandaSaved, http.StatusOK)
 
-	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--learning", "on"); err != nil {
+	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--improvement", "on"); err != nil {
 		t.Fatalf("teams settings set: %v", err)
 	}
 	if b, ok := put(t, script)["browser"]; ok {

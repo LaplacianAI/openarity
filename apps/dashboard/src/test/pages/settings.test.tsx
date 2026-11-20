@@ -29,7 +29,7 @@ const NEVER: TeamSettings = {
   model: null,
   search: { provider: "none", url: null, key_set: false },
   sandbox: { provider: "none", url: null, key_set: false },
-  learning: false,
+  improvement: false,
   compaction_messages: 100,
   compaction_tokens_min: 50_000,
   compaction_tokens_max: 60_000,
@@ -41,7 +41,7 @@ const BRAVE: TeamSettings = {
   model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
   search: { provider: "brave", url: null, key_set: true },
   sandbox: { provider: "none", url: null, key_set: false },
-  learning: false,
+  improvement: false,
   compaction_messages: 250,
   compaction_tokens_min: 50_000,
   compaction_tokens_max: 60_000,
@@ -77,7 +77,7 @@ describe("the request the form sends", () => {
       search: { provider: "brave" },
       sandbox: { provider: "none" },
       browser: { provider: "none" },
-      learning: false,
+      improvement: false,
       compaction_messages: 250,
       compaction_tokens_min: 50_000,
       compaction_tokens_max: 60_000,
@@ -143,7 +143,7 @@ describe("the request the form sends", () => {
   });
 
   it("keeps a self-hosted Firecrawl's key when nothing about it changed", () => {
-    const body = settingsRequest({ ...draftOf(OSS), learning: true }, OSS);
+    const body = settingsRequest({ ...draftOf(OSS), improvement: true }, OSS);
     expect((body as { search: object }).search).not.toHaveProperty("api_key");
   });
 
@@ -166,7 +166,7 @@ describe("the request the form sends", () => {
 describe("each group on its own", () => {
   it.each([
     ["model", { modelName: "gpt-6" }, true],
-    ["model", { learning: true }, false],
+    ["model", { improvement: true }, false],
     ["hub", { compaction: "300" }, false],
     ["compaction", { compaction: "300" }, true],
     ["compaction", { tokensMax: "70,000" }, true],
@@ -174,7 +174,7 @@ describe("each group on its own", () => {
     ["compaction", { tokensMax: "60000", compaction: "250" }, false],
     ["search", { key: "k" }, true],
     ["search", { dropKey: true }, true],
-    ["learning", { learning: true }, true],
+    ["improvement", { improvement: true }, true],
   ] as const)("%s is changed by %o: %s", (group, patch, said) => {
     expect(isDirty(group, { ...draftOf(BRAVE), ...patch }, BRAVE)).toBe(said);
   });
@@ -190,13 +190,13 @@ describe("each group on its own", () => {
   // The brain takes the settings whole: a group's Save sends the others as
   // they are stored, not as half-typed.
   it("sends the other groups as stored", () => {
-    const d = { ...draftOf(BRAVE), learning: true, modelName: "half-typed", compaction: "9" };
-    expect(groupRequest("learning", d, BRAVE)).toEqual({
+    const d = { ...draftOf(BRAVE), improvement: true, modelName: "half-typed", compaction: "9" };
+    expect(groupRequest("improvement", d, BRAVE)).toEqual({
       model: { name: "gpt-5", max_tokens: 4096, temperature: 0.2 },
       search: { provider: "brave" },
       sandbox: { provider: "none" },
       browser: { provider: "none" },
-      learning: true,
+      improvement: true,
       compaction_messages: 250,
       hub: null,
     });
@@ -206,8 +206,8 @@ describe("each group on its own", () => {
   // sends them, so a stale tab saving another group cannot reset them.
   it("sends the token lines only from Compaction's Save", () => {
     const d = { ...draftOf(BRAVE), tokensMin: "70,000", tokensMax: "90,000" };
-    expect(groupRequest("learning", d, BRAVE)).not.toHaveProperty("compaction_tokens_min");
-    expect(groupRequest("learning", d, BRAVE)).not.toHaveProperty("compaction_tokens_max");
+    expect(groupRequest("improvement", d, BRAVE)).not.toHaveProperty("compaction_tokens_min");
+    expect(groupRequest("improvement", d, BRAVE)).not.toHaveProperty("compaction_tokens_max");
     expect(groupRequest("compaction", d, BRAVE)).toMatchObject({
       compaction_tokens_min: 70_000,
       compaction_tokens_max: 90_000,
@@ -216,7 +216,7 @@ describe("each group on its own", () => {
 
   it("checks only its own fields", () => {
     const d = { ...draftOf(BRAVE), compaction: "9" };
-    expect(groupRequest("learning", d, BRAVE)).not.toBeTypeOf("string");
+    expect(groupRequest("improvement", d, BRAVE)).not.toBeTypeOf("string");
     expect(groupRequest("hub", d, BRAVE)).not.toBeTypeOf("string");
     expect(groupRequest("compaction", d, BRAVE)).toMatch(/Messages before a run compacts/);
   });
@@ -245,7 +245,13 @@ it("shows the defaults for a team that never saved", async () => {
 
   expect(await screen.findByText(/No model —/)).toBeInTheDocument();
   expect(screen.getByLabelText(/^provider$/i)).toHaveTextContent("Off");
-  expect(screen.getByLabelText(/learn from each run/i)).not.toBeChecked();
+  expect(screen.getByLabelText(/improve agents from their runs/i)).not.toBeChecked();
+  expect(screen.queryByText(/learn from each run/i)).toBeNull();
+  expect(
+    screen.getByText(
+      /The parts that propose arrive in a later release; until then this changes nothing\./,
+    ),
+  ).toBeInTheDocument();
   expect(screen.getByLabelText(/messages before a run compacts/i)).toHaveValue("100");
   expect(screen.getByLabelText(/^at least$/i)).toHaveValue("50,000");
   expect(screen.getByLabelText(/^at most$/i)).toHaveValue("60,000");
@@ -280,16 +286,16 @@ describe("the finding", () => {
 
 // Review Focus 1 from the dashboard: it never has the key, so it must never
 // send one it did not type.
-it("saves the learning switch without touching the key", async () => {
+it("saves the improvement switch without touching the key", async () => {
   const seen = brain({
     ...team(["team:settings"]),
     "GET /teams/{id}/settings": { body: BRAVE },
-    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, learning: true }) },
+    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, improvement: true }) },
   });
   at();
 
-  await userEvent.click(await screen.findByLabelText(/learn from each run/i));
-  await saveIn("Learning");
+  await userEvent.click(await screen.findByLabelText(/improve agents from their runs/i));
+  await saveIn("Improvement");
 
   await waitFor(() => expect(put(seen)).toBeDefined());
   expect(put(seen)).toEqual({
@@ -297,30 +303,30 @@ it("saves the learning switch without touching the key", async () => {
     search: { provider: "brave" },
     sandbox: { provider: "none" },
     browser: { provider: "none" },
-    learning: true,
+    improvement: true,
     compaction_messages: 250,
     hub: null,
   });
-  expect(await within(group("Learning")).findByText("Saved")).toBeInTheDocument();
+  expect(await within(group("Improvement")).findByText("Saved")).toBeInTheDocument();
 });
 
 it("keeps another group's unsaved edit, unsent, through a save", async () => {
   const seen = brain({
     ...team(["team:settings"]),
     "GET /teams/{id}/settings": { body: BRAVE },
-    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, learning: true }) },
+    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, improvement: true }) },
   });
   at();
 
   const model = await screen.findByRole("textbox", { name: /^model$/i });
   await userEvent.clear(model);
   await userEvent.type(model, "gpt-6");
-  await userEvent.click(screen.getByLabelText(/learn from each run/i));
-  await saveIn("Learning");
+  await userEvent.click(screen.getByLabelText(/improve agents from their runs/i));
+  await saveIn("Improvement");
 
   await waitFor(() => expect(put(seen)).toBeDefined());
   expect(put(seen).model.name).toBe("gpt-5");
-  expect(await within(group("Learning")).findByText("Saved")).toBeInTheDocument();
+  expect(await within(group("Improvement")).findByText("Saved")).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: /^model$/i })).toHaveValue("gpt-6");
   expect(within(group("Model")).getByText("Unsaved changes")).toBeInTheDocument();
 });
@@ -329,10 +335,10 @@ it("offers Save only once something in the group changed", async () => {
   brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
   at();
 
-  await screen.findByLabelText(/learn from each run/i);
-  expect(within(group("Learning")).queryByRole("button", { name: /^save$/i })).toBeNull();
-  await userEvent.click(screen.getByLabelText(/learn from each run/i));
-  expect(within(group("Learning")).getByRole("button", { name: /^save$/i })).toBeEnabled();
+  await screen.findByLabelText(/improve agents from their runs/i);
+  expect(within(group("Improvement")).queryByRole("button", { name: /^save$/i })).toBeNull();
+  await userEvent.click(screen.getByLabelText(/improve agents from their runs/i));
+  expect(within(group("Improvement")).getByRole("button", { name: /^save$/i })).toBeEnabled();
   expect(within(group("Model")).queryByRole("button", { name: /^save$/i })).toBeNull();
 });
 
@@ -340,7 +346,7 @@ it("asks before leaving with a change unsaved", async () => {
   brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
   const router = at();
 
-  await userEvent.click(await screen.findByLabelText(/learn from each run/i));
+  await userEvent.click(await screen.findByLabelText(/improve agents from their runs/i));
   act(() => {
     // Not awaited: a blocked move settles only once the dialog is answered.
     void router.navigate({ to: "/ui/elsewhere" } as never);
@@ -356,13 +362,13 @@ it("leaves without asking once the change is saved", async () => {
   brain({
     ...team(["team:settings"]),
     "GET /teams/{id}/settings": { body: BRAVE },
-    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, learning: true }) },
+    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, improvement: true }) },
   });
   const router = at();
 
-  await userEvent.click(await screen.findByLabelText(/learn from each run/i));
-  await saveIn("Learning");
-  await within(group("Learning")).findByText("Saved");
+  await userEvent.click(await screen.findByLabelText(/improve agents from their runs/i));
+  await saveIn("Improvement");
+  await within(group("Improvement")).findByText("Saved");
   act(() => {
     // Not awaited: a blocked move settles only once the dialog is answered.
     void router.navigate({ to: "/ui/elsewhere" } as never);
@@ -450,7 +456,7 @@ it("shows the brain's refusal in the group that was saved", async () => {
   await saveIn("Web search");
 
   expect(await within(group("Web search")).findByRole("alert")).toHaveTextContent(/link-local/);
-  expect(within(group("Learning")).queryByRole("alert")).toBeNull();
+  expect(within(group("Improvement")).queryByRole("alert")).toBeNull();
 });
 
 describe("the hub", () => {
@@ -480,14 +486,14 @@ describe("the hub", () => {
     const seen = brain({
       ...team(["team:settings"]),
       "GET /teams/{id}/settings": { body: WITH_HUB },
-      "PUT /teams/{id}/settings": { body: saved({ ...WITH_HUB, learning: true }) },
+      "PUT /teams/{id}/settings": { body: saved({ ...WITH_HUB, improvement: true }) },
     });
     at();
 
     const hub = await screen.findByRole("list", { name: "Hub" });
     expect(hub).toHaveTextContent("triage");
-    await userEvent.click(screen.getByLabelText(/learn from each run/i));
-    await saveIn("Learning");
+    await userEvent.click(screen.getByLabelText(/improve agents from their runs/i));
+    await saveIn("Improvement");
 
     await waitFor(() => expect(put(seen)).toBeDefined());
     expect(put(seen).hub).toBe("triage");
@@ -541,7 +547,7 @@ const DAYTONA: TeamSettings = {
 
 describe("the sandbox the form sends", () => {
   it("keeps the stored key while the provider and address are unchanged", () => {
-    const body = settingsRequest({ ...draftOf(DAYTONA), learning: true }, DAYTONA);
+    const body = settingsRequest({ ...draftOf(DAYTONA), improvement: true }, DAYTONA);
     expect(body).toMatchObject({
       sandbox: { provider: "daytona", url: "https://daytona.example/api" },
     });
@@ -647,7 +653,7 @@ describe("the browser the form sends", () => {
   const browserOf = (body: unknown) => (body as { browser: Record<string, unknown> }).browser;
 
   it("keeps the stored key while the provider and address are unchanged", () => {
-    const body = ask({ learning: true }, LIGHTPANDA);
+    const body = ask({ improvement: true }, LIGHTPANDA);
     expect(browserOf(body)).toEqual({ provider: "lightpanda", url: "ws://lightpanda:9222" });
   });
 

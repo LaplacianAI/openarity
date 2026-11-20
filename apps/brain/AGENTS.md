@@ -91,8 +91,9 @@ apps/brain/
     sessions/          read a conversation; start one and write in it on the dashboard; follow its stream
     loops/             the loops an agent may choose, which are the runner's
     blueprints/        a team's servers, skills, agents and approval rules (ask or deny, only ever stricter) in one document: export, plan (pure), apply in one tx; the builder's proposals
-    teamsettings/      a team's model, web search, learning and compaction
+    teamsettings/      a team's model, web search, self-improvement and compaction
     approvals/         what agents asked a person: list, read, answer (through the runtime's Decide); a team's approval settings and rules
+    improvements/      changes a team's agents propose to their own harness: before/after snapshots, the rules per kind, approve, reject, revert
     teamsummary/       the Home counts: one statement, one snapshot
   internal/gateway/    a provider's webhook in, normalised messages out; replies back out
     providertest/      the conformance suite every adapter runs

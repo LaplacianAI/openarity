@@ -27,9 +27,11 @@ agent.
 
 ## Product Purpose
 
-Openarity is an open-source agent platform where agents, tools, skills and
-learnings are a knowledge graph rather than a list: a run picks what it uses
-by walking relationships, and a hub agent delegates through the team's graph.
+Openarity is an open-source agent platform where agents, tools and skills
+are a knowledge graph rather than a list: a run picks what it uses by walking
+relationships, and a hub agent delegates through the team's graph. Each
+agent's harness improves from its own runs, by changes it proposes and a
+person approves.
 
 The dashboard is where a team is run. **Anyone can run a team from it
 entirely**; the `oa` CLI covers the same ground for scripts and for people who
@@ -43,7 +45,7 @@ on the answer in a click or two.
 
 What a neighbouring agent console could not truthfully copy:
 
-- **The graph is the system.** Agents, MCP servers, skills and learnings are
+- **The graph is the system.** Agents, MCP servers, tools and skills are
   nodes with edges of authority and provenance. What a run *may* use and what
   it *can* reach is the same traversal, and the dashboard can show it.
 - **A hub that delegates through that graph.** A run on a team can go to the
@@ -100,7 +102,11 @@ What the dashboard does today, and must keep doing through any redesign:
 - **MCP servers:** register, replace, delete, run discovery, list tools.
 - **Skills:** upload, import from GitHub, sync, replace, delete, read the body.
 - **Graph:** read the team's graph.
-- **Team settings:** the built-in hub's model and settings.
+- **Team settings:** the built-in hub's model and settings, and whether the
+  team's agents improve themselves.
+- **Improvements:** read the changes agents propose to their own harness, each
+  with its reason, what it expects and the runs it came from; approve or
+  reject one, and revert an applied one. Only an approver sees what waits.
 
 Known gaps, not yet built:
 
@@ -189,6 +195,7 @@ not measurements.
 | Channels | 1–10 | Where do messages come from, and are they arriving? | A channel silent longer than usual | Open its sessions |
 | Graph | tens to hundreds of nodes | How is the team wired? | Something in the team unreachable from the hub | Search the graph |
 | Team settings | one team | How does this team's built-in hub run? | No model set, so the hub cannot run | Set the model |
+| Improvements | 0–20 waiting | What do the agents want to change about themselves? | How many changes wait, and for how long | Approve or reject a change |
 | Teams | 1–10 teams, 1–20 members each | Who is in which team? | A team with no admin | Add a member |
 | Deleted teams | 0–5 | Which deleted teams can still come back, and until when? | The team closest to being purged | Restore a team |
 | Sign in | — | Get in | (none) | Sign in |

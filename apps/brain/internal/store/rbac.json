@@ -62,7 +62,7 @@
     },
     {
       "name": "team:settings",
-      "description": "Change a team's settings: its model, web search and learning"
+      "description": "Change a team's settings: its model, web search and self-improvement"
     },
     {
       "name": "approval:read",
@@ -75,6 +75,10 @@
     {
       "name": "approval:self",
       "description": "Approve or deny a tool call made for yourself"
+    },
+    {
+      "name": "improvement:approve",
+      "description": "Approve, reject and revert proposed improvements to a team's agents and skills"
     }
   ],
   "roles": [
@@ -95,7 +99,8 @@
         "team:settings",
         "approval:read",
         "approval:decide",
-        "approval:self"
+        "approval:self",
+        "improvement:approve"
       ]
     },
     {
@@ -110,7 +115,8 @@
         "sender:approve",
         "approval:read",
         "approval:decide",
-        "approval:self"
+        "approval:self",
+        "improvement:approve"
       ]
     },
     {
@@ -305,6 +311,22 @@
       "path": "/teams/{id}/approvals/{approvalID}/decision",
       "scope": "team",
       "permission": "approval:self"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/improvements",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/improvements/{proposalID}",
+      "scope": "member"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/improvements/{proposalID}/decision",
+      "scope": "team",
+      "permission": "improvement:approve"
     },
     {
       "method": "GET",

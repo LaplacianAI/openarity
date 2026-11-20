@@ -52,9 +52,11 @@ tags:
   - name: users
     description: Finding a user's id
   - name: settings
-    description: A team's model, web search, learning and compaction
+    description: A team's model, web search, self-improvement and compaction
   - name: approvals
     description: What agents ask a person before acting, and when they ask
+  - name: improvements
+    description: Changes a team's agents propose to their own harness, and a person's decision on each
 
 security:
   - bearerAuth: []
@@ -2753,7 +2755,7 @@ paths:
       summary: Read a team's settings
       description: |
         Any member may read them. A team that never saved reads the
-        defaults: no model, search off, no browser, learning off, compaction at 100
+        defaults: no model, search off, no browser, self-improvement off, compaction at 100
         messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
         null. The search key is never returned; `search.key_set` says
         whether there is one.
@@ -2974,6 +2976,131 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Approval"
+
+  /teams/{id}/improvements:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listImprovements
+      tags: [improvements]
+      summary: List proposed improvements to a team's agents
+      description: |
+        Any member may list applied and reverted ones. Waiting, rejected and
+        withdrawn ones quote runs that may be in conversations other members
+        cannot read, so asking for them needs `improvement:approve`; without
+        it that is a 403, so "none" and "not yours to see" stay apart. With
+        no status, an approver sees what is waiting and anyone else what is
+        applied. Newest first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Query"
+        - name: status
+          in: query
+          description: Only proposals in one of these states. Repeat it for more than one.
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/ImprovementStatus"
+        - name: agent
+          in: query
+          description: Only proposals about this agent.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: A page of proposals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImprovementPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/improvements/{proposalID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ImprovementID"
+    get:
+      operationId: getImprovement
+      tags: [improvements]
+      summary: Read one proposed improvement, with its changes
+      description: |
+        Any member may read an applied or reverted one; a waiting, rejected
+        or withdrawn one, to someone without `improvement:approve`, is a 404,
+        as another team's is.
+      responses:
+        "200":
+          description: The proposal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Improvement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/improvements/{proposalID}/decision:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ImprovementID"
+    post:
+      operationId: decideImprovement
+      tags: [improvements]
+      summary: Approve, reject or revert a proposed improvement
+      description: |
+        Requires `improvement:approve`, and the write permission the change
+        would need by hand: `agent:write` for a change to an agent,
+        `skill:write` for a skill edit, both for a new skill.
+
+        Approve writes the change with the same rules a person's edit of the
+        agent or skill meets, and withdraws the other proposals waiting on the
+        same target. It is refused when the target changed since the proposal
+        was made. Revert puts the old version back, and is refused when the
+        target changed since the change was applied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImprovementDecision"
+      responses:
+        "200":
+          description: Decided, described as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Improvement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Not allowed now, and nothing changed: the proposal is not in a
+            state that allows it, the target changed since, or the change
+            breaks a rule. The reason is the body.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the agent changed since this was proposed; reject it, and the next proposal is made from it as it is now"]
 
   /teams/{id}/approval-settings:
     parameters:
@@ -3816,6 +3943,14 @@ components:
       in: path
       required: true
       description: The MCP server
+      schema:
+        type: string
+        format: uuid
+    ImprovementID:
+      name: proposalID
+      in: path
+      required: true
+      description: The proposed improvement
       schema:
         type: string
         format: uuid
@@ -5976,7 +6111,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web, browser]
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web, browser, tool_notes]
           properties:
             instructions:
               type: string
@@ -6027,6 +6162,26 @@ components:
               description: |
                 Whether the agent may drive the team's browser when it runs as
                 itself. The team's hub may whatever this says.
+            tool_notes:
+              type: array
+              description: |
+                Usage notes on tools, for this agent, left by approved
+                improvements and told with each tool in its runs. Read-only:
+                a replace neither sends nor clears them. Ordered by server, then tool.
+              items:
+                $ref: "#/components/schemas/ToolNote"
+
+    ToolNote:
+      type: object
+      required: [server, tool, note]
+      properties:
+        server:
+          type: string
+          format: uuid
+        tool:
+          type: string
+        note:
+          type: string
 
     AgentRequest:
       type: object
@@ -6556,7 +6711,7 @@ components:
 
     TeamSettings:
       type: object
-      required: [search, sandbox, browser, learning, compaction_messages, compaction_tokens_min, compaction_tokens_max]
+      required: [search, sandbox, browser, improvement, compaction_messages, compaction_tokens_min, compaction_tokens_max]
       description: |
         `model`, `hub` and `updated_at` are always sent, null when unset;
         optional here only so a generated client decodes null as absent
@@ -6572,9 +6727,12 @@ components:
           $ref: "#/components/schemas/SandboxSettings"
         browser:
           $ref: "#/components/schemas/BrowserSettings"
-        learning:
+        improvement:
           type: boolean
-          description: Whether the learner writes learnings after each run, for approval
+          description: |
+            Whether the team's agents propose improvements to themselves from
+            their runs, for approval. The parts that propose arrive in a later
+            release; until then this setting changes nothing.
         compaction_messages:
           type: integer
           format: int32
@@ -6709,7 +6867,7 @@ components:
     TeamSettingsRequest:
       type: object
       additionalProperties: false
-      required: [search, learning, compaction_messages]
+      required: [search, improvement, compaction_messages]
       properties:
         model:
           $ref: "#/components/schemas/ModelRef"
@@ -6721,7 +6879,7 @@ components:
           $ref: "#/components/schemas/SandboxSettingsRequest"
         browser:
           $ref: "#/components/schemas/BrowserSettingsRequest"
-        learning:
+        improvement:
           type: boolean
         compaction_messages:
           type: integer
@@ -6954,6 +7112,160 @@ components:
         created_at:
           type: string
           format: date-time
+
+    ImprovementStatus:
+      type: string
+      enum: [waiting, applied, rejected, reverted, withdrawn]
+
+    ImprovementKind:
+      type: string
+      enum: [instructions, description, skill_grant, skill_drop, skill_new, skill_edit,
+             server_grant, server_drop, tools_narrow, builtin_tool, tool_note,
+             limits, delegation, pattern]
+
+    ImprovementMark:
+      type: string
+      description: |
+        What kind of change it is beyond its kind, computed by the brain:
+        widens_access (a server or built-in tool granted, or a skill that
+        names tools), widens_reach (wider delegation), raises_cost (a limit
+        raised), changes_code (a script added or changed), changes_discovery
+        (the description, which others find it by), changes_behaviour (its loop).
+      enum: [widens_access, widens_reach, raises_cost, changes_code, changes_discovery, changes_behaviour]
+
+    NamedRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: The name, or the id when it no longer exists
+
+    ImprovementChange:
+      type: object
+      required: [field, type, before, after]
+      properties:
+        field:
+          type: string
+          description: |
+            What changes: instructions, description, pattern, max_tokens,
+            max_steps, steer_continuations, token_budget, delegation, web,
+            browser, skills, delegates, mcp_servers, notes, body, or
+            files/<path> for a skill's file.
+        type:
+          type: string
+          enum: [text, list, value]
+          description: text is whole before and after, for a line diff; list is names; value is one value
+        before:
+          description: A string for text and value, an array of names for list; null for a file the change adds
+        after:
+          description: A string for text and value, an array of names for list; null for a file the change removes
+
+    Improvement:
+      type: object
+      required: [id, kind, status, agent, why, hypothesis, scope, marks, reaches, changes, runs, outsider, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/ImprovementKind"
+        status:
+          $ref: "#/components/schemas/ImprovementStatus"
+        agent:
+          $ref: "#/components/schemas/NamedRef"
+        skill:
+          description: The skill a skill_edit changes; null for every other kind
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/NamedRef"
+        why:
+          type: string
+          description: The pattern and the evidence for it, in words
+        hypothesis:
+          type: string
+          description: What the change is expected to do
+        scope:
+          type: string
+          enum: [invariant, domain]
+          description: A general weakness of agents, or knowledge of this team's domain
+        signature:
+          type: string
+          nullable: true
+        marks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImprovementMark"
+        reaches:
+          type: array
+          description: For a skill_edit, every agent that holds the skill now
+          items:
+            $ref: "#/components/schemas/NamedRef"
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImprovementChange"
+        runs:
+          type: array
+          description: The runs it cites; readable says whether the caller may open each
+          items:
+            type: object
+            required: [id, readable]
+            properties:
+              id:
+                type: string
+                format: uuid
+              readable:
+                type: boolean
+              session_id:
+                type: string
+                format: uuid
+                description: The conversation the run is read in; present only when readable
+        outsider:
+          type: boolean
+          description: A channel sender who is not a member spoke in a session it came from
+        created_at:
+          type: string
+          format: date-time
+        decided_by:
+          type: string
+          format: uuid
+          nullable: true
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        reverted_by:
+          type: string
+          format: uuid
+          nullable: true
+        reverted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ImprovementPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Improvement"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ImprovementDecision:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [approve, reject, revert]
 
     ApprovalPage:
       type: object
