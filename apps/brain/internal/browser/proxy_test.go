@@ -2,6 +2,7 @@ package browser
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 )
 
 // upstream is a site that counts its visitors and says what it was sent.
@@ -41,6 +44,8 @@ func newUpstream(t *testing.T) *upstream {
 func proxied(t *testing.T, public bool) (*Proxy, *http.Client) {
 	t.Helper()
 	p := NewProxy(func(a netip.Addr) bool { return public && a.IsLoopback() }, slog.New(slog.DiscardHandler))
+	// The tests' sites are on any port.
+	p.port = func(uint16) bool { return true }
 	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)
 	at, _ := url.Parse(srv.URL)
@@ -194,6 +199,7 @@ func TestPastItsConnectionsTheProxyRefuses(t *testing.T) {
 func TestATunnelEndsWhenTheProxyStops(t *testing.T) {
 	site := newUpstream(t)
 	p := NewProxy(func(a netip.Addr) bool { return a.IsLoopback() }, slog.New(slog.DiscardHandler))
+	p.port = func(uint16) bool { return true }
 	ctx, stop := context.WithCancel(t.Context())
 	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -215,5 +221,205 @@ func TestATunnelEndsWhenTheProxyStops(t *testing.T) {
 	var ne net.Error
 	if _, err := c.Read(make([]byte, 1)); err == nil || (errors.As(err, &ne) && ne.Timeout()) {
 		t.Errorf("read after the proxy stopped = %v, want the tunnel closed", err)
+	}
+}
+
+// Only a web port is dialed: the proxy is no relay for mail, SSH or a scan.
+func TestOnlyAWebPortIsDialed(t *testing.T) {
+	for port, want := range map[uint16]bool{80: true, 443: true, 8080: true, 8443: true, 0: false, 22: false, 25: false, 3128: false, 9222: false} {
+		if webPort(port) != want {
+			t.Errorf("port %d: %v, want %v", port, !want, want)
+		}
+	}
+	site := newUpstream(t)
+	p := NewProxy(func(a netip.Addr) bool { return a.IsLoopback() }, slog.New(slog.DiscardHandler))
+	if status, _ := connect(t, p, strings.TrimPrefix(site.URL, "http://")); status != http.StatusForbidden {
+		t.Errorf("CONNECT to the site's own port = %d, want refused", status)
+	}
+	if n := site.visits.Load(); n != 0 {
+		t.Errorf("the site was reached %d times", n)
+	}
+}
+
+// What the brain's own guard counts as not public, the proxy never dials:
+// the forms an address hides behind included.
+func TestTheProxyRefusesWhatIsNotPublic(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"8.8.8.8":                true,
+		"2606:4700::1111":        true,
+		"::ffff:8.8.8.8":         true,
+		"::ffff:169.254.169.254": false,
+		"::ffff:127.0.0.1":       false,
+		"169.254.169.254":        false,
+		"100.100.100.200":        false,
+		"100.64.0.1":             false,
+		"10.0.0.1":               false,
+		"0.0.0.0":                false,
+		"::":                     false,
+		"::1":                    false,
+		"64:ff9b::a9fe:a9fe":     false,
+		"224.0.0.1":              false,
+		"ff02::1":                false,
+		"fe80::1%eth0":           false,
+		"fd00::1":                false,
+		"255.255.255.255":        false,
+	} {
+		if got := reachable(netip.MustParseAddr(addr), hub.Public); got != want {
+			t.Errorf("%s: reachable %v, want %v", addr, got, want)
+		}
+	}
+}
+
+// A CONNECT must name a port; without one nothing is dialed.
+func TestACONNECTWithNoPortIsRefused(t *testing.T) {
+	p, _ := proxied(t, true)
+	if status, _ := connect(t, p, "localhost"); status != http.StatusBadRequest {
+		t.Errorf("CONNECT localhost = %d, want a bad request", status)
+	}
+}
+
+// A request's body reaches the site as the browser sent it.
+func TestAPostedBodyArrivesWhole(t *testing.T) {
+	var got atomic.Value
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got.Store(r.Method + " " + string(b))
+	}))
+	t.Cleanup(site.Close)
+	_, client := proxied(t, true)
+	body := strings.Repeat("form=value&", 50_000)
+	resp, err := client.Post(site.URL+"/submit", "application/x-www-form-urlencoded", strings.NewReader(body)) //nolint:noctx // a test
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if s, _ := got.Load().(string); s != "POST "+body {
+		t.Errorf("the site was sent %d bytes, want %d", len(s), len("POST "+body))
+	}
+}
+
+// A browser that half-closes a tunnel after its request still gets all of
+// the answer.
+func TestAHalfClosedTunnelStillCarriesTheAnswer(t *testing.T) {
+	answer := append(bytes.Repeat([]byte("x"), 16), bytes.Repeat([]byte("y"), 1<<20)...)
+	sent := make(chan string, 1)
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+		got, _ := io.ReadAll(c) // until the browser is done sending
+		sent <- string(got)
+		_, _ = c.Write(answer)
+	}()
+	p, _ := proxied(t, true)
+	srv := httptest.NewServer(p)
+	t.Cleanup(srv.Close)
+
+	c, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	target := l.Addr().String()
+	// The request's first bytes come with the CONNECT, as a browser's may.
+	_, _ = io.WriteString(c, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\nthe ")
+	br := bufio.NewReader(c)
+	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT = %d", resp.StatusCode)
+	}
+	_, _ = io.WriteString(c, "request")
+	tc, ok := c.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("a %T, not TCP", c)
+	}
+	if err := tc.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, answer) {
+		t.Errorf("after a half-close: %d bytes, want %d", len(got), len(answer))
+	}
+	if s := <-sent; s != "the request" {
+		t.Errorf("the site was sent %q", s)
+	}
+}
+
+// A site that cannot be reached is a 502 that says no more: the page
+// learns nothing of the worker's networks from why.
+func TestAnUnreachableSiteSaysNothingOfWhy(t *testing.T) {
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := l.Addr().String()
+	_ = l.Close()
+	_, client := proxied(t, true)
+	resp, err := client.Get("http://" + closed + "/") //nolint:noctx // a test
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway || strings.TrimSpace(string(body)) != "could not be reached" {
+		t.Errorf("got %d %q", resp.StatusCode, body)
+	}
+}
+
+// A tunnel that carries nothing either way is closed, and gives its
+// connection back.
+func TestAnIdleTunnelIsClosed(t *testing.T) {
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	held := make(chan net.Conn, 1)
+	go func() {
+		if c, err := l.Accept(); err == nil {
+			held <- c // a site that never answers, nor hangs up
+		}
+	}()
+	t.Cleanup(func() {
+		select {
+		case c := <-held:
+			_ = c.Close()
+		default:
+		}
+	})
+	p, _ := proxied(t, true)
+	p.idle = 200 * time.Millisecond
+
+	status, c := connect(t, p, l.Addr().String())
+	if status != http.StatusOK {
+		t.Fatalf("CONNECT = %d", status)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var ne net.Error
+	if _, err := c.Read(make([]byte, 1)); err == nil || (errors.As(err, &ne) && ne.Timeout()) {
+		t.Fatalf("read from an idle tunnel = %v, want it closed", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(p.slots) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d connections still held", len(p.slots))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

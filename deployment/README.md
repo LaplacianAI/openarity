@@ -670,11 +670,42 @@ Measured with each of the four, on Docker Desktop, a page asking for:
 | `169.254.169.254`, the host | no route | refused |
 | `169.254.169.254.nip.io`, `localtest.me` (public names, private answers) | no name resolves | refused |
 
-Browserless takes Chrome's flags only in the address it is dialed at, so a
-team saves the proxy there (its overlay shows the URL); without it, the
-browser reaches nothing. Host firewall rules are no longer needed for these
-overlays. A browser run another way needs the same: no route out but through
-a proxy like this one.
+The proxy dials ports 80, 443, 8080 and 8443 only, so it relays no mail,
+SSH or scan from the host's address; a site on any other port is refused. It
+holds 512 requests and tunnels at once for every browser on the network
+together, and closes a tunnel that has carried nothing for five minutes.
+
+> **Browserless: the proxy is in the URL a team saves.** Browserless takes
+> Chrome's flags only from the address it is dialed at, so its overlay cannot
+> set them. Save the URL its overlay shows, with `--proxy-server` and
+> `--proxy-bypass-list` in it. Saved without them, the browser loads nothing
+> and every page read comes back empty or as an error. The brain adds the
+> token to that URL's query, so the flags stay.
+
+Before turning an overlay on:
+
+- **Update the worker first, then the overlay.** A browser on the internal
+  network with a worker that serves no proxy, an older image or an empty
+  `OPENARITY_BROWSER_PROXY_BIND`, reaches nothing. It fails closed, and says
+  nothing more than a page that never loads.
+- **Never publish port 3128, and never run the worker with host
+  networking.** The proxy asks no one for a key: it is safe only because
+  nothing but the browser's network reaches it. The overlays bind it on every
+  network the worker joins, `0.0.0.0:3128`, and publish nothing.
+- **A browser's port published to the host stops working.** An internal
+  network has no route to the host; the brain reaches the browser over the
+  network the overlay gives them both.
+- **One worker per network address.** A port already taken stops the worker
+  at start, naming `BROWSER_PROXY_BIND`. Workers in containers of their own
+  each bind their own; two on the host's network collide.
+- **A proxy that stops stops the worker.** Its restart policy brings it back
+  with one, and runs it held resume as after any restart.
+
+Host firewall rules are no longer needed for these overlays. A browser run
+another way needs the same: no route out but through a proxy like this one.
+A hosted browser gets none of this: it resolves names on its provider's
+network, so a name that answers differently there is still the gap
+"DNS rebinding" in the web docs describes.
 
 ## Logs
 

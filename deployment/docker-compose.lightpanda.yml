@@ -21,7 +21,8 @@
 #   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.242/32
 #
 # Naming the compose network instead would open Postgres and OpenBao to any
-# URL a team saves.#
+# URL a team saves.
+#
 # Its network is internal: nothing on it routes anywhere. The browser's one
 # way out is the worker's proxy (OPENARITY_BROWSER_PROXY_BIND), which dials
 # public addresses only, deciding on the address it connects to, so a name

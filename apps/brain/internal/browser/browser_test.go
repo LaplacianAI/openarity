@@ -65,6 +65,13 @@ func TestABrowserAtOneAddress(t *testing.T) {
 		{"browserless cloud", Browserless, "", secret, "wss://production-sfo.browserless.io?token=sk-TEST-ONLY"},
 		{"browserless self-hosted", Browserless, "http://browserless:3000", "tok", "ws://browserless:3000?token=tok"},
 		{"browserless with no token", Browserless, "ws://browserless:3000", "", "ws://browserless:3000"},
+		// The overlay's URL: its proxy flags survive the token, as Chrome
+		// reads them, <-loopback> included.
+		{
+			"browserless with its proxy flags", Browserless,
+			"ws://browserless:3000?--proxy-server=http://worker:3128&--proxy-bypass-list=%3C-loopback%3E", "tok",
+			"ws://browserless:3000?--proxy-bypass-list=%3C-loopback%3E&--proxy-server=http%3A%2F%2Fworker%3A3128&token=tok",
+		},
 		{"lightpanda cloud", Lightpanda, "", "lp", "wss://euwest.cloud.lightpanda.io/ws?token=lp"},
 		{"lightpanda self-hosted", Lightpanda, "ws://lightpanda:9222", "", "ws://lightpanda:9222"},
 		{"cdp over https", CDP, "https://chrome.example/devtools", "", "wss://chrome.example/devtools"},

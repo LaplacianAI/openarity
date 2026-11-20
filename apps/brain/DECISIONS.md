@@ -369,7 +369,12 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   is looked up twice. It binds every interface and is found as `worker`, so a
   second worker serves it too; what else reaches it gets only what the
   internet already gives. Host firewall rules were the other choice: they
-  differ by host, and the ones written for this were never run.
+  differ by host, and the ones written for this were never run. It dials
+  ports 80, 443, 8080 and 8443 only: any port would make it a relay for mail
+  or a scan from the host's address, and those four serve the sites a run
+  visits, staging ones included. A proxy that stops stops the worker, which
+  its restart policy brings back with one: a worker without it looks healthy
+  while every self-hosted browser reaches nothing.
 - **The hub's graph finds every agent, and only its own tools and skills.**
   Its reach is the team's other agents, to hand work to, and the tools and
   skills the hub agent holds, since those are all it can call or load; the

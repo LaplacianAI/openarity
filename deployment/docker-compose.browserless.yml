@@ -9,6 +9,11 @@
 #   cp .env.example .env                        # then fill in the Browserless block
 #   docker compose -f docker-compose.yml -f docker-compose.browserless.yml up -d
 #
+# REQUIRED: the URL a team saves must carry the proxy flags below. Browserless
+# takes Chrome's flags only from the address it is dialed at, so this overlay
+# cannot set them; a URL without them gives a browser that loads nothing, and
+# every page read comes back empty or as an error.
+#
 # A team chooses it in its settings, not here, with the same token as its key:
 #
 #   printf %s "$BROWSERLESS_TOKEN" | oa teams settings set <team> --browser browserless \
@@ -26,7 +31,8 @@
 #   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.234/32
 #
 # Naming the compose network instead would open Postgres and OpenBao to any
-# URL a team saves.#
+# URL a team saves.
+#
 # Its network is internal: nothing on it routes anywhere. The browser's one
 # way out is the worker's proxy (OPENARITY_BROWSER_PROXY_BIND), which dials
 # public addresses only, deciding on the address it connects to, so a name

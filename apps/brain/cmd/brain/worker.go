@@ -41,22 +41,46 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 		logger.ErrorContext(ctx, "Starting with an erasure already overdue", "error", err)
 	}
 
-	if cfg.BrowserProxyBind != "" {
-		// Listened on before the worker starts, so a bind that cannot be had
-		// stops it rather than leaving the browser with no way out.
-		l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.BrowserProxyBind)
-		if err != nil {
-			return fmt.Errorf("the browser's proxy cannot listen on BROWSER_PROXY_BIND %s: %w", cfg.BrowserProxyBind, err)
-		}
-		proxy := browser.NewProxy(hub.Public, logger)
-		go func() {
-			if err := proxy.Serve(ctx, l); err != nil {
-				logger.ErrorContext(ctx, "The browser's proxy stopped, so a self-hosted browser reaches nothing", "error", err)
-			}
-		}()
+	ctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	if err := startBrowserProxy(ctx, cfg, logger, stop); err != nil {
+		return err
 	}
+	if err := worker.New(cfg.PostgresDSN, logger, jobs...).Run(ctx); err != nil {
+		return err
+	}
+	if err := context.Cause(ctx); errors.Is(err, errProxyStopped) {
+		return err
+	}
+	return nil
+}
 
-	return worker.New(cfg.PostgresDSN, logger, jobs...).Run(ctx)
+// errProxyStopped is the worker stopping because its browser proxy did: a
+// worker left running without it looks healthy while every self-hosted
+// browser reaches nothing, so it exits and is started again with one.
+var errProxyStopped = errors.New("the browser's proxy stopped")
+
+// startBrowserProxy serves the browser's proxy on BROWSER_PROXY_BIND, if it
+// is set. It listens before the worker starts, so a bind that cannot be had
+// stops the worker rather than leaving the browser with no way out.
+func startBrowserProxy(ctx context.Context, cfg *config.Config, logger *slog.Logger, stop context.CancelCauseFunc) error {
+	if cfg.BrowserProxyBind == "" {
+		return nil
+	}
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.BrowserProxyBind)
+	if err != nil {
+		return fmt.Errorf("the browser's proxy cannot listen on BROWSER_PROXY_BIND %s: %w", cfg.BrowserProxyBind, err)
+	}
+	go serveBrowserProxy(ctx, browser.NewProxy(hub.Public, logger), l, stop)
+	return nil
+}
+
+// serveBrowserProxy runs p on l, and stops the worker if it ends on its own.
+func serveBrowserProxy(ctx context.Context, p *browser.Proxy, l net.Listener, stop context.CancelCauseFunc) {
+	err := p.Serve(ctx, l)
+	if ctx.Err() == nil {
+		stop(fmt.Errorf("%w: %w", errProxyStopped, err))
+	}
 }
 
 func newJobs(
