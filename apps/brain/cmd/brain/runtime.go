@@ -48,7 +48,8 @@ func newRunJob(
 	builder := runtime.NewBuilder(dbStore, attachments, discoverer, graphDeps, search,
 		newFetch(searchClient, net.DefaultResolver)).
 		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, discoverer, runtime.Loops())}).
-		WithApprovals(dbStore)
+		WithApprovals(dbStore).
+		WithBrowsers(newBrowsers(secretStore, searchClient, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)
 	}
