@@ -533,10 +533,18 @@ func escapes(t *testing.T, pages ...string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _ = open.Open(within30(t), srv.refusedBase+"/reachable")
+		// A browser just started can drop its first navigation, so the
+		// control is given a few tries; it is not the thing under test.
+		var openErr error
+		for try := 0; try < 5 && !slices.Contains(srv.reached(), "/reachable"); try++ {
+			if try > 0 {
+				time.Sleep(time.Second)
+			}
+			_, openErr = open.Open(within30(t), srv.refusedBase+"/reachable")
+		}
 		open.Close()
 		if got := srv.reached(); !slices.Contains(got, "/reachable") {
-			t.Fatalf("the browser never reached %s, so the test proves nothing (reached %v)", srv.refusedBase, got)
+			t.Fatalf("the browser never reached %s, so the test proves nothing (reached %v, last open: %v)", srv.refusedBase, got, openErr)
 		}
 		srv.mu.Lock()
 		srv.escaped = nil
