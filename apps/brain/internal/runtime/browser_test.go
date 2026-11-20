@@ -19,6 +19,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/browser"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
@@ -330,6 +331,137 @@ func TestEveryBrowserToolFollowsTheEgressRule(t *testing.T) {
 	}
 	if n := b.opened.opener.opens.Load(); n != 0 {
 		t.Errorf("a refused call opened %d sessions", n)
+	}
+}
+
+// pageTools are the browser's five tools, each counting the times it was
+// really made.
+func pageTools(made map[string]int) []agent.Tool {
+	tools := make([]agent.Tool, len(BrowserToolNames))
+	for i, name := range BrowserToolNames {
+		tools[i] = agent.Tool{
+			Name: name, Schema: json.RawMessage(`{"type":"object"}`),
+			Invoke: func(context.Context, json.RawMessage) (string, error) { made[name]++; return "done", nil },
+		}
+	}
+	return tools
+}
+
+func pageTool(t *testing.T, tools []agent.Tool, name string) agent.Tool {
+	t.Helper()
+	for _, tool := range tools {
+		if tool.Name == name {
+			return tool
+		}
+	}
+	t.Fatalf("no %s among %d tools", name, len(tools))
+	return agent.Tool{}
+}
+
+var onThePage = []string{BrowserSnapshotToolName, BrowserClickToolName, BrowserTypeToolName, BrowserScreenshotToolName}
+
+// A pause for a person closes the page, so nothing done on one pauses: the
+// open asks, for the page and for clicking and typing on it, which can
+// submit or buy and so are writes. What is done on the page is then made
+// without asking again. Where nothing asks, nothing does.
+func TestTheBrowserAsksOnceAtTheOpen(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		mode approval.Mode
+		asks bool
+	}{
+		{approval.All, true},
+		{approval.Writes, true},
+		{approval.DestructiveOnly, false},
+	} {
+		d := &desk{byCall: map[string]db.Approval{}}
+		made := map[string]int{}
+		tools, unavailable := gatedBy(d, tc.mode, approval.Actor{CanSelf: true}).gateBrowser(pageTools(made))
+		if len(tools) != len(BrowserToolNames) || len(unavailable) != 0 {
+			t.Fatalf("%s: %d tools, unavailable %+v", tc.mode, len(tools), unavailable)
+		}
+
+		_, err := callAs(t, pageTool(t, tools, BrowserOpenToolName), "c1", `{"url":"https://example.com/"}`)
+		if asked := err != nil && err.Error() == askedTop; asked != tc.asks || (!tc.asks && err != nil) {
+			t.Errorf("%s: open = %v, want asked %v", tc.mode, err, tc.asks)
+		}
+		if tc.asks {
+			row := d.byCall["c1"]
+			if row.Tool != BrowserOpenToolName || row.Class != "write" ||
+				row.Summary != "url: https://example.com/\nand: "+pageCovers {
+				t.Errorf("%s: request = %+v, want the open asked as a write, saying it covers the page", tc.mode, row)
+			}
+		}
+		for _, name := range onThePage {
+			if _, err := callAs(t, pageTool(t, tools, name), "c-"+name, `{"ref":1,"text":"x","submit":true}`); err != nil || made[name] != 1 {
+				t.Errorf("%s: %s = %v, made %d; want it made without asking", tc.mode, name, err, made[name])
+			}
+		}
+		if wantOpen := map[bool]int{true: 0, false: 1}[tc.asks]; made[BrowserOpenToolName] != wantOpen || len(d.byCall) != map[bool]int{true: 1, false: 0}[tc.asks] {
+			t.Errorf("%s: open made %d, requests %d", tc.mode, made[BrowserOpenToolName], len(d.byCall))
+		}
+	}
+}
+
+// A team's rule that asks before a click is asked at the open, where the
+// page is not yet lost by waiting; a rule that denies one tool denies only
+// it.
+func TestABrowserRuleIsAskedAtTheOpenAndADenialStaysItsOwn(t *testing.T) {
+	t.Parallel()
+
+	d := &desk{byCall: map[string]db.Approval{}}
+	p := gatedBy(d, approval.DestructiveOnly, approval.Actor{CanSelf: true})
+	p.rules = []approval.Rule{
+		{Kind: "tool", Target: BrowserClickToolName, Verdict: approval.Ask, RequireOther: true},
+		{Kind: "tool", Target: BrowserTypeToolName, Verdict: approval.Deny},
+	}
+	made := map[string]int{}
+	tools, _ := p.gateBrowser(pageTools(made))
+
+	if _, err := callAs(t, pageTool(t, tools, BrowserOpenToolName), "c1", `{"url":"https://example.com/"}`); err == nil || err.Error() != askedTop {
+		t.Fatalf("open = %v, want it asked for the click's rule", err)
+	}
+	if !d.byCall["c1"].RequireOther {
+		t.Error("the click's rule wanted another person, and the open's request does not")
+	}
+	if _, err := callAs(t, pageTool(t, tools, BrowserClickToolName), "c2", `{"ref":1}`); err != nil || made[BrowserClickToolName] != 1 {
+		t.Errorf("click = %v, made %d; want it made on the page", err, made[BrowserClickToolName])
+	}
+	if _, err := callAs(t, pageTool(t, tools, BrowserTypeToolName), "c3", `{"ref":1,"text":"x"}`); err == nil ||
+		!strings.Contains(err.Error(), "A team rule does not allow browser_type") || made[BrowserTypeToolName] != 0 {
+		t.Errorf("type = %v, made %d; want the rule's refusal", err, made[BrowserTypeToolName])
+	}
+}
+
+// Approving the open for the run approves every page the run opens.
+func TestABrowserApprovedForTheRunOpensWithoutAsking(t *testing.T) {
+	t.Parallel()
+
+	d := &desk{byCall: map[string]db.Approval{}, runScope: &db.Approval{ID: uuid.New(), Tool: BrowserOpenToolName}}
+	made := map[string]int{}
+	tools, _ := gatedBy(d, approval.All, approval.Actor{CanSelf: true}).gateBrowser(pageTools(made))
+
+	for _, call := range []string{"c1", "c2"} {
+		if _, err := callAs(t, pageTool(t, tools, BrowserOpenToolName), call, `{"url":"https://example.com/`+call+`"}`); err != nil {
+			t.Errorf("open %s = %v", call, err)
+		}
+	}
+	if made[BrowserOpenToolName] != 2 || len(d.byCall) != 0 {
+		t.Errorf("opened %d, requests %d; want both made, nothing asked", made[BrowserOpenToolName], len(d.byCall))
+	}
+}
+
+// A pattern that cannot wait for a person gets no browser that would ask: a
+// page that cannot be opened has nothing to be done on.
+func TestABrowserThatAsksIsNotOfferedToAPatternThatCannotWait(t *testing.T) {
+	t.Parallel()
+
+	p := gatedBy(&desk{byCall: map[string]db.Approval{}}, approval.Writes, approval.Actor{CanSelf: true})
+	p.pattern = agent.PatternReWOO
+	tools, unavailable := p.gateBrowser(pageTools(map[string]int{}))
+	if len(tools) != 0 || len(unavailable) != 1 || unavailable[0].Name != BrowserOpenToolName {
+		t.Errorf("tools %d, unavailable %+v; want none, the open said why", len(tools), unavailable)
 	}
 }
 

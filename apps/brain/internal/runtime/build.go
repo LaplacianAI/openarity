@@ -247,13 +247,10 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		built.Unavailable = append(built.Unavailable, unavailable...)
 		for _, t := range tools {
 			built.answerable[t.Name] = t
-			gated, refused := gates.gate(t, target{name: t.Name, class: approval.ClassFor(approval.Egress, gates.actorOf())})
-			if refused != nil {
-				built.Unavailable = append(built.Unavailable, *refused)
-				continue
-			}
-			built.Spec.Tools = append(built.Spec.Tools, gated)
 		}
+		gated, refused := gates.gateBrowser(tools)
+		built.Unavailable = append(built.Unavailable, refused...)
+		built.Spec.Tools = append(built.Spec.Tools, gated...)
 	}
 
 	if a.ID != uuid.Nil {

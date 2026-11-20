@@ -97,12 +97,22 @@ After a click or a submit the read waits for the page it goes to, up to 15
 seconds; what a page fetches for itself later may come only with
 `browser_snapshot`. No call takes more than 30 seconds.
 
-Each call follows the team's approval rule for reaching the internet, as
-`web_fetch` does. A run opens the browser at its first call and lets it go
-when the run ends. A run that stops to wait for an approval comes back to a
-fresh page, so a click asked about after the page was opened has nothing to
-click: approve `browser_open` for the rest of the run (`--for-run`) rather
-than one call at a time.
+A run opens the browser at its first call and lets it go when the run ends,
+and a run that stops to wait for an approval comes back to a fresh page. So
+the browser is approved a page at a time, and only `browser_open` ever asks:
+
+| Mode | A person who may approve their own | A guest, or a run nobody is present for |
+| --- | --- | --- |
+| `all`, `writes` | `browser_open` asks once; the request says it covers clicking and typing on the page | as for `web_fetch` |
+| `destructive`, `off` | nothing asks | as for `web_fetch` |
+
+`browser_click` and `browser_type` are writes, with or without a submit: a
+click can buy, and a page's own script can send what is typed. They are asked
+for at the open, where waiting loses nothing, and what is then done on that
+page is not asked again. **Approve** covers the page until the next
+`browser_open`; **Approve for this run** (`--for-run`) covers every page the
+run opens. A team rule that asks for one of the five tools is asked at the
+open too; a rule that denies one denies only that tool.
 
 **What a page may reach.** Every request the page's tab makes, its scripts,
 images, frames, styles, fetches and redirects included, is paused for the

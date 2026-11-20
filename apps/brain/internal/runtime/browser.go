@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/browser"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -386,4 +387,75 @@ func (b *Builder) browserFor(ctx context.Context, teamID uuid.UUID, s db.TeamSet
 		tools[i] = r.tool(t.name, t.description, t.schema)
 	}
 	return r, tools, nil
+}
+
+// pageCovers is what approving browser_open approves besides the page.
+const pageCovers = "click and type on the page it opens"
+
+// gateBrowser puts the browser's tools behind the policy a page at a time. A
+// pause for a person closes the page, so nothing done on one may pause: the
+// open asks, for itself and for every tool the run may use on the page, and
+// what is then done on that page is not asked again. Approving the open
+// approves that page, until the next open; approving it for the run, every
+// page. A tool a rule denies is still denied on its own.
+func (p *policy) gateBrowser(tools []agent.Tool) ([]agent.Tool, []Unavailable) {
+	if p == nil {
+		return tools, nil
+	}
+	targets := make([]target, len(tools))
+	decided := make([]approval.Decision, len(tools))
+	page := target{name: BrowserOpenToolName, class: approval.Read}
+	ask := approval.Decision{Verdict: approval.Allow, Why: approval.ByMode}
+	acts := false
+	for i, t := range tools {
+		b := approval.Egress
+		if t.Name == BrowserClickToolName || t.Name == BrowserTypeToolName {
+			b = approval.Acts
+		}
+		targets[i] = target{name: t.Name, class: approval.ClassFor(b, p.actor)}
+		decided[i] = p.decide(targets[i])
+		if decided[i].Verdict == approval.Deny {
+			continue
+		}
+		page.class = higher(page.class, targets[i].class)
+		acts = acts || b == approval.Acts
+		if decided[i].Verdict == approval.Ask {
+			ask.RequireOther = ask.RequireOther || decided[i].RequireOther
+			if ask.Verdict != approval.Ask {
+				ask.Verdict, ask.Why = approval.Ask, decided[i].Why
+			}
+		}
+	}
+	if acts {
+		page.also = pageCovers
+	}
+
+	out := make([]agent.Tool, 0, len(tools))
+	for i, t := range tools {
+		at, d := targets[i], decided[i]
+		switch {
+		case d.Verdict == approval.Deny:
+		case t.Name == BrowserOpenToolName:
+			at, d = page, ask
+		default:
+			// Made only on a page the open was allowed or approved for.
+			d = approval.Decision{Verdict: approval.Allow, Why: d.Why}
+		}
+		gated, refused := p.wrap(t, at, d)
+		if refused != nil {
+			// Nothing is done on a page that cannot be opened.
+			return nil, []Unavailable{*refused}
+		}
+		out = append(out, gated)
+	}
+	return out, nil
+}
+
+// higher is the more dangerous of two classes.
+func higher(a, b approval.Class) approval.Class {
+	rank := map[approval.Class]int{approval.Read: 0, approval.Write: 1, approval.Destructive: 2}
+	if rank[b] > rank[a] {
+		return b
+	}
+	return a
 }

@@ -60,6 +60,10 @@ const (
 	Looks Builtin = "looks"
 	// Egress reaches the internet, where a query or a URL can carry data out.
 	Egress Builtin = "egress"
+	// Acts does something on a page a run has open: a click or typing, which
+	// can submit a form, sign in or buy, and a page's own script can send
+	// what is typed without a submit.
+	Acts Builtin = "acts"
 )
 
 // An Actor is who a run's calls are made for.
@@ -83,6 +87,8 @@ func ClassFor(b Builtin, a Actor) Class {
 		if a.CanSelf && !a.Unattended {
 			return Read
 		}
+		return Write
+	case Acts:
 		return Write
 	default:
 		return Destructive

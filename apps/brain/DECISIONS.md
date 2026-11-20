@@ -292,6 +292,16 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   browser that does not answer in time is a failure, never a refusal, so a
   hosted one is not used unguarded for being slow; one that refuses is, and
   every read says so.
+- **The browser is approved a page at a time, and only the open asks.** A
+  pause for a person ends the run's process and with it the page, so an ask
+  on a click would leave nothing to click. `browser_open` asks at the
+  strictest verdict of every browser tool the run is offered, and what is
+  then done on that page is made without asking; approving it for the run
+  covers every page. `browser_click` and `browser_type` are writes
+  (`approval.Acts`) for anyone, submit or not: a click can buy, and a page's
+  script can send what is typed. Keeping a page across a pause was weighed
+  and refused: a Bright Data session ends with its connection, and a tab left
+  without its guard attached runs on with nothing pausing its requests.
 - **The hub's graph finds every agent, and only its own tools and skills.**
   Its reach is the team's other agents, to hand work to, and the tools and
   skills the hub agent holds, since those are all it can call or load; the

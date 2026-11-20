@@ -136,6 +136,9 @@ type target struct {
 	name   string // <server>__<tool on the server>, or a built-in's own name
 	server string // empty for a built-in
 	class  approval.Class
+	// also is what approving the call approves besides, shown under its
+	// arguments.
+	also string
 }
 
 // actorOf is who the run acts for; none when there is no policy.
@@ -154,9 +157,17 @@ func (p *policy) gate(t agent.Tool, at target) (agent.Tool, *Unavailable) {
 	if p == nil {
 		return t, nil
 	}
-	d := approval.Decide(approval.Input{
+	return p.wrap(t, at, p.decide(at))
+}
+
+func (p *policy) decide(at target) approval.Decision {
+	return approval.Decide(approval.Input{
 		Tool: at.name, Server: at.server, Class: at.class, Mode: p.mode, Rules: p.rules, Actor: p.actor,
 	})
+}
+
+// wrap is t as decision d has it.
+func (p *policy) wrap(t agent.Tool, at target, d approval.Decision) (agent.Tool, *Unavailable) {
 	switch d.Verdict {
 	case approval.Allow:
 		return t, nil
@@ -257,7 +268,11 @@ type approvalRequestedPayload struct {
 // request records a call for a person to answer, with a code they can type
 // back into a chat, and says so in the run's events.
 func (p *policy) request(ctx context.Context, at target, requireOther bool, callID string, args json.RawMessage) error {
-	summary := approvalSummary(approval.Summary(args))
+	fields := approval.Summary(args)
+	if at.also != "" {
+		fields = append(fields, approval.Field{Name: "and", Value: at.also})
+	}
+	summary := approvalSummary(fields)
 	for range codeTries {
 		code, err := newCode()
 		if err != nil {

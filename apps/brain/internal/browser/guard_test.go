@@ -157,9 +157,10 @@ func TestClipCutsOnARune(t *testing.T) {
 // A request the judges cannot take now is held back and counted, never
 // waited for and never let through: the browser's event loop cannot be held,
 // and a goroutine for each would let a page make as many as it liked.
+//
+// Not parallel: the count is the process's, and a goroutine a request would
+// be 200 more, far past what other work moves it by.
 func TestARequestNoJudgeCanTakeIsHeldBackAndCounted(t *testing.T) {
-	t.Parallel()
-
 	g := &guard{tab: t.Context(), queue: make(chan paused)}
 	before := runtime.NumGoroutine()
 	for range 200 {
@@ -168,7 +169,7 @@ func TestARequestNoJudgeCanTakeIsHeldBackAndCounted(t *testing.T) {
 	if b, n, shed := g.Blocked(); len(b) != 0 || n != 0 || shed != 200 {
 		t.Fatalf("named %v, refused %d, held back %d; want only 200 held back", b, n, shed)
 	}
-	if after := runtime.NumGoroutine(); after > before+5 {
+	if after := runtime.NumGoroutine(); after > before+50 {
 		t.Errorf("%d goroutines after 200 held back, %d before", after, before)
 	}
 }
