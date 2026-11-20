@@ -95,7 +95,7 @@ plan, and any change to the draft takes the plan away. It is a
 role: `member`, `approver` or `admin`. **Team settings** has four groups: the
 model, the hub (and when a run compacts: past a number of messages, and
 always when its next request would read a tenth of its token budget, at
-least 50,000 and at most 100,000 tokens), web search, and learning. A run's transcript shows each
+least 50,000 and at most 60,000 tokens), web search, and learning. A run's transcript shows each
 compaction, with the summary that replaced the older turns, and a
 **Wrapping up** line when it was asked to finish before a limit. A run that
 stopped at its budget shows what it had under **What it had when it stopped**.

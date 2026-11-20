@@ -16,9 +16,10 @@ func TestARunCompactsAtATenthOfItsBudgetBetweenTheFloorAndTheCeiling(t *testing.
 		budget int64
 		want   int
 	}{
-		{5_000_000, 100_000},
-		{1_000_000, 100_000},
-		{700_000, 70_000},
+		{5_000_000, 60_000},
+		{1_000_000, 60_000},
+		{700_000, 60_000},
+		{550_000, 55_000},
 		{500_000, 50_000},
 		{300_000, 50_000},
 		{150_000, 50_000},

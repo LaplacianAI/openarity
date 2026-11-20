@@ -58,7 +58,9 @@ type usagePayload struct {
 	InputTokens       int    `json:"input_tokens"`
 	OutputTokens      int    `json:"output_tokens"`
 	CachedInputTokens int    `json:"cached_input_tokens"`
-	Spent             int64  `json:"spent"`
+	// Spent is the run's total as its budget counts it, a cached token as a
+	// tenth of one: not input plus output.
+	Spent int64 `json:"spent"`
 }
 
 // note is one of the brain's own events, written in turn with the agent's;
@@ -271,7 +273,8 @@ func recordOther(ctx context.Context, s EventStore, runID uuid.UUID, worker stri
 func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker string, lines *softLines, e agent.UsageEvent) error {
 	spent, err := s.AddRunUsage(ctx, db.AddRunUsageParams{
 		InputTokens: int64(e.Usage.InputTokens), OutputTokens: int64(e.Usage.OutputTokens),
-		ID: runID, Worker: worker,
+		CachedInputTokens: int64(e.Usage.CachedInputTokens),
+		ID:                runID, Worker: worker,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrLostRun

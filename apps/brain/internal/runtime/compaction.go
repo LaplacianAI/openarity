@@ -22,7 +22,12 @@ const (
 	// compaction keeps the latest ~15,000 tokens, the prompt and the tools,
 	// so a lower line is crossed again at once and the run spends its budget
 	// summarising. A small budget is kept by its soft lines instead.
-	compactCeiling = 100_000
+	//
+	// 60,000, not more: a review delegate at 100,000 spent its last ten or
+	// twenty steps rereading tool output it was done with, and a compaction
+	// on staging left about 26,000, so this still leaves room for several
+	// steps between compactions.
+	compactCeiling = 60_000
 	compactFloor   = 50_000
 	// defaultCompactionMessages is team_settings.compaction_messages' default,
 	// for a team that never saved its settings.

@@ -160,10 +160,14 @@ GROUPS = {
     ]),
     S: (900, [
         # A placeholder: set it a few times above what a normal hour spends.
+        # Tokens as a run's budget counts them: a cached token as a tenth,
+        # as it is billed. Counted whole, a review rereading its context
+        # from the cache fired this at a fifth of what it cost.
         rule("oa-token-spend", S, "Token spend spike", sql(
-            "SELECT coalesce(sum(input_tokens + output_tokens), 0) AS value "
+            "SELECT coalesce(sum(input_tokens - cached_input_tokens + cached_input_tokens / 10 "
+            "+ output_tokens), 0) AS value "
             "FROM runs WHERE created_at > now() - interval '1 hour'"),
-            "gt", 2000000, "0s", "warning", "Over 2M tokens spent in the last hour"),
+            "gt", 500000, "0s", "warning", "Over 500K tokens spent in the last hour, a cached token as a tenth"),
     ]),
 }
 

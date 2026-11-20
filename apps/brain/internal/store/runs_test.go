@@ -337,6 +337,47 @@ func TestUsageAddsUpAndOnlyForTheHolder(t *testing.T) {
 	}
 }
 
+// A token read from the provider's cache is billed at about a tenth of a
+// fresh one, so the budget counts it so: a review delegate rereading 100,000
+// cached tokens a step ran out of a 2M budget it had hardly paid for.
+func TestABudgetCountsACachedTokenAsATenth(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newRunFixture(t, s, "platform")
+	r := createRun(t, s, f)
+	claim(t, s, r.ID, "w1")
+
+	add := func(in, cached, out int64) int64 {
+		t.Helper()
+		spent, err := s.AddRunUsage(t.Context(), db.AddRunUsageParams{
+			ID: r.ID, Worker: "w1", InputTokens: in, CachedInputTokens: cached, OutputTokens: out,
+		})
+		if err != nil {
+			t.Fatalf("usage: %v", err)
+		}
+		return spent
+	}
+
+	// 10,000 fresh, 90,000 cached as 9,000, and 500 written.
+	if got := add(100_000, 90_000, 500); got != 19_500 {
+		t.Fatalf("spent = %d, want 19,500", got)
+	}
+	// None cached counts every token, as before.
+	if got := add(1_000, 0, 100); got != 20_600 {
+		t.Errorf("spent = %d, want 20,600", got)
+	}
+	// A provider counting more cached than it read is held to what it read.
+	if got := add(1_000, 5_000, 0); got != 20_700 {
+		t.Errorf("spent = %d, want 20,700: 1,000 cached as 100", got)
+	}
+	row := statusOf(t, s, r.ID)
+	if row.InputTokens != 102_000 || row.CachedInputTokens != 91_000 || row.OutputTokens != 600 {
+		t.Errorf("totals = %d in, %d cached, %d out; want 102,000, 91,000 and 600",
+			row.InputTokens, row.CachedInputTokens, row.OutputTokens)
+	}
+}
+
 func TestFinishRunOnlyFinishesARunThisWorkerHolds(t *testing.T) {
 	t.Parallel()
 

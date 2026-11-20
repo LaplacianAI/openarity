@@ -237,7 +237,8 @@ func TestEachSDKEventBecomesItsRow(t *testing.T) {
 
 	usage := payload[map[string]any](t, got[3])
 	if usage["model"] != "claude-sonnet" || usage["input_tokens"] != 120.0 || usage["output_tokens"] != 30.0 ||
-		usage["cached_input_tokens"] != 100.0 || usage["spent"] != 150.0 {
+		usage["cached_input_tokens"] != 100.0 || usage["spent"] != 60.0 {
+		// 20 fresh, 100 cached as 10, and 30 written.
 		t.Errorf("usage payload = %s", got[3].Payload)
 	}
 }
@@ -404,6 +405,25 @@ func TestUsagePastTheBudgetStopsTheRun(t *testing.T) {
 	got := h.events(t)
 	if last := payload[map[string]any](t, got[len(got)-1]); last["spent"] != 1_000_001.0 {
 		t.Errorf("the last usage says spent %v, want 1000001", last["spent"])
+	}
+}
+
+// A run that rereads its context from the provider's cache pays about a
+// tenth for it, and its budget counts it so: 1.1M read and written, 800,000
+// of it cached, is 380,000 spent, well inside the million.
+func TestCachedInputCountsAsATenthAgainstTheBudget(t *testing.T) {
+	t.Parallel()
+
+	h := newHeldRun(t)
+	cached := usage(900_000, 200_000)
+	cached.Usage.CachedInputTokens = 800_000
+
+	wantNoStop(t, feed(t, h.store, h.id, cached))
+	got := h.events(t)
+	last := payload[map[string]any](t, got[len(got)-1])
+	if last["spent"] != 380_000.0 || last["cached_input_tokens"] != 800_000.0 {
+		t.Errorf("the usage says spent %v and cached %v, want 380000 and 800000",
+			last["spent"], last["cached_input_tokens"])
 	}
 }
 

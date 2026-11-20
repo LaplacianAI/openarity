@@ -4,6 +4,21 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
 
 ## Decisions worth not relitigating
 
+- **A cached token counts as a tenth, in the budget and on the dashboard.**
+  The provider bills a token it reads from its cache at about a tenth of a
+  fresh one, and on staging 84% of the review team's input was cached:
+  counted whole, a delegate rereading 100,000 tokens a step ran out of a 2M
+  budget it had paid for a fifth of, and the spend alert fired at five times
+  the bill. `AddRunUsage` keeps `runs.cached_input_tokens` beside the totals
+  and returns `spent` so weighed; the dashboard's tokens and the spike alert
+  use the same sum, and show cache reads apart. A provider that reports no
+  cache counts every token whole, as before. Ignoring cache reads outright
+  would let a run loop on its context for nothing, so they count, cheaply.
+- **A run compacts at 60,000 tokens of context, not 100,000.** Review
+  delegates spent their last ten or twenty steps at 70,000 to 120,000,
+  carrying tool output they were done with; a compaction left about 26,000.
+  The cost is a compaction about twice as often, each a summary call and one
+  request whose context is not cached yet.
 - **A budget has two soft lines before its cap, and they measure different
   things.** With a tenth of the budget left the run compacts; when one more
   call would not fit (twice the last call's input plus room for an answer:
