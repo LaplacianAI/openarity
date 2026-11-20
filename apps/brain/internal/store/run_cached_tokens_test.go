@@ -11,6 +11,9 @@ import (
 // migration tests name theirs: a later migration must not move it.
 const beforeCachedTokens = 20261127090000
 
+// cachedTokensColumn adds the column; the migration after it fills it.
+const cachedTokensColumn = 20261128090000
+
 // A run from before gets the cached input its usage events recorded, held to
 // its input; one whose events carry none keeps zero; and the check the
 // backfill waited for is validated. Rolled back, the column goes and the
@@ -49,6 +52,7 @@ func TestOldRunsGetTheirCachedInputFromTheirUsageEvents(t *testing.T) {
 		`{"input_tokens": 40000, "cached_input_tokens": 30000}`)
 	over := run(1_000, `{"input_tokens": 1000, "cached_input_tokens": 5000}`)
 	none := run(500, `{"input_tokens": 500}`)
+	live := run(100_000, `{"input_tokens": 100000, "cached_input_tokens": 50000}`)
 	// Past a batch of a thousand, so the backfill commits and carries on.
 	if _, err := s.pool.Exec(t.Context(), `
 		WITH r AS (
@@ -60,8 +64,19 @@ func TestOldRunsGetTheirCachedInputFromTheirUsageEvents(t *testing.T) {
 		t.Fatalf("insert bulk runs: %v", err)
 	}
 
+	// A run still going when the column lands adds to it before the backfill
+	// reaches it: the backfill keeps what it added.
+	if _, err := p.UpTo(t.Context(), cachedTokensColumn); err != nil {
+		t.Fatalf("UpTo(%d): %v", cachedTokensColumn, err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET cached_input_tokens = 70000 WHERE id = $1`, live); err != nil {
+		t.Fatalf("a live run's usage: %v", err)
+	}
 	if _, err := s.Migrate(t.Context()); err != nil {
 		t.Fatalf("Migrate: %v", err)
+	}
+	if got := scalar[int64](t, s, `SELECT cached_input_tokens FROM runs WHERE id = $1`, live); got != 70_000 {
+		t.Errorf("the live run has %d cached after the backfill, want the 70,000 it had added", got)
 	}
 	backfilled := func() {
 		t.Helper()
