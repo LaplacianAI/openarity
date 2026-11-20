@@ -232,6 +232,11 @@ describe("the create form", () => {
       request_url: SLACK_PLACEHOLDER_URL,
       bot_events: ["message.channels", "message.groups", "message.im", "message.mpim"],
     });
+    // The buttons under an approval answer through Interactivity, beside the events.
+    expect(m.settings.interactivity).toEqual({
+      is_enabled: true,
+      request_url: `${SLACK_PLACEHOLDER_URL}/interactivity`,
+    });
     expect(m.settings.socket_mode_enabled).toBe(false);
     const unnamed = JSON.parse(
       new URL(slackManifestURL(" ")).searchParams.get("manifest_json") ?? "{}",
@@ -744,6 +749,14 @@ describe("a slack channel", () => {
     expect(
       within(dialog).getByRole("button", { name: `Copy the Request URL ${SL_HOOK}` }),
     ).toBeInTheDocument();
+    // The approval buttons' address, under Interactivity, beside the events'.
+    expect(text).toMatch(/interactivity & shortcuts/i);
+    expect(
+      within(dialog).getByRole("button", {
+        name: `Copy the Interactivity Request URL ${SL_HOOK}/interactivity`,
+      }),
+    ).toBeInTheDocument();
+    expect(within(within(dialog).getByRole("list")).getAllByRole("listitem")).toHaveLength(3);
     expect(text).not.toContain(TOKEN);
     expect(text).not.toContain(SECRET);
   });
@@ -762,6 +775,7 @@ describe("a slack channel", () => {
     const dialog = await screen.findByRole("dialog", { name: /one step left in slack/i });
     expect(dialog.textContent).toMatch(/no public address/i);
     expect(dialog.textContent).toContain("/hooks/slack/s1");
+    expect(dialog.textContent).toContain("/hooks/slack/s1/interactivity");
   });
 
   it("keeps the form open with the brain's reason when Slack refuses the token", async () => {
