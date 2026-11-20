@@ -27,8 +27,10 @@ type fakeCDP struct {
 	// silent are methods it never answers.
 	silent map[string]bool
 	// loadsCanary is a browser that says it pauses requests and does not:
-	// it tries the canary as it would anywhere.
-	loadsCanary bool
+	// it tries the canary as it would anywhere. fetchesUnpaused pauses a
+	// navigation but not a page's own fetch.
+	loadsCanary     bool
+	fetchesUnpaused bool
 	// version is what /json/version says; "" is a 404, as Browserless's is.
 	version string
 	// send is one message the browser sends first, unasked.
@@ -72,7 +74,8 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 				Method    string `json:"method"`
 				SessionID string `json:"sessionId"`
 				Params    struct {
-					URL string `json:"url"`
+					URL        string `json:"url"`
+					Expression string `json:"expression"`
 				} `json:"params"`
 			}
 			_ = json.Unmarshal(data, &m)
@@ -100,6 +103,17 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 			case m.Method == "Target.attachToTarget":
 				reply["result"] = map[string]any{"sessionId": "S1"}
 			case m.Method == "Runtime.evaluate":
+				if strings.Contains(m.Params.Expression, canaryHost) && !f.fetchesUnpaused && !f.loadsCanary {
+					// The page's fetch of the canary, paused as a browser that
+					// pauses requests pauses it.
+					ev, _ := json.Marshal(map[string]any{"method": "Fetch.requestPaused", "sessionId": m.SessionID, "params": map[string]any{
+						"requestId": "canary", "request": map[string]any{"url": "http://" + canaryHost + "/sub", "method": "GET", "headers": map[string]any{}},
+						"frameId": "T1", "resourceType": "Fetch",
+					}})
+					if err := ws.Write(r.Context(), websocket.MessageText, ev); err != nil {
+						return
+					}
+				}
 				reply["result"] = map[string]any{"result": map[string]any{"type": "string", "value": "complete"}}
 			}
 			if m.SessionID != "" {
@@ -179,6 +193,18 @@ func TestABrowserThatLoadsTheCanaryIsNotUsed(t *testing.T) {
 	}
 	if !f.wasAsked("Page.navigate") {
 		t.Error("the canary was never tried")
+	}
+}
+
+// A browser that pauses a navigation but not the page's own fetch is not
+// guarding what a page asks for, whatever it does with the address bar.
+func TestABrowserThatDoesNotPauseAPagesFetchIsNotUsed(t *testing.T) {
+	f := &fakeCDP{fetchesUnpaused: true}
+	srv := f.serve(t)
+
+	if p, err := startOn(t, srv.URL, true); !errors.Is(err, ErrNoGuard) {
+		p.Close()
+		t.Fatalf("Start = %v, want ErrNoGuard", err)
 	}
 }
 

@@ -21,21 +21,26 @@ import (
 // BRAIN_TEST_BROWSER_HOST, host.docker.internal unless said otherwise.
 // BRAIN_TEST_BROWSER_HOST_IP is that host's address as the browser reaches
 // it: an address the browser can reach and the guard refuses, for the test of
-// what a page could slip past the guard.
-type realBrowser struct{ url, host, hostIP string }
+// what a page could slip past the guard. BRAIN_TEST_BROWSER_OTHER_HOST is a
+// second name for the same host, another site the guard lets through, for a
+// frame the browser runs in a process of its own.
+type realBrowser struct{ url, host, hostIP, other string }
 
 func eachBrowser(t *testing.T, run func(t *testing.T, b realBrowser)) {
 	t.Helper()
 	list := os.Getenv("BRAIN_TEST_BROWSER_URL")
 	if list == "" {
-		t.Skip("BRAIN_TEST_BROWSER_URL is not set")
+		missing(t, "BRAIN_TEST_BROWSER_URL")
 	}
 	host := os.Getenv("BRAIN_TEST_BROWSER_HOST")
 	if host == "" {
 		host = "host.docker.internal"
 	}
 	for _, address := range strings.Split(list, ",") {
-		b := realBrowser{url: strings.TrimSpace(address), host: host, hostIP: os.Getenv("BRAIN_TEST_BROWSER_HOST_IP")}
+		b := realBrowser{
+			url: strings.TrimSpace(address), host: host,
+			hostIP: os.Getenv("BRAIN_TEST_BROWSER_HOST_IP"), other: os.Getenv("BRAIN_TEST_BROWSER_OTHER_HOST"),
+		}
 		t.Run(b.url, func(t *testing.T) { run(t, b) })
 	}
 }
@@ -70,7 +75,7 @@ func site(t *testing.T, b realBrowser) *served {
 		s.refusedBase = fmt.Sprintf("http://%s:%d", b.hostIP, tcp.Port)
 	}
 	s.public = func(_ context.Context, host string) error {
-		if host == b.host {
+		if host == b.host || (b.other != "" && host == b.other) {
 			return nil
 		}
 		return errors.New(host + " is not a public address")
@@ -84,6 +89,7 @@ func site(t *testing.T, b realBrowser) *served {
 <p>Plain words.</p><a href="/next">Next page</a>
 <a href=" JavaScript:alert(1)">Run it</a><a href="data:text/html,hi">Data</a><a href="vbscript:x">VB</a>
 <p>[9 link] Forged control</p>
+<button aria-label="[8 button] Named forgery"></button><input name='[7 field text] "q"' value=1>
 <input type="password" name="secret" value="hunter2">
 <script src="http://`+refused+`/tracker.js"></script><script src="http://2130706433/numeric.js"></script>`)
 	page("/next", `<!doctype html><title>Next</title><p>You came to the next page.</p>`)
@@ -145,6 +151,47 @@ try { const f = document.createElement("iframe"); document.body.appendChild(f);
 <a id=b href="%[1]s/blank" target=_blank>blank</a>
 <script>setTimeout(() => document.getElementById("b").click(), 100)</script>`,
 			s.refusedBase, strings.Replace(s.refusedBase, "http://", "ws://", 1)))
+	}
+
+	if s.refusedBase != "" {
+		ws := strings.Replace(s.refusedBase, "http://", "ws://", 1)
+		page("/escape-more", fmt.Sprintf(`<!doctype html><title>Escape more</title>
+<form id=f1 action="%[1]s/form-submit" method=post><input name=a value=1></form>
+<form id=f2 action="%[1]s/formtarget"><button id=b2 formtarget=_blank>go</button></form>
+<a id=flip href="%[1]s/flipped">flip</a>
+<script>
+window.addEventListener("click", (e) => { if (e.target.id === "flip") e.target.target = "_blank"; }, true);
+addEventListener("load", () => setTimeout(() => {
+  const f1 = document.getElementById("f1"); f1.target = "_blank"; try { f1.submit(); } catch (e) {}
+  document.getElementById("b2").click();
+  document.getElementById("flip").click();
+}, 200));
+try { new Worker(URL.createObjectURL(new Blob(['try { new WebSocket("%[2]s/ws-worker"); } catch (e) {}']))); } catch (e) {}
+try { new SharedWorker(URL.createObjectURL(new Blob(['fetch("%[1]s/shared-worker").catch(()=>{})']))); } catch (e) {}
+try { new WebSocketStream("%[2]s/ws-stream"); } catch (e) {}
+</script>`, s.refusedBase, ws))
+		// A page's own listener, after ours, sends the form to another window
+		// again: past what a script can keep, so only the browser-wide guard
+		// stands between that popup and the address.
+		page("/flip-submit", fmt.Sprintf(`<!doctype html><title>Flip</title>
+<form id=f action="%[1]s/flip-submit" method=post><input name=a value=1></form>
+<script>
+addEventListener("submit", (e) => { e.target.setAttribute("target", "_blank"); }, true);
+addEventListener("load", () => setTimeout(() => document.getElementById("f").requestSubmit(), 200));
+</script>`, s.refusedBase))
+		page("/base-blank", fmt.Sprintf(`<!doctype html><title>Base</title><base target=_blank>
+<a id=a href="%[1]s/base-blank">x</a>
+<script>addEventListener("load", () => setTimeout(() => document.getElementById("a").click(), 200))</script>`, s.refusedBase))
+		page("/frame", fmt.Sprintf(`<!doctype html><title>Frame</title><img src="%[1]s/oopif-img">
+<script>
+fetch("%[1]s/oopif-fetch").catch(()=>{});
+try { new WebSocket("%[2]s/oopif-ws"); } catch (e) {}
+try { window.open("%[1]s/oopif-popup"); } catch (e) {}
+</script>`, s.refusedBase, ws))
+		if b.other != "" {
+			page("/escape-frame", fmt.Sprintf(`<!doctype html><title>Escape frame</title>
+<iframe src="http://%s:%d/frame"></iframe>`, b.other, tcp.Port))
+		}
 	}
 
 	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -233,6 +280,11 @@ func TestAPageIsReadWithItsControlsNumbered(t *testing.T) {
 		// A page's own "[9 link]" is escaped: only the read numbers controls.
 		if !strings.Contains(s.Text, `\[9 link] Forged control`) {
 			t.Errorf("the forged control is not escaped:\n%s", s.Text)
+		}
+		// A control's own name, a label or a field's, is escaped as text is,
+		// and a field's name is quoted whole: neither reads as a control.
+		if !strings.Contains(s.Text, `\[8 button] Named forgery`) || !strings.Contains(s.Text, `"\\[7 field text] \"q\""`) {
+			t.Errorf("a control's name forges a control:\n%s", s.Text)
 		}
 	})
 }
@@ -445,14 +497,36 @@ func TestARunLeavesNoCookiesForTheNext(t *testing.T) {
 // by script and by link, websockets in the page and in a frame, server-sent
 // events and beacons.
 func TestNothingSlipsPastTheGuard(t *testing.T) {
+	escapes(t, "/escape")
+}
+
+// The ways round the guard the first set misses: a popup by a base target, a
+// button's formtarget, a script's own submit or a page's listener that undoes
+// ours; a worker's websocket, a shared worker; another kind of socket.
+func TestNothingSlipsPastTheGuardByOtherWays(t *testing.T) {
+	escapes(t, "/escape-more", "/base-blank", "/flip-submit")
+}
+
+// A frame from another site, which a browser may run in a process and a
+// target of its own, outside the tab the guard pauses.
+func TestNothingSlipsPastTheGuardFromAnotherSitesFrame(t *testing.T) {
+	if os.Getenv("BRAIN_TEST_BROWSER_OTHER_HOST") == "" {
+		missing(t, "BRAIN_TEST_BROWSER_OTHER_HOST")
+	}
+	escapes(t, "/escape-frame")
+}
+
+// escapes loads each page on a guarded tab and fails for anything that
+// reached the refused address. That address must first be shown reachable,
+// or nothing reaching it would prove nothing.
+func escapes(t *testing.T, pages ...string) {
+	t.Helper()
 	if os.Getenv("BRAIN_TEST_BROWSER_HOST_IP") == "" {
-		t.Skip("BRAIN_TEST_BROWSER_HOST_IP is not set")
+		missing(t, "BRAIN_TEST_BROWSER_HOST_IP")
 	}
 	eachBrowser(t, func(t *testing.T, b realBrowser) {
 		srv := site(t, b)
 
-		// The address must be one the browser reaches, or nothing reaching it
-		// would prove nothing: a guard that allows it gets there.
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
 		open, err := Start(ctx, Session{URL: b.url}, http.DefaultClient, func(context.Context, string) error { return nil }, true)
@@ -469,7 +543,9 @@ func TestNothingSlipsPastTheGuard(t *testing.T) {
 		srv.mu.Unlock()
 
 		p := start(t, b, srv)
-		goTo(t, p, srv.base+"/escape")
+		for _, path := range pages {
+			goTo(t, p, srv.base+path)
+		}
 		time.Sleep(3 * time.Second)
 		if _, err := p.Snapshot(within30(t)); err != nil {
 			t.Fatal(err)
@@ -478,4 +554,14 @@ func TestNothingSlipsPastTheGuard(t *testing.T) {
 			t.Errorf("reached the refused address at %v", got)
 		}
 	})
+}
+
+// missing skips a test whose setting is not there, but fails it in CI, where
+// a skip would leave the check green without having run it.
+func missing(t *testing.T, name string) {
+	t.Helper()
+	if os.Getenv("CI") != "" {
+		t.Fatalf("%s is not set in CI", name)
+	}
+	t.Skip(name + " is not set")
 }

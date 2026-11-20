@@ -148,6 +148,7 @@ jobs:
           - 9222:9222
         options: >-
           --add-host=host.docker.internal:host-gateway
+          --add-host=other.test:host-gateway
           --shm-size=1g
 
     env:
@@ -161,6 +162,8 @@ jobs:
       BRAIN_TEST_S3_SECRET_KEY: openarity-ci-secret
       BRAIN_TEST_BROWSER_URL: http://localhost:9222,ws://127.0.0.1:9223
       BRAIN_TEST_BROWSER_HOST: host.docker.internal
+      # Another site on the same host, for a frame from another site.
+      BRAIN_TEST_BROWSER_OTHER_HOST: other.test
 
     steps:
       - uses: actions/checkout@v7
@@ -270,14 +273,18 @@ jobs:
         run: |
           docker run -d --name lightpanda -p 9223:9222 \
             --add-host=host.docker.internal:host-gateway \
+            --add-host=other.test:host-gateway \
             lightpanda/browser:1.0.4@sha256:a9d899882899802bc3a6b82622a7ca394f8e1b828452869a0965d2e5097e6116 \
             /bin/lightpanda serve --host 0.0.0.0 --port 9222 --advertise-host 127.0.0.1
 
       # The host as the browsers reach it, for the test that a page reaches
-      # nothing the guard refuses: host-gateway is docker0's address.
+      # nothing the guard refuses: host-gateway is docker0's address. With no
+      # address the step fails, as the test would otherwise not run.
       - name: Wait for the browsers
         run: |
-          echo "BRAIN_TEST_BROWSER_HOST_IP=$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" >> "$GITHUB_ENV"
+          ip=$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1 | head -n1)
+          test -n "$ip" || { echo "docker0 has no IPv4 address" >&2; exit 1; }
+          echo "BRAIN_TEST_BROWSER_HOST_IP=$ip" >> "$GITHUB_ENV"
           for port in 9222 9223; do
             for _ in $(seq 1 30); do
               curl -sf "http://127.0.0.1:$port/json/version" >/dev/null && continue 2

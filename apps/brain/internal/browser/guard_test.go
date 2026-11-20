@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
@@ -129,14 +131,14 @@ func TestWhatIsBlockedIsBoundedAndForgottenOnceRead(t *testing.T) {
 	for range maxBlocked + 50 {
 		g.refuse(paused{url: long})
 	}
-	b, n := g.Blocked()
+	b, n, _ := g.Blocked()
 	if len(b) != maxBlocked || n != maxBlocked+50 {
 		t.Fatalf("named %d, counted %d; want %d named of %d", len(b), n, maxBlocked, maxBlocked+50)
 	}
 	if len(b[0]) > maxBlockedURL+len("…") {
 		t.Errorf("a blocked address is %d bytes, want at most %d", len(b[0]), maxBlockedURL)
 	}
-	if b, n := g.Blocked(); len(b) != 0 || n != 0 {
+	if b, n, _ := g.Blocked(); len(b) != 0 || n != 0 {
 		t.Errorf("Blocked again = %v, %d; want nothing", b, n)
 	}
 }
@@ -152,22 +154,65 @@ func TestClipCutsOnARune(t *testing.T) {
 	}
 }
 
-// A request the judges cannot take now is refused, never waited for: the
-// browser's event loop cannot be held.
-func TestARequestNoJudgeCanTakeIsRefused(t *testing.T) {
+// A request the judges cannot take now is held back and counted, never
+// waited for and never let through: the browser's event loop cannot be held,
+// and a goroutine for each would let a page make as many as it liked.
+func TestARequestNoJudgeCanTakeIsHeldBackAndCounted(t *testing.T) {
 	t.Parallel()
 
 	g := &guard{tab: t.Context(), queue: make(chan paused)}
-	g.pause(&fetch.EventRequestPaused{RequestID: "r1", Request: &network.Request{URL: "https://example.com/"}})
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, n := g.Blocked(); n == 1 {
-			return
+	before := runtime.NumGoroutine()
+	for range 200 {
+		g.pause(false)(&fetch.EventRequestPaused{RequestID: "r1", Request: &network.Request{URL: "https://example.com/"}})
+	}
+	if b, n, shed := g.Blocked(); len(b) != 0 || n != 0 || shed != 200 {
+		t.Fatalf("named %v, refused %d, held back %d; want only 200 held back", b, n, shed)
+	}
+	if after := runtime.NumGoroutine(); after > before+5 {
+		t.Errorf("%d goroutines after 200 held back, %d before", after, before)
+	}
+}
+
+// A name server that never answers is a refusal in judgeTimeout: a page's
+// own lookups cannot hold the judges.
+func TestALookupThatHangsIsARefusal(t *testing.T) {
+	t.Parallel()
+
+	g := &guard{tab: t.Context(), allowed: map[string]bool{}, public: func(ctx context.Context, _ string) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	judged := make(chan error, 1)
+	go func() { judged <- g.allows("https://tarpit.example/") }()
+	select {
+	case err := <-judged:
+		if err == nil {
+			t.Fatal("a lookup that never answered let the request through")
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("a request no judge could take was not refused")
-		}
-		time.Sleep(10 * time.Millisecond)
+	case <-time.After(judgeTimeout + 2*time.Second):
+		t.Fatalf("no verdict in %v: a lookup held a judge", judgeTimeout+2*time.Second)
+	}
+	if g.allowed["tarpit.example"] {
+		t.Error("a lookup that never answered was remembered as allowed")
+	}
+}
+
+// What the browser-wide guard refuses is not named in the tab's read: on a
+// browser runs share it may be another run's request. Its canary still says
+// the page's fetch was paused.
+func TestARequestRefusedBrowserWideIsNotNamed(t *testing.T) {
+	t.Parallel()
+
+	g := &guard{tab: t.Context(), canaried: make(chan struct{})}
+	g.refuse(paused{url: "http://10.0.0.5/elsewhere", browser: true})
+	if b, n, _ := g.Blocked(); len(b) != 0 || n != 0 {
+		t.Errorf("named %v, counted %d; want nothing from outside the tab", b, n)
+	}
+	g.refuse(paused{url: "http://" + canaryHost + "/sub", browser: true})
+	select {
+	case <-g.canaried:
+	default:
+		t.Error("the canary's fetch was refused and not noticed")
 	}
 }
 
@@ -180,5 +225,9 @@ func TestAReadIsHeldToItsLimit(t *testing.T) {
 	}
 	if got := clamp(Snapshot{Text: "short"}); got.Cut || got.Text != "short" {
 		t.Errorf("a short read changed: %+v", got)
+	}
+	got := clamp(Snapshot{Title: strings.Repeat("é", maxTitle), URL: "https://a.example/" + strings.Repeat("a", maxURL)})
+	if len(got.Title) > maxTitle+len("…") || len(got.URL) > maxURL+len("…") || !utf8.ValidString(got.Title) {
+		t.Errorf("title %d bytes, address %d bytes; want at most %d and %d, on a rune", len(got.Title), len(got.URL), maxTitle, maxURL)
 	}
 }

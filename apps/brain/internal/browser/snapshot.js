@@ -25,8 +25,10 @@
       size += s.length;
     }
   };
+  // flat is a page's own words on one line, cut to n, with a "[3 link]" of
+  // its own escaped: only the read numbers controls, in text or in a name.
   const flat = (s, n) => {
-    s = (s || "").replace(/\s+/g, " ").trim();
+    s = (s || "").replace(/\s+/g, " ").trim().replace(/\[(?=\d+ )/g, "\\[");
     return s.length > n ? s.slice(0, n) + "…" : s;
   };
   const hidden = (el) => {
@@ -72,7 +74,7 @@
     const named = el.getAttribute("aria-label") || el.getAttribute("title") || "";
     if (k.startsWith("field") || k === "select" || k === "checkbox" || k === "radio") {
       const name = el.getAttribute("name") || el.getAttribute("placeholder") || named;
-      let s = name ? '"' + flat(name, 60) + '"' : "";
+      let s = name ? JSON.stringify(flat(name, 60)) : "";
       if (k === "select") {
         const o = el.options && el.options[el.selectedIndex];
         const all = Array.from(el.options || []).slice(0, 20).map((x) => flat(x.textContent, 40));

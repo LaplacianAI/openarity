@@ -40,12 +40,26 @@ const (
 	// script stops there, and it is held here too, as the page could say
 	// otherwise.
 	maxText = 200_000
+	// maxTitle and maxURL are the most of a page's title and address shown,
+	// in bytes.
+	maxTitle = 300
+	maxURL   = 2048
 	// maxScreenshot is the largest picture handed to the model.
 	maxScreenshot = 8 << 20
 )
 
 //go:embed snapshot.js
 var snapshotJS string
+
+// ErrNotTaken is an action the page did not take because it named nothing
+// there: no control by that number, no option by that name. The page stayed
+// where it was.
+var ErrNotTaken = errors.New("the action named nothing on the page")
+
+type notTaken string
+
+func (e notTaken) Error() string { return string(e) }
+func (notTaken) Unwrap() error   { return ErrNotTaken }
 
 // A Snapshot is a page as the model reads it.
 type Snapshot struct {
@@ -55,9 +69,11 @@ type Snapshot struct {
 	Cut   bool   `json:"cut"`
 	Refs  int    `json:"refs"`
 	// Blocked names requests refused since the last read, at most a hundred;
-	// Refused counts them all.
+	// Refused counts them all, and Shed those held back because the page
+	// asked for more at once than are judged.
 	Blocked []string `json:"-"`
 	Refused int      `json:"-"`
+	Shed    int      `json:"-"`
 }
 
 // A Page is one tab in a session's browser, every request it makes checked.
@@ -104,12 +120,23 @@ func Start(ctx context.Context, s Session, client *http.Client, public Public, r
 	return p, nil
 }
 
-// Close shuts the tab and lets the session go, once. Safe on a nil Page.
+// Close shuts the tab and lets the session go, once. Safe on a nil Page. The
+// tab is closed, and its browser context disposed, before a hosted session is
+// let go, for as long as releaseTimeout allows.
 func (p *Page) Close() {
 	if p == nil {
 		return
 	}
 	p.once.Do(func() {
+		closed := make(chan struct{})
+		go func() {
+			defer close(closed)
+			_ = chromedp.Cancel(p.tab)
+		}()
+		select {
+		case <-closed:
+		case <-time.After(releaseTimeout):
+		}
 		p.abort()
 		if p.release != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
@@ -121,6 +148,10 @@ func (p *Page) Close() {
 
 // Unguarded is a hosted browser that would not pause its requests.
 func (p *Page) Unguarded() bool { return p.guard != nil && p.guard.unguarded }
+
+// Uncontained is a hosted browser that would not keep the page in its tab: a
+// page may open a socket or a popup there.
+func (p *Page) Uncontained() bool { return p.guard != nil && p.guard.uncontained }
 
 // within is the tab, stopped when ctx is or when the call has taken its
 // limit: chromedp runs on the tab's context.
@@ -268,7 +299,7 @@ func (p *Page) Screenshot(ctx context.Context) (Picture, error) {
 	if err != nil || len(at) != 2 {
 		at = []string{"", ""}
 	}
-	return Picture{PNG: png, URL: at[0], Title: at[1]}, nil
+	return Picture{PNG: png, URL: clip(at[0], maxURL), Title: clip(at[1], maxTitle)}, nil
 }
 
 func (p *Page) act(ctx context.Context, ref int, js string) (Snapshot, error) {
@@ -284,9 +315,9 @@ func (p *Page) act(ctx context.Context, ref int, js string) (Snapshot, error) {
 	}
 	switch said {
 	case "missing":
-		return Snapshot{}, fmt.Errorf("no control %d on this page: take a snapshot to see what is there", ref)
+		return Snapshot{}, notTaken(fmt.Sprintf("no control %d on this page: take a snapshot to see what is there", ref))
 	case "no option":
-		return Snapshot{}, fmt.Errorf("control %d has no option by that name or value", ref)
+		return Snapshot{}, notTaken(fmt.Sprintf("control %d has no option by that name or value", ref))
 	}
 	p.settle(c, mark)
 	return p.read(c)
@@ -346,16 +377,18 @@ func (p *Page) read(ctx context.Context) (Snapshot, error) {
 	}
 	s = clamp(s)
 	if p.guard != nil {
-		s.Blocked, s.Refused = p.guard.Blocked()
+		s.Blocked, s.Refused, s.Shed = p.guard.Blocked()
 	}
 	return s, nil
 }
 
-// clamp holds a read to maxText characters, whatever the page's script said.
+// clamp holds a read to maxText characters, whatever the page's script said,
+// and its title and address to what a heading needs: a page sets both.
 func clamp(s Snapshot) Snapshot {
 	if utf8.RuneCountInString(s.Text) > maxText {
 		s.Text, s.Cut = string([]rune(s.Text)[:maxText]), true
 	}
+	s.Title, s.URL = clip(s.Title, maxTitle), clip(s.URL, maxURL)
 	return s
 }
 

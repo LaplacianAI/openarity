@@ -105,14 +105,21 @@ click: approve `browser_open` for the rest of the run (`--for-run`) rather
 than one call at a time.
 
 **What a page may reach.** Every request the page's tab makes, its scripts,
-images, frames, styles, fetches, a worker's fetches and redirects included, is
-paused for the brain to allow, and one to an address that is not public is
-blocked; the read says what was. A page may open no popup and no websocket,
-and a link or form that targets another window opens in its own. A browser of
-the team's own is proved at start: it is sent to an address that is always
-refused, and one that loads it is not used. It also gets a browser context of
-its own for each run, so no cookie or storage is carried from one run to the
-next. A hosted browser that will not let its requests be paused is used all
+images, frames, styles, fetches and redirects included, is paused for the
+brain to allow, and one to an address that is not public is blocked. The read
+names up to ten of them and counts the rest. On a browser of the team's own,
+requests are also paused browser-wide, so a popup's or a frame's from another
+site are checked too. A page may open no socket of any kind (a websocket,
+`WebSocketStream`, WebTransport, WebRTC), start no worker, and open no popup.
+A link or form that targets another window opens in the page's own. A page
+that asks for more than a thousand requests at once has the rest held back,
+and the read says so.
+
+A browser of the team's own is proved at start. It is sent to an address that
+is always refused, and asked to fetch it from a page; one that loads either is
+not used. It also gets a browser context of its own for each run, so no cookie
+or storage is carried from one run to the next. A hosted browser that will not
+let its requests be paused, or will not keep the page in its tab, is used all
 the same, since what it reaches is its provider's network, and every read
 says so.
 
@@ -169,10 +176,9 @@ their port drives them: keep them on the network the overlay gives them.
   of the check's reach. For a browser of the team's own, its network is the
   boundary that holds: the deployment guide's "A browser" gives the host
   rules that keep it off private and link-local addresses.
-- **A worker's own websocket in Chrome.** Fetch pauses no websocket, and no
-  script reaches into a worker, so a worker could open one; WebRTC is not
-  checked either. The same network rules stand behind them. Lightpanda runs
-  neither.
+- **A connection opened ahead of a request.** `<link rel=preconnect>` and DNS
+  prefetch can reach an address without a request Fetch pauses. They carry no
+  data the page chose, and the same network rules stand behind them.
 - **Uploads, downloads, a second tab, and a page kept across an approval.**
 - **DNS rebinding through Firecrawl.** Firecrawl resolves the name itself, so a
   name whose answer changes between the brain's check and Firecrawl's lookup is

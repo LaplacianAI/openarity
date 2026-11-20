@@ -267,16 +267,28 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   runs scripts but lays nothing out; a control is found by the
   `data-oa-ref` the read stamped on it.
 - **What Fetch cannot see, a page may not do, and the guard is proved.**
-  Fetch pauses the requests of the page's own tab, its frames and its
-  workers, but no websocket and no other tab. So a script run before the
-  page's own, in every frame, takes away `WebSocket` and `window.open`, and
-  sends a link or form aimed at another window into its own. Measured on
-  headless-shell and Lightpanda, with an address the browser can reach and
-  the guard refuses: only a worker's own websocket in Chrome still gets
-  there, so that, and DNS rebinding, are left to the browser's network. A
-  browser of the team's own is sent to an address that is always refused
-  before it is used, so one that acknowledges `Fetch.enable` and pauses
-  nothing is found out, and each run gets a browser context of its own. A
+  Fetch on the tab pauses the requests of the page's own tab and frames, but
+  no socket of any kind, no shared worker's and no other tab's; and
+  `Network.setBlockedURLs` stops no websocket handshake either, measured. So a
+  script run before the page's own, in every frame, takes away every socket
+  (`WebSocket`, `WebSocketStream`, WebTransport, WebRTC), every worker (no
+  script of ours reaches into one to take its socket away) and
+  `window.open`, and sends a link or form aimed at another window into its
+  own. That script is best effort: a page's own listener, after ours, can
+  still send a form to a popup. So a browser of the team's own is also
+  paused browser-wide (`Fetch.enable` on the browser target), which reaches
+  popups, shared workers and frames from other sites. On a browser runs
+  share, a run's browser-wide guard pauses other runs' requests too and
+  judges them by the same rule; what it refuses there is not named in the
+  run's read, as it may be another run's. Measured on headless-shell and
+  Lightpanda, with an address the browser can reach and the guard refuses
+  and a second site on the same host: nothing gets there, and the popup a
+  listener sends does without the browser-wide guard. DNS rebinding and a
+  preconnect's bare connection are left to the browser's network. A browser
+  of the team's own is sent to an address that is always refused, and asked
+  to fetch it from a page, before it is used, so one that acknowledges
+  `Fetch.enable` and pauses nothing, or pauses navigations only, is found
+  out; and each run gets a browser context of its own. A
   browser that does not answer in time is a failure, never a refusal, so a
   hosted one is not used unguarded for being slow; one that refuses is, and
   every read says so.

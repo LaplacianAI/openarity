@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -39,32 +41,55 @@ const (
 	maxBlocked    = 100
 	maxBlockedURL = 200
 	// canaryHost is refused whatever public says. A self-hosted browser is
-	// sent to it at start, and one that loads it is not pausing its requests,
-	// whatever it answered Fetch.enable.
+	// sent to it at start, and asked to fetch it from the page: one that loads
+	// either is not pausing its requests, whatever it answered Fetch.enable.
 	canaryHost = "oa-canary.invalid"
+	// judgeTimeout is how long one host is looked up. A lookup that takes
+	// longer is a refusal: a page's own name server cannot hold a judge.
+	judgeTimeout = 5 * time.Second
+	// canaryWait is how long the page's fetch of the canary may take to be
+	// paused before the browser is taken not to pause it.
+	canaryWait = 5 * time.Second
 )
 
 // containJS runs before a page's own scripts in every frame. Fetch pauses no
-// websocket, and a popup is a tab of its own the guard does not watch: so a
-// page may open neither, and a link or form that targets another window
-// opens in this one.
+// socket of any kind, and no script of ours reaches into a worker to lock its
+// own: so a page may open no socket and start no worker. A popup's requests
+// are paused by the browser-wide guard, but it is a tab the read does not
+// follow, so a page may open none, and a link or form that targets another
+// window opens in this one.
 const containJS = `(() => {
   const lock = (o, k, v) => { try { Object.defineProperty(o, k, {value: v, writable: false, configurable: false}); } catch (e) {} };
-  lock(window, "WebSocket", function () { throw new Error("websockets are not allowed in this browser"); });
+  for (const k of ["WebSocket", "WebSocketStream", "WebTransport", "RTCPeerConnection", "webkitRTCPeerConnection", "Worker", "SharedWorker"]) {
+    lock(window, k, function () { throw new Error(k + " is not allowed in this browser"); });
+  }
+  try { lock(ServiceWorkerContainer.prototype, "register", function () { return Promise.reject(new Error("service workers are not allowed in this browser")); }); } catch (e) {}
   lock(window, "open", function () { return null; });
+  const self = (el) => { if (el) { el.setAttribute("target", "_self"); el.removeAttribute("formtarget"); } };
   const keep = (e) => {
     const t = e.target;
-    const a = t && t.closest && t.closest("a[target], area[target], form[target]");
-    if (a) a.target = "_self";
-    if (t && t.form && t.form.target) t.form.target = "_self";
+    if (!t || !t.closest) return;
+    self(t.closest("a, area, form"));
+    self(t.form);
+    self(e.submitter);
+    if (t.hasAttribute && t.hasAttribute("formtarget")) t.removeAttribute("formtarget");
   };
   window.addEventListener("click", keep, true);
   window.addEventListener("submit", keep, true);
+  for (const k of ["submit", "requestSubmit"]) {
+    const own = HTMLFormElement.prototype[k];
+    lock(HTMLFormElement.prototype, k, function (...a) { self(this); if (a[0]) self(a[0]); return own.apply(this, a); });
+  }
 })();`
 
 type paused struct {
 	id  fetch.RequestID
 	url string
+	// browser is a request the browser-wide guard paused: one from outside
+	// the tab, a popup's or a worker's, or the tab's own a second time. It is
+	// answered there, and not named in the tab's read, as on a browser runs
+	// share it may be another run's.
+	browser bool
 }
 
 // guard pauses every request the tab makes and lets through only those
@@ -74,13 +99,21 @@ type guard struct {
 	public Public
 	queue  chan paused
 	// unguarded is a hosted browser that would not pause its requests, used
-	// all the same: the read says so.
-	unguarded bool
+	// all the same: the read says so. uncontained is one that would not take
+	// containJS, so a page may open a socket or a popup: the read says that.
+	unguarded   bool
+	uncontained bool
 
 	mu      sync.Mutex
 	allowed map[string]bool
 	blocked []string
 	refused int
+	// shed is the requests refused because more were waiting than the queue
+	// holds, not for where they went.
+	shed int
+	// canaried is closed when the page's fetch of the canary is paused.
+	canaried chan struct{}
+	canaryed sync.Once
 }
 
 // startGuard starts judging tab's requests and keeps the page in its tab.
@@ -88,9 +121,17 @@ type guard struct {
 // end of it: a browser of the team's own sits on the team's network, a hosted
 // one on its provider's. A browser that does not answer is a failure, never a
 // refusal: a hosted one must not be used unguarded because it was slow.
+//
+// A browser of the team's own is guarded browser-wide too, behind the tab:
+// a popup or a worker makes requests the tab's guard never sees, and on a
+// browser runs share, the rule judged is the same whichever run's guard
+// pauses a request.
 func startGuard(tab context.Context, public Public, required bool) (*guard, error) {
-	g := &guard{tab: tab, public: public, queue: make(chan paused, queued), allowed: map[string]bool{}}
-	if err := chromedp.Listen(tab, g.pause); err != nil {
+	g := &guard{
+		tab: tab, public: public, queue: make(chan paused, queued), allowed: map[string]bool{},
+		canaried: make(chan struct{}),
+	}
+	if err := chromedp.Listen(tab, g.pause(false)); err != nil {
 		return nil, err
 	}
 	for range judges {
@@ -113,13 +154,21 @@ func startGuard(tab context.Context, public Public, required bool) (*guard, erro
 		case required:
 			return nil, ErrNoGuard
 		}
+		g.uncontained = true
 	}
 	if required {
-		if err := canary(tab); err != nil {
+		if err := chromedp.ListenBrowser(tab, g.pause(true)); err != nil {
 			return nil, err
 		}
-		// The canary is the brain's own request, not the page's to report.
-		g.Blocked()
+		if _, err := chromedp.CallBrowser(tab, fetch.Enable, fetch.EnableParams{}); err != nil {
+			if tab.Err() != nil {
+				return nil, fmt.Errorf("the browser did not answer: %w", tab.Err())
+			}
+			return nil, ErrNoGuard
+		}
+		if err := g.canary(); err != nil {
+			return nil, err
+		}
 	}
 	return g, nil
 }
@@ -131,34 +180,54 @@ func contain(tab context.Context) error {
 }
 
 // canary is the guard proved: a browser that said it pauses its requests and
-// loads the canary anyway does not.
-func canary(tab context.Context) error {
-	err := chromedp.Do(tab, chromedp.Navigate("http://"+canaryHost+"/"))
+// loads the canary anyway does not, nor does one whose page fetches it
+// without the fetch being paused. A browser may pause the one and not the
+// other.
+func (g *guard) canary() error {
+	err := chromedp.Do(g.tab, chromedp.Navigate("http://"+canaryHost+"/"))
 	switch {
 	case err != nil && strings.Contains(err.Error(), "ERR_BLOCKED_BY_CLIENT"):
-		// The error page's own events can still be queued, and the next
-		// Navigate would take its load for the page it asked for: a round
-		// trip lets them arrive first, as CDP keeps its order.
-		_, _ = chromedp.Run(tab, chromedp.Evaluate[any]("0"))
-		return nil
-	case tab.Err() != nil:
-		return fmt.Errorf("the browser did not answer: %w", tab.Err())
+	case g.tab.Err() != nil:
+		return fmt.Errorf("the browser did not answer: %w", g.tab.Err())
+	default:
+		return ErrNoGuard
 	}
-	return ErrNoGuard
+	// The error page's own events can still be queued, and the next Navigate
+	// would take its load for the page it asked for: this round trip lets
+	// them arrive first, as CDP keeps its order.
+	if _, err := chromedp.Run(g.tab, chromedp.Evaluate[any](`fetch("http://`+canaryHost+`/sub").catch(() => {}), 0`)); err != nil {
+		if g.tab.Err() != nil {
+			return fmt.Errorf("the browser did not answer: %w", g.tab.Err())
+		}
+		return ErrNoGuard
+	}
+	select {
+	case <-g.canaried:
+		return nil
+	case <-g.tab.Done():
+		return fmt.Errorf("the browser did not answer: %w", g.tab.Err())
+	case <-time.After(canaryWait):
+		return ErrNoGuard
+	}
 }
 
 // pause runs on chromedp's event loop, which a command sent from it would
-// block: a request is queued for a judge, or refused when the queue is full.
-func (g *guard) pause(ev any) {
-	e, ok := ev.(*fetch.EventRequestPaused)
-	if !ok {
-		return
-	}
-	p := paused{e.RequestID, e.Request.URL}
-	select {
-	case g.queue <- p:
-	default:
-		go g.refuse(p)
+// block: a request is queued for a judge. One past the queue is left paused,
+// counted and never let through: a page that asks for more than a thousand at
+// once waits on them, and a goroutine for each would let it make as many.
+func (g *guard) pause(browser bool) func(ev any) {
+	return func(ev any) {
+		e, ok := ev.(*fetch.EventRequestPaused)
+		if !ok {
+			return
+		}
+		select {
+		case g.queue <- paused{e.RequestID, e.Request.URL, browser}:
+		default:
+			g.mu.Lock()
+			g.shed++
+			g.mu.Unlock()
+		}
 	}
 }
 
@@ -172,21 +241,47 @@ func (g *guard) judge() {
 				g.refuse(p)
 				continue
 			}
-			_, _ = chromedp.Call(g.tab, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: p.id})
+			// A request the browser would not let go on is failed, never
+			// left for the page to wait on.
+			if _, err := send(g.tab, p.browser, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: p.id}); err != nil {
+				g.fail(p)
+			}
 		}
 	}
 }
 
 func (g *guard) refuse(p paused) {
-	g.mu.Lock()
-	g.refused++
-	if len(g.blocked) < maxBlocked {
-		g.blocked = append(g.blocked, clip(p.url, maxBlockedURL))
+	// The canary is the brain's own request, whichever guard paused it and
+	// however late: never the page's to report.
+	if host, _ := hostOf(p.url); host == canaryHost {
+		g.canaryed.Do(func() { close(g.canaried) })
+		g.fail(p)
+		return
 	}
-	g.mu.Unlock()
-	_, _ = chromedp.Call(g.tab, fetch.FailRequest, fetch.FailRequestParams{
+	if !p.browser {
+		g.mu.Lock()
+		g.refused++
+		if len(g.blocked) < maxBlocked {
+			g.blocked = append(g.blocked, clip(p.url, maxBlockedURL))
+		}
+		g.mu.Unlock()
+	}
+	g.fail(p)
+}
+
+func (g *guard) fail(p paused) {
+	_, _ = send(g.tab, p.browser, fetch.FailRequest, fetch.FailRequestParams{
 		RequestID: p.id, ErrorReason: network.ErrorReasonBlockedByClient,
 	})
+}
+
+// send sends a command to the tab, or to the browser for a request the
+// browser-wide guard paused.
+func send[P, R any](tab context.Context, browser bool, cmd cdp.Command[P, R], params P) (R, error) {
+	if browser {
+		return chromedp.CallBrowser(tab, cmd, params)
+	}
+	return chromedp.Call(tab, cmd, params)
 }
 
 // allows is whether the request may go on. Only a host let through is
@@ -205,7 +300,9 @@ func (g *guard) allows(raw string) error {
 	if ok {
 		return nil
 	}
-	if err := g.public(g.tab, host); err != nil {
+	ctx, cancel := context.WithTimeout(g.tab, judgeTimeout)
+	defer cancel()
+	if err := g.public(ctx, host); err != nil {
 		return err
 	}
 	g.mu.Lock()
@@ -217,13 +314,14 @@ func (g *guard) allows(raw string) error {
 }
 
 // Blocked is the requests refused since the last call, at most maxBlocked
-// named, and how many there were; it forgets them.
-func (g *guard) Blocked() ([]string, int) {
+// named, how many there were, and how many were held back as one too many;
+// it forgets them.
+func (g *guard) Blocked() ([]string, int, int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	b, n := g.blocked, g.refused
-	g.blocked, g.refused = nil, 0
-	return b, n
+	b, n, shed := g.blocked, g.refused, g.shed
+	g.blocked, g.refused, g.shed = nil, 0, 0
+	return b, n, shed
 }
 
 // hostOf is the host a request reaches, or "" for one that reaches none: a
