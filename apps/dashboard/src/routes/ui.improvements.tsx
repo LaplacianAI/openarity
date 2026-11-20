@@ -73,10 +73,12 @@ function Improvements() {
   const [typed, setTyped] = useState(q ?? "");
   // And the box follows the address when it changes from outside, as Back
   // does, so a stale box never writes its old words back.
+  // The box's own words reaching the address (trimmed) change nothing in it,
+  // so a trailing space or a keystroke still on its way is kept.
   const [lastQ, setLastQ] = useState(q);
   if (q !== lastQ) {
     setLastQ(q);
-    setTyped(q ?? "");
+    if ((q ?? "") !== typed.trim()) setTyped(q ?? "");
   }
   useEffect(() => {
     if (typed.trim() === (q ?? "")) return;

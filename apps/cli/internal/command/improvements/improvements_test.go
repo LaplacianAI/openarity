@@ -407,3 +407,14 @@ func TestLineDiffOfALongFileStaysCheap(t *testing.T) {
 		t.Errorf("a wholly rewritten long file = %d lines", len(d))
 	}
 }
+
+// An added file needs no table at all, however long it is.
+func TestLineDiffOfAnAddedFileBuildsNoTable(t *testing.T) {
+	big := make([]string, 200_000)
+	for i := range big {
+		big[i] = fmt.Sprintf("l%d", i)
+	}
+	if d := lineDiff(nil, big); len(d) != len(big) || d[0].op != opAdd {
+		t.Errorf("an added file = %d lines", len(d))
+	}
+}

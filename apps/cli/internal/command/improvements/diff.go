@@ -57,7 +57,7 @@ func lineDiff(a, b []string) []diffLine {
 }
 
 func middleDiff(a, b []string) []diffLine {
-	if len(a)*len(b) > maxCells {
+	if len(a) == 0 || len(b) == 0 || (len(a)+1)*(len(b)+1) > maxCells {
 		out := make([]diffLine, 0, len(a)+len(b))
 		for _, l := range a {
 			out = append(out, diffLine{opDel, cli.Line(l)})

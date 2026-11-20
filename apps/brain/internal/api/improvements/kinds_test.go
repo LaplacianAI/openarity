@@ -235,6 +235,13 @@ func TestCheckNoteLeavesAnOrphanAlone(t *testing.T) {
 	if err := Check(KindToolNote, Snapshot{Agent: &b}, Snapshot{Agent: ptr(withNotes(orphan, fresh, two))}); err == nil {
 		t.Error("adding two notes was allowed")
 	}
+	blank := ToolNote{Server: server, Tool: "fetch", Note: "\u202e\x01\n"}
+	if err := Check(KindToolNote, Snapshot{Agent: &b}, Snapshot{Agent: ptr(withNotes(orphan, blank))}); err == nil {
+		t.Error("a note of nothing printable was allowed")
+	}
+	if err := Check(KindToolNote, Snapshot{Agent: ptr(withNotes(orphan, fresh))}, Snapshot{Agent: &b}); err != nil {
+		t.Errorf("removing one note was refused: %v", err)
+	}
 	again := ToolNote{Server: server, Tool: "search", Note: "and cite it"}
 	if err := Check(KindToolNote, Snapshot{Agent: &b}, Snapshot{Agent: ptr(withNotes(orphan, fresh, again))}); err == nil {
 		t.Error("two notes on one tool were allowed")

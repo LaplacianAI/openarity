@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -358,7 +359,7 @@ func checkNote(b, a AgentState) error {
 			continue
 		}
 		changed++
-		if strings.TrimSpace(n.Note) == "" || utf8.RuneCountInString(n.Note) > 1000 || n.Tool == "" {
+		if oneLine(n.Note) == "" || utf8.RuneCountInString(n.Note) > 1000 || n.Tool == "" {
 			return refuse("a tool note is 1-1000 characters on a named tool")
 		}
 		g, ok := grantOf(a, n.Server)
@@ -495,6 +496,8 @@ func Marks(kind Kind, before, after Snapshot) []string {
 		// What the agent is told, and so what it does.
 		out = append(out, MarkChangesBehaviour)
 	case KindSkillNew:
+		// A new skill's body is more the agent will be told.
+		out = append(out, MarkChangesBehaviour)
 		if after.Skill != nil && after.Skill.AllowedTools != nil {
 			out = append(out, MarkWidensAccess)
 		}
@@ -556,4 +559,13 @@ func hasScripts(before, after []FileState) bool {
 		}
 	}
 	return false
+}
+
+// oneLine is a note as the model is told it: its words on one line, with
+// control and formatting characters (bidi overrides among them) gone. A note
+// that is nothing once this is done says nothing, and is refused.
+func oneLine(note string) string {
+	return strings.Join(strings.FieldsFunc(note, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r)
+	}), " ")
 }

@@ -77,3 +77,19 @@ describe("a long file", () => {
     expect(d[1500]?.kind).toBe("add");
   });
 });
+
+describe("an added or removed file", () => {
+  it("needs no table, however long", () => {
+    const big = Array.from({ length: 200_000 }, (_, i) => `l${i}`).join("\n");
+    const d = lineDiff(null, big);
+    expect(d).toHaveLength(200_000);
+    expect(d.every((l) => l.kind === "add")).toBe(true);
+  });
+
+  it("reads a final newline as the end of the last line", () => {
+    expect(lineDiff(null, "one\ntwo\n")).toEqual([
+      { kind: "add", text: "one" },
+      { kind: "add", text: "two" },
+    ]);
+  });
+});

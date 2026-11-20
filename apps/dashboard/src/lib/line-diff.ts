@@ -15,7 +15,8 @@ export type Folded = { kind: "skip"; count: number };
 
 function linesOf(text: string | null): string[] {
   if (text === null || text === "") return [];
-  return text.replace(/\r\n/g, "\n").split("\n");
+  // A final newline ends the last line rather than starting an empty one.
+  return text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 }
 
 /** Every line of `after` and `before`, each marked as kept, added or removed. */
@@ -40,7 +41,7 @@ export function lineDiff(before: string | null, after: string | null): DiffLine[
 }
 
 function middleDiff(a: string[], b: string[]): DiffLine[] {
-  if (a.length * b.length > MAX_CELLS) {
+  if (a.length === 0 || b.length === 0 || (a.length + 1) * (b.length + 1) > MAX_CELLS) {
     return [
       ...a.map((text): DiffLine => ({ kind: "del", text })),
       ...b.map((text): DiffLine => ({ kind: "add", text })),

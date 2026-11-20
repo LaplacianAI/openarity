@@ -515,9 +515,13 @@ func limited(t agent.Tool) agent.Tool {
 // note is model-written, so it is one line of printable text: it cannot open
 // a section of its own inside the description.
 func withNote(description, note string) string {
+	// The same cleaning the improvements API applies before it stores a note.
 	note = strings.Join(strings.FieldsFunc(note, func(r rune) bool {
-		return unicode.IsControl(r) || unicode.IsSpace(r)
+		return unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r)
 	}), " ")
+	if note == "" {
+		return description
+	}
 	if description == "" {
 		return "Note for this agent: " + note
 	}
