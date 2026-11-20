@@ -271,7 +271,10 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    # web_search and web_fetch; off unless set\n" +
 			"    web: true\n" +
 			"    # a browser to drive, from the team's browser provider; off unless set\n" +
-			"    browser: false\n\n" +
+			"    browser: false\n" +
+			"    # Bash, Read, Write, Edit, Glob and Grep in its session's workspace,\n" +
+			"    # from the team's sandbox provider; off unless set\n" +
+			"    workspace: false\n\n" +
 			"    oa agents create platform -f triage.yaml \\\n" +
 			"        --mcp-server github=search_code --skill pdf-processing",
 		Args: cobra.ExactArgs(1),
@@ -431,6 +434,11 @@ func printAgent(opts *cli.Options, a *client.Agent, did string) error {
 				table.Row("browser", "on", "the team's browser")
 			} else {
 				table.Row("browser", "off", "")
+			}
+			if a.Workspace {
+				table.Row("workspace", "on", "a shell and files in the session's sandbox")
+			} else {
+				table.Row("workspace", "off", "")
 			}
 		},
 	})

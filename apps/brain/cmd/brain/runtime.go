@@ -44,7 +44,7 @@ func newRunJob(
 	searchClient := websearch.NewClient(reachable(cfg.MCPPrivateNetworks))
 	search := &runtime.SearchDeps{Secrets: secretStore, New: newSearchers(searchClient)}
 	discoverer := newDiscoverer(cfg, secretStore, dbStore)
-	runCommandsInRooms(discoverer, cfg, logger, dbStore, secretStore)
+	rooms := runCommandsInRooms(discoverer, cfg, logger, dbStore, secretStore)
 	builder := runtime.NewBuilder(dbStore, attachments, discoverer, graphDeps, search,
 		newFetch(searchClient, net.DefaultResolver)).
 		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, discoverer, runtime.Loops())}).
@@ -52,6 +52,9 @@ func newRunJob(
 		WithBrowsers(newBrowsers(secretStore, searchClient, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)
+	}
+	if ws := newWorkspaces(rooms, cfg); ws != nil {
+		builder.WithWorkspaces(ws)
 	}
 	endpoint := agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 	streamer, err := agent.New(clients, runtime.StreamingPatterns()...)

@@ -292,14 +292,14 @@ func TestAServersBrowserToolIsTheBrainsOnlyOnABrowserRun(t *testing.T) {
 
 func TestTheBrowserNamesAreReservedOnlyOnABrowserRun(t *testing.T) {
 	for _, name := range BrowserToolNames {
-		if reserved(name, true, true, false) {
+		if reserved(name, reservedFor{hub: true, web: true}) {
 			t.Errorf("%s reserved on a run without a browser", name)
 		}
-		if !reserved(name, false, false, true) {
+		if !reserved(name, reservedFor{browse: true}) {
 			t.Errorf("%s not reserved on a browser run", name)
 		}
 	}
-	if reserved("browser", false, false, true) {
+	if reserved("browser", reservedFor{browse: true}) {
 		t.Error("a name that is not the brain's reserved")
 	}
 }

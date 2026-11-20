@@ -62,6 +62,7 @@ type listed struct {
 	Delegation    string `json:"delegation"`
 	Web           bool   `json:"web"`
 	Browser       bool   `json:"browser"`
+	Workspace     bool   `json:"workspace"`
 	ServerCount   int64  `json:"mcp_server_count"`
 	SkillCount    int64  `json:"skill_count"`
 	DelegateCount int64  `json:"delegate_count"`
@@ -82,6 +83,7 @@ type detail struct {
 	Delegates          []uuid.UUID   `json:"delegates"`
 	Web                bool          `json:"web"`
 	Browser            bool          `json:"browser"`
+	Workspace          bool          `json:"workspace"`
 	ToolNotes          []ToolNote    `json:"tool_notes"`
 }
 
@@ -104,6 +106,9 @@ type Request struct {
 	Delegates          []uuid.UUID   `json:"delegates"`
 	Web                *bool         `json:"web"`
 	Browser            *bool         `json:"browser"`
+	// Workspace is Bash, Read, Write, Edit, Glob and Grep in a room of the
+	// session's, offered when the team has a sandbox.
+	Workspace *bool `json:"workspace"`
 }
 
 type agentCursor struct {

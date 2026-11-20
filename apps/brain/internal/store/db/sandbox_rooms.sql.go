@@ -264,6 +264,23 @@ func (q *Queries) TouchSandboxRoom(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const touchSandboxRoomByOwner = `-- name: TouchSandboxRoomByOwner :exec
+UPDATE sandbox_rooms SET last_used_at = now()
+WHERE owner_kind = $1 AND owner_id = $2
+`
+
+type TouchSandboxRoomByOwnerParams struct {
+	OwnerKind string
+	OwnerID   uuid.UUID
+}
+
+// An owner's room, used again by a caller that already holds its endpoint,
+// so the sweep of idle rooms leaves it while it is in use.
+func (q *Queries) TouchSandboxRoomByOwner(ctx context.Context, arg TouchSandboxRoomByOwnerParams) error {
+	_, err := q.db.Exec(ctx, touchSandboxRoomByOwner, arg.OwnerKind, arg.OwnerID)
+	return err
+}
+
 const unlockSandboxRoom = `-- name: UnlockSandboxRoom :one
 SELECT pg_advisory_unlock(hashtextextended('sandbox-room:' || $1::text || ':' || $2::text, 0))::bool AS released
 `

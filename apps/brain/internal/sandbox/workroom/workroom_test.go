@@ -42,6 +42,11 @@ func (e *ensurer) Ensure(_ context.Context, o keeper.Owner, team uuid.UUID, _ ke
 	return sandbox.Endpoint{URL: "http://room"}, nil
 }
 
+func (e *ensurer) Touch(_ context.Context, o keeper.Owner) error {
+	e.owner = o
+	return nil
+}
+
 func TestTheRoomIsTheSessions(t *testing.T) {
 	t.Parallel()
 	e := &ensurer{}
@@ -51,6 +56,10 @@ func TestTheRoomIsTheSessions(t *testing.T) {
 	}
 	if e.owner != (keeper.Owner{Kind: "session", ID: session}) || e.team != team {
 		t.Errorf("owner %+v, team %v", e.owner, e.team)
+	}
+	e.owner = keeper.Owner{}
+	if err := workroom.New(e).Touch(t.Context(), session); err != nil || e.owner != (keeper.Owner{Kind: "session", ID: session}) {
+		t.Errorf("touched %+v, %v", e.owner, err)
 	}
 }
 

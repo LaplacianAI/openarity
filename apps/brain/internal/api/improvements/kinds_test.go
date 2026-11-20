@@ -60,6 +60,11 @@ func TestCheckPerKind(t *testing.T) {
 		{"server grant", KindServerGrant, func(s *AgentState) { s.Agent.MCPServers = []agents.ServerGrant{{ID: server}} }, true},
 		{"builtin web", KindBuiltinTool, func(s *AgentState) { s.Agent.Web = ptr(true) }, true},
 		{"builtin both", KindBuiltinTool, func(s *AgentState) { s.Agent.Web = ptr(true); s.Agent.Browser = ptr(true) }, false},
+		// A shell is a person's to grant: no kind of proposal turns it on.
+		{"builtin workspace", KindBuiltinTool, func(s *AgentState) { s.Agent.Workspace = ptr(true) }, false},
+		{"instructions with a workspace", KindInstructions, func(s *AgentState) { s.Agent.Instructions = "j"; s.Agent.Workspace = ptr(true) }, false},
+		// A snapshot from before the field existed has none: that is off.
+		{"instructions from before workspaces", KindInstructions, func(s *AgentState) { s.Agent.Instructions = "j"; s.Agent.Workspace = ptr(false) }, true},
 		{"delegation listed", KindDelegation, func(s *AgentState) { s.Agent.Delegation = ptr("listed"); s.Agent.Delegates = []uuid.UUID{delegate} }, true},
 		{"delegation listed with nobody", KindDelegation, func(s *AgentState) { s.Agent.Delegation = ptr("listed") }, false},
 		{"unknown kind", Kind("model"), func(s *AgentState) { s.Agent.Model.Name = "x" }, false},

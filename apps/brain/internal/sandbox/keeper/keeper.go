@@ -101,6 +101,7 @@ type Store interface {
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 	GetSandboxRoom(ctx context.Context, arg db.GetSandboxRoomParams) (db.SandboxRoom, error)
 	TouchSandboxRoom(ctx context.Context, id uuid.UUID) error
+	TouchSandboxRoomByOwner(ctx context.Context, arg db.TouchSandboxRoomByOwnerParams) error
 	ReplaceSandboxRoom(ctx context.Context, old *db.SandboxRoom, arg db.CreateSandboxRoomParams) (db.SandboxRoom, error)
 	RecordDeletedSecret(ctx context.Context, arg db.RecordDeletedSecretParams) error
 	WithRoomLock(ctx context.Context, kind string, owner uuid.UUID, fn func(context.Context) error) error
@@ -447,6 +448,14 @@ func (k *Keeper) forget(ctx context.Context, team uuid.UUID, path string) {
 	if err != nil {
 		k.logger.ErrorContext(ctx, "keeper: a room's token outlived its failed start", "team_id", team, "error", err)
 	}
+}
+
+// Touch marks the owner's room used now, so the sweep of idle rooms leaves
+// it. A caller that holds an endpoint calls it in place of Ensure on every
+// request: Ensure takes the owner's lock and asks the room whether it
+// answers, which a request about to be sent is about to find out anyway.
+func (k *Keeper) Touch(ctx context.Context, o Owner) error {
+	return k.store.TouchSandboxRoomByOwner(ctx, db.TouchSandboxRoomByOwnerParams{OwnerKind: o.Kind, OwnerID: o.ID})
 }
 
 // Delete deletes a room at a provider with the key it was made with, for the

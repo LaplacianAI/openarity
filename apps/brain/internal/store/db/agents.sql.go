@@ -119,13 +119,13 @@ INSERT INTO agents (
     team_id, name, description, kind, instructions,
     model_name, max_tokens, temperature, pattern, max_steps, steer_continuations,
     output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature,
-    token_budget, delegation, web, browser
+    token_budget, delegation, web, browser, workspace
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
-    $17, $18, $19, $20
-) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser
+    $17, $18, $19, $20, $21
+) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace
 `
 
 type CreateAgentParams struct {
@@ -149,6 +149,7 @@ type CreateAgentParams struct {
 	Delegation         string
 	Web                bool
 	Browser            bool
+	Workspace          bool
 }
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error) {
@@ -173,6 +174,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.Delegation,
 		arg.Web,
 		arg.Browser,
+		arg.Workspace,
 	)
 	var i Agent
 	err := row.Scan(
@@ -199,6 +201,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.Delegation,
 		&i.Web,
 		&i.Browser,
+		&i.Workspace,
 	)
 	return i, err
 }
@@ -213,7 +216,7 @@ func (q *Queries) DeleteAgent(ctx context.Context, id uuid.UUID) error {
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser FROM agents WHERE id = $1
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace FROM agents WHERE id = $1
 `
 
 func (q *Queries) GetAgent(ctx context.Context, id uuid.UUID) (Agent, error) {
@@ -243,12 +246,13 @@ func (q *Queries) GetAgent(ctx context.Context, id uuid.UUID) (Agent, error) {
 		&i.Delegation,
 		&i.Web,
 		&i.Browser,
+		&i.Workspace,
 	)
 	return i, err
 }
 
 const getAgentByName = `-- name: GetAgentByName :one
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser FROM agents
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace FROM agents
 WHERE team_id = $1 AND lower(name) = lower($2::text)
 `
 
@@ -286,6 +290,7 @@ func (q *Queries) GetAgentByName(ctx context.Context, arg GetAgentByNameParams) 
 		&i.Delegation,
 		&i.Web,
 		&i.Browser,
+		&i.Workspace,
 	)
 	return i, err
 }
@@ -368,7 +373,7 @@ func (q *Queries) ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uui
 }
 
 const listAgentsByTeam = `-- name: ListAgentsByTeam :many
-SELECT a.id, a.team_id, a.name, a.description, a.kind, a.instructions, a.model_name, a.max_tokens, a.temperature, a.pattern, a.max_steps, a.steer_continuations, a.output_schema, a.parser, a.parser_model_name, a.parser_max_tokens, a.parser_temperature, a.created_at, a.updated_at, a.token_budget, a.delegation, a.web, a.browser,
+SELECT a.id, a.team_id, a.name, a.description, a.kind, a.instructions, a.model_name, a.max_tokens, a.temperature, a.pattern, a.max_steps, a.steer_continuations, a.output_schema, a.parser, a.parser_model_name, a.parser_max_tokens, a.parser_temperature, a.created_at, a.updated_at, a.token_budget, a.delegation, a.web, a.browser, a.workspace,
     (SELECT count(*) FROM agent_mcp_servers g WHERE g.agent_id = a.id) AS server_count,
     (SELECT count(*) FROM agent_skills k WHERE k.agent_id = a.id)      AS skill_count,
     (SELECT count(*) FROM agent_delegates d WHERE d.agent_id = a.id)   AS delegate_count
@@ -437,6 +442,7 @@ func (q *Queries) ListAgentsByTeam(ctx context.Context, arg ListAgentsByTeamPara
 			&i.Agent.Delegation,
 			&i.Agent.Web,
 			&i.Agent.Browser,
+			&i.Agent.Workspace,
 			&i.ServerCount,
 			&i.SkillCount,
 			&i.DelegateCount,
@@ -720,9 +726,10 @@ UPDATE agents SET
     delegation          = $16,
     web                 = $17,
     browser             = $18,
+    workspace           = $19,
     updated_at          = now()
-WHERE id = $19
-RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser
+WHERE id = $20
+RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace
 `
 
 type UpdateAgentParams struct {
@@ -744,6 +751,7 @@ type UpdateAgentParams struct {
 	Delegation         string
 	Web                bool
 	Browser            bool
+	Workspace          bool
 	ID                 uuid.UUID
 }
 
@@ -768,6 +776,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.Delegation,
 		arg.Web,
 		arg.Browser,
+		arg.Workspace,
 		arg.ID,
 	)
 	var i Agent
@@ -795,6 +804,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.Delegation,
 		&i.Web,
 		&i.Browser,
+		&i.Workspace,
 	)
 	return i, err
 }

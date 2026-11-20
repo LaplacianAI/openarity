@@ -40,6 +40,7 @@ const (
 // Ensurer is the keeper, as this package uses it.
 type Ensurer interface {
 	Ensure(ctx context.Context, o keeper.Owner, team uuid.UUID, w keeper.Want) (sandbox.Endpoint, error)
+	Touch(ctx context.Context, o keeper.Owner) error
 }
 
 // Rooms are sessions' workspaces in their team's sandbox.
@@ -51,6 +52,12 @@ func New(k Ensurer) *Rooms { return &Rooms{keeper: k} }
 // there is none.
 func (r *Rooms) Ensure(ctx context.Context, team, session uuid.UUID) (sandbox.Endpoint, error) {
 	return r.keeper.Ensure(ctx, keeper.Owner{Kind: OwnerKind, ID: session}, team, Want())
+}
+
+// Touch marks the session's room used, for a caller that holds its endpoint
+// and so need not ensure it again for every call.
+func (r *Rooms) Touch(ctx context.Context, session uuid.UUID) error {
+	return r.keeper.Touch(ctx, keeper.Owner{Kind: OwnerKind, ID: session})
 }
 
 // Want is what every workspace is made from. Nothing in it is a session's

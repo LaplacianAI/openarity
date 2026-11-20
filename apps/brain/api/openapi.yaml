@@ -6111,7 +6111,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web, browser, tool_notes]
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web, browser, workspace, tool_notes]
           properties:
             instructions:
               type: string
@@ -6162,6 +6162,11 @@ components:
               description: |
                 Whether the agent may drive the team's browser when it runs as
                 itself. The team's hub may whatever this says.
+            workspace:
+              type: boolean
+              description: |
+                Whether the agent has Bash, Read, Write, Edit, Glob and Grep in
+                its session's workspace, when the team has a sandbox.
             tool_notes:
               type: array
               description: |
@@ -6276,6 +6281,17 @@ components:
             team's browser provider, and is apart from web: a browser runs a
             page's scripts and acts on it. Left out, it is false, and a PUT
             that leaves it out takes the grant away.
+        workspace:
+          type: boolean
+          default: false
+          description: |
+            Gives the agent a workspace: Bash, Read, Write, Edit, Glob and Grep
+            in a sandbox room of its session's, shared by every agent working
+            on that session, with the public internet and nothing private. It
+            needs the team's sandbox provider; every call passes the team's
+            approval policy, and Bash is classed as a write. An agent cannot
+            propose this grant for itself. Left out, it is false, and a PUT
+            that leaves it out takes the grant away.
 
     Delegation:
       type: string
@@ -6295,7 +6311,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [delegation, web, browser, mcp_server_count, skill_count, delegate_count]
+          required: [delegation, web, browser, workspace, mcp_server_count, skill_count, delegate_count]
           properties:
             delegation:
               $ref: "#/components/schemas/Delegation"
@@ -6305,6 +6321,9 @@ components:
             browser:
               type: boolean
               description: Whether it may drive the team's browser by its own grant
+            workspace:
+              type: boolean
+              description: Whether it has a workspace by its own grant
             mcp_server_count:
               type: integer
               format: int64
@@ -6494,6 +6513,8 @@ components:
         web:
           type: boolean
         browser:
+          type: boolean
+        workspace:
           type: boolean
 
     BlueprintServerGrant:
