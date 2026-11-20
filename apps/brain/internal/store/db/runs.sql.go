@@ -36,10 +36,10 @@ const addRunUsage = `-- name: AddRunUsage :one
 UPDATE runs SET
     input_tokens        = input_tokens  + $1::bigint,
     output_tokens       = output_tokens + $2::bigint,
-    cached_input_tokens = cached_input_tokens
-        + least($3::bigint, $1::bigint)
+    cached_input_tokens = cached_input_tokens + greatest(0,
+        least($3::bigint, $1::bigint))
 WHERE id = $4 AND worker = $5::text AND status = 'running'
-RETURNING (input_tokens - cached_input_tokens + cached_input_tokens / 10 + output_tokens)::bigint AS spent
+RETURNING run_spent(input_tokens, cached_input_tokens, output_tokens)::bigint AS spent
 `
 
 type AddRunUsageParams struct {
@@ -51,9 +51,9 @@ type AddRunUsageParams struct {
 }
 
 // Counted as it is spent, so a resumed run carries on from the same total.
-// spent is what the run's budget counts: a token read from the provider's
-// cache as a tenth of one, as it is billed, and every other token whole. A
-// provider counting more cached than it read is held to what it read.
+// spent is what the run's budget counts (run_spent: a cached token as a
+// tenth). A provider counting more cached than it read, or less than none,
+// is held between none and what it read.
 func (q *Queries) AddRunUsage(ctx context.Context, arg AddRunUsageParams) (int64, error) {
 	row := q.db.QueryRow(ctx, addRunUsage,
 		arg.InputTokens,

@@ -339,7 +339,8 @@ func TestUsageAddsUpAndOnlyForTheHolder(t *testing.T) {
 
 // A token read from the provider's cache is billed at about a tenth of a
 // fresh one, so the budget counts it so: a review delegate rereading 100,000
-// cached tokens a step ran out of a 2M budget it had hardly paid for.
+// cached tokens a step ran out of a 2M budget it had hardly paid for. Each
+// row adds one call's usage to the same run; spent is the running total.
 func TestABudgetCountsACachedTokenAsATenth(t *testing.T) {
 	t.Parallel()
 
@@ -348,33 +349,31 @@ func TestABudgetCountsACachedTokenAsATenth(t *testing.T) {
 	r := createRun(t, s, f)
 	claim(t, s, r.ID, "w1")
 
-	add := func(in, cached, out int64) int64 {
-		t.Helper()
+	for _, step := range []struct {
+		name               string
+		in, cached, out    int64
+		spent, totalCached int64
+	}{
+		{"mostly cached: 10,000 fresh, 90,000 as 9,000, 500 written", 100_000, 90_000, 500, 19_500, 90_000},
+		{"none cached counts every token", 1_000, 0, 100, 20_600, 90_000},
+		{"more cached than read is held to what was read", 1_000, 5_000, 0, 20_700, 91_000},
+		{"less than none cached counts as none", 100, -50, 0, 20_800, 91_000},
+		// The tenth is taken of the run's total, not of each call, so small
+		// cached counts are not lost: 91,009 cached is 9,100 whole.
+		{"a few cached tokens still add up", 9, 9, 0, 20_800, 91_009},
+	} {
 		spent, err := s.AddRunUsage(t.Context(), db.AddRunUsageParams{
-			ID: r.ID, Worker: "w1", InputTokens: in, CachedInputTokens: cached, OutputTokens: out,
+			ID: r.ID, Worker: "w1", InputTokens: step.in, CachedInputTokens: step.cached, OutputTokens: step.out,
 		})
 		if err != nil {
-			t.Fatalf("usage: %v", err)
+			t.Fatalf("%s: %v", step.name, err)
 		}
-		return spent
-	}
-
-	// 10,000 fresh, 90,000 cached as 9,000, and 500 written.
-	if got := add(100_000, 90_000, 500); got != 19_500 {
-		t.Fatalf("spent = %d, want 19,500", got)
-	}
-	// None cached counts every token, as before.
-	if got := add(1_000, 0, 100); got != 20_600 {
-		t.Errorf("spent = %d, want 20,600", got)
-	}
-	// A provider counting more cached than it read is held to what it read.
-	if got := add(1_000, 5_000, 0); got != 20_700 {
-		t.Errorf("spent = %d, want 20,700: 1,000 cached as 100", got)
-	}
-	row := statusOf(t, s, r.ID)
-	if row.InputTokens != 102_000 || row.CachedInputTokens != 91_000 || row.OutputTokens != 600 {
-		t.Errorf("totals = %d in, %d cached, %d out; want 102,000, 91,000 and 600",
-			row.InputTokens, row.CachedInputTokens, row.OutputTokens)
+		if spent != step.spent {
+			t.Errorf("%s: spent = %d, want %d", step.name, spent, step.spent)
+		}
+		if got := statusOf(t, s, r.ID).CachedInputTokens; got != step.totalCached {
+			t.Errorf("%s: cached total = %d, want %d", step.name, got, step.totalCached)
+		}
 	}
 }
 

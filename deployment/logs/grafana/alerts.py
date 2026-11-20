@@ -159,15 +159,15 @@ GROUPS = {
              "gt", 0, "0s", "warning", "Postgres, FalkorDB or Loki logged a fatal error"),
     ]),
     S: (900, [
-        # A placeholder: set it a few times above what a normal hour spends.
-        # Tokens as a run's budget counts them: a cached token as a tenth,
-        # as it is billed. Counted whole, a review rereading its context
-        # from the cache fired this at a fifth of what it cost.
+        # Tokens as a run's budget counts them (run_spent: a cached token as
+        # a tenth, as it is billed). Counted whole, a review rereading its
+        # context from the cache fired this at five times the bill. Over the
+        # week to 20 Nov 2026 an active hour spent 115K at the median, 1.4M
+        # at the 90th percentile and 3.2M at most, so 2M is the top few hours.
         rule("oa-token-spend", S, "Token spend spike", sql(
-            "SELECT coalesce(sum(input_tokens - cached_input_tokens + cached_input_tokens / 10 "
-            "+ output_tokens), 0) AS value "
+            "SELECT coalesce(sum(run_spent(input_tokens, cached_input_tokens, output_tokens)), 0) AS value "
             "FROM runs WHERE created_at > now() - interval '1 hour'"),
-            "gt", 500000, "0s", "warning", "Over 500K tokens spent in the last hour, a cached token as a tenth"),
+            "gt", 2000000, "0s", "warning", "Over 2M tokens spent in the last hour, a cached token as a tenth"),
     ]),
 }
 
