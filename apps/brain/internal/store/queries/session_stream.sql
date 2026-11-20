@@ -17,6 +17,7 @@ FROM (
            NULL::text AS agent, NULL::uuid AS parent_run_id, NULL::text AS output
     FROM messages m
     WHERE m.session_id = sqlc.arg('session_id')::uuid AND m.session_seq > sqlc.arg('after')::bigint
+      AND NOT m.answer
     UNION ALL
     SELECT e.session_seq, e.created_at, e.kind, e.run_id, e.payload,
            r.agent_name, r.parent_run_id, CASE WHEN e.kind = 'finished' THEN r.output END
@@ -54,6 +55,11 @@ ORDER BY r.depth, r.id;
 -- one. Until a run takes it, it is pending.
 -- name: MarkMessageAsks :exec
 UPDATE messages SET asks = true WHERE id = $1;
+
+-- A typed message the brain read as an answer to a request: kept, so a
+-- notice can answer it, and out of the conversation as a tap is.
+-- name: MarkMessageAnswer :exec
+UPDATE messages SET answer = true WHERE id = $1;
 
 -- A run taking pending messages of its session, oldest first, and saying so
 -- in its events: the one given, the oldest one when first_only, or all of
@@ -153,6 +159,7 @@ FROM (
     LEFT JOIN users u ON u.id = m.user_id
     WHERE m.session_id = sqlc.arg('session_id')::uuid
       AND m.session_seq < sqlc.arg('before')::bigint
+      AND NOT m.answer
     UNION ALL
     SELECT coalesce(e.session_seq, 0), e.created_at, true, ''::text, coalesce(r.output, ''), '{}'::text[]
     FROM run_events e

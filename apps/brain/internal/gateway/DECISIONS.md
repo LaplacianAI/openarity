@@ -391,8 +391,13 @@ in this conversation: a waiting one is decided, an answered one is said to be
 over. Any other word ("yes sure") is what they wrote. A lookup over everyone's
 requests would tell a group which codes are live, and a "no such code" reply
 would swallow an ordinary message. A typed code answers in a group without a
-mention, as the footer asks for it; a bare yes there must still ask the bot,
-since "yes" to a colleague is not an answer. Either is read only where the
+mention, as the footer asks for it. **Only a code decides.** A bare yes or
+no, while the sender has a request waiting and the message asks the bot, is
+told the code and decides nothing, with one request waiting as with several:
+"yes" may answer the agent's own question, and read as an ordinary message it
+would give up the very request it meant to approve. A bare yes in a group
+that does not ask the bot is not an answer at all, since "yes" to a colleague
+is not one. Either is read only where the
 channel answers at all (`answersHere`, the part of `addressed` that is not
 about being asked), and never from a bot. A code can come round again across
 a conversation's runs: the waiting request is the one it names, else the
@@ -507,3 +512,27 @@ Two things that look like details and are the whole rule:
 
 A permission rather than a role, because which role holds it is data in
 `rbac.json`. A super admin passes it the way they pass every permission.
+
+**A tap is an action, not something said.** An answer given with a control (a
+WhatsApp poll vote, a Telegram keyboard tap, a Slack button) is matched to its
+request before its message is stored. One that names nothing it may act on is
+refused there and never stored: a poll vote changed after it decided its
+request, since WhatsApp cannot take a poll back, or a tap on someone else's
+request that is already over. One that acts is stored with `messages.answer`
+set, as is a typed message read as an answer (decided, told it is over, or
+told the code), and every read of the conversation leaves those rows out: the
+`history` tool, the next run's "said since", the session's stream and lists,
+and the message a reply quotes. They are kept rather than dropped because a
+notice is a reply to a message (`replies.in_reply_to`), and the notice is what
+takes a Slack or Telegram prompt's buttons away. The decision itself is on the
+approval and its events. Found on staging, 2026-11-20: two requests, each
+voted on and then changed, left four "Voted in the poll" messages the model
+read as things the person had said.
+
+"Answer" here is the column's meaning: a message that acted on a request. It
+is not `Delivery.Answer`, the control an adapter parsed, nor `unanswered`, a
+message no run took. Rows from before the column are left as they were, since
+telling an old vote from something said would be a guess by its text. A bare
+yes or no told the code is an answer too, and so hidden: while a request waits
+its run is parked on that request, so the yes is about it, and the model
+reading it would take it for an approval nothing made.

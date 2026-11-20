@@ -169,6 +169,10 @@ func (f *inboxStore) MarkMessageAsks(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// MarkMessageAnswer is a typed answer marked: the fake answers no typed
+// message, so it records nothing.
+func (f *inboxStore) MarkMessageAnswer(context.Context, uuid.UUID) error { return nil }
+
 func (f *inboxStore) ConsumeMessages(_ context.Context, arg db.ConsumeMessagesParams) (int64, error) {
 	f.consumed = append(f.consumed, arg)
 	return 1, nil

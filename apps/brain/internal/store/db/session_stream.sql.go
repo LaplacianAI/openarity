@@ -152,7 +152,7 @@ func (q *Queries) DashboardChannel(ctx context.Context, teamID uuid.UUID) (Chann
 }
 
 const getMessageByExternalID = `-- name: GetMessageByExternalID :one
-SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by, sender_name FROM messages WHERE channel_id = $1 AND external_id = $2
+SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by, sender_name, answer FROM messages WHERE channel_id = $1 AND external_id = $2
 `
 
 type GetMessageByExternalIDParams struct {
@@ -177,6 +177,7 @@ func (q *Queries) GetMessageByExternalID(ctx context.Context, arg GetMessageByEx
 		&i.Asks,
 		&i.ConsumedBy,
 		&i.SenderName,
+		&i.Answer,
 	)
 	return i, err
 }
@@ -197,6 +198,7 @@ FROM (
            NULL::text AS agent, NULL::uuid AS parent_run_id, NULL::text AS output
     FROM messages m
     WHERE m.session_id = $1::uuid AND m.session_seq > $2::bigint
+      AND NOT m.answer
     UNION ALL
     SELECT e.session_seq, e.created_at, e.kind, e.run_id, e.payload,
            r.agent_name, r.parent_run_id, CASE WHEN e.kind = 'finished' THEN r.output END
@@ -269,6 +271,7 @@ FROM (
     LEFT JOIN users u ON u.id = m.user_id
     WHERE m.session_id = $1::uuid
       AND m.session_seq < $2::bigint
+      AND NOT m.answer
     UNION ALL
     SELECT coalesce(e.session_seq, 0), e.created_at, true, ''::text, coalesce(r.output, ''), '{}'::text[]
     FROM run_events e
@@ -378,6 +381,17 @@ func (q *Queries) LockRunSession(ctx context.Context, id uuid.UUID) (uuid.UUID, 
 	var id_2 uuid.UUID
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const markMessageAnswer = `-- name: MarkMessageAnswer :exec
+UPDATE messages SET answer = true WHERE id = $1
+`
+
+// A typed message the brain read as an answer to a request: kept, so a
+// notice can answer it, and out of the conversation as a tap is.
+func (q *Queries) MarkMessageAnswer(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markMessageAnswer, id)
+	return err
 }
 
 const markMessageAsks = `-- name: MarkMessageAsks :exec
