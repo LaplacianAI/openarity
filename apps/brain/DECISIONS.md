@@ -623,9 +623,7 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     the latest and takes the API's new runs. What waits under
     `openarity-brain-v1` waits untouched, and is taken up when this build is
     deployed again, with no restamp.
-  - **Startup cannot be cut short by a signal,** so DBOS's connect and
-    migrations are bounded by `startupTimeout` (60s), not its two minutes.
-  - **Every workflow survives a stop, not only runs.** A sweep, purge, drain
+  - **Other jobs' workflows are left PENDING by a stop.** A sweep, purge, drain
     or reply workflow stopped mid-step stays PENDING under the dead worker's
     executor id. Only runs are taken over, by the run sweep, and executor ids
     are random per process, so nothing else ever clears those rows: a few
@@ -637,8 +635,9 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     Postgres tests in `internal/worker/shutdown_test.go` hold it, with
     `TestTheWorkerKeepsOneVersionAcrossBuilds`; run them with `db=` on every
     DBOS upgrade.
-  - **Restamping** is needed after the first deploy of this change and after
-    any change to `appVersion`, because a workflow keeps the version it was
+  - **Restamping** is needed after the first deploy of this change, after
+    any change to `appVersion`, and after a rollback to an older build and
+    forward again (the older build stamps new runs with its hash), because a workflow keeps the version it was
     enqueued with and neither a resume nor a second enqueue restamps it. There
     is no operations page yet, so the steps live here:
     1. Deploy, and make sure no older worker still runs.
@@ -646,17 +645,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
        the run sweep takes it over (`staleAfter`, 90s) and resumes it (the
        `runtime-sweep` schedule, every minute).
     3. Count what is left on another version, restamp it, and count again
-       until nothing is. Where `DBOS__APPVERSION` is set, use its value; better,
+       until nothing is. A row with no version is the API's and is normal:
+       the latest version's worker takes it, so neither query touches it. Where `DBOS__APPVERSION` is set, use its value; better,
        do not set it in a deployment.
 
     ```sql
     SELECT application_version, status, count(*) FROM dbos.workflow_status
      WHERE queue_name = 'openarity-runs' AND status IN ('ENQUEUED', 'PENDING')
+       AND application_version <> 'openarity-brain-v1'
      GROUP BY 1, 2 ORDER BY 1, 2;
 
     UPDATE dbos.workflow_status SET application_version = 'openarity-brain-v1'
      WHERE queue_name = 'openarity-runs' AND status IN ('ENQUEUED', 'PENDING')
-       AND application_version IS DISTINCT FROM 'openarity-brain-v1';
+       AND application_version <> 'openarity-brain-v1';
     ```
 
     Leave the other queues: the next tick or sweep redoes their work.

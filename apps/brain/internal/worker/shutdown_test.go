@@ -261,6 +261,9 @@ func TestAWorkerUnderAnOverriddenVersionStillTakesUpTheAPIsRuns(t *testing.T) {
 	client := testClient(t, dsn)
 	launchBuild(t, dsn, "env-v")
 	launchBuild(t, dsn, "another-build")
+	if got := latestVersion(t, client); got != "another-build" {
+		t.Fatalf("the latest version is %s before the worker starts, want another-build", got)
+	}
 
 	t.Setenv("DBOS__APPVERSION", "env-v")
 	close(job.release)
