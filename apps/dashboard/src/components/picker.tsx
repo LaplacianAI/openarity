@@ -61,9 +61,11 @@ export function Picker({
   /**
    * One pick shown in a field of its own, as a select is, rather than as a
    * chip and an "Add" link: for a form where it sits in a row of fields.
-   * Only with max 1; the field names itself with this id for its label.
+   * Only with max 1, where nothing is hidden by it; with more it is
+   * ignored, so a pick is never chosen out of sight. The field is named by
+   * its label and then by what is chosen, as a select is.
    */
-  field?: { id: string; placeholder: string };
+  field?: { id: string; labelId: string; placeholder: string };
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -85,6 +87,7 @@ export function Picker({
   const chosen = new Set(value.map((v) => v.id));
 
   const single = max === 1;
+  const asField = single ? field : undefined;
   const full = max !== undefined && value.length >= max;
   const toggle = (o: Picked) => {
     if (chosen.has(o.id)) {
@@ -131,7 +134,7 @@ export function Picker({
 
   return (
     <div className="space-y-1.5">
-      {value.length > 0 && !field ? (
+      {value.length > 0 && !asField ? (
         <ul aria-label={label} className="flex flex-wrap gap-1">
           {value.map((p) => (
             <li
@@ -160,18 +163,20 @@ export function Picker({
         }}
       >
         <Popover.Trigger asChild>
-          {field ? (
+          {asField ? (
             <button
               ref={trigger}
-              id={field.id}
+              id={asField.id}
               type="button"
-              aria-haspopup="listbox"
+              aria-labelledby={`${asField.labelId} ${asField.id}-value`}
               className={cn(
                 "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 text-left text-sm transition-[color,border-color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
                 value.length === 0 && "text-muted-foreground",
               )}
             >
-              <span className="truncate">{value[0]?.name ?? field.placeholder}</span>
+              <span id={`${asField.id}-value`} className="truncate">
+                {value[0]?.name ?? asField.placeholder}
+              </span>
               <ChevronDown aria-hidden className="size-4 shrink-0 opacity-50" />
             </button>
           ) : (

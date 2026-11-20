@@ -55,7 +55,7 @@ const ROUTES = {
 
 /** Chooses a server in the rule form's picker, and closes it. */
 async function chooseServer(section: HTMLElement, name: string) {
-  await userEvent.click(within(section).getByRole("button", { name: "Server" }));
+  await userEvent.click(within(section).getByRole("button", { name: /^Server / }));
   await userEvent.click(await screen.findByRole("option", { name }));
   await userEvent.keyboard("{Escape}");
 }
@@ -274,7 +274,7 @@ it("finds the built-in tools by a tool's name", async () => {
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
   await within(section).findByRole("list", { name: "Tool approval rules" });
 
-  await userEvent.click(within(section).getByRole("button", { name: "Server" }));
+  await userEvent.click(within(section).getByRole("button", { name: /^Server / }));
   await userEvent.type(await screen.findByRole("combobox", { name: "Search server" }), "fetch");
   await waitFor(() => expect(screen.queryByRole("option", { name: "github" })).toBeNull());
   expect(screen.getByRole("option", { name: "Built-in tools" })).toBeInTheDocument();
@@ -390,4 +390,42 @@ it("says nothing of the mode while approvals are on", async () => {
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
   await within(section).findByRole("list", { name: "Tool approval rules" });
   expect(within(section).queryByText(/approvals are off/i)).toBeNull();
+});
+
+it("names the server field by what is chosen in it", async () => {
+  brain({ ...team(["team:settings"]), ...ROUTES });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  expect(
+    await within(section).findByRole("button", { name: "Server Choose a server" }),
+  ).toBeInTheDocument();
+  await chooseServer(section, "shell");
+  expect(within(section).getByRole("button", { name: "Server shell" })).toBeInTheDocument();
+  expect(within(section).getByLabelText("Tool")).toHaveTextContent("Choose a tool");
+});
+
+it("forgets someone else's answer once the rule no longer asks", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "POST /teams/{id}/approval-rules": { body: { ...RULE, id: "ru7" } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
+
+  await userEvent.click(within(section).getByRole("switch", { name: "Someone else must answer" }));
+  await userEvent.click(within(section).getByRole("radio", { name: "Never" }));
+  await userEvent.click(within(section).getByRole("radio", { name: "Ask" }));
+  expect(
+    within(section).getByRole("switch", { name: "Someone else must answer" }),
+  ).not.toBeChecked();
+  await userEvent.click(within(section).getByRole("radio", { name: "Every tool of a server" }));
+  await chooseServer(section, "shell");
+  await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
+    mode: "ask",
+    require_other: false,
+  });
 });

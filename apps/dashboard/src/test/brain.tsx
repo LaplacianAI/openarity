@@ -291,11 +291,9 @@ export function showAt(at: string, routes: [path: string, route: AnyRoute][], st
 
 /**
  * Chooses an option in one of the dashboard's selects. It opens from the
- * keyboard, as jsdom has no pointer capture for a press to open it, and
- * scrolls its highlighted option into view, which jsdom cannot.
+ * keyboard, as jsdom has no pointer capture for a press to open it.
  */
 export async function choose(trigger: HTMLElement, name: string | RegExp) {
-  Element.prototype.scrollIntoView ??= () => {};
   trigger.focus();
   await userEvent.keyboard("{ArrowDown}");
   await userEvent.click(await screen.findByRole("option", { name }));

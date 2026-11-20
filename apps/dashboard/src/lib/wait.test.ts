@@ -11,3 +11,10 @@ it("says a wait the way a person would", () => {
   expect(waitWords(1440)).toBe("1 day");
   expect(waitWords(1439)).toBe("23 hours 59 minutes");
 });
+
+it.each([[0], [-65], [30.5], [Number.NaN], [Number.POSITIVE_INFINITY]])(
+  "says nothing of %s, which is not a wait",
+  (minutes) => {
+    expect(waitWords(minutes)).toBe("");
+  },
+);

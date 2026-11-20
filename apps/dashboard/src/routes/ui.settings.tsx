@@ -28,21 +28,13 @@ import type {
   TeamSettings,
   TeamSettingsRequest,
 } from "@/api/types";
+import { Choice, type ChoiceGroup, chosen, Segments } from "@/components/choices";
 import { DeleteTeamDialog } from "@/components/delete-team-dialog";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SwitchField } from "@/components/ui/switch";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
@@ -934,74 +926,6 @@ function SettingsForm({
   );
 }
 
-/* ---------------------------------------------------------- one choice */
-
-/**
- * One choice from a short list, in the dashboard's own select rather than the
- * browser's: anchored under its field, at the field's width. Field passes its
- * description and invalid state, which land on the trigger.
- */
-function Choice<T extends string>({
-  id,
-  value,
-  options,
-  onChange,
-  placeholder,
-  disabled,
-  ...aria
-}: {
-  id: string;
-  value: T | "";
-  options: readonly { value: T; label: string }[] | readonly ChoiceGroup<T>[];
-  onChange: (next: T) => void;
-  placeholder?: string;
-  disabled?: boolean;
-  "aria-describedby"?: string;
-  "aria-invalid"?: boolean;
-}) {
-  const groups: readonly ChoiceGroup<T>[] =
-    options[0] !== undefined && "options" in options[0]
-      ? (options as readonly ChoiceGroup<T>[])
-      : [{ label: "", options: options as readonly { value: T; label: string }[] }];
-  return (
-    <Select
-      // An empty value is no choice yet: the placeholder shows.
-      value={value === "" ? undefined : value}
-      onValueChange={(v) => onChange(v as T)}
-      disabled={disabled}
-    >
-      <SelectTrigger id={id} className="w-full" {...aria}>
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent position="popper" align="start">
-        {groups.map((g) =>
-          g.label ? (
-            <SelectGroup key={g.label}>
-              <SelectLabel>{g.label}</SelectLabel>
-              {g.options.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          ) : (
-            g.options.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))
-          ),
-        )}
-      </SelectContent>
-    </Select>
-  );
-}
-
-type ChoiceGroup<T extends string> = {
-  label: string;
-  options: readonly { value: T; label: string }[];
-};
-
 /* ---------------------------------------------------------- tool approvals */
 
 /** The modes from loosest to strictest, each with what it asks before. */
@@ -1010,7 +934,8 @@ const APPROVAL_MODES: { value: ApprovalMode; label: string; about: string }[] = 
   {
     value: "destructive",
     label: "Destructive calls only",
-    about: "Agents ask before a call that may delete or send something.",
+    about:
+      "Agents ask before a call that may delete or send something. Opening a page, clicking and typing are not asked.",
   },
   {
     value: "writes",
@@ -1125,34 +1050,34 @@ function ApprovalModeSection({
           }}
           className="divide-y divide-rule overflow-hidden rounded-md border border-border"
         >
-          {APPROVAL_MODES.map((m) => (
-            <label
-              key={m.value}
-              htmlFor={`approval-mode-${m.value}`}
-              className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors duration-(--dur-press) ease-out hover:bg-muted has-[:disabled]:cursor-default has-[:disabled]:hover:bg-transparent"
-            >
-              <RadioGroup.Item
-                id={`approval-mode-${m.value}`}
-                value={m.value}
-                aria-labelledby={`approval-mode-${m.value}-label`}
-                aria-describedby={`approval-mode-${m.value}-about`}
-                className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-input transition-colors duration-(--dur-press) ease-out outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=checked]:border-primary"
+          {APPROVAL_MODES.map((m) => {
+            const id = `approval-mode-${m.value}`;
+            return (
+              <label
+                key={m.value}
+                htmlFor={id}
+                className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors duration-(--dur-press) ease-out hover:bg-muted has-[:disabled]:cursor-default has-[:disabled]:hover:bg-transparent"
               >
-                <RadioGroup.Indicator className="size-2 rounded-full bg-primary" />
-              </RadioGroup.Item>
-              <span className="min-w-0 space-y-0.5">
-                <span id={`approval-mode-${m.value}-label`} className="block text-sm font-medium">
-                  {m.label}
-                </span>
-                <span
-                  id={`approval-mode-${m.value}-about`}
-                  className="block text-xs text-muted-foreground"
+                <RadioGroup.Item
+                  id={id}
+                  value={m.value}
+                  aria-labelledby={`${id}-label`}
+                  aria-describedby={`${id}-about`}
+                  className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-input transition-colors duration-(--dur-press) ease-out outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=checked]:border-primary"
                 >
-                  {m.about}
+                  <RadioGroup.Indicator className="size-2 rounded-full bg-primary" />
+                </RadioGroup.Item>
+                <span className="min-w-0 space-y-0.5">
+                  <span id={`${id}-label`} className="block text-sm font-medium">
+                    {m.label}
+                  </span>
+                  <span id={`${id}-about`} className="block text-xs text-muted-foreground">
+                    {m.about}
+                  </span>
                 </span>
-              </span>
-            </label>
-          ))}
+              </label>
+            );
+          })}
         </RadioGroup.Root>
       </div>
       <Field
@@ -1161,6 +1086,7 @@ function ApprovalModeSection({
         hint={`${TTL_MIN} to ${TTL_MAX}. After that it expires and the run carries on without it.`}
       >
         <WaitInput
+          id="settings-approval-ttl"
           value={ttl}
           readout={valid ? waitWords(minutes) : null}
           onChange={(v) => {
@@ -1183,11 +1109,13 @@ function ApprovalModeSection({
 
 /** The wait in minutes, with what it comes to beside it. */
 function WaitInput({
+  id,
   value,
   readout,
   onChange,
   ...aria
 }: {
+  id: string;
   value: string;
   readout: string | null;
   onChange: (next: string) => void;
@@ -1197,7 +1125,7 @@ function WaitInput({
   return (
     <div className="flex items-center gap-2">
       <Input
-        id="settings-approval-ttl"
+        id={id}
         type="number"
         inputMode="numeric"
         className="w-24 tabular-nums"
@@ -1206,7 +1134,7 @@ function WaitInput({
         {...aria}
       />
       <span className="text-sm text-muted-foreground">
-        minutes{readout && readout !== `${value} minutes` ? ` · ${readout}` : ""}
+        minutes{readout && readout !== `${Number(value)} minutes` ? ` · ${readout}` : ""}
       </span>
     </div>
   );
@@ -1230,9 +1158,14 @@ const RULE_ANSWERS: {
   { value: "ask", label: "Always ask", short: "Ask", icon: Clock, tone: "text-warning" },
   { value: "deny", label: "Never allow", short: "Never", icon: Ban, tone: "text-destructive" },
 ];
-// Ask is the cautious reading of an answer this build does not know, as the brain's.
-const ASK = RULE_ANSWERS[1] as (typeof RULE_ANSWERS)[number];
-const answerOf = (m: ApprovalRuleMode) => RULE_ANSWERS.find((a) => a.value === m) ?? ASK;
+/**
+ * A rule's answer as shown. One this build does not know is shown as asking,
+ * since that is what the brain does with it (`verdictOf`).
+ */
+function answerOf(m: ApprovalRuleMode) {
+  const ask = RULE_ANSWERS.find((a) => a.value === "ask");
+  return RULE_ANSWERS.find((a) => a.value === m) ?? (ask as (typeof RULE_ANSWERS)[number]);
+}
 
 /** The brain's own tools a rule may name: those the approval gate stands before. */
 const BUILT_INS: ChoiceGroup<string>[] = [
@@ -1246,7 +1179,11 @@ const BUILT_INS: ChoiceGroup<string>[] = [
   {
     label: "Browser",
     options: [
-      { value: "browser_open", label: "browser_open" },
+      {
+        value: "browser_open",
+        label: "browser_open",
+        hint: "Asked when a page opens, and covers what is then done on it.",
+      },
       { value: "browser_snapshot", label: "browser_snapshot" },
       { value: "browser_click", label: "browser_click" },
       { value: "browser_type", label: "browser_type" },
@@ -1308,11 +1245,8 @@ function RuleTool({
   const hint = !server ? (
     "Choose a server first."
   ) : builtIn ? (
-    value === "browser_open" ? (
-      "Asked when a page opens, and covers what is then done on it."
-    ) : (
-      "Tools every agent can be given, such as reading a web page."
-    )
+    (chosen(BUILT_INS, value)?.hint ??
+    "Tools every agent can be given, such as reading a web page.")
   ) : tools.isPending ? (
     "Reading the server's tools…"
   ) : tools.isError ? (
@@ -1351,43 +1285,6 @@ function ruleSubject(kind: string, target: string): { name: string; from: string
     return { name: target.slice(cut + 2), from: `on ${target.slice(0, cut)}`, mono: true };
   }
   return { name: target, from: "Built-in", mono: true };
-}
-
-/** A small set of choices drawn as one segmented control. */
-function Segments<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: readonly { value: T; label: string; icon?: typeof Check; tone?: string }[];
-  onChange: (next: T) => void;
-}) {
-  return (
-    <RadioGroup.Root
-      aria-label={label}
-      orientation="horizontal"
-      value={value}
-      onValueChange={(v) => onChange(v as T)}
-      className="inline-flex max-w-full flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
-    >
-      {options.map((o) => {
-        const Icon = o.icon;
-        return (
-          <RadioGroup.Item
-            key={o.value}
-            value={o.value}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm text-muted-foreground transition-[color,background-color] duration-(--dur-press) ease-out outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-[0.97] data-[state=checked]:bg-surface data-[state=checked]:font-medium data-[state=checked]:text-foreground data-[state=checked]:shadow-[inset_0_0_0_1px_var(--sheet-edge)] motion-reduce:active:scale-100"
-          >
-            {Icon ? <Icon aria-hidden className={cn("size-3.5", o.tone)} /> : null}
-            {o.label}
-          </RadioGroup.Item>
-        );
-      })}
-    </RadioGroup.Root>
-  );
 }
 
 const RULE_SCOPES = [
@@ -1550,14 +1447,22 @@ function ApprovalRulesSection({
           />
           <div className={cn("grid gap-3", kind === "tool" && "sm:grid-cols-2")}>
             <div className="min-w-0 space-y-1.5">
-              <label htmlFor="rule-server" className="block text-sm font-medium">
+              <label
+                id="rule-server-label"
+                htmlFor="rule-server"
+                className="block text-sm font-medium"
+              >
                 Server
               </label>
               <Picker
                 label="Server"
                 noun="server"
                 max={1}
-                field={{ id: "rule-server", placeholder: "Choose a server" }}
+                field={{
+                  id: "rule-server",
+                  labelId: "rule-server-label",
+                  placeholder: "Choose a server",
+                }}
                 value={server ? [server] : []}
                 onChange={(next) => {
                   const picked = next[0] ?? null;
@@ -1578,7 +1483,11 @@ function ApprovalRulesSection({
               label="Answer"
               value={mode}
               options={RULE_ANSWERS.map((a) => ({ ...a, label: a.short }))}
-              onChange={setMode}
+              onChange={(next) => {
+                setMode(next);
+                // Someone else's answer belongs to a rule that asks.
+                if (next !== "ask") setOther(false);
+              }}
             />
           </div>
           {mode === "ask" ? (
