@@ -686,8 +686,12 @@ func TestRunsSharingABrowserStartAndReadApart(t *testing.T) {
 // form to another; a link may still lead away, and what is then on the page
 // is refused until it is opened. Kept to nothing, it is taken anywhere.
 func TestAnActionIsKeptToItsSite(t *testing.T) {
-	if os.Getenv("BRAIN_TEST_BROWSER_OTHER_HOST") == "" {
-		missing(t, "BRAIN_TEST_BROWSER_OTHER_HOST")
+	// Both: the site's pages to another one are served beside the refused
+	// address's.
+	for _, need := range []string{"BRAIN_TEST_BROWSER_OTHER_HOST", "BRAIN_TEST_BROWSER_HOST_IP"} {
+		if os.Getenv(need) == "" {
+			missing(t, need)
+		}
 	}
 	eachBrowser(t, func(t *testing.T, b realBrowser) {
 		srv := site(t, b)

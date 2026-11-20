@@ -318,3 +318,32 @@ func TestEachPopupIsClosedOnceAndRetriedWhenFull(t *testing.T) {
 		t.Errorf("popups gone are still kept: %v", w.closed)
 	}
 }
+
+// The failers take the tab's own first, and stop with the tab.
+func TestTheFailersTakeTheTabsFirstAndStopWithIt(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	g := &guard{tab: ctx, failQ: make(chan paused, 4), wideFail: make(chan paused, 4)}
+	for i := range 4 {
+		g.wideFail <- paused{url: fmt.Sprintf("https://wide.example/%d", i), browser: true}
+	}
+	g.failQ <- paused{url: "https://tab.example/1"}
+	g.failQ <- paused{url: "https://tab.example/2"}
+	for i := range 2 {
+		if p, ok := g.nextToFail(); !ok || p.browser {
+			t.Fatalf("taken %d: %+v, %v; want the tab's own first", i+1, p, ok)
+		}
+	}
+	if p, ok := g.nextToFail(); !ok || !p.browser {
+		t.Errorf("with the tab's done: %+v, %v; want a browser-wide one", p, ok)
+	}
+	cancel()
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); g.failer() }()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a failer outlived its tab")
+	}
+}

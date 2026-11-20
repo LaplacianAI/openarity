@@ -115,7 +115,6 @@ type guard struct {
 	// queue is the tab's requests, wide the browser-wide guard's, and failQ
 	// and wideFail what each could not take: apart, so a flood of other runs'
 	// requests never leaves the tab's own waiting to be failed.
-	// what neither could take.
 	queue, wide, failQ, wideFail chan paused
 	// unguarded is a hosted browser that would not pause its requests, used
 	// all the same: the read says so. uncontained is one that would not take
@@ -227,7 +226,9 @@ func (g *guard) closePopups() error {
 			case <-g.tab.Done():
 				return
 			case id := <-w.closing:
-				_, _ = chromedp.CallBrowser(g.tab, target.CloseTarget, target.CloseTargetParams{TargetID: id})
+				if _, err := chromedp.CallBrowser(g.tab, target.CloseTarget, target.CloseTargetParams{TargetID: id}); err != nil && g.tab.Err() == nil {
+					w.unclosed(id)
+				}
 			}
 		}
 	}()
@@ -281,15 +282,20 @@ func (w *popups) event(ev any) {
 	select {
 	case w.closing <- info.TargetID:
 	default:
-		// More popups than are closed at once: forgotten, so its next event
-		// tries again, and the read says the page is not kept in its tab.
-		w.mu.Lock()
-		delete(w.closed, info.TargetID)
-		w.mu.Unlock()
-		w.g.mu.Lock()
-		w.g.uncontained = true
-		w.g.mu.Unlock()
+		// More popups than are closed at once.
+		w.unclosed(info.TargetID)
 	}
+}
+
+// unclosed is a popup that could not be closed now: forgotten, so its next
+// event tries again, and the read says the page is not kept in its tab.
+func (w *popups) unclosed(id target.ID) {
+	w.mu.Lock()
+	delete(w.closed, id)
+	w.mu.Unlock()
+	w.g.mu.Lock()
+	w.g.uncontained = true
+	w.g.mu.Unlock()
 }
 
 // contain keeps the page in its tab: containJS in every document.
@@ -399,21 +405,32 @@ func (g *guard) pause(browser bool) func(ev any) {
 // noticed here too: one held back under load is still this guard's.
 func (g *guard) failer() {
 	for {
-		var p paused
-		select {
-		case <-g.tab.Done():
+		p, ok := g.nextToFail()
+		if !ok {
 			return
-		case p = <-g.failQ:
-		default:
-			select {
-			case <-g.tab.Done():
-				return
-			case p = <-g.failQ:
-			case p = <-g.wideFail:
-			}
 		}
 		g.noticeCanary(p)
 		g.fail(p)
+	}
+}
+
+// nextToFail is the tab's own when one waits, else whichever comes first;
+// false once the tab is done.
+func (g *guard) nextToFail() (paused, bool) {
+	select {
+	case <-g.tab.Done():
+		return paused{}, false
+	case p := <-g.failQ:
+		return p, true
+	default:
+	}
+	select {
+	case <-g.tab.Done():
+		return paused{}, false
+	case p := <-g.failQ:
+		return p, true
+	case p := <-g.wideFail:
+		return p, true
 	}
 }
 
