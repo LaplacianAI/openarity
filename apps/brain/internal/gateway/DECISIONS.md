@@ -528,3 +528,11 @@ takes a Slack or Telegram prompt's buttons away. The decision itself is on the
 approval and its events. Found on staging, 2026-11-20: two requests, each
 voted on and then changed, left four "Voted in the poll" messages the model
 read as things the person had said.
+
+"Answer" here is the column's meaning: a message that acted on a request. It
+is not `Delivery.Answer`, the control an adapter parsed, nor `unanswered`, a
+message no run took. Rows from before the column are left as they were, since
+telling an old vote from something said would be a guess by its text. A bare
+yes or no told the code is an answer too, and so hidden: while a request waits
+its run is parked on that request, so the yes is about it, and the model
+reading it would take it for an approval nothing made.

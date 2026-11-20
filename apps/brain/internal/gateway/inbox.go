@@ -96,8 +96,10 @@ func (i *Inbox) KickingNotices(kick func(ctx context.Context, messageID uuid.UUI
 
 // Delivered is what became of one message: the conversation it is in, and
 // the run it started or was sent to, or why it got no answer. Message is
-// uuid.Nil for one already stored under the same ExternalID, which is
-// dropped as the retry it is.
+// uuid.Nil when nothing was stored: a message already stored under the same
+// ExternalID, dropped as the retry it is, or an answer given with a control
+// that names no request it may act on, refused (Unanswered says so). Only a
+// channel's message carries a control, so the dashboard never sees the second.
 type Delivered struct {
 	Session    uuid.UUID
 	Message    uuid.UUID

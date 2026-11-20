@@ -6,6 +6,8 @@ SET LOCAL lock_timeout = '3s';
 -- run's input and the session's reads leave it out. A constant default, so
 -- adding it rewrites nothing.
 ALTER TABLE messages ADD COLUMN answer boolean NOT NULL DEFAULT false;
+COMMENT ON COLUMN messages.answer IS
+    'An answer to a request (a tap, a vote, a typed code), not something said: every read of the conversation must leave it out.';
 
 -- +goose Down
 SET LOCAL lock_timeout = '3s';

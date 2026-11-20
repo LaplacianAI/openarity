@@ -182,9 +182,9 @@ func (w *chatWorld) runStatus(t *testing.T) string {
 	return s
 }
 
-// A yes with its code from the person a request is for, who may approve
-// their own, decides it in the chat: approved by them, via the channel, the run queued again and
-// handed back, one notice, and the message never a steer.
+// A yes with its code from the person a request is for, who may approve their
+// own, decides it in the chat: approved by them, via the channel, the run
+// queued again and handed back, one notice, and the message never a steer.
 func TestAYesInTheChatApprovesTheRequestAndResumesTheRun(t *testing.T) {
 	w := newChatWorld(t, "member")
 	a := w.ask(t, "c1", "7K2F", time.Hour, false)
@@ -813,5 +813,31 @@ func TestABareYesWithOneWaitingIsToldTheCodeAndDecidesNothing(t *testing.T) {
 	w.say(t, w.user, "m-2", "yes 7K2F", nil)
 	if got := w.request(t, a); got.Status != "approved" {
 		t.Errorf("the request is %s after its code, want approved", got.Status)
+	}
+}
+
+// A vote taken back, or a refused vote delivered again, names nothing: it is
+// refused before it is stored, every time, and says nothing.
+func TestAVoteTakenBackOrDeliveredAgainIsNotStored(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	yes := sha256.Sum256([]byte(gateway.PollOptions("7K2F")[0]))
+	no := sha256.Sum256([]byte(gateway.PollOptions("7K2F")[1]))
+
+	w.say(t, w.user, "vote-1", "Voted in the poll", &gateway.Answer{Hashes: [][]byte{yes[:]}})
+	w.say(t, w.user, "vote-2", "Voted in the poll", &gateway.Answer{Hashes: nil})
+	w.say(t, w.user, "vote-3", "Voted in the poll", &gateway.Answer{Hashes: [][]byte{no[:]}})
+	w.say(t, w.user, "vote-3", "Voted in the poll", &gateway.Answer{Hashes: [][]byte{no[:]}})
+
+	if got := w.request(t, a); got.Status != "approved" {
+		t.Errorf("the request is %s, want still approved", got.Status)
+	}
+	for _, id := range []string{"vote-2", "vote-3"} {
+		if stored, _ := w.stored(t, id); stored {
+			t.Errorf("%s was stored", id)
+		}
+	}
+	if n := w.notices(t); len(n) != 1 {
+		t.Errorf("notices %+v, want only the decision's", n)
 	}
 }

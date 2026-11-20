@@ -255,7 +255,14 @@ func Supersede(ctx context.Context, q Superseding, runID, userID uuid.UUID, via 
 // marks one it was as an answer: whatever it did (decided a request, was told
 // its request is over, was asked which code it meant), it is the person
 // acting on a request, not something said, and leaves the conversation as a
-// tap does. Kept, not dropped, since its notice answers it.
+// tap does. Kept, not dropped, since its notice answers it. Marked after it is
+// stored, unlike a tap: a typed message is known to be an answer only by
+// reading it against the requests, which needs its row for the notice. The
+// same transaction holds the session, so no reader sees it unmarked.
+//
+// A bare yes or no, told the code, is marked too: while a request waits its
+// run is parked on that very request, so a bare yes is about it, and shown to
+// the model it would read as an approval when nothing was decided.
 func typedAnswer(ctx context.Context, c chat, addressed bool) (outcome, bool, error) {
 	out, handled, err := answerTyped(ctx, c, addressed)
 	if err != nil || !handled {
