@@ -117,8 +117,9 @@ type guard struct {
 	// requests never leaves the tab's own waiting to be failed.
 	queue, wide, failQ, wideFail chan paused
 	// unguarded is a hosted browser that would not pause its requests, used
-	// all the same: the read says so. uncontained is one that would not take
-	// containJS, so a page may open a socket or a popup: the read says that.
+	// all the same: the read says so. uncontained is a page not kept in its
+	// tab, a hosted browser that would not take containJS or a popup that
+	// could not be closed: the read says that.
 	unguarded   bool
 	uncontained bool
 
