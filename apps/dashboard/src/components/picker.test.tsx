@@ -225,3 +225,49 @@ describe("a picker of one", () => {
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   });
 });
+
+describe("a picker drawn as a field", () => {
+  function AsField({ max, initial = [] as Picked[] }: { max: number; initial?: Picked[] }) {
+    const [value, setValue] = useState<Picked[]>(initial);
+    return (
+      <>
+        <span id="skill-label">Skill</span>
+        <Picker
+          label="Skills"
+          noun="skill"
+          value={value}
+          onChange={setValue}
+          search={searcher()}
+          searchKey={["field", max]}
+          max={max}
+          field={{ id: "skill", labelId: "skill-label", placeholder: "Choose a skill" }}
+        />
+      </>
+    );
+  }
+
+  function show(ui: React.ReactNode) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  }
+
+  it("is named by its label and then by what is chosen, and opens a dialog", async () => {
+    show(<AsField max={1} />);
+    const field = screen.getByRole("button", { name: "Skill Choose a skill" });
+    expect(field).toHaveAttribute("aria-haspopup", "dialog");
+    await userEvent.click(field);
+    await userEvent.click(await screen.findByRole("option", { name: "pdf" }));
+    expect(screen.getByRole("button", { name: "Skill pdf" })).toBeInTheDocument();
+    // A field shows its pick inside it, never as a chip beside it.
+    expect(screen.queryByRole("list", { name: "Skills" })).toBeNull();
+  });
+
+  it("is ignored for more than one, so no pick is out of sight", () => {
+    show(<AsField max={3} initial={[SKILLS[3] as Picked, SKILLS[4] as Picked]} />);
+    expect(screen.queryByRole("button", { name: /^Skill / })).toBeNull();
+    expect(
+      within(screen.getByRole("list", { name: "Skills" })).getAllByRole("listitem"),
+    ).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /add skill/i })).toBeInTheDocument();
+  });
+});

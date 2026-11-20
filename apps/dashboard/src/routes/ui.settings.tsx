@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { Ban, Check, Clock, Info, TriangleAlert } from "lucide-react";
+import { RadioGroup } from "radix-ui";
 import { type ReactNode, useId, useState } from "react";
 
 import {
@@ -26,6 +28,7 @@ import type {
   TeamSettings,
   TeamSettingsRequest,
 } from "@/api/types";
+import { Choice, type ChoiceGroup, chosen, Segments } from "@/components/choices";
 import { DeleteTeamDialog } from "@/components/delete-team-dialog";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
@@ -52,6 +55,8 @@ import {
   TOKENS,
   tidied,
 } from "@/lib/compaction";
+import { cn } from "@/lib/utils";
+import { waitWords } from "@/lib/wait";
 
 export const Route = createFileRoute("/ui/settings")({
   component: Settings,
@@ -922,20 +927,12 @@ function SettingsForm({
         {...props("search")}
       >
         <Field label="Provider" htmlFor="settings-provider">
-          <select
+          <Choice
             id="settings-provider"
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={draft.provider}
-            onChange={(e) =>
-              set("search", { provider: e.target.value as SearchProvider, key: "", dropKey: false })
-            }
-          >
-            {PROVIDERS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+            options={PROVIDERS}
+            onChange={(provider) => set("search", { provider, key: "", dropKey: false })}
+          />
         </Field>
         {selfHosted ? (
           <Field
@@ -989,26 +986,15 @@ function SettingsForm({
         {...props("sandbox")}
       >
         <Field label="Sandbox provider" htmlFor="settings-sandbox" hint={sandboxAbout}>
-          <select
+          <Choice
             id="settings-sandbox"
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={draft.sandbox}
-            onChange={(e) =>
+            options={SANDBOXES}
+            onChange={(sandbox) =>
               // The address and key are the old provider's.
-              set("sandbox", {
-                sandbox: e.target.value as SandboxProvider,
-                sandboxURL: "",
-                sandboxTemplate: "",
-                sandboxKey: "",
-              })
+              set("sandbox", { sandbox, sandboxURL: "", sandboxTemplate: "", sandboxKey: "" })
             }
-          >
-            {SANDBOXES.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          />
         </Field>
         {draft.sandbox === "daytona" || draft.sandbox === "sandboxd" ? (
           <Field
@@ -1070,26 +1056,15 @@ function SettingsForm({
         {...props("browser")}
       >
         <Field label="Browser provider" htmlFor="settings-browser" hint={browserAbout}>
-          <select
+          <Choice
             id="settings-browser"
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={draft.browser}
-            onChange={(e) =>
+            options={BROWSERS}
+            onChange={(browser) =>
               // The address and key are the old provider's.
-              set("browser", {
-                browser: e.target.value as BrowserProvider,
-                browserURL: "",
-                browserKey: "",
-                dropBrowserKey: false,
-              })
+              set("browser", { browser, browserURL: "", browserKey: "", dropBrowserKey: false })
             }
-          >
-            {BROWSERS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          />
         </Field>
         {browserTakesURL ? (
           <Field
@@ -1163,19 +1138,26 @@ function SettingsForm({
 
 /* ---------------------------------------------------------- tool approvals */
 
+/** The modes from loosest to strictest, each with what it asks before. */
 const APPROVAL_MODES: { value: ApprovalMode; label: string; about: string }[] = [
-  { value: "off", label: "Off", about: "Agents never ask. Every call is made." },
-  {
-    value: "writes",
-    label: "Writes and destructive calls",
-    about: "Agents ask before any call that is not a read.",
-  },
+  { value: "off", label: "Off", about: "Agents never ask, and the rules below are off too." },
   {
     value: "destructive",
     label: "Destructive calls only",
-    about: "Agents ask only before a call that destroys something.",
+    about:
+      "Agents ask before a call that may delete or send something. Opening a page, clicking and typing are not asked.",
   },
-  { value: "all", label: "Every call", about: "Agents ask before every call, reads too." },
+  {
+    value: "writes",
+    label: "Writes and destructive calls",
+    about:
+      "Agents ask before any call that changes something, clicking or typing in a web page included.",
+  },
+  {
+    value: "all",
+    label: "Every call",
+    about: "Agents ask before every call, reading a page or searching the web too.",
+  },
 ];
 
 const TTL_MIN = 5;
@@ -1207,7 +1189,7 @@ function ApprovalSections({ teamId, canWrite }: { teamId: string; canWrite: bool
       ) : (
         <Skeleton className="mt-6 h-24 w-full" role="status" aria-label="Loading approvals" />
       )}
-      <ApprovalRulesSection teamId={teamId} canWrite={canWrite} />
+      <ApprovalRulesSection teamId={teamId} canWrite={canWrite} mode={stored.data?.mode} />
     </>
   );
 }
@@ -1231,6 +1213,7 @@ function ApprovalModeSection({
   const dirty =
     mode !== stored.mode ||
     (valid ? minutes !== stored.ttl_minutes : ttl !== String(stored.ttl_minutes));
+  const labelId = useId();
 
   const save = useMutation({
     mutationFn: (s: ApprovalSettings) => saveApprovalSettings(teamId, s),
@@ -1240,6 +1223,10 @@ function ApprovalModeSection({
     },
     onError: (err: Error) => setProblem(err.message),
   });
+  const edited = () => {
+    setSaved(false);
+    setProblem(null);
+  };
 
   return (
     <Section
@@ -1260,58 +1247,161 @@ function ApprovalModeSection({
         save.mutate({ mode, ttl_minutes: minutes });
       }}
     >
-      <Field
-        label="Ask before"
-        htmlFor="settings-approval-mode"
-        hint={APPROVAL_MODES.find((m) => m.value === mode)?.about}
-      >
-        <select
-          id="settings-approval-mode"
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+      <div className="space-y-1.5">
+        <p id={labelId} className="text-sm font-medium">
+          Ask before
+        </p>
+        <RadioGroup.Root
+          aria-labelledby={labelId}
           value={mode}
-          onChange={(e) => {
-            setMode(e.target.value as ApprovalMode);
-            setSaved(false);
-            setProblem(null);
+          onValueChange={(v) => {
+            setMode(v as ApprovalMode);
+            edited();
           }}
+          className="divide-y divide-rule overflow-hidden rounded-md border border-border"
         >
-          {APPROVAL_MODES.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-      </Field>
+          {APPROVAL_MODES.map((m) => {
+            const id = `approval-mode-${m.value}`;
+            return (
+              <label
+                key={m.value}
+                htmlFor={id}
+                className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors duration-(--dur-press) ease-out hover:bg-muted has-[:disabled]:cursor-default has-[:disabled]:hover:bg-transparent"
+              >
+                <RadioGroup.Item
+                  id={id}
+                  value={m.value}
+                  aria-labelledby={`${id}-label`}
+                  aria-describedby={`${id}-about`}
+                  className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-input transition-colors duration-(--dur-press) ease-out outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=checked]:border-primary"
+                >
+                  <RadioGroup.Indicator className="size-2 rounded-full bg-primary" />
+                </RadioGroup.Item>
+                <span className="min-w-0 space-y-0.5">
+                  <span id={`${id}-label`} className="block text-sm font-medium">
+                    {m.label}
+                  </span>
+                  <span id={`${id}-about`} className="block text-xs text-muted-foreground">
+                    {m.about}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        </RadioGroup.Root>
+      </div>
       <Field
         label="Minutes a request waits"
         htmlFor="settings-approval-ttl"
         hint={`${TTL_MIN} to ${TTL_MAX}. After that it expires and the run carries on without it.`}
       >
-        <Input
+        <WaitInput
           id="settings-approval-ttl"
-          type="number"
-          inputMode="numeric"
-          className="w-32"
           value={ttl}
-          onChange={(e) => {
-            setTtl(e.target.value);
-            setSaved(false);
-            setProblem(null);
+          readout={valid ? waitWords(minutes) : null}
+          onChange={(v) => {
+            setTtl(v);
+            edited();
           }}
         />
       </Field>
+      <p className="flex gap-2 text-xs text-muted-foreground">
+        <Info aria-hidden className="mt-px size-3.5 shrink-0" />
+        <span>
+          Unless approvals are off, a run for a guest asks before any call that is not a read, and a
+          run with nobody there to answer, such as a scheduled one, is refused a call it would have
+          asked about.
+        </span>
+      </p>
     </Section>
   );
 }
 
-const RULE_WORDS: Record<ApprovalRuleMode, string> = {
-  allow: "Allow without asking",
-  ask: "Always ask",
-  deny: "Never allow",
-};
+/** The wait in minutes, with what it comes to beside it. */
+function WaitInput({
+  id,
+  value,
+  readout,
+  onChange,
+  ...aria
+}: {
+  id: string;
+  value: string;
+  readout: string | null;
+  onChange: (next: string) => void;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        id={id}
+        type="number"
+        inputMode="numeric"
+        className="w-24 tabular-nums"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        {...aria}
+      />
+      <span className="text-sm text-muted-foreground">
+        minutes{readout && readout !== `${Number(value)} minutes` ? ` · ${readout}` : ""}
+      </span>
+    </div>
+  );
+}
+
+/** A rule's answer: its words, and the icon and colour it is shown in. */
+const RULE_ANSWERS: {
+  value: ApprovalRuleMode;
+  label: string;
+  short: string;
+  icon: typeof Check;
+  tone: string;
+}[] = [
+  {
+    value: "allow",
+    label: "Allow without asking",
+    short: "Allow",
+    icon: Check,
+    tone: "text-succeeded",
+  },
+  { value: "ask", label: "Always ask", short: "Ask", icon: Clock, tone: "text-warning" },
+  { value: "deny", label: "Never allow", short: "Never", icon: Ban, tone: "text-destructive" },
+];
+/**
+ * A rule's answer as shown. One this build does not know is shown as asking,
+ * since that is what the brain does with it (`verdictOf`).
+ */
+function answerOf(m: ApprovalRuleMode) {
+  const ask = RULE_ANSWERS.find((a) => a.value === "ask");
+  return RULE_ANSWERS.find((a) => a.value === m) ?? (ask as (typeof RULE_ANSWERS)[number]);
+}
 
 /** The brain's own tools a rule may name: those the approval gate stands before. */
-const BUILT_INS = ["web_search", "web_fetch"] as const;
+const BUILT_INS: ChoiceGroup<string>[] = [
+  {
+    label: "Web",
+    options: [
+      { value: "web_search", label: "web_search" },
+      { value: "web_fetch", label: "web_fetch" },
+    ],
+  },
+  {
+    label: "Browser",
+    options: [
+      {
+        value: "browser_open",
+        label: "browser_open",
+        hint: "Asked when a page opens, and covers what is then done on that page's own site.",
+      },
+      { value: "browser_snapshot", label: "browser_snapshot" },
+      { value: "browser_click", label: "browser_click" },
+      { value: "browser_type", label: "browser_type" },
+      { value: "browser_screenshot", label: "browser_screenshot" },
+    ],
+  },
+];
+const BUILT_IN_NAMES = BUILT_INS.flatMap((g) => g.options.map((o) => o.value));
 // Not a UUID, so no server's id can be it.
 const BUILT_IN: Picked = { id: ":built-in", name: "Built-in tools" };
 
@@ -1323,7 +1413,7 @@ async function ruleServers(teamId: string, q: string, builtIns: boolean) {
   const matches =
     wanted === "" ||
     "built-in tools".includes(wanted) ||
-    BUILT_INS.some((name) => name.includes(wanted.replaceAll(" ", "_")));
+    BUILT_IN_NAMES.some((name) => name.includes(wanted.replaceAll(" ", "_")));
   if (builtIns && matches) items.unshift(BUILT_IN);
   return { items, more: Boolean(page.next_cursor) };
 }
@@ -1350,16 +1440,23 @@ function RuleTool({
     enabled: Boolean(server) && !builtIn,
   });
   // Each option carries its target and its label, so neither is cut from the other.
-  const options: { value: string; label: string }[] = builtIn
-    ? BUILT_INS.map((n) => ({ value: n, label: n }))
-    : (tools.data?.items ?? []).map((t) => ({
-        value: `${server?.name}__${t.name}`,
-        label: t.name,
-      }));
+  const options: ChoiceGroup<string>[] = builtIn
+    ? BUILT_INS
+    : [
+        {
+          label: "",
+          options: (tools.data?.items ?? []).map((t) => ({
+            value: `${server?.name}__${t.name}`,
+            label: t.name,
+          })),
+        },
+      ];
+  const empty = options.every((g) => g.options.length === 0);
   const hint = !server ? (
     "Choose a server first."
   ) : builtIn ? (
-    "Tools every agent has, such as reading a web page."
+    (chosen(BUILT_INS, value)?.hint ??
+    "Tools every agent can be given, such as reading a web page.")
   ) : tools.isPending ? (
     "Reading the server's tools…"
   ) : tools.isError ? (
@@ -1373,30 +1470,48 @@ function RuleTool({
         Try again
       </button>
     </>
-  ) : options.length === 0 ? (
+  ) : empty ? (
     "This server has said it has no tools."
   ) : undefined;
   return (
     <Field label="Tool" htmlFor="rule-target" hint={hint}>
-      <select
+      <Choice
         id="rule-target"
-        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
         value={value}
-        disabled={options.length === 0}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="">Choose a tool</option>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+        options={options}
+        placeholder="Choose a tool"
+        disabled={empty}
+        onChange={onChange}
+      />
     </Field>
   );
 }
 
-function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: boolean }) {
+/** A rule's target as a person reads it: the tool, and where it is from. */
+function ruleSubject(kind: string, target: string): { name: string; from: string; mono: boolean } {
+  if (kind === "server") return { name: target, from: "Every tool of this server", mono: false };
+  const cut = target.indexOf("__");
+  if (cut > 0) {
+    return { name: target.slice(cut + 2), from: `on ${target.slice(0, cut)}`, mono: true };
+  }
+  return { name: target, from: "Built-in", mono: true };
+}
+
+const RULE_SCOPES = [
+  { value: "tool", label: "One tool" },
+  { value: "server", label: "Every tool of a server" },
+] as const;
+
+function ApprovalRulesSection({
+  teamId,
+  canWrite,
+  mode: teamMode,
+}: {
+  teamId: string;
+  canWrite: boolean;
+  /** The team's mode, once read: with approvals off, no rule applies. */
+  mode?: ApprovalMode;
+}) {
   const qc = useQueryClient();
   const rules = useQuery({
     queryKey: ["approval-rules", teamId],
@@ -1417,7 +1532,8 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
         target_kind: kind,
         target: target.trim(),
         mode,
-        require_other: other,
+        // Only an answer that asks has someone to answer it.
+        require_other: mode === "ask" && other,
       }),
     onSuccess: () => {
       setServer(null);
@@ -1441,7 +1557,7 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
   return (
     <Section
       title="Tool approval rules"
-      about="A standing answer for one tool or every tool of a server, whatever the mode. The most specific rule wins."
+      about="A standing answer for one tool, or every tool of a server, whatever the mode. A tool's own rule wins over its server's."
       canWrite={canWrite}
       dirty={false}
       saved={false}
@@ -1460,6 +1576,14 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
         add.mutate();
       }}
     >
+      {teamMode === "off" ? (
+        <p className="flex gap-2 text-sm">
+          <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+          <span>
+            Approvals are off, so no rule applies until a mode is chosen under Tool approvals.
+          </span>
+        </p>
+      ) : null}
       {rules.isError ? (
         <ErrorState
           what="the approval rules"
@@ -1474,77 +1598,81 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
           No rules. The mode above decides for every call.
         </p>
       ) : (
-        <table className="w-full text-sm" aria-label="Tool approval rules">
-          <thead className="text-left text-xs text-muted-foreground">
-            <tr>
-              <th className="py-1 pr-3 font-normal">Applies to</th>
-              <th className="py-1 pr-3 font-normal">Target</th>
-              <th className="py-1 pr-3 font-normal">Answer</th>
-              <th className="py-1 pr-3 font-normal">Someone else answers</th>
-              <th className="py-1">
-                <span className="sr-only">Remove</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((r) => (
-              <tr key={r.id} data-rule={r.target} className="border-t border-rule">
-                <td className="py-2 pr-3">{r.target_kind === "tool" ? "A tool" : "A server"}</td>
-                <td className="py-2 pr-3 font-mono text-xs break-all">{r.target}</td>
-                <td className="py-2 pr-3">{RULE_WORDS[r.mode]}</td>
-                <td className="py-2 pr-3">{r.require_other ? "Yes" : "No"}</td>
-                <td className="py-2 text-right">
-                  {canWrite ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={remove.isPending}
-                      aria-label={`Remove the rule for ${r.target}`}
-                      onClick={() => remove.mutate(r.id)}
-                    >
-                      Remove
-                    </Button>
+        <ul aria-label="Tool approval rules" className="divide-y divide-rule">
+          {items.map((r) => {
+            const subject = ruleSubject(r.target_kind, r.target);
+            const answer = answerOf(r.mode);
+            const Icon = answer.icon;
+            return (
+              <li
+                key={r.id}
+                data-rule={r.target}
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2.5 first:pt-0"
+              >
+                <div className="min-w-0 flex-1 basis-48">
+                  <p className={cn("truncate", subject.mono ? "font-mono text-xs" : "text-sm")}>
+                    {subject.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{subject.from}</p>
+                </div>
+                <div className="min-w-0 basis-40">
+                  <p className="flex items-center gap-1.5 text-sm">
+                    <Icon aria-hidden className={cn("size-3.5 shrink-0", answer.tone)} />
+                    {answer.label}
+                  </p>
+                  {r.require_other ? (
+                    <p className="text-xs text-muted-foreground">Someone else answers</p>
                   ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+                {canWrite ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto"
+                    disabled={remove.isPending}
+                    aria-label={`Remove the rule for ${r.target}`}
+                    onClick={() => remove.mutate(r.id)}
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
       )}
       {canWrite ? (
-        <div className="space-y-3 border-t border-rule pt-4">
-          <div
-            className={
-              kind === "tool"
-                ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-[8rem_minmax(0,1fr)_minmax(0,1fr)_12rem]"
-                : "grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)_12rem]"
-            }
-          >
-            <Field label="Applies to" htmlFor="rule-kind">
-              <select
-                id="rule-kind"
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={kind}
-                onChange={(e) => {
-                  setKind(e.target.value as "tool" | "server");
-                  setServer(null);
-                  setTarget("");
-                }}
-              >
-                <option value="tool">A tool</option>
-                <option value="server">A server</option>
-              </select>
-            </Field>
+        <div className="space-y-4 rounded-md bg-surface p-4">
+          <h3 className="text-sm font-medium">New rule</h3>
+          <Segments
+            label="Applies to"
+            value={kind}
+            options={RULE_SCOPES}
+            onChange={(next) => {
+              setKind(next);
+              setServer(null);
+              setTarget("");
+            }}
+          />
+          <div className={cn("grid gap-3", kind === "tool" && "sm:grid-cols-2")}>
             <div className="min-w-0 space-y-1.5">
-              {/* The picker names itself to a screen reader; this is for the eye. */}
-              <p aria-hidden className="text-sm font-medium">
+              <label
+                id="rule-server-label"
+                htmlFor="rule-server"
+                className="block text-sm font-medium"
+              >
                 Server
-              </p>
+              </label>
               <Picker
                 label="Server"
                 noun="server"
                 max={1}
+                field={{
+                  id: "rule-server",
+                  labelId: "rule-server-label",
+                  placeholder: "Choose a server",
+                }}
                 value={server ? [server] : []}
                 onChange={(next) => {
                   const picked = next[0] ?? null;
@@ -1558,28 +1686,29 @@ function ApprovalRulesSection({ teamId, canWrite }: { teamId: string; canWrite: 
             {kind === "tool" ? (
               <RuleTool teamId={teamId} server={server} value={target} onChange={setTarget} />
             ) : null}
-            <Field label="Answer" htmlFor="rule-mode">
-              <select
-                id="rule-mode"
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={mode}
-                onChange={(e) => setMode(e.target.value as ApprovalRuleMode)}
-              >
-                {(Object.keys(RULE_WORDS) as ApprovalRuleMode[]).map((m) => (
-                  <option key={m} value={m}>
-                    {RULE_WORDS[m]}
-                  </option>
-                ))}
-              </select>
-            </Field>
           </div>
-          <SwitchField
-            label="Someone else must answer"
-            description="The person the run works for may not approve their own request."
-            checked={other}
-            onCheckedChange={setOther}
-          />
-          <Button type="submit" size="sm" variant="outline" loading={add.isPending}>
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">Answer</p>
+            <Segments
+              label="Answer"
+              value={mode}
+              options={RULE_ANSWERS.map((a) => ({ ...a, label: a.short }))}
+              onChange={(next) => {
+                setMode(next);
+                // Someone else's answer belongs to a rule that asks.
+                if (next !== "ask") setOther(false);
+              }}
+            />
+          </div>
+          {mode === "ask" ? (
+            <SwitchField
+              label="Someone else must answer"
+              description="The person the run works for may not approve their own request."
+              checked={other}
+              onCheckedChange={setOther}
+            />
+          ) : null}
+          <Button type="submit" size="sm" loading={add.isPending}>
             Add rule
           </Button>
         </div>
