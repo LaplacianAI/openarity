@@ -911,6 +911,12 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
 }
 
 /**
+ * Where a Slack channel's buttons answer: beside its events, on the same hook.
+ * Keep in step with slack.InteractivitySuffix in the brain.
+ */
+const INTERACTIVITY = "/interactivity";
+
+/**
  * Slack's own page for making an app from a manifest, filled in: a bot that
  * reads the messages it is sent and the channels it is in, answers, and
  * reads the files people share, with Interactivity on for the buttons under
@@ -919,9 +925,6 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
  * placeholders the person replaces as the last step.
  */
 export const SLACK_PLACEHOLDER_URL = "https://example.com/replace-with-the-openarity-request-url";
-
-/** Where a Slack channel's buttons answer: beside its events, on the same hook. */
-const INTERACTIVITY = "/interactivity";
 
 export function slackManifestURL(channelName: string): string {
   const name = channelName.trim().slice(0, 35) || "Openarity";
@@ -1321,6 +1324,11 @@ function SlackSetup({
  */
 function SlackLastStep({ channel }: { channel: CreatedChannel }) {
   const path = hookPath(channel);
+  // With no public address there is no URL under a step, only the paths above.
+  const events = channel.hook_url ? "this one" : "an address that reaches the events path above";
+  const buttons = channel.hook_url
+    ? "this one"
+    : "an address that reaches the Interactivity path above";
   return (
     <>
       {channel.hook_url ? null : (
@@ -1334,14 +1342,14 @@ function SlackLastStep({ channel }: { channel: CreatedChannel }) {
         <SetupStep n={1} title="Point Event Subscriptions here">
           <p className="text-xs text-muted-foreground">
             In the app's settings, open Event Subscriptions under Features and replace the Request
-            URL with this one. Slack checks it straight away and shows Verified.
+            URL with {events}. Slack checks it straight away and shows Verified.
           </p>
           <SlackAddress channel={channel} label="Request URL" />
         </SetupStep>
         <SetupStep n={2} title="Point Interactivity here">
           <p className="text-xs text-muted-foreground">
             Open Interactivity &amp; Shortcuts, turn Interactivity on, and replace its Request URL
-            with this one. The buttons under an approval answer here; without it they do nothing.
+            with {buttons}. The buttons under an approval answer here; without it they do nothing.
             Slack does not check this one: try it with an approval.
           </p>
           <SlackAddress

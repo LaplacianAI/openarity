@@ -487,6 +487,16 @@ describe("a channel's sheet", () => {
     expect(within(sheet).getByText(`POST ${hook}/interactivity`)).toBeInTheDocument();
   });
 
+  it("gives a Slack channel's Interactivity path when the brain has no public address", async () => {
+    const slack = { ...support, id: "s1", provider: "slack", name: "acme" };
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [slack] } } });
+    at();
+
+    const sheet = await opened("acme");
+    expect(within(sheet).getByText("Interactivity path")).toBeInTheDocument();
+    expect(within(sheet).getByText("POST /hooks/slack/s1/interactivity")).toBeInTheDocument();
+  });
+
   // One the brain gave no URL for keeps its path, rather than a guess.
   it("gives the path when the brain has no public address", async () => {
     brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [support] } } });
@@ -790,6 +800,10 @@ describe("a slack channel", () => {
     // Said once for both addresses, not under each step.
     expect(dialog.textContent?.match(/no public address/gi)).toHaveLength(1);
     expect(within(dialog).queryByRole("button", { name: /^copy the/i })).not.toBeInTheDocument();
+    // No step points at a URL that is not there.
+    expect(dialog.textContent).not.toMatch(/with this one/i);
+    expect(dialog.textContent).toMatch(/reaches the events path above/i);
+    expect(dialog.textContent).toMatch(/reaches the Interactivity path above/i);
     expect(dialog.textContent).toContain("/hooks/slack/s1");
     expect(dialog.textContent).toContain("/hooks/slack/s1/interactivity");
   });
