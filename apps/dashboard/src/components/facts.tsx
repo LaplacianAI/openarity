@@ -31,8 +31,18 @@ export function KeyValue({ label, children }: { label: string; children: ReactNo
 /**
  * An id in mono, cut to fit, with a button that copies the whole of it. The
  * full id is the button's name, so a screen reader hears what it will copy.
+ * With `wrap` the whole value shows over as many lines as it takes, for an
+ * address a person pastes elsewhere and checks by its end.
  */
-export function CopyId({ value, label = "id" }: { value: string; label?: string }) {
+export function CopyId({
+  value,
+  label = "id",
+  wrap = false,
+}: {
+  value: string;
+  label?: string;
+  wrap?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -51,8 +61,16 @@ export function CopyId({ value, label = "id" }: { value: string; label?: string 
   };
 
   return (
-    <span className="inline-flex max-w-full min-w-0 items-center gap-1">
-      <span className="truncate font-mono text-xs text-muted-foreground select-all" title={value}>
+    <span
+      className={cn("inline-flex max-w-full min-w-0 gap-1", wrap ? "items-start" : "items-center")}
+    >
+      <span
+        className={cn(
+          "font-mono text-xs text-muted-foreground select-all",
+          wrap ? "break-all pt-1" : "truncate",
+        )}
+        title={value}
+      >
         {value}
       </span>
       <button
