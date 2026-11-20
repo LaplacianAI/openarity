@@ -283,12 +283,24 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   run's read, as it may be another run's. Measured on headless-shell and
   Lightpanda, with an address the browser can reach and the guard refuses
   and a second site on the same host: nothing gets there, and the popup a
-  listener sends does without the browser-wide guard. DNS rebinding and a
-  preconnect's bare connection are left to the browser's network. A browser
-  of the team's own is sent to an address that is always refused, and asked
-  to fetch it from a page, before it is used, so one that acknowledges
-  `Fetch.enable` and pauses nothing, or pauses navigations only, is found
-  out; and each run gets a browser context of its own. A
+  listener sends does without the browser-wide guard. A popup that opens
+  all the same has no script of ours, and its socket nothing pauses
+  (measured: it reached the refused address), so every page target the tab
+  opens, or that opens in its browser context, is closed as it appears; the
+  race between its opening and its close is the browser's, and in the test
+  the popup's page was never served. The browser-wide guard judges on a
+  queue of its own, small, so other runs' requests never hold the tab's
+  judges; what neither queue takes is failed by two failers, never let
+  through, and only the tab's own are counted in its read. A frame from
+  another site in a process of its own gets no script of ours: accepted,
+  and left with DNS rebinding and a preconnect's bare connection to the
+  browser's network; headless-shell runs such a frame in the page. A
+  browser of the team's own is sent to an address that is always refused,
+  and asked to fetch another from a page, each by a random path matched
+  exactly, before it is used, so one that acknowledges `Fetch.enable` and
+  pauses nothing, or pauses navigations only, is found out, whatever other
+  runs' canaries on a shared browser are doing; and each run gets a browser
+  context of its own. A
   browser that does not answer in time is a failure, never a refusal, so a
   hosted one is not used unguarded for being slow; one that refuses is, and
   every read says so.
@@ -296,10 +308,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   pause for a person ends the run's process and with it the page, so an ask
   on a click would leave nothing to click. `browser_open` asks at the
   strictest verdict of every browser tool the run is offered, and what is
-  then done on that page is made without asking; approving it for the run
-  covers every page. `browser_click` and `browser_type` are writes
-  (`approval.Acts`) for anyone, submit or not: a click can buy, and a page's
-  script can send what is typed. Keeping a page across a pause was weighed
+  then done on that page is made without asking, on the site that open was
+  for: a link may lead away, but a click or typing there, or a form sent
+  there, is refused until `browser_open` opens it, which asks. The check
+  runs in the same script as the action, so the page cannot move between
+  them. Without it one approval would cover typing into any site an
+  injected page led the model to; the text typed is still not shown to the
+  approver, a trade made knowingly. Approving the open for the run covers
+  every page, each on its own site. `browser_click` and `browser_type` are
+  writes (`approval.Acts`) for anyone, submit or not: a click can buy, and a
+  page's script can send what is typed. Destructive was weighed and not
+  chosen: in `destructive` mode a run clicks and submits unasked, a
+  scheduled one too, and a team that wants otherwise uses `writes` or a
+  rule. A denied open leaves the run no browser. Keeping a page across a pause was weighed
   and refused: a Bright Data session ends with its connection, and a tab left
   without its guard attached runs on with nothing pausing its requests.
 - **The hub's graph finds every agent, and only its own tools and skills.**

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -154,23 +153,33 @@ func TestClipCutsOnARune(t *testing.T) {
 	}
 }
 
-// A request the judges cannot take now is held back and counted, never
-// waited for and never let through: the browser's event loop cannot be held,
-// and a goroutine for each would let a page make as many as it liked.
-//
-// Not parallel: the count is the process's, and a goroutine a request would
-// be 200 more, far past what other work moves it by.
-func TestARequestNoJudgeCanTakeIsHeldBackAndCounted(t *testing.T) {
-	g := &guard{tab: t.Context(), queue: make(chan paused)}
-	before := runtime.NumGoroutine()
-	for range 200 {
-		g.pause(false)(&fetch.EventRequestPaused{RequestID: "r1", Request: &network.Request{URL: "https://example.com/"}})
+// A request no judge can take now is handed to be failed, never waited for
+// and never let through: the browser's event loop cannot be held. Only the
+// tab's are counted in its read; a browser-wide one may be another run's.
+// Past the failers' queue a request stays paused.
+func TestARequestNoJudgeCanTakeIsFailedAndOnlyTheTabsCounted(t *testing.T) {
+	t.Parallel()
+
+	g := &guard{tab: t.Context(), queue: make(chan paused), wide: make(chan paused), failQ: make(chan paused, 300)}
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		for _, browser := range []bool{false, true} {
+			for range 200 {
+				g.pause(browser)(&fetch.EventRequestPaused{RequestID: "r1", Request: &network.Request{URL: "https://example.com/"}})
+			}
+		}
+	}()
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pause handler blocked the browser's event loop")
 	}
 	if b, n, shed := g.Blocked(); len(b) != 0 || n != 0 || shed != 200 {
-		t.Fatalf("named %v, refused %d, held back %d; want only 200 held back", b, n, shed)
+		t.Errorf("named %v, refused %d, held back %d; want only the tab's 200 held back", b, n, shed)
 	}
-	if after := runtime.NumGoroutine(); after > before+50 {
-		t.Errorf("%d goroutines after 200 held back, %d before", after, before)
+	if len(g.failQ) != cap(g.failQ) {
+		t.Errorf("%d handed to be failed, want the %d the queue holds", len(g.failQ), cap(g.failQ))
 	}
 }
 
@@ -199,21 +208,40 @@ func TestALookupThatHangsIsARefusal(t *testing.T) {
 }
 
 // What the browser-wide guard refuses is not named in the tab's read: on a
-// browser runs share it may be another run's request. Its canary still says
-// the page's fetch was paused.
+// browser runs share it may be another run's request.
 func TestARequestRefusedBrowserWideIsNotNamed(t *testing.T) {
 	t.Parallel()
 
-	g := &guard{tab: t.Context(), canaried: make(chan struct{})}
+	g := &guard{tab: t.Context()}
 	g.refuse(paused{url: "http://10.0.0.5/elsewhere", browser: true})
 	if b, n, _ := g.Blocked(); len(b) != 0 || n != 0 {
 		t.Errorf("named %v, counted %d; want nothing from outside the tab", b, n)
 	}
-	g.refuse(paused{url: "http://" + canaryHost + "/sub", browser: true})
+}
+
+// Only the canary's own request, by its path, says it was paused: not its
+// other request, not another run's canary, and pausing it twice, by the
+// tab's guard and the browser-wide one, is noticed once.
+func TestOnlyTheCanarysOwnRequestProvesIt(t *testing.T) {
+	t.Parallel()
+
+	g := &guard{tab: t.Context(), watch: map[string]chan struct{}{}}
+	nav, sub := g.watching("/nav-a"), g.watching("/sub-a")
+	g.refuse(paused{url: "http://" + canaryHost + "/sub-another-run", browser: true})
+	g.refuse(paused{url: "http://" + canaryHost + "/nav-a"})
+	g.refuse(paused{url: "http://" + canaryHost + "/nav-a", browser: true})
 	select {
-	case <-g.canaried:
+	case <-sub:
+		t.Fatal("the fetch was taken as paused when only the navigation and another run's were")
 	default:
-		t.Error("the canary's fetch was refused and not noticed")
+	}
+	select {
+	case <-nav:
+	default:
+		t.Error("the navigation was paused and not noticed")
+	}
+	if b, n, _ := g.Blocked(); len(b) != 0 || n != 0 {
+		t.Errorf("named %v, counted %d; the canary is never the page's", b, n)
 	}
 }
 

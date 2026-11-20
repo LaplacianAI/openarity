@@ -21,8 +21,10 @@ import (
 type desk struct {
 	byCall   map[string]db.Approval
 	runScope *db.Approval
-	clashes  int // how many inserts refuse their code first
-	noted    []string
+	// scoped is what the run-scoped approval was last looked up by.
+	scoped  db.FindRunScopedApprovalParams
+	clashes int // how many inserts refuse their code first
+	noted   []string
 }
 
 func (*desk) ListApprovalRules(context.Context, uuid.UUID) ([]db.ApprovalRule, error) {
@@ -60,7 +62,8 @@ func (d *desk) FindPendingRequest(_ context.Context, a db.FindPendingRequestPara
 	return db.Approval{}, pgx.ErrNoRows
 }
 
-func (d *desk) FindRunScopedApproval(context.Context, db.FindRunScopedApprovalParams) (db.Approval, error) {
+func (d *desk) FindRunScopedApproval(_ context.Context, a db.FindRunScopedApprovalParams) (db.Approval, error) {
+	d.scoped = a
 	if d.runScope == nil {
 		return db.Approval{}, pgx.ErrNoRows
 	}

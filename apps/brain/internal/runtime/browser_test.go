@@ -306,9 +306,10 @@ func TestTheBrowserNamesAreReservedOnlyOnABrowserRun(t *testing.T) {
 
 // --- the approval rule ---
 
-// The browser reaches the internet as web_fetch does, so it asks when the
-// web asks: a run nobody is present for is refused each call.
-func TestEveryBrowserToolFollowsTheEgressRule(t *testing.T) {
+// A run nobody is present for, where the browser would ask, is refused at
+// the open, and offered nothing to do on a page it cannot have; every tool
+// can still be answered by name.
+func TestAnUnattendedRunIsRefusedTheBrowserAtItsOpen(t *testing.T) {
 	b := newBrowserFixture("kernel", "", "kn-key")
 	b.store.settings.ApprovalMode = string(approval.All)
 	b.run.Unattended = true
@@ -316,15 +317,13 @@ func TestEveryBrowserToolFollowsTheEgressRule(t *testing.T) {
 
 	got := b.build(t)
 
+	if names := browserToolsIn(got); !slices.Equal(names, []string{BrowserOpenToolName}) {
+		t.Fatalf("browser tools %v, want only the open, refusing", names)
+	}
+	if _, err := callBrowser(t, got, BrowserOpenToolName, `{"url":"https://example.com/"}`); err == nil || !strings.Contains(err.Error(), "Nobody is present") {
+		t.Errorf("open = %v, want the refusal", err)
+	}
 	for _, name := range BrowserToolNames {
-		tools := toolsNamed(got, name)
-		if len(tools) != 1 {
-			t.Fatalf("%s tools = %d", name, len(tools))
-		}
-		_, _, err := tools[0].Call(t.Context(), json.RawMessage(`{"url":"https://example.com/","ref":1,"text":"x"}`))
-		if err == nil || !strings.Contains(err.Error(), "Nobody is present") {
-			t.Errorf("%s = %v, want the egress refusal", name, err)
-		}
 		if _, ok := got.answerable[name]; !ok {
 			t.Errorf("%s is not answerable", name)
 		}
@@ -377,7 +376,7 @@ func TestTheBrowserAsksOnceAtTheOpen(t *testing.T) {
 	} {
 		d := &desk{byCall: map[string]db.Approval{}}
 		made := map[string]int{}
-		tools, unavailable := gatedBy(d, tc.mode, approval.Actor{CanSelf: true}).gateBrowser(pageTools(made))
+		tools, unavailable, _ := gatedBy(d, tc.mode, approval.Actor{CanSelf: true}).gateBrowser(pageTools(made))
 		if len(tools) != len(BrowserToolNames) || len(unavailable) != 0 {
 			t.Fatalf("%s: %d tools, unavailable %+v", tc.mode, len(tools), unavailable)
 		}
@@ -389,7 +388,7 @@ func TestTheBrowserAsksOnceAtTheOpen(t *testing.T) {
 		if tc.asks {
 			row := d.byCall["c1"]
 			if row.Tool != BrowserOpenToolName || row.Class != "write" ||
-				row.Summary != "url: https://example.com/\nand: "+pageCovers {
+				row.Summary != "url: https://example.com/\nand: "+pageCovers(true, true) {
 				t.Errorf("%s: request = %+v, want the open asked as a write, saying it covers the page", tc.mode, row)
 			}
 		}
@@ -417,7 +416,7 @@ func TestABrowserRuleIsAskedAtTheOpenAndADenialStaysItsOwn(t *testing.T) {
 		{Kind: "tool", Target: BrowserTypeToolName, Verdict: approval.Deny},
 	}
 	made := map[string]int{}
-	tools, _ := p.gateBrowser(pageTools(made))
+	tools, _, _ := p.gateBrowser(pageTools(made))
 
 	if _, err := callAs(t, pageTool(t, tools, BrowserOpenToolName), "c1", `{"url":"https://example.com/"}`); err == nil || err.Error() != askedTop {
 		t.Fatalf("open = %v, want it asked for the click's rule", err)
@@ -440,8 +439,8 @@ func TestABrowserApprovedForTheRunOpensWithoutAsking(t *testing.T) {
 
 	d := &desk{byCall: map[string]db.Approval{}, runScope: &db.Approval{ID: uuid.New(), Tool: BrowserOpenToolName}}
 	made := map[string]int{}
-	tools, _ := gatedBy(d, approval.All, approval.Actor{CanSelf: true}).gateBrowser(pageTools(made))
-
+	p := gatedBy(d, approval.All, approval.Actor{CanSelf: true})
+	tools, _, _ := p.gateBrowser(pageTools(made))
 	for _, call := range []string{"c1", "c2"} {
 		if _, err := callAs(t, pageTool(t, tools, BrowserOpenToolName), call, `{"url":"https://example.com/`+call+`"}`); err != nil {
 			t.Errorf("open %s = %v", call, err)
@@ -449,6 +448,71 @@ func TestABrowserApprovedForTheRunOpensWithoutAsking(t *testing.T) {
 	}
 	if made[BrowserOpenToolName] != 2 || len(d.byCall) != 0 {
 		t.Errorf("opened %d, requests %d; want both made, nothing asked", made[BrowserOpenToolName], len(d.byCall))
+	}
+	// Approved for the run tree, by the open's own name: not another run's.
+	if d.scoped.RootRunID != p.run.RootRunID || d.scoped.Tool != BrowserOpenToolName {
+		t.Errorf("looked up by %+v, want the run's root %s and %s", d.scoped, p.run.RootRunID, BrowserOpenToolName)
+	}
+}
+
+// Who asks and what is offered, by mode, person and rule. The open asks at
+// the strictest verdict of the tools offered, whatever a rule on the open
+// alone allows; a denied open leaves nothing to do on a page; a denied action
+// is left out of what the open's request says it covers.
+func TestWhenTheBrowserAsks(t *testing.T) {
+	t.Parallel()
+
+	person, guest, nobody := approval.Actor{CanSelf: true}, approval.Actor{}, approval.Actor{CanSelf: true, Unattended: true}
+	for _, tc := range []struct {
+		name    string
+		mode    approval.Mode
+		actor   approval.Actor
+		rules   []approval.Rule
+		asks    bool
+		offered []string
+		covers  string
+	}{
+		{"a person, writes", approval.Writes, person, nil, true, BrowserToolNames, pageCovers(true, true)},
+		{"a person, destructive", approval.DestructiveOnly, person, nil, false, BrowserToolNames, ""},
+		{"a guest, writes", approval.Writes, guest, nil, true, BrowserToolNames, pageCovers(true, true)},
+		{"a guest, destructive", approval.DestructiveOnly, guest, nil, true, BrowserToolNames, pageCovers(true, true)},
+		// Clicking and typing are writes: in destructive, a run nobody is
+		// present for is let do them unasked.
+		{"nobody, destructive", approval.DestructiveOnly, nobody, nil, false, BrowserToolNames, ""},
+		{"nobody, writes", approval.Writes, nobody, nil, false, []string{BrowserOpenToolName}, ""},
+		{"the open allowed, typing asks", approval.DestructiveOnly, person, []approval.Rule{
+			{Kind: "tool", Target: BrowserOpenToolName, Verdict: approval.Allow},
+			{Kind: "tool", Target: BrowserTypeToolName, Verdict: approval.Ask},
+		}, true, BrowserToolNames, pageCovers(true, true)},
+		{"the open denied", approval.DestructiveOnly, person, []approval.Rule{
+			{Kind: "tool", Target: BrowserOpenToolName, Verdict: approval.Deny},
+		}, false, []string{BrowserOpenToolName}, ""},
+		{"clicking denied", approval.Writes, person, []approval.Rule{
+			{Kind: "tool", Target: BrowserClickToolName, Verdict: approval.Deny},
+		}, true, BrowserToolNames, pageCovers(false, true)},
+	} {
+		d := &desk{byCall: map[string]db.Approval{}}
+		p := gatedBy(d, tc.mode, tc.actor)
+		p.rules = tc.rules
+		made := map[string]int{}
+		tools, _, asks := p.gateBrowser(pageTools(made))
+		var names []string
+		for _, tool := range tools {
+			names = append(names, tool.Name)
+		}
+		if asks != tc.asks || !slices.Equal(names, tc.offered) {
+			t.Errorf("%s: asks %v, offered %v; want %v, %v", tc.name, asks, names, tc.asks, tc.offered)
+			continue
+		}
+		_, err := callAs(t, pageTool(t, tools, BrowserOpenToolName), "c1", `{"url":"https://example.com/"}`)
+		switch {
+		case tc.asks && (err == nil || err.Error() != askedTop):
+			t.Errorf("%s: open = %v, want it asked", tc.name, err)
+		case tc.asks && !strings.HasSuffix(d.byCall["c1"].Summary, "\nand: "+tc.covers):
+			t.Errorf("%s: the request says %q, want it to cover %q", tc.name, d.byCall["c1"].Summary, tc.covers)
+		case !tc.asks && made[BrowserOpenToolName] == 0 && err == nil:
+			t.Errorf("%s: open neither made nor refused", tc.name)
+		}
 	}
 }
 
@@ -459,9 +523,51 @@ func TestABrowserThatAsksIsNotOfferedToAPatternThatCannotWait(t *testing.T) {
 
 	p := gatedBy(&desk{byCall: map[string]db.Approval{}}, approval.Writes, approval.Actor{CanSelf: true})
 	p.pattern = agent.PatternReWOO
-	tools, unavailable := p.gateBrowser(pageTools(map[string]int{}))
+	tools, unavailable, _ := p.gateBrowser(pageTools(map[string]int{}))
 	if len(tools) != 0 || len(unavailable) != 1 || unavailable[0].Name != BrowserOpenToolName {
 		t.Errorf("tools %d, unavailable %+v; want none, the open said why", len(tools), unavailable)
+	}
+}
+
+// A browser whose open asks keeps what is done on a page to the site the
+// open was for: the host asked for and the one it landed on, in lower case.
+// Before any open, or after one that failed, nothing; one that asks no one,
+// anywhere.
+func TestAnApprovedPageIsKeptToItsSite(t *testing.T) {
+	t.Parallel()
+
+	r := &runBrowser{bound: true}
+	if on := r.on(); on == nil || len(on) != 0 {
+		t.Errorf("before any open: %v, want nothing", on)
+	}
+	r.bind("https://Example.com/a", "https://www.example.com/b", nil)
+	if on := r.on(); !slices.Equal(on, []string{"example.com", "www.example.com"}) {
+		t.Errorf("after the open: %v", on)
+	}
+	r.bind("https://other.example/", "", errors.New("did not load"))
+	if on := r.on(); on == nil || len(on) != 0 {
+		t.Errorf("after an open that failed: %v, want nothing", on)
+	}
+	free := &runBrowser{}
+	free.bind("https://example.com/", "https://example.com/", nil)
+	if on := free.on(); on != nil {
+		t.Errorf("a browser that asks no one: %v, want anywhere", on)
+	}
+}
+
+// The run's browser is bound when its open asks, and not when nothing does.
+func TestTheRunsBrowserIsBoundWhenItsOpenAsks(t *testing.T) {
+	for _, tc := range []struct {
+		mode  approval.Mode
+		bound bool
+	}{{approval.Writes, true}, {approval.Off, false}} {
+		b := newBrowserFixture("kernel", "", "kn-key")
+		b.store.settings.ApprovalMode = string(tc.mode)
+		b.builder.WithApprovals(&desk{byCall: map[string]db.Approval{}})
+		got := b.build(t)
+		if got.browser == nil || got.browser.bound != tc.bound {
+			t.Errorf("%s: browser %+v, want bound %v", tc.mode, got.browser, tc.bound)
+		}
 	}
 }
 
@@ -809,6 +915,7 @@ func toolsOn(t *testing.T, address string) {
 	mux.HandleFunc("/find", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, `<!doctype html><title>Found</title><p>Flights to %s.</p><a href="/">Back</a>`, r.URL.Query().Get("to"))
 	})
+	other := os.Getenv("BRAIN_TEST_BROWSER_OTHER_HOST")
 	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
@@ -824,11 +931,14 @@ func toolsOn(t *testing.T, address string) {
 		return browser.New(p, url, key, http.DefaultClient)
 	}
 	b.builder.browsers.Public = func(_ context.Context, h string) error {
-		if h == host {
+		if h == host || (other != "" && h == other) {
 			return nil
 		}
 		return errors.New(h + " is not a public address")
 	}
+	mux.HandleFunc("/leave", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `<!doctype html><title>Leave</title><a href="http://%s:%d/find?to=elsewhere">Elsewhere</a>`, other, tcp.Port)
+	})
 	got := b.build(t)
 
 	r, err := callBrowser(t, got, BrowserOpenToolName, `{"url":"`+base+`/"}`)
@@ -858,5 +968,29 @@ func toolsOn(t *testing.T, address string) {
 
 	if _, err := callBrowser(t, got, BrowserOpenToolName, `{"url":"http://10.0.0.5/"}`); err == nil || !strings.Contains(err.Error(), "not at a public address") {
 		t.Errorf("a private page = %v", err)
+	}
+
+	// Approved a page at a time: a link may lead to another site, and the
+	// page is read there, but nothing is done on it until it is opened.
+	if other == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("BRAIN_TEST_BROWSER_OTHER_HOST is not set in CI")
+		}
+		return
+	}
+	got.browser.bound = true
+	if _, err := callBrowser(t, got, BrowserOpenToolName, `{"url":"`+base+`/leave"}`); err != nil {
+		t.Fatal(err)
+	}
+	if r, err = callBrowser(t, got, BrowserClickToolName, `{"ref":1}`); err != nil || !strings.Contains(r.Output, "Flights to elsewhere.") {
+		t.Fatalf("a link to another site = %v:\n%s", err, r.Output)
+	}
+	if _, err := callBrowser(t, got, BrowserClickToolName, `{"ref":1}`); !errors.Is(err, browser.ErrOffSite) || !strings.Contains(err.Error(), other) {
+		t.Errorf("a click on the other site = %v, want it refused, naming it", err)
+	}
+	if r, err := callBrowser(t, got, BrowserOpenToolName, `{"url":"http://`+other+fmt.Sprintf(":%d", tcp.Port)+`/find?to=there"}`); err != nil {
+		t.Fatal(err)
+	} else if r, err = callBrowser(t, got, BrowserClickToolName, `{"ref":1}`); err != nil || !strings.Contains(r.Output, `title="Shop"`) {
+		t.Errorf("once opened, a click there = %v:\n%s", err, r.Output)
 	}
 }

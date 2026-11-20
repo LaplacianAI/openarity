@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
@@ -33,6 +35,15 @@ const (
 	// cannot be held.
 	judges = 16
 	queued = 1024
+	// wideJudges and wideQueued are the browser-wide guard's own: on a
+	// browser runs share it sees every run's requests, and the tab's guard
+	// judges this run's too, so it is small, apart, and never holds the tab's
+	// judges. failers fail what neither queue can take, up to failQueued;
+	// past that a request stays paused, never let through.
+	wideJudges = 4
+	wideQueued = 64
+	failers    = 2
+	failQueued = 4096
 	// maxJudged is how many hosts' verdicts a session keeps. Past it a host
 	// is judged on every request, never let through unjudged.
 	maxJudged = 4096
@@ -47,17 +58,21 @@ const (
 	// judgeTimeout is how long one host is looked up. A lookup that takes
 	// longer is a refusal: a page's own name server cannot hold a judge.
 	judgeTimeout = 5 * time.Second
-	// canaryWait is how long the page's fetch of the canary may take to be
-	// paused before the browser is taken not to pause it.
-	canaryWait = 5 * time.Second
+	// maxPopups is how many popups may wait to be closed at once; past it
+	// the tab is said to be uncontained.
+	maxPopups = 64
 )
+
+// canaryWait is how long each of the canary's requests may take to be paused
+// before the browser is taken not to pause it; a test shortens it.
+var canaryWait = 5 * time.Second
 
 // containJS runs before a page's own scripts in every frame. Fetch pauses no
 // socket of any kind, and no script of ours reaches into a worker to lock its
-// own: so a page may open no socket and start no worker. A popup's requests
-// are paused by the browser-wide guard, but it is a tab the read does not
-// follow, so a page may open none, and a link or form that targets another
-// window opens in this one.
+// own: so a page may open no socket and start no worker. A popup gets no
+// script of ours, so a page may open none, a link or form that targets
+// another window opens in this one, and one that opens all the same is closed
+// (closePopups).
 const containJS = `(() => {
   const lock = (o, k, v) => { try { Object.defineProperty(o, k, {value: v, writable: false, configurable: false}); } catch (e) {} };
   for (const k of ["WebSocket", "WebSocketStream", "WebTransport", "RTCPeerConnection", "webkitRTCPeerConnection", "Worker", "SharedWorker"]) {
@@ -97,7 +112,9 @@ type paused struct {
 type guard struct {
 	tab    context.Context
 	public Public
-	queue  chan paused
+	// queue is the tab's requests, wide the browser-wide guard's, and failQ
+	// what neither could take.
+	queue, wide, failQ chan paused
 	// unguarded is a hosted browser that would not pause its requests, used
 	// all the same: the read says so. uncontained is one that would not take
 	// containJS, so a page may open a socket or a popup: the read says that.
@@ -108,12 +125,13 @@ type guard struct {
 	allowed map[string]bool
 	blocked []string
 	refused int
-	// shed is the requests refused because more were waiting than the queue
-	// holds, not for where they went.
+	// shed is the tab's requests refused because more were waiting than the
+	// queue holds, not for where they went.
 	shed int
-	// canaried is closed when the page's fetch of the canary is paused.
-	canaried chan struct{}
-	canaryed sync.Once
+	// watch is the canary's requests in flight, by path: each is closed and
+	// dropped when that very request is paused, by either of this guard's
+	// sessions. Another run's canary, or this one's other request, is not it.
+	watch map[string]chan struct{}
 }
 
 // startGuard starts judging tab's requests and keeps the page in its tab.
@@ -128,14 +146,17 @@ type guard struct {
 // pauses a request.
 func startGuard(tab context.Context, public Public, required bool) (*guard, error) {
 	g := &guard{
-		tab: tab, public: public, queue: make(chan paused, queued), allowed: map[string]bool{},
-		canaried: make(chan struct{}),
+		tab: tab, public: public, allowed: map[string]bool{}, watch: map[string]chan struct{}{},
+		queue: make(chan paused, queued), wide: make(chan paused, wideQueued), failQ: make(chan paused, failQueued),
 	}
 	if err := chromedp.Listen(tab, g.pause(false)); err != nil {
 		return nil, err
 	}
 	for range judges {
-		go g.judge()
+		go g.judge(g.queue)
+	}
+	for range failers {
+		go g.failer()
 	}
 	if _, err := chromedp.Call(tab, fetch.Enable, fetch.EnableParams{}); err != nil {
 		switch {
@@ -144,8 +165,8 @@ func startGuard(tab context.Context, public Public, required bool) (*guard, erro
 		case required:
 			return nil, ErrNoGuard
 		}
+		// Used all the same, and still kept in its tab if it will be.
 		g.unguarded = true
-		return g, nil
 	}
 	if err := contain(tab); err != nil {
 		switch {
@@ -154,9 +175,14 @@ func startGuard(tab context.Context, public Public, required bool) (*guard, erro
 		case required:
 			return nil, ErrNoGuard
 		}
+		g.mu.Lock()
 		g.uncontained = true
+		g.mu.Unlock()
 	}
 	if required {
+		for range wideJudges {
+			go g.judge(g.wide)
+		}
 		if err := chromedp.ListenBrowser(tab, g.pause(true)); err != nil {
 			return nil, err
 		}
@@ -166,11 +192,77 @@ func startGuard(tab context.Context, public Public, required bool) (*guard, erro
 			}
 			return nil, ErrNoGuard
 		}
+		if err := g.closePopups(); err != nil {
+			return nil, err
+		}
 		if err := g.canary(); err != nil {
 			return nil, err
 		}
 	}
 	return g, nil
+}
+
+// closePopups closes every other page the tab's browser context, or the tab
+// itself, opens: a popup is a tab of its own, with none of containJS, so a
+// socket it opened would be checked by nothing. Between its opening and its
+// close it may run; its requests are paused browser-wide all the while.
+func (g *guard) closePopups() error {
+	c := chromedp.FromContext(g.tab)
+	if c == nil || c.Target == nil {
+		return errors.New("the tab has no target to keep popups from")
+	}
+	ours, own := c.Target.TargetID, c.BrowserContextID
+	var mu sync.Mutex
+	closed := map[target.ID]bool{}
+	closing := make(chan target.ID, maxPopups)
+	if err := chromedp.ListenBrowser(g.tab, func(ev any) {
+		var info *target.Info
+		switch e := ev.(type) {
+		case *target.EventTargetCreated:
+			info = e.TargetInfo
+		case *target.EventTargetInfoChanged:
+			info = e.TargetInfo
+		default:
+			return
+		}
+		if info == nil || info.Type != "page" || info.TargetID == ours ||
+			(info.OpenerID != ours && (own == "" || info.BrowserContextID != own)) {
+			return
+		}
+		mu.Lock()
+		seen := closed[info.TargetID]
+		closed[info.TargetID] = true
+		mu.Unlock()
+		if seen {
+			return
+		}
+		select {
+		case closing <- info.TargetID:
+		default:
+			// More popups than are closed at once: the read says the page
+			// is not kept in its tab.
+			g.mu.Lock()
+			g.uncontained = true
+			g.mu.Unlock()
+		}
+	}); err != nil {
+		return err
+	}
+	go func() {
+		for {
+			select {
+			case <-g.tab.Done():
+				return
+			case id := <-closing:
+				_, _ = chromedp.CallBrowser(g.tab, target.CloseTarget, target.CloseTargetParams{TargetID: id})
+			}
+		}
+	}()
+	_, err := chromedp.CallBrowser(g.tab, target.SetDiscoverTargets, target.SetDiscoverTargetsParams{Discover: true})
+	if err != nil && g.tab.Err() != nil {
+		return fmt.Errorf("the browser did not answer: %w", g.tab.Err())
+	}
+	return err
 }
 
 // contain keeps the page in its tab: containJS in every document.
@@ -184,7 +276,9 @@ func contain(tab context.Context) error {
 // without the fetch being paused. A browser may pause the one and not the
 // other.
 func (g *guard) canary() error {
-	err := chromedp.Do(g.tab, chromedp.Navigate("http://"+canaryHost+"/"))
+	nav, sub := "/nav-"+rand.Text(), "/sub-"+rand.Text()
+	navPaused := g.watching(nav)
+	err := chromedp.Do(g.tab, chromedp.Navigate("http://"+canaryHost+nav))
 	switch {
 	case err != nil && strings.Contains(err.Error(), "ERR_BLOCKED_BY_CLIENT"):
 	case g.tab.Err() != nil:
@@ -192,17 +286,46 @@ func (g *guard) canary() error {
 	default:
 		return ErrNoGuard
 	}
+	if err := g.await(navPaused); err != nil {
+		return err
+	}
 	// The error page's own events can still be queued, and the next Navigate
 	// would take its load for the page it asked for: this round trip lets
 	// them arrive first, as CDP keeps its order.
-	if _, err := chromedp.Run(g.tab, chromedp.Evaluate[any](`fetch("http://`+canaryHost+`/sub").catch(() => {}), 0`)); err != nil {
+	subPaused := g.watching(sub)
+	if _, err := chromedp.Run(g.tab, chromedp.Evaluate[any](`fetch("http://`+canaryHost+sub+`").catch(() => {}), 0`)); err != nil {
 		if g.tab.Err() != nil {
 			return fmt.Errorf("the browser did not answer: %w", g.tab.Err())
 		}
 		return ErrNoGuard
 	}
+	return g.await(subPaused)
+}
+
+// watching is a channel closed when the canary's request for path is paused.
+func (g *guard) watching(path string) chan struct{} {
+	ch := make(chan struct{})
+	g.mu.Lock()
+	g.watch[path] = ch
+	g.mu.Unlock()
+	return ch
+}
+
+// seen closes path's channel, once: the tab's guard and the browser-wide one
+// may both pause the same request.
+func (g *guard) seen(path string) {
+	g.mu.Lock()
+	ch, ok := g.watch[path]
+	delete(g.watch, path)
+	g.mu.Unlock()
+	if ok {
+		close(ch)
+	}
+}
+
+func (g *guard) await(paused chan struct{}) error {
 	select {
-	case <-g.canaried:
+	case <-paused:
 		return nil
 	case <-g.tab.Done():
 		return fmt.Errorf("the browser did not answer: %w", g.tab.Err())
@@ -212,31 +335,57 @@ func (g *guard) canary() error {
 }
 
 // pause runs on chromedp's event loop, which a command sent from it would
-// block: a request is queued for a judge. One past the queue is left paused,
-// counted and never let through: a page that asks for more than a thousand at
-// once waits on them, and a goroutine for each would let it make as many.
+// block: a request is queued for a judge, the tab's or the browser-wide
+// guard's. One past its queue is failed by a failer, never let through, and
+// counted when it is the tab's: a browser-wide one may be another run's. Past
+// the failers' queue too it stays paused, which holds the page but lets
+// nothing out: a goroutine for each would let a page make as many as it liked.
 func (g *guard) pause(browser bool) func(ev any) {
+	q := g.queue
+	if browser {
+		q = g.wide
+	}
 	return func(ev any) {
 		e, ok := ev.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
+		p := paused{e.RequestID, e.Request.URL, browser}
 		select {
-		case g.queue <- paused{e.RequestID, e.Request.URL, browser}:
+		case q <- p:
+			return
 		default:
+		}
+		if !browser {
 			g.mu.Lock()
 			g.shed++
 			g.mu.Unlock()
 		}
+		select {
+		case g.failQ <- p:
+		default:
+		}
 	}
 }
 
-func (g *guard) judge() {
+// failer fails what no judge could take.
+func (g *guard) failer() {
 	for {
 		select {
 		case <-g.tab.Done():
 			return
-		case p := <-g.queue:
+		case p := <-g.failQ:
+			g.fail(p)
+		}
+	}
+}
+
+func (g *guard) judge(q chan paused) {
+	for {
+		select {
+		case <-g.tab.Done():
+			return
+		case p := <-q:
 			if err := g.allows(p.url); err != nil {
 				g.refuse(p)
 				continue
@@ -252,9 +401,10 @@ func (g *guard) judge() {
 
 func (g *guard) refuse(p paused) {
 	// The canary is the brain's own request, whichever guard paused it and
-	// however late: never the page's to report.
-	if host, _ := hostOf(p.url); host == canaryHost {
-		g.canaryed.Do(func() { close(g.canaried) })
+	// however late: never the page's to report. Only this guard's own, by
+	// its path, says the guard works.
+	if u, err := url.Parse(p.url); err == nil && u.Hostname() == canaryHost {
+		g.seen(u.Path)
 		g.fail(p)
 		return
 	}

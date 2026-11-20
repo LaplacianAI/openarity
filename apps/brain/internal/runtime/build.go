@@ -248,7 +248,10 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		for _, t := range tools {
 			built.answerable[t.Name] = t
 		}
-		gated, refused := gates.gateBrowser(tools)
+		gated, refused, asks := gates.gateBrowser(tools)
+		if r != nil {
+			r.bound = asks
+		}
 		built.Unavailable = append(built.Unavailable, refused...)
 		built.Spec.Tools = append(built.Spec.Tools, gated...)
 	}

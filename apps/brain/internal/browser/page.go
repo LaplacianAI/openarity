@@ -61,6 +61,15 @@ type notTaken string
 func (e notTaken) Error() string { return string(e) }
 func (notTaken) Unwrap() error   { return ErrNotTaken }
 
+// ErrOffSite is an action refused because the page, or the form it would
+// send, is on a site other than those it may be taken on. Nothing was done.
+var ErrOffSite = errors.New("the action is on another site")
+
+type offSite string
+
+func (e offSite) Error() string { return string(e) }
+func (offSite) Unwrap() error   { return ErrOffSite }
+
 // A Snapshot is a page as the model reads it.
 type Snapshot struct {
 	URL   string `json:"url"`
@@ -151,7 +160,14 @@ func (p *Page) Unguarded() bool { return p.guard != nil && p.guard.unguarded }
 
 // Uncontained is a hosted browser that would not keep the page in its tab: a
 // page may open a socket or a popup there.
-func (p *Page) Uncontained() bool { return p.guard != nil && p.guard.uncontained }
+func (p *Page) Uncontained() bool {
+	if p.guard == nil {
+		return false
+	}
+	p.guard.mu.Lock()
+	defer p.guard.mu.Unlock()
+	return p.guard.uncontained
+}
 
 // within is the tab, stopped when ctx is or when the call has taken its
 // limit: chromedp runs on the tab's context.
@@ -217,10 +233,25 @@ const leavesJS = `const leaves = (el, kind) => {
   };
 };`
 
-const clickJS = `((ref) => {
+// sitesJS keeps an action to the sites it may be taken on: the page must be
+// on one, and a form it sends must go to one. sites is null for anywhere.
+const sitesJS = `const off = (host) => sites !== null && !sites.includes(String(host).toLowerCase());
+const sends = (form, by) => {
+  try {
+    const raw = (by && by.getAttribute && by.getAttribute("formaction")) || form.getAttribute("action") || "";
+    return new URL(raw, document.baseURI).hostname;
+  } catch (e) { return ""; }
+};
+if (off(location.hostname)) return "elsewhere " + location.hostname;`
+
+const clickJS = `((ref, sites) => {
   ` + leavesJS + `
+  ` + sitesJS + `
   const el = document.querySelector('[data-oa-ref="' + ref + '"]');
   if (!el) return "missing";
+  if (el.form && (el.type === "submit" || el.type === "image") && off(sends(el.form, el))) {
+    return "sends elsewhere " + sends(el.form, el);
+  }
   if (el.target) el.target = "_self";
   if (el.scrollIntoView) el.scrollIntoView({block: "center"});
   if (el.focus) el.focus();
@@ -228,18 +259,22 @@ const clickJS = `((ref) => {
   el.click();
   noted();
   return "done";
-})(%d)`
+})(%d, %s)`
 
 // Click clicks the control numbered ref, waits for what it starts, and reads
-// the page.
-func (p *Page) Click(ctx context.Context, ref int) (Snapshot, error) {
-	return p.act(ctx, ref, fmt.Sprintf(clickJS, ref))
+// the page. With sites, only on a page on one of them, and never a button
+// that sends its form to another; nil is anywhere.
+func (p *Page) Click(ctx context.Context, ref int, sites []string) (Snapshot, error) {
+	return p.act(ctx, ref, fmt.Sprintf(clickJS, ref, jsSites(sites)))
 }
 
-const typeJS = `((ref, text, submit) => {
+const typeJS = `((ref, text, submit, sites) => {
   ` + leavesJS + `
+  ` + sitesJS + `
   const el = document.querySelector('[data-oa-ref="' + ref + '"]');
   if (!el) return "missing";
+  const form = el.form || (el.closest && el.closest("form"));
+  if (submit && form && off(sends(form, null))) return "sends elsewhere " + sends(form, null);
   if (el.focus) el.focus();
   if (el.tagName === "SELECT") {
     const want = text.trim().toLowerCase();
@@ -258,7 +293,6 @@ const typeJS = `((ref, text, submit) => {
   el.dispatchEvent(new Event("input", {bubbles: true}));
   el.dispatchEvent(new Event("change", {bubbles: true}));
   if (submit) {
-    const form = el.form || (el.closest && el.closest("form"));
     if (form && form.target) form.target = "_self";
     if (form) {
       const noted = leaves(form, "submit");
@@ -270,12 +304,26 @@ const typeJS = `((ref, text, submit) => {
     }
   }
   return "done";
-})(%d, %s, %t)`
+})(%d, %s, %t, %s)`
 
 // Type puts text in the field numbered ref, choosing the option it names in
 // a select, and submits its form when submit says so, then reads the page.
-func (p *Page) Type(ctx context.Context, ref int, text string, submit bool) (Snapshot, error) {
-	return p.act(ctx, ref, fmt.Sprintf(typeJS, ref, jsString(text), submit))
+// sites keeps it as Click's does.
+func (p *Page) Type(ctx context.Context, ref int, text string, submit bool, sites []string) (Snapshot, error) {
+	return p.act(ctx, ref, fmt.Sprintf(typeJS, ref, jsString(text), submit, jsSites(sites)))
+}
+
+// jsSites is sites as the scripts take them: lower case, or null for any.
+func jsSites(sites []string) string {
+	if sites == nil {
+		return "null"
+	}
+	lower := make([]string, len(sites))
+	for i, s := range sites {
+		lower[i] = strings.ToLower(s)
+	}
+	b, _ := json.Marshal(lower) //nolint:errchkjson // strings always marshal
+	return string(b)
 }
 
 // A Picture is the visible page as a PNG, and where it is.
@@ -313,11 +361,17 @@ func (p *Page) act(ctx context.Context, ref int, js string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("the page did not take the action: %w", err)
 	}
-	switch said {
-	case "missing":
+	switch {
+	case said == "missing":
 		return Snapshot{}, notTaken(fmt.Sprintf("no control %d on this page: take a snapshot to see what is there", ref))
-	case "no option":
+	case said == "no option":
 		return Snapshot{}, notTaken(fmt.Sprintf("control %d has no option by that name or value", ref))
+	case strings.HasPrefix(said, "elsewhere "):
+		return Snapshot{}, offSite(fmt.Sprintf("the page is now on %s, not the site it was opened for, so nothing is done on it: open it first",
+			clip(strings.TrimPrefix(said, "elsewhere "), maxTitle)))
+	case strings.HasPrefix(said, "sends elsewhere "):
+		return Snapshot{}, offSite(fmt.Sprintf("control %d would send its form to %s, not the site the page was opened for, so it is not sent: open that site first",
+			ref, clip(strings.TrimPrefix(said, "sends elsewhere "), maxTitle)))
 	}
 	p.settle(c, mark)
 	return p.read(c)

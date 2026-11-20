@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -32,6 +33,9 @@ type fakeCDP struct {
 	// navigation but not a page's own fetch.
 	loadsCanary     bool
 	fetchesUnpaused bool
+	// blocksUnpaused refuses the canary's navigation without pausing it, as
+	// something other than the guard might.
+	blocksUnpaused bool
 	// pausesPages pauses the request a navigation makes, as a browser that
 	// pauses requests does, beside the canary's.
 	pausesPages bool
@@ -99,18 +103,26 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 				continue
 			}
 			reply := map[string]any{"id": m.ID, "result": map[string]any{}}
+			pauses := func(id, url, kind string) bool {
+				ev, _ := json.Marshal(map[string]any{"method": "Fetch.requestPaused", "sessionId": m.SessionID, "params": map[string]any{
+					"requestId": id, "request": map[string]any{"url": url, "method": "GET", "headers": map[string]any{}},
+					"frameId": "T1", "resourceType": kind,
+				}})
+				return ws.Write(r.Context(), websocket.MessageText, ev) == nil
+			}
 			switch {
+			case f.refuse[m.Method]:
+				reply = map[string]any{"id": m.ID, "error": map[string]any{"code": -32601, "message": "not supported"}}
 			case m.Method == "Page.navigate" && strings.Contains(m.Params.URL, canaryHost) && !f.loadsCanary:
+				if !f.blocksUnpaused && !pauses("canary-nav", m.Params.URL, "Document") {
+					return
+				}
 				reply["result"] = map[string]any{"frameId": "T1", "errorText": "net::ERR_BLOCKED_BY_CLIENT"}
 			case m.Method == "Page.navigate" && strings.Contains(m.Params.URL, canaryHost):
 				// Not paused, so tried: .invalid names nothing.
 				reply["result"] = map[string]any{"frameId": "T1", "errorText": "net::ERR_NAME_NOT_RESOLVED"}
 			case m.Method == "Page.navigate" && f.pausesPages:
-				ev, _ := json.Marshal(map[string]any{"method": "Fetch.requestPaused", "sessionId": m.SessionID, "params": map[string]any{
-					"requestId": "page", "request": map[string]any{"url": m.Params.URL, "method": "GET", "headers": map[string]any{}},
-					"frameId": "T1", "resourceType": "Document",
-				}})
-				if err := ws.Write(r.Context(), websocket.MessageText, ev); err != nil {
+				if !pauses("page", m.Params.URL, "Document") {
 					return
 				}
 				reply["result"] = map[string]any{"frameId": "T1"}
@@ -118,21 +130,15 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 				reply["result"] = map[string]any{"browserContextId": "B1"}
 			case m.Method == "Page.addScriptToEvaluateOnNewDocument":
 				reply["result"] = map[string]any{"identifier": "1"}
-			case f.refuse[m.Method]:
-				reply = map[string]any{"id": m.ID, "error": map[string]any{"code": -32601, "message": "not supported"}}
 			case m.Method == "Target.createTarget":
 				reply["result"] = map[string]any{"targetId": "T1"}
 			case m.Method == "Target.attachToTarget":
 				reply["result"] = map[string]any{"sessionId": "S1"}
 			case m.Method == "Runtime.evaluate":
-				if strings.Contains(m.Params.Expression, canaryHost) && !f.fetchesUnpaused && !f.loadsCanary {
+				if at := canaryFetch.FindString(m.Params.Expression); at != "" && !f.fetchesUnpaused && !f.loadsCanary {
 					// The page's fetch of the canary, paused as a browser that
 					// pauses requests pauses it.
-					ev, _ := json.Marshal(map[string]any{"method": "Fetch.requestPaused", "sessionId": m.SessionID, "params": map[string]any{
-						"requestId": "canary", "request": map[string]any{"url": "http://" + canaryHost + "/sub", "method": "GET", "headers": map[string]any{}},
-						"frameId": "T1", "resourceType": "Fetch",
-					}})
-					if err := ws.Write(r.Context(), websocket.MessageText, ev); err != nil {
+					if !pauses("canary-sub", at, "Fetch") {
 						return
 					}
 				}
@@ -150,6 +156,9 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 	t.Cleanup(srv.Close)
 	return srv
 }
+
+// canaryFetch is the address the canary's fetch asks for.
+var canaryFetch = regexp.MustCompile(`http://` + regexp.QuoteMeta(canaryHost) + `/[^"]+`)
 
 func (f *fakeCDP) wasAsked(method string) bool {
 	f.mu.Lock()
@@ -228,12 +237,48 @@ func TestABrowserThatLoadsTheCanaryIsNotUsed(t *testing.T) {
 // A browser that pauses a navigation but not the page's own fetch is not
 // guarding what a page asks for, whatever it does with the address bar.
 func TestABrowserThatDoesNotPauseAPagesFetchIsNotUsed(t *testing.T) {
+	was := canaryWait
+	canaryWait = 300 * time.Millisecond
+	t.Cleanup(func() { canaryWait = was })
+
 	f := &fakeCDP{fetchesUnpaused: true}
 	srv := f.serve(t)
 
 	if p, err := startOn(t, srv.URL, true); !errors.Is(err, ErrNoGuard) {
 		p.Close()
 		t.Fatalf("Start = %v, want ErrNoGuard", err)
+	}
+}
+
+// A browser whose canary navigation is refused by something other than the
+// guard has not shown it pauses anything.
+func TestABrowserThatRefusesTheCanaryUnpausedIsNotUsed(t *testing.T) {
+	was := canaryWait
+	canaryWait = 300 * time.Millisecond
+	t.Cleanup(func() { canaryWait = was })
+
+	f := &fakeCDP{blocksUnpaused: true}
+	if p, err := startOn(t, f.serve(t).URL, true); !errors.Is(err, ErrNoGuard) {
+		p.Close()
+		t.Fatalf("Start = %v, want ErrNoGuard", err)
+	}
+}
+
+// A hosted browser that will neither pause its requests nor take the script
+// that keeps a page in its tab is used, and says both; the team's own is not.
+func TestAHostedBrowserThatRefusesBothSaysBoth(t *testing.T) {
+	refuse := map[string]bool{"Fetch.enable": true, "Page.addScriptToEvaluateOnNewDocument": true}
+	p, err := startOn(t, (&fakeCDP{refuse: refuse}).serve(t).URL, false)
+	if err != nil {
+		t.Fatalf("Start = %v", err)
+	}
+	defer p.Close()
+	if !p.Unguarded() || !p.Uncontained() {
+		t.Errorf("unguarded %v, uncontained %v; want both said", p.Unguarded(), p.Uncontained())
+	}
+	if p, err := startOn(t, (&fakeCDP{refuse: refuse}).serve(t).URL, true); !errors.Is(err, ErrNoGuard) {
+		p.Close()
+		t.Errorf("self-hosted: Start = %v, want ErrNoGuard", err)
 	}
 }
 

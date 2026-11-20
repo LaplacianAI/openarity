@@ -13,6 +13,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/chromedp/cdproto/cdp"
+	pagepkg "github.com/chromedp/cdproto/page"
+	"github.com/chromedp/chromedp"
 )
 
 // Real browsers, at the addresses BRAIN_TEST_BROWSER_URL lists (comma
@@ -55,6 +59,9 @@ type served struct {
 
 	mu      sync.Mutex
 	escaped []string
+	// popped and framed are how often the popup's page and the other
+	// site's frame were served.
+	popped, framed int
 }
 
 func (s *served) reached() []string {
@@ -182,12 +189,43 @@ addEventListener("load", () => setTimeout(() => document.getElementById("f").req
 		page("/base-blank", fmt.Sprintf(`<!doctype html><title>Base</title><base target=_blank>
 <a id=a href="%[1]s/base-blank">x</a>
 <script>addEventListener("load", () => setTimeout(() => document.getElementById("a").click(), 200))</script>`, s.refusedBase))
-		page("/frame", fmt.Sprintf(`<!doctype html><title>Frame</title><img src="%[1]s/oopif-img">
+		frame := fmt.Sprintf(`<!doctype html><title>Frame</title><img src="%[1]s/oopif-img">
 <script>
 fetch("%[1]s/oopif-fetch").catch(()=>{});
 try { new WebSocket("%[2]s/oopif-ws"); } catch (e) {}
 try { window.open("%[1]s/oopif-popup"); } catch (e) {}
-</script>`, s.refusedBase, ws))
+</script>`, s.refusedBase, ws)
+		mux.HandleFunc("/frame", func(w http.ResponseWriter, _ *http.Request) {
+			s.mu.Lock()
+			s.framed++
+			s.mu.Unlock()
+			_, _ = fmt.Fprint(w, frame)
+		})
+		if b.other != "" {
+			other := fmt.Sprintf("http://%s:%d", b.other, tcp.Port)
+			page("/to-other", fmt.Sprintf(`<!doctype html><title>To other</title>
+<a href="%[1]s/next">Other site</a> <a href="/next">Same site</a>
+<form action="%[1]s/search"><input name="q" placeholder="Where"><button>Send there</button></form>`, other))
+		}
+		// A popup on the site the guard lets through, past what a script
+		// can keep: once open, a page of its own with none of containJS,
+		// whose socket nothing pauses.
+		page("/popup-flip", fmt.Sprintf(`<!doctype html><title>Popup</title>
+<form id=f action="%[1]s/popped"><input name=a value=1></form>
+<script>
+addEventListener("submit", (e) => { e.target.setAttribute("target", "_blank"); }, true);
+addEventListener("load", () => setTimeout(() => document.getElementById("f").requestSubmit(), 200));
+</script>`, s.base))
+		mux.HandleFunc("/popped", func(w http.ResponseWriter, _ *http.Request) {
+			s.mu.Lock()
+			s.popped++
+			s.mu.Unlock()
+			_, _ = fmt.Fprintf(w, `<!doctype html><title>Popped</title><img src="%[1]s/popped-img">
+<script>
+try { new WebSocket("%[2]s/popped-ws"); } catch (e) {}
+fetch("%[1]s/popped-fetch").catch(()=>{});
+</script>`, s.refusedBase, ws)
+		})
 		if b.other != "" {
 			page("/escape-frame", fmt.Sprintf(`<!doctype html><title>Escape frame</title>
 <iframe src="http://%s:%d/frame"></iframe>`, b.other, tcp.Port))
@@ -340,7 +378,7 @@ func TestClickingALinkGoesThere(t *testing.T) {
 	eachBrowser(t, func(t *testing.T, b realBrowser) {
 		srv := site(t, b)
 		p := start(t, b, srv)
-		s, err := p.Click(within30(t), refOf(t, goTo(t, p, srv.base+"/"), "Next page"))
+		s, err := p.Click(within30(t), refOf(t, goTo(t, p, srv.base+"/"), "Next page"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -356,7 +394,7 @@ func TestASlowClickReadsWhereItWent(t *testing.T) {
 	eachBrowser(t, func(t *testing.T, b realBrowser) {
 		srv := site(t, b)
 		p := start(t, b, srv)
-		s, err := p.Click(within30(t), refOf(t, goTo(t, p, srv.base+"/to-slow"), "Slow page"))
+		s, err := p.Click(within30(t), refOf(t, goTo(t, p, srv.base+"/to-slow"), "Slow page"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -372,10 +410,10 @@ func TestAStaleRefSaysToLookAgain(t *testing.T) {
 		srv := site(t, b)
 		p := start(t, b, srv)
 		ref := refOf(t, goTo(t, p, srv.base+"/"), "Next page")
-		if _, err := p.Click(within30(t), ref); err != nil {
+		if _, err := p.Click(within30(t), ref, nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := p.Click(within30(t), ref); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("no control %d", ref)) {
+		if _, err := p.Click(within30(t), ref, nil); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("no control %d", ref)) {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -385,7 +423,7 @@ func TestTypingAndSubmittingSendsTheForm(t *testing.T) {
 	eachBrowser(t, func(t *testing.T, b realBrowser) {
 		srv := site(t, b)
 		p := start(t, b, srv)
-		s, err := p.Type(within30(t), refOf(t, goTo(t, p, srv.base+"/form"), `"q"`), `cheap "flights"`, true)
+		s, err := p.Type(within30(t), refOf(t, goTo(t, p, srv.base+"/form"), `"q"`), `cheap "flights"`, true, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -402,10 +440,10 @@ func TestASelectIsChosenByItsOptionsName(t *testing.T) {
 		srv := site(t, b)
 		p := start(t, b, srv)
 		ref := refOf(t, goTo(t, p, srv.base+"/choose"), `"city"`)
-		if _, err := p.Type(within30(t), ref, "Madrid", false); err == nil || !strings.Contains(err.Error(), "no option") {
+		if _, err := p.Type(within30(t), ref, "Madrid", false, nil); err == nil || !strings.Contains(err.Error(), "no option") {
 			t.Errorf("an option that is not there = %v", err)
 		}
-		s, err := p.Type(within30(t), ref, "porto", true)
+		s, err := p.Type(within30(t), ref, "porto", true, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -420,7 +458,7 @@ func TestAMissingControlSaysToLookAgain(t *testing.T) {
 		srv := site(t, b)
 		p := start(t, b, srv)
 		goTo(t, p, srv.base+"/next")
-		if _, err := p.Click(within30(t), 42); err == nil || !strings.Contains(err.Error(), "no control 42") {
+		if _, err := p.Click(within30(t), 42, nil); err == nil || !strings.Contains(err.Error(), "no control 42") {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -514,6 +552,184 @@ func TestNothingSlipsPastTheGuardFromAnotherSitesFrame(t *testing.T) {
 		missing(t, "BRAIN_TEST_BROWSER_OTHER_HOST")
 	}
 	escapes(t, "/escape-frame")
+}
+
+// The frame from another site loaded, so the test above proves something:
+// in the page's own process, where the tab's guard and script cover it, or
+// as a target of its own, paused browser-wide. headless-shell
+// runs it in the page; a Chrome with site isolation would not, and that case
+// is not proved here. Lightpanda loads no frame from another site at all.
+func TestAnotherSitesFrameLoads(t *testing.T) {
+	if os.Getenv("BRAIN_TEST_BROWSER_OTHER_HOST") == "" {
+		missing(t, "BRAIN_TEST_BROWSER_OTHER_HOST")
+	}
+	eachBrowser(t, func(t *testing.T, b realBrowser) {
+		srv := site(t, b)
+		p := start(t, b, srv)
+		goTo(t, p, srv.base+"/escape-frame")
+		if ua, _ := chromedp.Run(p.tab, chromedp.Evaluate[string](`navigator.userAgent`)); strings.Contains(ua, "Lightpanda") {
+			t.Skip("Lightpanda loads no frame from another site, so there is nothing to prove")
+		}
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			if where := frameFrom(t, p, b.other); where != "" {
+				t.Logf("the frame from %s ran %s", b.other, where)
+				return
+			}
+			srv.mu.Lock()
+			framed := srv.framed
+			srv.mu.Unlock()
+			if framed > 0 {
+				t.Logf("the frame from %s was served; the browser shows it in no frame tree or target", b.other)
+				return
+			}
+		}
+		t.Errorf("the frame from %s never loaded, so nothing above was tried from it", b.other)
+	})
+}
+
+// frameFrom is where a frame from host runs: in the page, as a target of its
+// own, or "" when there is none.
+func frameFrom(t *testing.T, p *Page, host string) string {
+	t.Helper()
+	if tree, err := chromedp.Call(p.tab, pagepkg.GetFrameTree, cdp.Empty{}); err == nil {
+		for _, c := range tree.FrameTree.ChildFrames {
+			if strings.Contains(c.Frame.URL, host) {
+				return "in the page's own process"
+			}
+		}
+	}
+	infos, err := chromedp.Targets(p.tab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range infos {
+		if i.Type == "iframe" && strings.Contains(i.URL, host) {
+			return "as a target of its own"
+		}
+	}
+	return ""
+}
+
+// A popup that opens all the same is closed: nothing it would do reaches the
+// refused address, and no page but the tab is left in its browser context.
+// Between its opening and its close it may run; that race is the browser's.
+func TestAPopupIsClosed(t *testing.T) {
+	if os.Getenv("BRAIN_TEST_BROWSER_HOST_IP") == "" {
+		missing(t, "BRAIN_TEST_BROWSER_HOST_IP")
+	}
+	eachBrowser(t, func(t *testing.T, b realBrowser) {
+		srv := site(t, b)
+		p := start(t, b, srv)
+		goTo(t, p, srv.base+"/popup-flip")
+
+		// Time for the popup to open and do what it can, then for it to go.
+		time.Sleep(2 * time.Second)
+		pages := otherPages(t, p)
+		for deadline := time.Now().Add(5 * time.Second); len(pages) != 0 && time.Now().Before(deadline); pages = otherPages(t, p) {
+			time.Sleep(200 * time.Millisecond)
+		}
+		if len(pages) != 0 {
+			t.Errorf("pages left open beside the tab: %v", pages)
+		}
+		if got := srv.reached(); len(got) != 0 {
+			t.Errorf("the popup reached the refused address at %v", got)
+		}
+		srv.mu.Lock()
+		t.Logf("the popup's page was served %d times", srv.popped)
+		srv.mu.Unlock()
+	})
+}
+
+// Runs that share a browser start at once, each guard proved by its own
+// canary whatever the others' guards pause, and each read counts only what
+// its own page asked for.
+func TestRunsSharingABrowserStartAndReadApart(t *testing.T) {
+	if os.Getenv("BRAIN_TEST_BROWSER_HOST_IP") == "" {
+		missing(t, "BRAIN_TEST_BROWSER_HOST_IP")
+	}
+	eachBrowser(t, func(t *testing.T, b realBrowser) {
+		srv := site(t, b)
+		const runs = 3
+		pages := make([]*Page, runs)
+		errs := make([]error, runs)
+		var wg sync.WaitGroup
+		for i := range runs {
+			wg.Go(func() {
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				defer cancel()
+				pages[i], errs[i] = Start(ctx, Session{URL: b.url}, http.DefaultClient, srv.public, true)
+			})
+		}
+		wg.Wait()
+		for i := range runs {
+			t.Cleanup(pages[i].Close)
+			if errs[i] != nil {
+				t.Fatalf("run %d of %d sharing the browser did not start: %v", i+1, runs, errs[i])
+			}
+		}
+
+		goTo(t, pages[0], srv.base+"/")
+		for i, p := range pages[1:] {
+			if s := goTo(t, p, srv.base+"/next"); s.Refused != 0 || s.Shed != 0 {
+				t.Errorf("run %d read %d refused, %d held back, all of them another run's", i+2, s.Refused, s.Shed)
+			}
+		}
+	})
+}
+
+// An action kept to a site is taken only on a page on it, and never sends a
+// form to another; a link may still lead away, and what is then on the page
+// is refused until it is opened. Kept to nothing, it is taken anywhere.
+func TestAnActionIsKeptToItsSite(t *testing.T) {
+	if os.Getenv("BRAIN_TEST_BROWSER_OTHER_HOST") == "" {
+		missing(t, "BRAIN_TEST_BROWSER_OTHER_HOST")
+	}
+	eachBrowser(t, func(t *testing.T, b realBrowser) {
+		srv := site(t, b)
+		p := start(t, b, srv)
+		here := []string{b.host}
+		s := goTo(t, p, srv.base+"/to-other")
+
+		if _, err := p.Type(within30(t), refOf(t, s, `"q"`), "secret", true, here); !errors.Is(err, ErrOffSite) {
+			t.Errorf("a form sent to another site = %v, want it refused", err)
+		}
+		if _, err := p.Click(within30(t), refOf(t, s, "Send there"), here); !errors.Is(err, ErrOffSite) {
+			t.Errorf("a button sending its form to another site = %v, want it refused", err)
+		}
+		if got, _ := p.Snapshot(within30(t)); !strings.HasSuffix(got.URL, "/to-other") {
+			t.Fatalf("a refused action moved the page to %s", got.URL)
+		}
+
+		moved, err := p.Click(within30(t), refOf(t, s, "Other site"), here)
+		if err != nil || !strings.Contains(moved.URL, b.other) {
+			t.Fatalf("a link to another site = %v at %s, want it followed", err, moved.URL)
+		}
+		if _, err := p.Click(within30(t), 1, here); !errors.Is(err, ErrOffSite) || !strings.Contains(err.Error(), b.other) {
+			t.Errorf("acting on the other site = %v, want it refused, naming it", err)
+		}
+
+		s = goTo(t, p, srv.base+"/to-other")
+		if got, err := p.Type(within30(t), refOf(t, s, `"q"`), "anything", true, nil); err != nil || !strings.Contains(got.URL, b.other) {
+			t.Errorf("kept to nothing, the form = %v at %s, want it sent", err, got.URL)
+		}
+	})
+}
+
+// otherPages is every page in the tab's browser context but the tab.
+func otherPages(t *testing.T, p *Page) []string {
+	t.Helper()
+	c := chromedp.FromContext(p.tab)
+	infos, err := chromedp.Targets(p.tab)
+	if err != nil {
+		t.Fatalf("targets: %v", err)
+	}
+	var out []string
+	for _, i := range infos {
+		if i.Type == "page" && i.TargetID != c.Target.TargetID && i.BrowserContextID == c.BrowserContextID {
+			out = append(out, i.URL)
+		}
+	}
+	return out
 }
 
 // escapes loads each page on a guarded tab and fails for anything that
