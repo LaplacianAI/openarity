@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,9 @@ type fakeCDP struct {
 	// navigation but not a page's own fetch.
 	loadsCanary     bool
 	fetchesUnpaused bool
+	// pausesPages pauses the request a navigation makes, as a browser that
+	// pauses requests does, beside the canary's.
+	pausesPages bool
 	// version is what /json/version says; "" is a 404, as Browserless's is.
 	version string
 	// send is one message the browser sends first, unasked.
@@ -39,6 +43,8 @@ type fakeCDP struct {
 	mu     sync.Mutex
 	asked  []string
 	dialed []string
+	// continued and failed are the paused requests let go on and failed.
+	continued, failed []string
 }
 
 func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
@@ -76,11 +82,18 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 				Params    struct {
 					URL        string `json:"url"`
 					Expression string `json:"expression"`
+					RequestID  string `json:"requestId"`
 				} `json:"params"`
 			}
 			_ = json.Unmarshal(data, &m)
 			f.mu.Lock()
 			f.asked = append(f.asked, m.Method)
+			switch m.Method {
+			case "Fetch.continueRequest":
+				f.continued = append(f.continued, m.Params.RequestID)
+			case "Fetch.failRequest":
+				f.failed = append(f.failed, m.Params.RequestID)
+			}
 			f.mu.Unlock()
 			if f.silent[m.Method] {
 				continue
@@ -92,6 +105,15 @@ func (f *fakeCDP) serve(t *testing.T) *httptest.Server {
 			case m.Method == "Page.navigate" && strings.Contains(m.Params.URL, canaryHost):
 				// Not paused, so tried: .invalid names nothing.
 				reply["result"] = map[string]any{"frameId": "T1", "errorText": "net::ERR_NAME_NOT_RESOLVED"}
+			case m.Method == "Page.navigate" && f.pausesPages:
+				ev, _ := json.Marshal(map[string]any{"method": "Fetch.requestPaused", "sessionId": m.SessionID, "params": map[string]any{
+					"requestId": "page", "request": map[string]any{"url": m.Params.URL, "method": "GET", "headers": map[string]any{}},
+					"frameId": "T1", "resourceType": "Document",
+				}})
+				if err := ws.Write(r.Context(), websocket.MessageText, ev); err != nil {
+					return
+				}
+				reply["result"] = map[string]any{"frameId": "T1"}
 			case m.Method == "Target.createBrowserContext":
 				reply["result"] = map[string]any{"browserContextId": "B1"}
 			case m.Method == "Page.addScriptToEvaluateOnNewDocument":
@@ -138,6 +160,13 @@ func (f *fakeCDP) wasAsked(method string) bool {
 		}
 	}
 	return false
+}
+
+// what says whether the request named id was let go on and failed.
+func (f *fakeCDP) what(id string) (continued, failed bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.continued, id), slices.Contains(f.failed, id)
 }
 
 func anyHost(context.Context, string) error { return nil }
@@ -244,6 +273,38 @@ func TestABrowserThatNeverAnswersFailsInTime(t *testing.T) {
 		}
 		if errors.Is(err, ErrNoGuard) || time.Since(began) > 5*time.Second {
 			t.Errorf("required %v: Start = %v after %s, want a failure in time", required, err, time.Since(began))
+		}
+	}
+}
+
+// A request the guard lets through that the browser will not let go on is
+// failed, never left paused for the page to wait on for ever.
+func TestARequestTheBrowserWillNotContinueIsFailed(t *testing.T) {
+	for _, refuses := range []bool{false, true} {
+		f := &fakeCDP{pausesPages: true}
+		if refuses {
+			f.refuse = map[string]bool{"Fetch.continueRequest": true}
+		}
+		srv := f.serve(t)
+		p, err := startOn(t, srv.URL, true)
+		if err != nil {
+			t.Fatalf("Start = %v", err)
+		}
+		// The fake sends no load event, so the open ends at its limit; the
+		// paused request is answered long before.
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		_, _ = p.Open(ctx, "http://example.test/")
+		cancel()
+
+		var continued, failed bool
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if continued, failed = f.what("page"); failed || (continued && !refuses) {
+				break
+			}
+		}
+		p.Close()
+		if !continued || failed != refuses {
+			t.Errorf("refused %v: continued %v, failed %v; want it continued, and failed only when refused", refuses, continued, failed)
 		}
 	}
 }
