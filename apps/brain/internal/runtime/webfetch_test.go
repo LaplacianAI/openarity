@@ -724,7 +724,7 @@ func TestTheModelSeesALongPagesEndsAndCanReadTheRest(t *testing.T) {
 	spec := agent.Spec{
 		Model: agent.ModelRef{Name: "m", MaxTokens: 100}, Pattern: agent.PatternReAct, MaxSteps: 3,
 		Tools:      []agent.Tool{WebFetchTool(fetcher, nil)},
-		Compaction: compactionFor(defaultCompactionMessages, maxTokens),
+		Compaction: compactionFor(defaultTeamSettings(), maxTokens),
 	}
 	task := []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "read it"}}}}
 

@@ -31,6 +31,8 @@ const NEVER: TeamSettings = {
   sandbox: { provider: "none", url: null, key_set: false },
   learning: false,
   compaction_messages: 100,
+  compaction_tokens_min: 50_000,
+  compaction_tokens_max: 60_000,
   hub: null,
   updated_at: null,
 };
@@ -41,6 +43,8 @@ const BRAVE: TeamSettings = {
   sandbox: { provider: "none", url: null, key_set: false },
   learning: false,
   compaction_messages: 250,
+  compaction_tokens_min: 50_000,
+  compaction_tokens_max: 60_000,
   hub: null,
   updated_at: "2026-10-21T09:00:00Z",
 };
@@ -75,6 +79,8 @@ describe("the request the form sends", () => {
       browser: { provider: "none" },
       learning: false,
       compaction_messages: 250,
+      compaction_tokens_min: 50_000,
+      compaction_tokens_max: 60_000,
       hub: null,
     });
   });
@@ -147,8 +153,11 @@ describe("the request the form sends", () => {
     [{ maxTokens: "12.5" }, /Max tokens/],
     [{ temperature: "2.1" }, /Temperature/],
     [{ temperature: "warm" }, /Temperature/],
-    [{ compaction: "9" }, /Compaction/],
-    [{ compaction: "10001" }, /Compaction/],
+    [{ compaction: "9" }, /Messages before a run compacts/],
+    [{ compaction: "10001" }, /Messages before a run compacts/],
+    [{ tokensMin: "29,999" }, /^At least/],
+    [{ tokensMax: "1,000,001" }, /^At most/],
+    [{ tokensMin: "70,000" }, /is above at most/],
   ])("refuses %o before asking the brain", (patch, said) => {
     expect(settingsRequest({ ...draftOf(BRAVE), ...patch }, BRAVE)).toMatch(said);
   });
@@ -158,7 +167,11 @@ describe("each group on its own", () => {
   it.each([
     ["model", { modelName: "gpt-6" }, true],
     ["model", { learning: true }, false],
-    ["hub", { compaction: "300" }, true],
+    ["hub", { compaction: "300" }, false],
+    ["compaction", { compaction: "300" }, true],
+    ["compaction", { tokensMax: "70,000" }, true],
+    // The same number however it is typed.
+    ["compaction", { tokensMax: "60000", compaction: "250" }, false],
     ["search", { key: "k" }, true],
     ["search", { dropKey: true }, true],
     ["learning", { learning: true }, true],
@@ -189,10 +202,23 @@ describe("each group on its own", () => {
     });
   });
 
+  // The token lines are optional on the wire: only Compaction's own Save
+  // sends them, so a stale tab saving another group cannot reset them.
+  it("sends the token lines only from Compaction's Save", () => {
+    const d = { ...draftOf(BRAVE), tokensMin: "70,000", tokensMax: "90,000" };
+    expect(groupRequest("learning", d, BRAVE)).not.toHaveProperty("compaction_tokens_min");
+    expect(groupRequest("learning", d, BRAVE)).not.toHaveProperty("compaction_tokens_max");
+    expect(groupRequest("compaction", d, BRAVE)).toMatchObject({
+      compaction_tokens_min: 70_000,
+      compaction_tokens_max: 90_000,
+    });
+  });
+
   it("checks only its own fields", () => {
     const d = { ...draftOf(BRAVE), compaction: "9" };
     expect(groupRequest("learning", d, BRAVE)).not.toBeTypeOf("string");
-    expect(groupRequest("hub", d, BRAVE)).toMatch(/Compaction/);
+    expect(groupRequest("hub", d, BRAVE)).not.toBeTypeOf("string");
+    expect(groupRequest("compaction", d, BRAVE)).toMatch(/Messages before a run compacts/);
   });
 });
 
@@ -220,7 +246,9 @@ it("shows the defaults for a team that never saved", async () => {
   expect(await screen.findByText(/No model —/)).toBeInTheDocument();
   expect(screen.getByLabelText(/^provider$/i)).toHaveTextContent("Off");
   expect(screen.getByLabelText(/learn from each run/i)).not.toBeChecked();
-  expect(screen.getByLabelText(/messages before a transcript compacts/i)).toHaveValue("100");
+  expect(screen.getByLabelText(/messages before a run compacts/i)).toHaveValue("100");
+  expect(screen.getByLabelText(/^at least$/i)).toHaveValue("50,000");
+  expect(screen.getByLabelText(/^at most$/i)).toHaveValue("60,000");
 });
 
 // Settings are per team; the title says whose they are.

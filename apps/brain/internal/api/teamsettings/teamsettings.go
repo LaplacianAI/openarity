@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	browserpkg "github.com/LaplacianAI/openarity/apps/brain/internal/browser"
@@ -21,6 +22,10 @@ import (
 const (
 	KeyAPI            = "api_key"
 	defaultCompaction = 100
+	// The brain's line before teams could set it, kept for a team that
+	// never saved its settings.
+	defaultCompactionTokensMin = 50_000
+	defaultCompactionTokensMax = 60_000
 )
 
 type Store interface {
@@ -133,6 +138,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := params(teamID, req, secretID, hub)
+	p.CompactionTokensMin, p.CompactionTokensMax = compactionTokens(req, stored)
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
 	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
@@ -142,10 +148,24 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 				h.forget(r.Context(), teamID, path)
 			}
 		}
+		if raced(err) {
+			http.Error(w, "the team's compaction settings changed while saving; read them again and retry", http.StatusConflict)
+			return
+		}
 		api.Fail(w, h.logger, u, "failed to save team settings", err)
 		return
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, view(saved, hub))
+}
+
+// raced is a save whose token lines were checked against settings another
+// save changed before this one wrote: one sent only the lowest, the other
+// only the highest, and together they cross. The table refuses the pair, so
+// nothing is wrong in it; the caller reads the settings again and retries.
+func raced(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "23514" &&
+		pg.ConstraintName == "team_settings_compaction_tokens_order"
 }
 
 func (h *handler) stored(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, bool, error) {
@@ -290,11 +310,13 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 			Template: row.SandboxTemplate,
 			KeySet:   row.SandboxSecretID != nil,
 		},
-		Browser:            browserView(row),
-		Learning:           row.Learning,
-		CompactionMessages: row.CompactionMessages,
-		Hub:                hub,
-		UpdatedAt:          &row.UpdatedAt,
+		Browser:             browserView(row),
+		Learning:            row.Learning,
+		CompactionMessages:  row.CompactionMessages,
+		CompactionTokensMin: row.CompactionTokensMin,
+		CompactionTokensMax: row.CompactionTokensMax,
+		Hub:                 hub,
+		UpdatedAt:           &row.UpdatedAt,
 	}
 	if row.ModelName != nil && row.ModelMaxTokens != nil {
 		s.Model = &modelRef{Name: *row.ModelName, MaxTokens: *row.ModelMaxTokens, Temperature: row.ModelTemperature}
@@ -304,9 +326,11 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 
 func defaults() settings {
 	return settings{
-		Search:             search{Provider: providerNone},
-		Sandbox:            sandbox{Provider: string(sandboxpkg.None)},
-		Browser:            browser{Provider: string(browserpkg.None)},
-		CompactionMessages: defaultCompaction,
+		Search:              search{Provider: providerNone},
+		Sandbox:             sandbox{Provider: string(sandboxpkg.None)},
+		Browser:             browser{Provider: string(browserpkg.None)},
+		CompactionMessages:  defaultCompaction,
+		CompactionTokensMin: defaultCompactionTokensMin,
+		CompactionTokensMax: defaultCompactionTokensMax,
 	}
 }

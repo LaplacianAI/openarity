@@ -804,6 +804,9 @@ export type TeamSettings = {
   browser?: { provider: BrowserProvider; url: string | null; key_set: boolean };
   learning: boolean;
   compaction_messages: number;
+  /** A run compacts at a tenth of its budget, held between these two. */
+  compaction_tokens_min: number;
+  compaction_tokens_max: number;
   /** The agent every message reaches first; null for the built-in orchestrator. */
   hub: { id: string; name: string } | null;
   updated_at: string | null;
@@ -829,6 +832,9 @@ export type TeamSettingsRequest = {
   browser?: { provider: BrowserProvider; url?: string; api_key?: string };
   learning: boolean;
   compaction_messages: number;
+  /** Left out, the stored value stays. */
+  compaction_tokens_min?: number;
+  compaction_tokens_max?: number;
   /** An agent's name in the team; null for the built-in orchestrator. */
   hub: string | null;
 };

@@ -16,19 +16,19 @@ import (
 )
 
 const (
-	// compactCeiling is the most a run's next request may read before it
-	// compacts. A run's own budget lowers it to a tenth of the budget, so no
-	// single call reads more than that, but never below compactFloor: a
-	// compaction keeps the latest ~15,000 tokens, the prompt and the tools,
-	// so a lower line is crossed again at once and the run spends its budget
-	// summarising. A small budget is kept by its soft lines instead.
+	// defaultCompactionTokensMin and defaultCompactionTokensMax hold a run's
+	// token line for a team that never saved its settings: a run compacts
+	// once its next request would read a tenth of its budget, never below the
+	// least, since a compaction keeps the latest ~15,000 tokens, the prompt and
+	// the tools and a lower line is crossed again at once, and never above the
+	// most. A small budget is kept by its soft lines instead.
 	//
 	// 60,000, not more: a review delegate at 100,000 spent its last ten or
 	// twenty steps rereading tool output it was done with, and a compaction
 	// on staging left about 26,000, so this still leaves room for several
 	// steps between compactions.
-	compactCeiling = 60_000
-	compactFloor   = 50_000
+	defaultCompactionTokensMin = 50_000
+	defaultCompactionTokensMax = 60_000
 	// defaultCompactionMessages is team_settings.compaction_messages' default,
 	// for a team that never saved its settings.
 	defaultCompactionMessages = 100
@@ -69,9 +69,7 @@ type wrapUpPayload struct {
 func (b *Builder) teamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error) {
 	s, err := b.store.GetTeamSettings(ctx, teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return db.TeamSetting{
-			SearchProvider: noSearchProvider, BrowserProvider: noBrowserProvider, CompactionMessages: defaultCompactionMessages,
-		}, nil
+		return defaultTeamSettings(), nil
 	}
 	if err != nil {
 		return db.TeamSetting{}, fmt.Errorf("reading the team's settings: %w", err)
@@ -79,12 +77,24 @@ func (b *Builder) teamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSe
 	return s, nil
 }
 
+// defaultTeamSettings are a team's settings before it saves any.
+func defaultTeamSettings() db.TeamSetting {
+	return db.TeamSetting{
+		SearchProvider:      noSearchProvider,
+		BrowserProvider:     noBrowserProvider,
+		CompactionMessages:  defaultCompactionMessages,
+		CompactionTokensMin: defaultCompactionTokensMin,
+		CompactionTokensMax: defaultCompactionTokensMax,
+	}
+}
+
 // compactionFor is how a run compacts: past the team's message count, or past
-// a tenth of the run's budget, held between the floor and the ceiling.
-func compactionFor(messages int32, budget int64) *agent.Compaction {
+// a tenth of the run's budget, held between the team's least and most tokens.
+// The settings handler and the table keep least at or under most.
+func compactionFor(s db.TeamSetting, budget int64) *agent.Compaction {
 	return &agent.Compaction{
-		AfterMessages:    int(messages),
-		AfterInputTokens: int(min(compactCeiling, max(budget/10, compactFloor))),
+		AfterMessages:    int(s.CompactionMessages),
+		AfterInputTokens: int(min(int64(s.CompactionTokensMax), max(budget/10, int64(s.CompactionTokensMin)))),
 	}
 }
 
