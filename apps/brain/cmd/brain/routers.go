@@ -16,6 +16,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/blueprints"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/channels"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/docs"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/loops"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpoauth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
@@ -80,6 +81,7 @@ func newRouters(
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		approvals.New(logger, dbStore, authorizer, decider{store: dbStore, resumer: starter}),
+		improvements.New(logger, dbStore, authorizer, improvements.NewDecider(dbStore, attachments, runtime.Loops())),
 		teamgraph.New(logger, graphs),
 		teamsummary.New(logger, dbStore, authorizer),
 		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks)),

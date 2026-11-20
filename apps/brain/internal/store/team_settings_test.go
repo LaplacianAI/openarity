@@ -92,7 +92,7 @@ func TestANewTeamStartsAskingBeforeWrites(t *testing.T) {
 		t.Fatalf("GetTeamSettings on a new team: %v", err)
 	}
 	if got.ApprovalMode != "writes" || got.ApprovalTtlMinutes != 60 || got.SearchProvider != "none" ||
-		got.Learning || got.CompactionMessages != 100 || got.ModelName != nil {
+		got.Improvement || got.CompactionMessages != 100 || got.ModelName != nil {
 		t.Errorf("a new team's settings = %+v; want writes for 60 minutes and every other default", got)
 	}
 
@@ -136,11 +136,11 @@ func TestTheColumnDefaultsAreTheSpecsDefaults(t *testing.T) {
 		t.Errorf("token defaults = %d to %d, want 50,000 to 60,000, the spec's",
 			got.CompactionTokensMin, got.CompactionTokensMax)
 	}
-	if got.SearchProvider != "none" || got.Learning || got.CompactionMessages != 100 ||
+	if got.SearchProvider != "none" || got.Improvement || got.CompactionMessages != 100 ||
 		got.ModelName != nil || got.SearchSecretID != nil || got.ApprovalMode != "off" {
 		t.Errorf("defaults = provider %q, learning %v, compaction %d, model %v, secret %v, approvals %q; "+
 			"want none, false, 100, nil, nil, off",
-			got.SearchProvider, got.Learning, got.CompactionMessages, got.ModelName, got.SearchSecretID, got.ApprovalMode)
+			got.SearchProvider, got.Improvement, got.CompactionMessages, got.ModelName, got.SearchSecretID, got.ApprovalMode)
 	}
 }
 
@@ -180,10 +180,10 @@ func TestUpsertingTwiceKeepsOneRow(t *testing.T) {
 	}
 
 	again := settings(team.ID)
-	again.Learning = true
+	again.Improvement = true
 	second := mustUpsertSettings(t, s, again)
 
-	if !second.Learning {
+	if !second.Improvement {
 		t.Error("the second save did not change learning")
 	}
 	if !second.UpdatedAt.After(past.Add(time.Hour)) {
@@ -376,7 +376,7 @@ func TestKeepingTheSearchKeyTombstonesNothing(t *testing.T) {
 
 	mustUpsertSettings(t, s, keyed(team.ID, "brave", a))
 	again := keyed(team.ID, "brave", a)
-	again.Learning = true
+	again.Improvement = true
 	mustUpsertSettings(t, s, again)
 
 	if got := secretPaths(t, s); len(got) != 0 {

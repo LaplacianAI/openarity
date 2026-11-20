@@ -143,3 +143,6 @@ func validate(m Manifest) error {
 func blank(s *string) bool {
 	return s != nil && strings.TrimSpace(*s) == ""
 }
+
+// Validate holds a manifest built in code to the rules a parsed one meets.
+func (m Manifest) Validate() error { return validate(m) }

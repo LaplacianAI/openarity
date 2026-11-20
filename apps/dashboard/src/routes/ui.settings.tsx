@@ -179,7 +179,7 @@ function Settings() {
       <PageHeader
         title={teamName ? `Team settings — ${teamName}` : "Team settings"}
         finding={settings.data && settings.data.model === null ? NO_MODEL : null}
-        description="For this team only: the model its built-in agents run on, how they search the web, where its command servers run, and what they learn. Each team has its own."
+        description="For this team only: the model its built-in agents run on, how they search the web, where its command servers run, and whether they propose improvements to themselves. Each team has its own."
       />
 
       {teamId && !perms.isPending && !canWrite ? (
@@ -256,7 +256,7 @@ export type SettingsDraft = {
   browserKey: string;
   /** A self-hosted browser only: reach it with no key. */
   dropBrowserKey: boolean;
-  learning: boolean;
+  improvement: boolean;
   /** Messages, and the token lines, as typed: compared by value. */
   compaction: string;
   tokensMin: string;
@@ -285,7 +285,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     browserURL: s.browser?.url ?? "",
     browserKey: "",
     dropBrowserKey: false,
-    learning: s.learning,
+    improvement: s.improvement,
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -294,7 +294,14 @@ export function draftOf(s: TeamSettings): SettingsDraft {
 }
 
 /** The groups of the page, each saved on its own. */
-export type Group = "model" | "hub" | "compaction" | "search" | "sandbox" | "browser" | "learning";
+export type Group =
+  | "model"
+  | "hub"
+  | "compaction"
+  | "search"
+  | "sandbox"
+  | "browser"
+  | "improvement";
 
 /** Which of the draft's fields each group owns. */
 const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
@@ -304,7 +311,7 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
   search: ["provider", "url", "key", "dropKey"],
   sandbox: ["sandbox", "sandboxURL", "sandboxTemplate", "sandboxKey"],
   browser: ["browser", "browserURL", "browserKey", "dropBrowserKey"],
-  learning: ["learning"],
+  improvement: ["improvement"],
 };
 
 function same(a: SettingsDraft[keyof SettingsDraft], b: SettingsDraft[keyof SettingsDraft]) {
@@ -431,7 +438,7 @@ export function settingsRequest(
     search,
     sandbox,
     browser,
-    learning: d.learning,
+    improvement: d.improvement,
     compaction_messages: compaction.messages,
     compaction_tokens_min: compaction.least,
     compaction_tokens_max: compaction.most,
@@ -758,7 +765,15 @@ function TokensInput({
   );
 }
 
-const GROUPS: Group[] = ["model", "hub", "compaction", "search", "sandbox", "browser", "learning"];
+const GROUPS: Group[] = [
+  "model",
+  "hub",
+  "compaction",
+  "search",
+  "sandbox",
+  "browser",
+  "improvement",
+];
 
 function SettingsForm({
   teamId,
@@ -1119,15 +1134,15 @@ function SettingsForm({
       </Section>
 
       <Section
-        title="Learning"
-        about="What the team's agents take away from their runs."
-        {...props("learning")}
+        title="Improvement"
+        about="Changes the team's agents propose to themselves from their runs."
+        {...props("improvement")}
       >
         <SwitchField
-          label="Learn from each run"
-          description="After a run, the learner writes what it taught. Nothing it writes is used until someone who may approve learning approves it."
-          checked={draft.learning}
-          onCheckedChange={(learning) => set("learning", { learning })}
+          label="Improve agents from their runs"
+          description="Agents propose changes to their own instructions, skills and tools from their runs, for someone who may approve to accept. The parts that propose arrive in a later release; until then this changes nothing."
+          checked={draft.improvement}
+          onCheckedChange={(improvement) => set("improvement", { improvement })}
         />
       </Section>
 

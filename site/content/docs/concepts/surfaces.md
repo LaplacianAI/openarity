@@ -12,17 +12,18 @@ title: Surfaces
 Openarity is one graph with more than one way in.
 
 The surfaces below are not separate products that happen to share a vendor.
-They are views onto the same agents, tools, skills and learnings — which means
+They are views onto the same agents, tools and skills — which means
 the interesting property is not any one of them, but what passes between them.
 
 ## The property that matters
 
-A learning earned in one surface is capability in every other.
+What an agent gets better at in one surface is capability in every other.
 
 An agent works out, while fixing a flaky test, that this repository's
-integration suite needs the database migrated twice. That is a node. It has
-edges: to the tool that ran the migration, to the skill that failed without it,
-to the team that owns the repository.
+integration suite needs the database migrated twice. It proposes that as a
+change to the skill that failed without it, a person approves it, and the
+skill is a node with edges: to the tool that ran the migration, to every agent
+that holds it, to the team that owns the repository.
 
 Nothing has to be integrated for that to be available the next time somebody
 asks a question in chat about why CI is slow. It is not copied, exported or
@@ -37,7 +38,7 @@ graph means each new surface needs none.
 
 <div class="grid cards" markdown>
 
-  - **Openarity Code**: Agents on a repository — review, migration, the on-call trail. The surface where a learning is cheapest to earn, because tests say whether it was right.
+  - **Openarity Code**: Agents on a repository — review, migration, the on-call trail. The surface where an improvement is cheapest to earn, because tests say whether it was right.
   - **Openarity Work**: Agents in the channels people already use. Slack, Discord, Telegram and webhooks normalise into one message, so a surface is an adapter rather than a product.
   - **Openarity Knowledge**: The organisation's own graph, queried directly. Not a second knowledge base — the same nodes the agents traverse, with a person doing the walking.
   - **Openarity Design**: Agents on design files and design systems, where the constraint is a system rather than a compiler.

@@ -1,7 +1,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import { Popover } from "radix-ui";
-import { type ReactNode, useId, useState } from "react";
+import { Fragment, type ReactNode, useId, useState } from "react";
 
 import {
   getAgent,
@@ -14,7 +14,7 @@ import {
   listMCPTools,
   listSkills,
 } from "@/api";
-import type { Delegation, MCPServerGrant } from "@/api/types";
+import type { Delegation, MCPServerGrant, ToolNote } from "@/api/types";
 import { Choice } from "@/components/choices";
 import { type Picked, Picker, type SearchResult } from "@/components/picker";
 import { Field, TextArea } from "@/components/registry-bits";
@@ -132,6 +132,7 @@ export function AgentForm({
   set,
   self,
   drafted,
+  toolNotes = [],
 }: {
   teamId: string;
   draft: Draft;
@@ -143,6 +144,12 @@ export function AgentForm({
    * agent can be granted a server or skill that does not exist yet.
    */
   drafted?: Drafted;
+  /**
+   * What approved improvements noted on this agent's tools, shown under the
+   * servers and never edited: they are not part of the draft, so a save does
+   * not send them.
+   */
+  toolNotes?: ToolNote[];
 }) {
   const names = useNames(teamId);
   const settings = useQuery({
@@ -301,6 +308,7 @@ export function AgentForm({
               )
             }
           />
+          <ToolNotes notes={toolNotes} servers={servers} />
         </div>
         <div>
           <p className="mb-1.5 text-sm font-medium">Skills</p>
@@ -463,6 +471,38 @@ function Delegates({
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The notes approved improvements left on an agent's tools, under their
+ * server and read only: they are told to the agent with each tool, and
+ * changed by proposing a change, not by typing here.
+ */
+function ToolNotes({ notes, servers }: { notes: ToolNote[]; servers: Picked[] }) {
+  if (notes.length === 0) return null;
+  const serverIds = [...new Set(notes.map((n) => n.server))];
+  return (
+    <section className="mt-2 space-y-2" aria-label="Tool notes">
+      <p className="text-xs text-muted-foreground">
+        Tool notes come from approved improvements and are told to the agent with each tool.
+      </p>
+      {serverIds.map((id) => (
+        <div key={id} className="space-y-0.5">
+          <p className="text-xs font-medium">{servers.find((s) => s.id === id)?.name ?? id}</p>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+            {notes
+              .filter((n) => n.server === id)
+              .map((n) => (
+                <Fragment key={n.tool}>
+                  <dt className="font-mono text-muted-foreground">{n.tool}</dt>
+                  <dd className="break-words whitespace-pre-wrap">{n.note}</dd>
+                </Fragment>
+              ))}
+          </dl>
+        </div>
+      ))}
+    </section>
   );
 }
 

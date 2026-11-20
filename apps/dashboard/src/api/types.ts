@@ -600,7 +600,15 @@ export type Agent = AgentSummary & {
   web: boolean;
   /** The team's browser, to drive pages with. A hub has it whatever this says. */
   browser: boolean;
+  /**
+   * Usage notes on tools, left by approved improvements. Read only: a PUT
+   * never sends them, and the brain refuses a body that does.
+   */
+  tool_notes?: ToolNote[];
 };
+
+/** A note on one tool of one server, for one agent. */
+export type ToolNote = { server: string; tool: string; note: string };
 
 /** Whom an agent may hand work to: any other agent in its team, only its delegates, or no one. */
 export type Delegation = "team" | "listed" | "none";
@@ -802,7 +810,7 @@ export type TeamSettings = {
   };
   /** The key is never returned. Absent from a brain that predates browsers. */
   browser?: { provider: BrowserProvider; url: string | null; key_set: boolean };
-  learning: boolean;
+  improvement: boolean;
   compaction_messages: number;
   /** A run compacts at a tenth of its budget, held between these two. */
   compaction_tokens_min: number;
@@ -830,7 +838,7 @@ export type TeamSettingsRequest = {
    * browser an empty one removes it.
    */
   browser?: { provider: BrowserProvider; url?: string; api_key?: string };
-  learning: boolean;
+  improvement: boolean;
   compaction_messages: number;
   /** Left out, the stored value stays. */
   compaction_tokens_min?: number;
@@ -971,3 +979,73 @@ export type ApprovalRuleRequest = {
   mode: ApprovalRuleMode;
   require_other?: boolean;
 };
+
+/* ------------------------------------------------------------ improvements */
+
+export type ImprovementStatus = "waiting" | "applied" | "rejected" | "reverted" | "withdrawn";
+
+export type ImprovementKind =
+  | "instructions"
+  | "description"
+  | "skill_grant"
+  | "skill_drop"
+  | "skill_new"
+  | "skill_edit"
+  | "server_grant"
+  | "server_drop"
+  | "tools_narrow"
+  | "builtin_tool"
+  | "tool_note"
+  | "limits"
+  | "delegation"
+  | "pattern";
+
+export type ImprovementMark =
+  | "widens_access"
+  | "widens_reach"
+  | "raises_cost"
+  | "changes_code"
+  | "changes_discovery"
+  | "changes_behaviour";
+
+/** A thing by id and name; the name is the id when it no longer exists. */
+export type NamedRef = { id: string; name: string };
+
+/** One change: text is whole before and after, list is names, value is one value. */
+export type ImprovementChange = {
+  field: string;
+} & (
+  | { type: "text" | "value"; before: string | null; after: string | null }
+  | { type: "list"; before: string[] | null; after: string[] | null }
+);
+
+/** GET /teams/{id}/improvements/{proposalID} */
+export type Improvement = {
+  id: string;
+  kind: ImprovementKind;
+  status: ImprovementStatus;
+  agent: NamedRef;
+  /** The skill a skill_edit changes; null for every other kind. */
+  skill?: NamedRef | null;
+  why: string;
+  hypothesis: string;
+  /** A general weakness of agents (invariant), or this team's domain. */
+  scope: "invariant" | "domain";
+  signature?: string | null;
+  marks: ImprovementMark[];
+  /** For a skill_edit, every agent that holds the skill now. */
+  reaches: NamedRef[];
+  changes: ImprovementChange[];
+  /** The runs it cites; a readable one says the conversation it is read in. */
+  runs: { id: string; readable: boolean; session_id?: string }[];
+  /** A channel sender who is not a member spoke in a session it came from. */
+  outsider: boolean;
+  created_at: string;
+  decided_by?: string | null;
+  decided_at?: string | null;
+  reverted_by?: string | null;
+  reverted_at?: string | null;
+};
+
+/** POST /teams/{id}/improvements/{proposalID}/decision */
+export type ImprovementDecision = { action: "approve" | "reject" | "revert" };

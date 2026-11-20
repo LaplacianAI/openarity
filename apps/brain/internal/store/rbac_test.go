@@ -616,15 +616,19 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		// decides the team's requests nor made this one. Approval settings,
 		// rules, and believing a server's hints all loosen or tighten what
 		// asks, so they are the team's settings.
-		"GET /teams/{id}/approvals":                          "team approval:read",
-		"GET /teams/{id}/approvals/{approvalID}":             "team approval:read",
-		"POST /teams/{id}/approvals/{approvalID}/decision":   "team approval:self",
-		"GET /teams/{id}/approval-settings":                  "member",
-		"PUT /teams/{id}/approval-settings":                  "team team:settings",
-		"GET /teams/{id}/approval-rules":                     "member",
-		"POST /teams/{id}/approval-rules":                    "team team:settings",
-		"DELETE /teams/{id}/approval-rules/{ruleID}":         "team team:settings",
-		"PUT /teams/{id}/mcp-servers/{serverID}/trust-hints": "team team:settings",
+		"GET /teams/{id}/approvals":                        "team approval:read",
+		"GET /teams/{id}/approvals/{approvalID}":           "team approval:read",
+		"POST /teams/{id}/approvals/{approvalID}/decision": "team approval:self",
+		// Waiting proposals are narrowed to approvers in the handler.
+		"GET /teams/{id}/improvements":                        "member",
+		"GET /teams/{id}/improvements/{proposalID}":           "member",
+		"POST /teams/{id}/improvements/{proposalID}/decision": "team improvement:approve",
+		"GET /teams/{id}/approval-settings":                   "member",
+		"PUT /teams/{id}/approval-settings":                   "team team:settings",
+		"GET /teams/{id}/approval-rules":                      "member",
+		"POST /teams/{id}/approval-rules":                     "team team:settings",
+		"DELETE /teams/{id}/approval-rules/{ruleID}":          "team team:settings",
+		"PUT /teams/{id}/mcp-servers/{serverID}/trust-hints":  "team team:settings",
 
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an

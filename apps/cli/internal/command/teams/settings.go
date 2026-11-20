@@ -24,7 +24,7 @@ const defaultE2BTemplate = "openarity-sandbox"
 var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
-	"learning", "compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
+	"improvement", "compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 	"browser", "browser-url", "browser-key-stdin", "no-browser-key",
 }
@@ -39,7 +39,7 @@ var browserFlags = []string{"browser", "browser-url", "browser-key-stdin", "no-b
 func newSettingsCmd(opts *cli.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings",
-		Short: "A team's model, web search, sandbox, browser, learning, compaction and hub",
+		Short: "A team's model, web search, sandbox, browser, self-improvement, compaction and hub",
 		Long: "Every member can read a team's settings. Changing them needs\n" +
 			"team:settings in the team, which only admin holds by default.",
 	}
@@ -80,7 +80,7 @@ type settingsFlags struct {
 	searchURL   string
 	keyStdin    bool
 	noKey       bool
-	learning    string
+	improvement string
 	compaction  int32
 	tokensMin   int32
 	tokensMax   int32
@@ -208,7 +208,7 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&f.browserKeyStdin, "browser-key-stdin", false,
 		"read the browser provider's key from stdin; brightdata's is the zone's USER:PASS")
 	cmd.Flags().BoolVar(&f.noBrowserKey, "no-browser-key", false, "a self-hosted browser only: reach it with no key")
-	cmd.Flags().StringVar(&f.learning, "learning", "", "on or off")
+	cmd.Flags().StringVar(&f.improvement, "improvement", "", "on or off")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().Int32Var(&f.tokensMin, "compaction-tokens-min", 0,
 		"the least a run's next request may read before it compacts, 30000 to 1000000")
@@ -239,8 +239,8 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--browser-key-stdin and --no-browser-key contradict each other")
 	case countTrue(f.keyStdin, f.sandboxKeyStdin, f.browserKeyStdin) > 1:
 		return errors.New("stdin holds one key: set the search, sandbox and browser keys in separate commands")
-	case changed("learning") && f.learning != "on" && f.learning != "off":
-		return fmt.Errorf("--learning takes on or off, not %q", f.learning)
+	case changed("improvement") && f.improvement != "on" && f.improvement != "off":
+		return fmt.Errorf("--improvement takes on or off, not %q", f.improvement)
 	case changed("hub") && f.noHub:
 		return errors.New("--hub and --no-hub contradict each other")
 	case changed("hub") && strings.TrimSpace(f.hub) == "":
@@ -273,7 +273,7 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 	key := k.search
 	req := client.TeamSettingsRequest{
 		Model:              cur.Model,
-		Learning:           cur.Learning,
+		Improvement:        cur.Improvement,
 		CompactionMessages: cur.CompactionMessages,
 		Search: client.SearchSettingsRequest{
 			Provider: cur.Search.Provider,
@@ -316,8 +316,8 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 		u := f.searchURL
 		req.Search.URL = &u
 	}
-	if changed("learning") {
-		req.Learning = f.learning == "on"
+	if changed("improvement") {
+		req.Improvement = f.improvement == "on"
 	}
 	if changed("compaction-messages") {
 		req.CompactionMessages = f.compaction
@@ -428,11 +428,11 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 			printSandbox(table, opts, s.Sandbox)
 			printBrowser(table, opts, s.Browser)
 
-			learning := "off"
-			if s.Learning {
-				learning = "on"
+			improvement := "off"
+			if s.Improvement {
+				improvement = "on"
 			}
-			table.Row(label("learning"), value(learning))
+			table.Row(label("self-improvement"), value(improvement))
 			table.Row(label("compaction"), value(compactionLine(s)))
 			if s.Hub == nil {
 				table.Row(label("hub"), muted("orchestrator (built in)"))

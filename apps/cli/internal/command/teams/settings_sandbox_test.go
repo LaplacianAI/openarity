@@ -11,7 +11,7 @@ import (
 const daytonaSaved = `{"model":null,
   "search":{"provider":"none","url":null,"key_set":false},
   "sandbox":{"provider":"daytona","url":"https://daytona.example","key_set":true},
-  "learning":false,"compaction_messages":100,"updated_at":"2026-11-18T09:00:00Z"}`
+  "improvement":false,"compaction_messages":100,"updated_at":"2026-11-18T09:00:00Z"}`
 
 func sandbox(t *testing.T, body map[string]any) map[string]any {
 	t.Helper()
@@ -28,7 +28,7 @@ func sandbox(t *testing.T, body map[string]any) map[string]any {
 func TestSettingsSetWithoutSandboxFlagsSendsNoSandbox(t *testing.T) {
 	script := settingsRoutes(t, daytonaSaved, http.StatusOK)
 
-	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--learning", "on"); err != nil {
+	if _, err := clitest.Execute(t, commands, "teams", "settings", "set", teamID, "--improvement", "on"); err != nil {
 		t.Fatalf("teams settings set: %v", err)
 	}
 	if s, ok := put(t, script)["sandbox"]; ok {
@@ -124,7 +124,7 @@ func TestSettingsSetSendsAnE2BTemplate(t *testing.T) {
 const e2bSaved = `{"model":null,
   "search":{"provider":"none","url":null,"key_set":false},
   "sandbox":{"provider":"e2b","url":null,"template":"acme/openarity-sandbox","key_set":true},
-  "learning":false,"compaction_messages":100,"updated_at":"2026-11-18T09:00:00Z"}`
+  "improvement":false,"compaction_messages":100,"updated_at":"2026-11-18T09:00:00Z"}`
 
 // A template is E2B's: switching away leaves it behind, and clearing it
 // returns to the default.

@@ -15,7 +15,7 @@ The sidebar is grouped by the job a screen is for:
 | Work | Home, Runs, Sessions, Approvals | Is the team working, what did it do, who is waiting |
 | Build | Agents, Skills, MCP servers, Channels, Builder, Blueprint | Defining what the team can do and where it hears from |
 | Understand | Graph | The team's agents, servers, tools and skills as the graph holds them |
-| Team | Team settings, Teams, Deleted teams | The team's model, hub, web search and learning; its members; and, for super admins only, deleted teams and restoring one |
+| Team | Team settings, Improvements, Teams, Deleted teams | The team's model, hub, web search and self-improvement; the changes its agents propose to themselves; its members; and, for super admins only, deleted teams and restoring one |
 
 The team in the top bar is the one everything is scoped to, shown with your
 role in it; with more than one team it is a switcher. Approvals shows how many
@@ -52,6 +52,20 @@ has one, then by what was first asked in it, then "Direct session". Opening one
 shows the **Conversation** and its **Runs**, each with its trace: tool calls,
 delegations and fetched pages. Under a channel's answer is a line saying
 whether the reply was sent, when, or why not; see [Channels](channels.md).
+
+**Improvements** lists the changes the team's agents propose to their own
+harness: instructions, description, skills and their files, servers and tools,
+limits, delegation and loop. Each shows the agent, why it proposed the change,
+what it expects to happen, the runs it came from (linked when you may read
+them), and the change itself as a line diff, names added and removed, or a
+value before and after; a skill's script is shown in full. Marks say when a
+change widens what the agent can reach or raises its cost, and a skill edit
+names every agent that holds the skill. An approver sees **Waiting**,
+**Applied** and **Closed** (rejected, reverted and withdrawn) and decides with
+**Approve**, **Reject** or **Revert**; reject and revert ask once more.
+Everyone else sees what was applied. A change is refused if its agent or skill
+has changed since it was proposed, and approving one withdraws the others
+waiting on the same target.
 
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to
@@ -93,7 +107,8 @@ plan, and any change to the draft takes the plan away. It is a
 
 **Teams** lists the teams you can see and their members, with each member's
 role: `member`, `approver` or `admin`. **Team settings** groups the model,
-the hub, compaction, web search, the sandbox, the browser, and learning.
+the hub, compaction, web search, the sandbox, the browser, and whether the
+team's agents improve themselves from their runs.
 Compaction says when a run folds its earlier turns into a summary: past a
 number of messages, and when its next request would read a tenth of its
 token budget, held between an at least and an at most the team chooses

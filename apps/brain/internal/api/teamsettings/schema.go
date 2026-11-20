@@ -44,7 +44,7 @@ type settings struct {
 	Search              search     `json:"search"`
 	Sandbox             sandbox    `json:"sandbox"`
 	Browser             browser    `json:"browser"`
-	Learning            bool       `json:"learning"`
+	Improvement         bool       `json:"improvement"`
 	CompactionMessages  int32      `json:"compaction_messages"`
 	CompactionTokensMin int32      `json:"compaction_tokens_min"`
 	CompactionTokensMax int32      `json:"compaction_tokens_max"`
@@ -80,7 +80,7 @@ type settingsRequest struct {
 	Search             searchRequest   `json:"search"`
 	Sandbox            *sandboxRequest `json:"sandbox"`
 	Browser            *browserRequest `json:"browser"`
-	Learning           bool            `json:"learning"`
+	Improvement        bool            `json:"improvement"`
 	CompactionMessages int32           `json:"compaction_messages"`
 	// Left out, the stored value stays, as a sandbox does.
 	CompactionTokensMin *int32  `json:"compaction_tokens_min"`

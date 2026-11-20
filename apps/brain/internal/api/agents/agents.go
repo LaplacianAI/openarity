@@ -28,6 +28,7 @@ type Store interface {
 	ListAgentMCPServers(ctx context.Context, agentID uuid.UUID) ([]db.AgentMcpServer, error)
 	ListAgentSkills(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
 	ListAgentDelegates(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
+	ListAgentToolNotes(ctx context.Context, agentID uuid.UUID) ([]db.AgentToolNote, error)
 	DeleteAgent(ctx context.Context, id uuid.UUID) error
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
@@ -53,6 +54,7 @@ type grants struct {
 	servers   []ServerGrant
 	skills    []uuid.UUID
 	delegates []uuid.UUID
+	notes     []ToolNote
 }
 
 func New(logger *slog.Logger, s Store, loops []string) *api.Router {
@@ -151,7 +153,15 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.write(w, u, http.StatusOK, row, requested(req))
+	// A replace leaves the notes as they are; the answer shows them.
+	notes, err := h.store.ListAgentToolNotes(r.Context(), row.ID)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to list agent tool notes", err)
+		return
+	}
+	g := requested(req)
+	g.notes = toolNotes(notes)
+	h.write(w, u, http.StatusOK, row, g)
 }
 
 func (h *handler) get(w http.ResponseWriter, r *http.Request) {
@@ -182,8 +192,15 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to list agent delegates", err)
 		return
 	}
+	notes, err := h.store.ListAgentToolNotes(r.Context(), row.ID)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to list agent tool notes", err)
+		return
+	}
 
-	h.write(w, u, http.StatusOK, row, stored(servers, skills, delegates))
+	g := stored(servers, skills, delegates)
+	g.notes = toolNotes(notes)
+	h.write(w, u, http.StatusOK, row, g)
 }
 
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -464,6 +481,10 @@ func view(row db.Agent, g grants) (detail, error) {
 		Delegates:          g.delegates,
 		Web:                row.Web,
 		Browser:            row.Browser,
+		ToolNotes:          g.notes,
+	}
+	if d.ToolNotes == nil {
+		d.ToolNotes = []ToolNote{}
 	}
 	if d.MCPServers == nil {
 		d.MCPServers = []ServerGrant{}
@@ -506,4 +527,12 @@ func viewListed(row db.ListAgentsByTeamRow) listed {
 		Delegation: row.Agent.Delegation, Web: row.Agent.Web, Browser: row.Agent.Browser,
 		ServerCount: row.ServerCount, SkillCount: row.SkillCount, DelegateCount: row.DelegateCount,
 	}
+}
+
+func toolNotes(rows []db.AgentToolNote) []ToolNote {
+	out := make([]ToolNote, len(rows))
+	for i, n := range rows {
+		out[i] = ToolNote{Server: n.McpServerID, Tool: n.Tool, Note: n.Note}
+	}
+	return out
 }

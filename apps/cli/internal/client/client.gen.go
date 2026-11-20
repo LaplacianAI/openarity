@@ -546,6 +546,177 @@ func (e GraphNodeLabel) Valid() bool {
 	}
 }
 
+// Defines values for ImprovementScope.
+const (
+	Domain    ImprovementScope = "domain"
+	Invariant ImprovementScope = "invariant"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementScope enum.
+func (e ImprovementScope) Valid() bool {
+	switch e {
+	case Domain:
+		return true
+	case Invariant:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementChangeType.
+const (
+	List  ImprovementChangeType = "list"
+	Text  ImprovementChangeType = "text"
+	Value ImprovementChangeType = "value"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementChangeType enum.
+func (e ImprovementChangeType) Valid() bool {
+	switch e {
+	case List:
+		return true
+	case Text:
+		return true
+	case Value:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementDecisionAction.
+const (
+	Approve ImprovementDecisionAction = "approve"
+	Reject  ImprovementDecisionAction = "reject"
+	Revert  ImprovementDecisionAction = "revert"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementDecisionAction enum.
+func (e ImprovementDecisionAction) Valid() bool {
+	switch e {
+	case Approve:
+		return true
+	case Reject:
+		return true
+	case Revert:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementKind.
+const (
+	ImprovementKindBuiltinTool  ImprovementKind = "builtin_tool"
+	ImprovementKindDelegation   ImprovementKind = "delegation"
+	ImprovementKindDescription  ImprovementKind = "description"
+	ImprovementKindInstructions ImprovementKind = "instructions"
+	ImprovementKindLimits       ImprovementKind = "limits"
+	ImprovementKindPattern      ImprovementKind = "pattern"
+	ImprovementKindServerDrop   ImprovementKind = "server_drop"
+	ImprovementKindServerGrant  ImprovementKind = "server_grant"
+	ImprovementKindSkillDrop    ImprovementKind = "skill_drop"
+	ImprovementKindSkillEdit    ImprovementKind = "skill_edit"
+	ImprovementKindSkillGrant   ImprovementKind = "skill_grant"
+	ImprovementKindSkillNew     ImprovementKind = "skill_new"
+	ImprovementKindToolNote     ImprovementKind = "tool_note"
+	ImprovementKindToolsNarrow  ImprovementKind = "tools_narrow"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementKind enum.
+func (e ImprovementKind) Valid() bool {
+	switch e {
+	case ImprovementKindBuiltinTool:
+		return true
+	case ImprovementKindDelegation:
+		return true
+	case ImprovementKindDescription:
+		return true
+	case ImprovementKindInstructions:
+		return true
+	case ImprovementKindLimits:
+		return true
+	case ImprovementKindPattern:
+		return true
+	case ImprovementKindServerDrop:
+		return true
+	case ImprovementKindServerGrant:
+		return true
+	case ImprovementKindSkillDrop:
+		return true
+	case ImprovementKindSkillEdit:
+		return true
+	case ImprovementKindSkillGrant:
+		return true
+	case ImprovementKindSkillNew:
+		return true
+	case ImprovementKindToolNote:
+		return true
+	case ImprovementKindToolsNarrow:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementMark.
+const (
+	ChangesBehaviour ImprovementMark = "changes_behaviour"
+	ChangesCode      ImprovementMark = "changes_code"
+	ChangesDiscovery ImprovementMark = "changes_discovery"
+	RaisesCost       ImprovementMark = "raises_cost"
+	WidensAccess     ImprovementMark = "widens_access"
+	WidensReach      ImprovementMark = "widens_reach"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementMark enum.
+func (e ImprovementMark) Valid() bool {
+	switch e {
+	case ChangesBehaviour:
+		return true
+	case ChangesCode:
+		return true
+	case ChangesDiscovery:
+		return true
+	case RaisesCost:
+		return true
+	case WidensAccess:
+		return true
+	case WidensReach:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementStatus.
+const (
+	ImprovementStatusApplied   ImprovementStatus = "applied"
+	ImprovementStatusRejected  ImprovementStatus = "rejected"
+	ImprovementStatusReverted  ImprovementStatus = "reverted"
+	ImprovementStatusWaiting   ImprovementStatus = "waiting"
+	ImprovementStatusWithdrawn ImprovementStatus = "withdrawn"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementStatus enum.
+func (e ImprovementStatus) Valid() bool {
+	switch e {
+	case ImprovementStatusApplied:
+		return true
+	case ImprovementStatusRejected:
+		return true
+	case ImprovementStatusReverted:
+		return true
+	case ImprovementStatusWaiting:
+		return true
+	case ImprovementStatusWithdrawn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListedChannelReplyMode.
 const (
 	ListedChannelReplyModeEvents ListedChannelReplyMode = "events"
@@ -960,8 +1131,13 @@ type Agent struct {
 
 	// TokenBudget What one run of the agent may spend, input and output tokens
 	// together. Absent when the agent uses the deployment's default.
-	TokenBudget *int64    `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at" yaml:"updated_at"`
+	TokenBudget *int64 `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
+
+	// ToolNotes Usage notes on tools, for this agent, left by approved
+	// improvements and told with each tool in its runs. Read-only:
+	// a replace neither sends nor clears them. Ordered by server, then tool.
+	ToolNotes []ToolNote `json:"tool_notes" yaml:"tool_notes"`
+	UpdatedAt time.Time  `json:"updated_at" yaml:"updated_at"`
 
 	// Web Whether the agent has web_search and web_fetch when it runs as
 	// itself. The team's hub has both whatever this says.
@@ -1995,6 +2171,102 @@ type HubRef struct {
 	Name string `json:"name" yaml:"name"`
 }
 
+// Improvement defines model for Improvement.
+type Improvement struct {
+	Agent     NamedRef            `json:"agent" yaml:"agent"`
+	Changes   []ImprovementChange `json:"changes" yaml:"changes"`
+	CreatedAt time.Time           `json:"created_at" yaml:"created_at"`
+	DecidedAt *time.Time          `json:"decided_at,omitempty" yaml:"decided_at,omitempty"`
+	DecidedBy *openapi_types.UUID `json:"decided_by,omitempty" yaml:"decided_by,omitempty"`
+
+	// Hypothesis What the change is expected to do
+	Hypothesis string             `json:"hypothesis" yaml:"hypothesis"`
+	ID         openapi_types.UUID `json:"id" yaml:"id"`
+	Kind       ImprovementKind    `json:"kind" yaml:"kind"`
+	Marks      []ImprovementMark  `json:"marks" yaml:"marks"`
+
+	// Outsider A channel sender who is not a member spoke in a session it came from
+	Outsider bool `json:"outsider" yaml:"outsider"`
+
+	// Reaches For a skill_edit, every agent that holds the skill now
+	Reaches    []NamedRef          `json:"reaches" yaml:"reaches"`
+	RevertedAt *time.Time          `json:"reverted_at,omitempty" yaml:"reverted_at,omitempty"`
+	RevertedBy *openapi_types.UUID `json:"reverted_by,omitempty" yaml:"reverted_by,omitempty"`
+
+	// Runs The runs it cites; readable says whether the caller may open each
+	Runs []struct {
+		ID       openapi_types.UUID `json:"id" yaml:"id"`
+		Readable bool               `json:"readable" yaml:"readable"`
+
+		// SessionID The conversation the run is read in; present only when readable
+		SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
+	} `json:"runs" yaml:"runs"`
+
+	// Scope A general weakness of agents, or knowledge of this team's domain
+	Scope     ImprovementScope `json:"scope" yaml:"scope"`
+	Signature *string          `json:"signature,omitempty" yaml:"signature,omitempty"`
+
+	// Skill The skill a skill_edit changes; null for every other kind
+	Skill  *NamedRef         `json:"skill,omitempty" yaml:"skill,omitempty"`
+	Status ImprovementStatus `json:"status" yaml:"status"`
+
+	// Why The pattern and the evidence for it, in words
+	Why string `json:"why" yaml:"why"`
+}
+
+// ImprovementScope A general weakness of agents, or knowledge of this team's domain
+type ImprovementScope string
+
+// ImprovementChange defines model for ImprovementChange.
+type ImprovementChange struct {
+	// After A string for text and value, an array of names for list; null for a file the change removes
+	After interface{} `json:"after" yaml:"after"`
+
+	// Before A string for text and value, an array of names for list; null for a file the change adds
+	Before interface{} `json:"before" yaml:"before"`
+
+	// Field What changes: instructions, description, pattern, max_tokens,
+	// max_steps, steer_continuations, token_budget, delegation, web,
+	// browser, skills, delegates, mcp_servers, notes, body, or
+	// files/<path> for a skill's file.
+	Field string `json:"field" yaml:"field"`
+
+	// Type text is whole before and after, for a line diff; list is names; value is one value
+	Type ImprovementChangeType `json:"type" yaml:"type"`
+}
+
+// ImprovementChangeType text is whole before and after, for a line diff; list is names; value is one value
+type ImprovementChangeType string
+
+// ImprovementDecision defines model for ImprovementDecision.
+type ImprovementDecision struct {
+	Action ImprovementDecisionAction `json:"action" yaml:"action"`
+}
+
+// ImprovementDecisionAction defines model for ImprovementDecision.Action.
+type ImprovementDecisionAction string
+
+// ImprovementKind defines model for ImprovementKind.
+type ImprovementKind string
+
+// ImprovementMark What kind of change it is beyond its kind, computed by the brain:
+// widens_access (a server or built-in tool granted, or a skill that
+// names tools), widens_reach (wider delegation), raises_cost (a limit
+// raised), changes_code (a script added or changed), changes_discovery
+// (the description, which others find it by), changes_behaviour (its loop).
+type ImprovementMark string
+
+// ImprovementPage defines model for ImprovementPage.
+type ImprovementPage struct {
+	Items []Improvement `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// ImprovementStatus defines model for ImprovementStatus.
+type ImprovementStatus string
+
 // ListedAgent A row of the agents list: the summary, how the agent works with the
 // web and with other agents, and what it is granted, as counts. The
 // grants themselves are read from the agent.
@@ -2495,6 +2767,14 @@ type ModelRef struct {
 	// Examples: anthropic/claude-opus-5
 	Name        string   `json:"name" yaml:"name"`
 	Temperature *float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+}
+
+// NamedRef defines model for NamedRef.
+type NamedRef struct {
+	ID openapi_types.UUID `json:"id" yaml:"id"`
+
+	// Name The name, or the id when it no longer exists
+	Name string `json:"name" yaml:"name"`
 }
 
 // NewSender The sender let in as someone new, with a user of their own.
@@ -3228,8 +3508,10 @@ type TeamSettings struct {
 	// again when the chosen agent is deleted.
 	Hub *HubRef `json:"hub,omitempty" yaml:"hub,omitempty"`
 
-	// Learning Whether the learner writes learnings after each run, for approval
-	Learning bool `json:"learning" yaml:"learning"`
+	// Improvement Whether the team's agents propose improvements to themselves from
+	// their runs, for approval. The parts that propose arrive in a later
+	// release; until then this setting changes nothing.
+	Improvement bool `json:"improvement" yaml:"improvement"`
 
 	// Model The model the team's built-in agents run on. Null until chosen, and until then they do not run.
 	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
@@ -3262,8 +3544,8 @@ type TeamSettingsRequest struct {
 	//
 	//
 	// Examples: triage
-	Hub      *string `json:"hub,omitempty" yaml:"hub,omitempty"`
-	Learning bool    `json:"learning" yaml:"learning"`
+	Hub         *string `json:"hub,omitempty" yaml:"hub,omitempty"`
+	Improvement bool    `json:"improvement" yaml:"improvement"`
 
 	// Model Null or absent for no model, which stops the built-in agents running.
 	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
@@ -3293,6 +3575,13 @@ type TeamSummary struct {
 	// team. Null without `channel:read`: a caller who cannot list the
 	// queue is not told its length. Always sent.
 	WaitingSenders int64 `json:"waiting_senders" yaml:"waiting_senders"`
+}
+
+// ToolNote defines model for ToolNote.
+type ToolNote struct {
+	Note   string             `json:"note" yaml:"note"`
+	Server openapi_types.UUID `json:"server" yaml:"server"`
+	Tool   string             `json:"tool" yaml:"tool"`
 }
 
 // TriggerWord The word a message must hold to ask the channel, such as `@Fduv`:
@@ -3413,6 +3702,9 @@ type ChannelID = openapi_types.UUID
 
 // Cursor defines model for Cursor.
 type Cursor = string
+
+// ImprovementID defines model for ImprovementID.
+type ImprovementID = openapi_types.UUID
 
 // Limit defines model for Limit.
 type Limit = int32
@@ -3557,6 +3849,30 @@ type ListChannelSessionsParams struct {
 // GetTeamGraphParams defines parameters for GetTeamGraph.
 type GetTeamGraphParams struct {
 	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+}
+
+// ListImprovementsParams defines parameters for ListImprovements.
+type ListImprovementsParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Q Only the rows whose name contains this, ignoring case. It is taken
+	// literally, so `%` and `_` are characters, not wildcards. Spaces around
+	// it are dropped, and an empty one lists everything. A cursor from a
+	// search goes on within the same search.
+	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
+
+	// Status Only proposals in one of these states. Repeat it for more than one.
+	Status *[]ImprovementStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
+
+	// Agent Only proposals about this agent.
+	Agent *openapi_types.UUID `form:"agent,omitempty" json:"agent,omitempty" yaml:"agent,omitempty"`
 }
 
 // ListMCPServersParams defines parameters for ListMCPServers.
@@ -3792,6 +4108,9 @@ type PairChannelJSONRequestBody = PairChannelRequest
 
 // ApproveChannelSenderJSONRequestBody defines body for ApproveChannelSender for application/json ContentType.
 type ApproveChannelSenderJSONRequestBody = ApproveSenderRequest
+
+// DecideImprovementJSONRequestBody defines body for DecideImprovement for application/json ContentType.
+type DecideImprovementJSONRequestBody = ImprovementDecision
 
 // PutMCPSecretJSONRequestBody defines body for PutMCPSecret for application/json ContentType.
 type PutMCPSecretJSONRequestBody = MCPSecretWrite
@@ -4675,6 +4994,61 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
 	GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListImprovements List proposed improvements to a team's agents
+	//
+	// Any member may list applied and reverted ones. Waiting, rejected and
+	// withdrawn ones quote runs that may be in conversations other members
+	// cannot read, so asking for them needs `improvement:approve`; without
+	// it that is a 403, so "none" and "not yours to see" stay apart. With
+	// no status, an approver sees what is waiting and anyone else what is
+	// applied. Newest first.
+	//
+	// Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
+	ListImprovements(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetImprovement Read one proposed improvement, with its changes
+	//
+	// Any member may read an applied or reverted one; a waiting, rejected
+	// or withdrawn one, to someone without `improvement:approve`, is a 404,
+	// as another team's is.
+	//
+	// Corresponds with GET /teams/{id}/improvements/{proposalID} (the `GetImprovement` operationId).
+	GetImprovement(ctx context.Context, id TeamID, proposalID ImprovementID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideImprovementWithBody Approve, reject or revert a proposed improvement
+	//
+	// Requires `improvement:approve`, and the write permission the change
+	// would need by hand: `agent:write` for a change to an agent,
+	// `skill:write` for a skill edit, both for a new skill.
+	//
+	// Approve writes the change with the same rules a person's edit of the
+	// agent or skill meets, and withdraws the other proposals waiting on the
+	// same target. It is refused when the target changed since the proposal
+	// was made. Revert puts the old version back, and is refused when the
+	// target changed since the change was applied.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+	DecideImprovementWithBody(ctx context.Context, id TeamID, proposalID ImprovementID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideImprovement Approve, reject or revert a proposed improvement
+	//
+	// Requires `improvement:approve`, and the write permission the change
+	// would need by hand: `agent:write` for a change to an agent,
+	// `skill:write` for a skill edit, both for a new skill.
+	//
+	// Approve writes the change with the same rules a person's edit of the
+	// agent or skill meets, and withdraws the other proposals waiting on the
+	// same target. It is refused when the target changed since the proposal
+	// was made. Revert puts the old version back, and is refused when the
+	// target changed since the change was applied.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+	DecideImprovement(ctx context.Context, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListLoops List the loops an agent may use
 	//
 	// A read, so belonging to the team is enough. These are the loops the
@@ -5455,7 +5829,7 @@ type ClientInterface interface {
 	// GetTeamSettings Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, no browser, learning off, compaction at 100
+	// defaults: no model, search off, no browser, self-improvement off, compaction at 100
 	// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
@@ -6935,6 +7309,101 @@ func (c *Client) GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGra
 	return c.Client.Do(req)
 }
 
+// ListImprovements List proposed improvements to a team's agents
+//
+// Any member may list applied and reverted ones. Waiting, rejected and
+// withdrawn ones quote runs that may be in conversations other members
+// cannot read, so asking for them needs `improvement:approve`; without
+// it that is a 403, so "none" and "not yours to see" stay apart. With
+// no status, an approver sees what is waiting and anyone else what is
+// applied. Newest first.
+//
+// Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
+func (c *Client) ListImprovements(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListImprovementsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetImprovement Read one proposed improvement, with its changes
+//
+// Any member may read an applied or reverted one; a waiting, rejected
+// or withdrawn one, to someone without `improvement:approve`, is a 404,
+// as another team's is.
+//
+// Corresponds with GET /teams/{id}/improvements/{proposalID} (the `GetImprovement` operationId).
+func (c *Client) GetImprovement(ctx context.Context, id TeamID, proposalID ImprovementID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetImprovementRequest(c.Server, id, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideImprovementWithBody Approve, reject or revert a proposed improvement
+//
+// Requires `improvement:approve`, and the write permission the change
+// would need by hand: `agent:write` for a change to an agent,
+// `skill:write` for a skill edit, both for a new skill.
+//
+// Approve writes the change with the same rules a person's edit of the
+// agent or skill meets, and withdraws the other proposals waiting on the
+// same target. It is refused when the target changed since the proposal
+// was made. Revert puts the old version back, and is refused when the
+// target changed since the change was applied.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+func (c *Client) DecideImprovementWithBody(ctx context.Context, id TeamID, proposalID ImprovementID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideImprovementRequestWithBody(c.Server, id, proposalID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideImprovement Approve, reject or revert a proposed improvement
+//
+// Requires `improvement:approve`, and the write permission the change
+// would need by hand: `agent:write` for a change to an agent,
+// `skill:write` for a skill edit, both for a new skill.
+//
+// Approve writes the change with the same rules a person's edit of the
+// agent or skill meets, and withdraws the other proposals waiting on the
+// same target. It is refused when the target changed since the proposal
+// was made. Revert puts the old version back, and is refused when the
+// target changed since the change was applied.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+func (c *Client) DecideImprovement(ctx context.Context, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideImprovementRequest(c.Server, id, proposalID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListLoops List the loops an agent may use
 //
 // A read, so belonging to the team is enough. These are the loops the
@@ -8186,7 +8655,7 @@ func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID opena
 // GetTeamSettings Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, no browser, learning off, compaction at 100
+// defaults: no model, search off, no browser, self-improvement off, compaction at 100
 // messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
@@ -10487,6 +10956,210 @@ func NewGetTeamGraphRequest(server string, id TeamID, params *GetTeamGraphParams
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewListImprovementsRequest constructs an http.Request for the ListImprovements method
+func NewListImprovementsRequest(server string, id TeamID, params *ListImprovementsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/improvements", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Agent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetImprovementRequest constructs an http.Request for the GetImprovement method
+func NewGetImprovementRequest(server string, id TeamID, proposalID ImprovementID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "proposalID", proposalID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/improvements/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDecideImprovementRequest calls the generic DecideImprovement builder with application/json body
+func NewDecideImprovementRequest(server string, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDecideImprovementRequestWithBody(server, id, proposalID, "application/json", bodyReader)
+}
+
+// NewDecideImprovementRequestWithBody constructs an http.Request for the DecideImprovement method, with any body, and a specified content type
+func NewDecideImprovementRequestWithBody(server string, id TeamID, proposalID ImprovementID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "proposalID", proposalID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/improvements/%s/decision", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -14036,6 +14709,65 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/graph (the `GetTeamGraph` operationId).
 	GetTeamGraphWithResponse(ctx context.Context, id TeamID, params *GetTeamGraphParams, reqEditors ...RequestEditorFn) (*GetTeamGraphResponse, error)
 
+	// ListImprovementsWithResponse List proposed improvements to a team's agents
+	//
+	// Any member may list applied and reverted ones. Waiting, rejected and
+	// withdrawn ones quote runs that may be in conversations other members
+	// cannot read, so asking for them needs `improvement:approve`; without
+	// it that is a 403, so "none" and "not yours to see" stay apart. With
+	// no status, an approver sees what is waiting and anyone else what is
+	// applied. Newest first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
+	ListImprovementsWithResponse(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*ListImprovementsResponse, error)
+
+	// GetImprovementWithResponse Read one proposed improvement, with its changes
+	//
+	// Any member may read an applied or reverted one; a waiting, rejected
+	// or withdrawn one, to someone without `improvement:approve`, is a 404,
+	// as another team's is.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/improvements/{proposalID} (the `GetImprovement` operationId).
+	GetImprovementWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, reqEditors ...RequestEditorFn) (*GetImprovementResponse, error)
+
+	// DecideImprovementWithBodyWithResponse Approve, reject or revert a proposed improvement
+	//
+	// Requires `improvement:approve`, and the write permission the change
+	// would need by hand: `agent:write` for a change to an agent,
+	// `skill:write` for a skill edit, both for a new skill.
+	//
+	// Approve writes the change with the same rules a person's edit of the
+	// agent or skill meets, and withdraws the other proposals waiting on the
+	// same target. It is refused when the target changed since the proposal
+	// was made. Revert puts the old version back, and is refused when the
+	// target changed since the change was applied.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+	DecideImprovementWithBodyWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideImprovementResponse, error)
+
+	// DecideImprovementWithResponse Approve, reject or revert a proposed improvement
+	//
+	// Requires `improvement:approve`, and the write permission the change
+	// would need by hand: `agent:write` for a change to an agent,
+	// `skill:write` for a skill edit, both for a new skill.
+	//
+	// Approve writes the change with the same rules a person's edit of the
+	// agent or skill meets, and withdraws the other proposals waiting on the
+	// same target. It is refused when the target changed since the proposal
+	// was made. Revert puts the old version back, and is refused when the
+	// target changed since the change was applied.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+	DecideImprovementWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideImprovementResponse, error)
+
 	// ListLoopsWithResponse List the loops an agent may use
 	//
 	// A read, so belonging to the team is enough. These are the loops the
@@ -14870,7 +15602,7 @@ type ClientWithResponsesInterface interface {
 	// GetTeamSettingsWithResponse Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, no browser, learning off, compaction at 100
+	// defaults: no model, search off, no browser, self-improvement off, compaction at 100
 	// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
@@ -16780,6 +17512,150 @@ func (r GetTeamGraphResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetTeamGraphResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListImprovementsResponse401Headers the declared response headers of an HTTP 401 response for ListImprovements
+type ListImprovementsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListImprovementsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImprovementPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListImprovementsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListImprovementsResponse) GetJSON200() *ImprovementPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListImprovementsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListImprovementsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListImprovementsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListImprovementsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetImprovementResponse401Headers the declared response headers of an HTTP 401 response for GetImprovement
+type GetImprovementResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetImprovementResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Improvement
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetImprovementResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetImprovementResponse) GetJSON200() *Improvement {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetImprovementResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetImprovementResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetImprovementResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetImprovementResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DecideImprovementResponse401Headers the declared response headers of an HTTP 401 response for DecideImprovement
+type DecideImprovementResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DecideImprovementResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Improvement
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DecideImprovementResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DecideImprovementResponse) GetJSON200() *Improvement {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r DecideImprovementResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DecideImprovementResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DecideImprovementResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DecideImprovementResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -20257,6 +21133,89 @@ func (c *ClientWithResponses) GetTeamGraphWithResponse(ctx context.Context, id T
 	return ParseGetTeamGraphResponse(rsp)
 }
 
+// ListImprovementsWithResponse List proposed improvements to a team's agents
+//
+// Any member may list applied and reverted ones. Waiting, rejected and
+// withdrawn ones quote runs that may be in conversations other members
+// cannot read, so asking for them needs `improvement:approve`; without
+// it that is a 403, so "none" and "not yours to see" stay apart. With
+// no status, an approver sees what is waiting and anyone else what is
+// applied. Newest first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
+func (c *ClientWithResponses) ListImprovementsWithResponse(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*ListImprovementsResponse, error) {
+	rsp, err := c.ListImprovements(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListImprovementsResponse(rsp)
+}
+
+// GetImprovementWithResponse Read one proposed improvement, with its changes
+//
+// Any member may read an applied or reverted one; a waiting, rejected
+// or withdrawn one, to someone without `improvement:approve`, is a 404,
+// as another team's is.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/improvements/{proposalID} (the `GetImprovement` operationId).
+func (c *ClientWithResponses) GetImprovementWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, reqEditors ...RequestEditorFn) (*GetImprovementResponse, error) {
+	rsp, err := c.GetImprovement(ctx, id, proposalID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetImprovementResponse(rsp)
+}
+
+// DecideImprovementWithBodyWithResponse Approve, reject or revert a proposed improvement
+//
+// Requires `improvement:approve`, and the write permission the change
+// would need by hand: `agent:write` for a change to an agent,
+// `skill:write` for a skill edit, both for a new skill.
+//
+// Approve writes the change with the same rules a person's edit of the
+// agent or skill meets, and withdraws the other proposals waiting on the
+// same target. It is refused when the target changed since the proposal
+// was made. Revert puts the old version back, and is refused when the
+// target changed since the change was applied.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+func (c *ClientWithResponses) DecideImprovementWithBodyWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideImprovementResponse, error) {
+	rsp, err := c.DecideImprovementWithBody(ctx, id, proposalID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideImprovementResponse(rsp)
+}
+
+// DecideImprovementWithResponse Approve, reject or revert a proposed improvement
+//
+// Requires `improvement:approve`, and the write permission the change
+// would need by hand: `agent:write` for a change to an agent,
+// `skill:write` for a skill edit, both for a new skill.
+//
+// Approve writes the change with the same rules a person's edit of the
+// agent or skill meets, and withdraws the other proposals waiting on the
+// same target. It is refused when the target changed since the proposal
+// was made. Revert puts the old version back, and is refused when the
+// target changed since the change was applied.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
+func (c *ClientWithResponses) DecideImprovementWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideImprovementResponse, error) {
+	rsp, err := c.DecideImprovement(ctx, id, proposalID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideImprovementResponse(rsp)
+}
+
 // ListLoopsWithResponse List the loops an agent may use
 //
 // A read, so belonging to the team is enough. These are the loops the
@@ -21374,7 +22333,7 @@ func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, i
 // GetTeamSettingsWithResponse Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, no browser, learning off, compaction at 100
+// defaults: no model, search off, no browser, self-improvement off, compaction at 100
 // messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
@@ -22994,6 +23953,123 @@ func ParseGetTeamGraphResponse(rsp *http.Response) (*GetTeamGraphResponse, error
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GetTeamGraphResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListImprovementsResponse parses an HTTP response from a ListImprovementsWithResponse call
+func ParseListImprovementsResponse(rsp *http.Response) (*ListImprovementsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListImprovementsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImprovementPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListImprovementsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetImprovementResponse parses an HTTP response from a GetImprovementWithResponse call
+func ParseGetImprovementResponse(rsp *http.Response) (*GetImprovementResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetImprovementResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Improvement
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetImprovementResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDecideImprovementResponse parses an HTTP response from a DecideImprovementWithResponse call
+func ParseDecideImprovementResponse(rsp *http.Response) (*DecideImprovementResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DecideImprovementResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Improvement
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DecideImprovementResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

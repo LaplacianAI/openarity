@@ -23,6 +23,7 @@ export const SCREENS = [
   { name: "runs", path: "/ui/runs" },
   { name: "approvals", path: "/ui/approvals" },
   { name: "requests", path: "/ui/requests" },
+  { name: "improvements", path: "/ui/improvements" },
   { name: "sessions", path: "/ui/sessions" },
   {
     name: "session",

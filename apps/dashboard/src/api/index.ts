@@ -28,6 +28,9 @@ import type {
   ChannelPairing,
   CreateChannelRequest,
   CreatedChannel,
+  Improvement,
+  ImprovementDecision,
+  ImprovementStatus,
   ListedAgent,
   ListedChannel,
   ListedSession,
@@ -942,5 +945,53 @@ export function setServerTrustHints(
   return request<MCPServer>(`/teams/${teamId}/mcp-servers/${serverId}/trust-hints`, {
     method: "PUT",
     body: { trust },
+  });
+}
+
+/* ------------------------------------------------------------ improvements */
+
+/**
+ * Newest first. Waiting, rejected and withdrawn need improvement:approve; a
+ * member may ask only for applied and reverted.
+ */
+export function listImprovements(
+  teamId: string,
+  filter: { status?: ImprovementStatus[]; agent?: string; q?: string; limit?: number } = {},
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<Page<Improvement>> {
+  const params = new URLSearchParams();
+  for (const s of filter.status ?? []) params.append("status", s);
+  if (filter.agent) params.set("agent", filter.agent);
+  if (filter.q?.trim()) params.set("q", filter.q.trim());
+  if (filter.limit) params.set("limit", String(filter.limit));
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return request<Page<Improvement>>(
+    `/teams/${teamId}/improvements${query ? `?${query}` : ""}`,
+    signal ? { signal } : {},
+  );
+}
+
+export function getImprovement(
+  teamId: string,
+  proposalId: string,
+  signal?: AbortSignal,
+): Promise<Improvement> {
+  return request<Improvement>(
+    `/teams/${teamId}/improvements/${proposalId}`,
+    signal ? { signal } : {},
+  );
+}
+
+/** A 409 is an ApiError whose message is the brain's reason, as plain text. */
+export function decideImprovement(
+  teamId: string,
+  proposalId: string,
+  decision: ImprovementDecision,
+): Promise<Improvement> {
+  return request<Improvement>(`/teams/${teamId}/improvements/${proposalId}/decision`, {
+    method: "POST",
+    body: decision,
   });
 }

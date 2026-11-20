@@ -74,7 +74,7 @@ const registry = {
     body: {
       model: null,
       search: { provider: "none", url: null, key_set: false },
-      learning: false,
+      improvement: false,
       compaction_messages: 40,
       compaction_tokens_min: 50_000,
       compaction_tokens_max: 60_000,

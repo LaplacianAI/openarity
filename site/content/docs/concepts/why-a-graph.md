@@ -39,7 +39,7 @@ separate them, because the thing that separates them is not in the description:
 it is what each tool is connected to.
 
 - The skill that already uses this tool, and what that skill is for
-- The learning from the last run that used it, and whether that run went well
+- The last run that used it, and whether that run did the task
 - The agent that holds it, and what that agent is allowed to touch
 - The team whose credential it would spend
 
@@ -47,7 +47,7 @@ None of that is text similarity. All of it is an edge.
 
 ## Traversal, not ranking
 
-Openarity stores agents, tools, skills and past learnings as a graph and
+Openarity stores agents, tools and skills as a graph and
 selects by walking it. The question stops being *what looks relevant* and
 becomes *what is reachable from here*, which is a different query with a
 different failure mode: it can return nothing, and returning nothing is a
@@ -59,7 +59,7 @@ better answer than returning forty things that read alike.
     team's agents, MCP servers, tools and skills are projected into it, and every
     run's `graph` tool searches it, scoped to what the caller can reach before
     anything is scored. The hub finds the agent to hand work to that way.
-    Learnings are not in it yet, and a run still receives the tools its agent was
+    A run still receives the tools its agent was
     granted rather than the ones a walk would select. A ReWOO agent with many
     tools is the exception: it plans with the tools the graph picks for its
     task, and gets every tool when there is no graph or nothing is picked. What runs is in
@@ -81,9 +81,9 @@ questions — *what are the themes in this corpus*. If your problem is a large
 pile of documents, that is the technique.
 
 Openarity's graph is the second kind. Its nodes are not paragraphs. They are
-agents, tools, skills, teams, channels and learnings, and its edges are
-authority and provenance: who may call what, which skill uses which tool, which
-learning came from which run. A traversal is therefore an answer to a question
+agents, tools, skills, teams and channels, and its edges are authority and
+provenance: who may call what, which skill uses which tool, which agent holds
+which skill. A traversal is therefore an answer to a question
 about **capability**, and the same traversal is an answer about
 **authorisation** — the two are the same walk, which is why they cannot drift
 apart.

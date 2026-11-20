@@ -6,8 +6,8 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![go](https://img.shields.io/badge/go-1.26-00ADD8.svg)](go.work)
 
-An open-source agent platform where agents, tools, skills and learnings are a
-knowledge graph, not a list.
+An open-source agent platform where agents, tools and skills are a knowledge
+graph, not a list, and each agent's harness improves from its own runs.
 
 **[laplacianai.github.io/openarity](https://laplacianai.github.io/openarity)** —
 the argument for a graph, the harness around a run, and the docs.
@@ -33,11 +33,10 @@ tools by embedding first lifted it to **43.13%** and halved prompt tokens. That
 is the fix the field has settled on, and the same paper reports its precision
 degrading as the registry scales into the thousands — because what separates two
 similar tools is not in their descriptions. It is what they connect to: the
-skills that use them, the learnings derived from them, the agents that hold
-them, the team whose credential they spend.
+skills that use them, the agents that hold them, the team whose credential
+they spend.
 
-So agents, tools, skills and past learnings are a graph, and selection is a
-walk. This is **graph engineering** rather than GraphRAG: a knowledge graph
+So agents, tools and skills are a graph, and selection is a walk. This is **graph engineering** rather than GraphRAG: a knowledge graph
 models what a system knows, and this one models what it *is* — with edges of
 authority and provenance, so asking what a run *may* do and what it *can* do is
 the same traversal.
@@ -49,6 +48,16 @@ boundaries are structural — the agent loop is a separate Go module, so it
 *cannot* import the brain's internals, and a CI check fails if it links a
 provider SDK at all.
 
+The harness improves itself, and a person decides. With improvement switched
+on for a team, an agent proposes changes to its own harness from how its runs
+went: its instructions and description, the skills it holds and their
+references and scripts, its tools and servers, its limits, whom it delegates
+to and how it loops. The main signal is not a failure but a run that finished
+and still missed the task. Each proposal carries the runs it came from and
+what it expects to change; nothing changes until someone who may approve it
+does, and an approved change can be reverted. The approve-and-revert half is
+built; the part that reads runs and writes proposals is not, yet.
+
 A planner turns a request into a workflow with branches, loops and retries.
 Channels — Slack, Discord, Telegram, webhooks — are pluggable and all normalise
 into one message format, so every channel works with every part of the system
@@ -56,7 +65,8 @@ without special cases.
 
 The graph is what makes more than one surface worth building on it: Code, Work,
 Knowledge, Design and a mobile client are views onto the same nodes, so a
-learning earned in one is capability in every other with nothing to integrate.
+skill an agent sharpens in one is capability in every other with nothing to
+integrate.
 **None of that is built** — see what is, below.
 
 ## What works today
@@ -175,7 +185,10 @@ its conversation, and the answer goes back to the channel: into the chat for
 Telegram and Slack, to a signed reply URL for `custom`, a generic webhook.
 
 Not built yet: a Discord adapter; the seam it plugs into is.
-Learnings are not in the graph, and there is no sandbox for model-written code.
+A change an agent proposes to itself waits on the dashboard's Improvements
+screen and in `oa improvements` for someone who may approve it, and is applied
+and reverted through the same write as a person's edit; nothing writes those
+proposals from runs yet. There is no sandbox for model-written code.
 A run whose granted tools are too many to send finds them instead: it searches
 the graph, reads a found tool's schema with `describe_tools` and runs it with
 `call_tool`, and an MCP server is reached only when one of its tools is called.

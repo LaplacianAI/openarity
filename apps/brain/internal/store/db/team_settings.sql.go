@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -27,7 +27,7 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.SearchProvider,
 		&i.SearchUrl,
 		&i.SearchSecretID,
-		&i.Learning,
+		&i.Improvement,
 		&i.CompactionMessages,
 		&i.UpdatedAt,
 		&i.HubAgentID,
@@ -71,7 +71,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
 `
 
 type SetTeamApprovalParams struct {
@@ -94,7 +94,7 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.SearchProvider,
 		&i.SearchUrl,
 		&i.SearchSecretID,
-		&i.Learning,
+		&i.Improvement,
 		&i.CompactionMessages,
 		&i.UpdatedAt,
 		&i.HubAgentID,
@@ -129,7 +129,7 @@ INSERT INTO team_settings (
     team_id,
     model_name, model_max_tokens, model_temperature,
     search_provider, search_url, search_secret_id,
-    learning, compaction_messages, compaction_tokens_min, compaction_tokens_max, hub_agent_id,
+    improvement, compaction_messages, compaction_tokens_min, compaction_tokens_max, hub_agent_id,
     sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
     browser_provider, browser_url, browser_secret_id
 ) VALUES (
@@ -148,7 +148,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     search_provider     = EXCLUDED.search_provider,
     search_url          = EXCLUDED.search_url,
     search_secret_id    = EXCLUDED.search_secret_id,
-    learning            = EXCLUDED.learning,
+    improvement         = EXCLUDED.improvement,
     compaction_messages = EXCLUDED.compaction_messages,
     compaction_tokens_min = EXCLUDED.compaction_tokens_min,
     compaction_tokens_max = EXCLUDED.compaction_tokens_max,
@@ -161,7 +161,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     browser_url         = EXCLUDED.browser_url,
     browser_secret_id   = EXCLUDED.browser_secret_id,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
 `
 
 type UpsertTeamSettingsParams struct {
@@ -172,7 +172,7 @@ type UpsertTeamSettingsParams struct {
 	SearchProvider      string
 	SearchUrl           *string
 	SearchSecretID      *uuid.UUID
-	Learning            bool
+	Improvement         bool
 	CompactionMessages  int32
 	CompactionTokensMin int32
 	CompactionTokensMax int32
@@ -198,7 +198,7 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.SearchProvider,
 		arg.SearchUrl,
 		arg.SearchSecretID,
-		arg.Learning,
+		arg.Improvement,
 		arg.CompactionMessages,
 		arg.CompactionTokensMin,
 		arg.CompactionTokensMax,
@@ -220,7 +220,7 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.SearchProvider,
 		&i.SearchUrl,
 		&i.SearchSecretID,
-		&i.Learning,
+		&i.Improvement,
 		&i.CompactionMessages,
 		&i.UpdatedAt,
 		&i.HubAgentID,

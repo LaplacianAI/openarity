@@ -16,7 +16,7 @@ func withSandbox(sb string) string {
 	if sb != "" {
 		s += `"sandbox":` + sb + `,`
 	}
-	return s + `"learning":false,"compaction_messages":100}`
+	return s + `"improvement":false,"compaction_messages":100}`
 }
 
 // storedSandbox puts a saved sandbox in the fake.
@@ -153,7 +153,7 @@ func TestAFailedSaveDestroysBothKeysItWrote(t *testing.T) {
 	e.store.upsertErr = errAny
 
 	rec := e.save(t, `{"model":null,"search":{"provider":"brave","api_key":"b"},`+
-		`"sandbox":{"provider":"e2b","api_key":"s"},"learning":false,"compaction_messages":100}`)
+		`"sandbox":{"provider":"e2b","api_key":"s"},"improvement":false,"compaction_messages":100}`)
 
 	if rec.Code != http.StatusInternalServerError || len(e.secrets.puts) != 2 || len(e.store.recorded) != 2 {
 		t.Fatalf("status %d, puts %+v, recorded %+v; want 500 and both keys recorded", rec.Code, e.secrets.puts, e.store.recorded)
@@ -171,7 +171,7 @@ func TestASandboxKeyTheStoreRefusesForgetsTheSearchKey(t *testing.T) {
 	e.secrets.putErrAfter = 1
 
 	rec := e.save(t, `{"model":null,"search":{"provider":"brave","api_key":"b"},`+
-		`"sandbox":{"provider":"e2b","api_key":"s"},"learning":false,"compaction_messages":100}`)
+		`"sandbox":{"provider":"e2b","api_key":"s"},"improvement":false,"compaction_messages":100}`)
 
 	if rec.Code != http.StatusServiceUnavailable || len(e.store.upserts) != 0 {
 		t.Fatalf("status %d, upserts %d; want 503 and nothing saved", rec.Code, len(e.store.upserts))

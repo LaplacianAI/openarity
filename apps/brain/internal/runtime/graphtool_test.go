@@ -252,28 +252,17 @@ func TestGraphToolSearchesWithTheEmbeddersModelAndVector(t *testing.T) {
 	}
 }
 
-// Learnings arrive in slice G; until then asking for them alone costs nothing.
-func TestGraphToolLearningsAloneSearchesNothing(t *testing.T) {
+// There are no learnings: a team's agents improve their own harness
+// instead, so the kind is refused like any unknown one, and nothing is
+// searched.
+func TestGraphToolRefusesLearnings(t *testing.T) {
 	f := newGraphFixture()
-	out, err := f.invoke(t, `{"query":"x","kinds":["learnings"]}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != `{"results":[]}` {
-		t.Errorf("output = %s, want no results", out)
+	if _, err := f.invoke(t, `{"query":"x","kinds":["learnings"]}`); err == nil ||
+		!strings.Contains(err.Error(), "not one of agents, tools, skills") {
+		t.Errorf("learnings = %v, want refused as an unknown kind", err)
 	}
 	if f.search.calls() != 0 || len(f.embed.texts) != 0 {
-		t.Errorf("learnings alone searched %d times and embedded %d times", f.search.calls(), len(f.embed.texts))
-	}
-}
-
-func TestGraphToolLearningsWithOtherKindsSearchesTheOthers(t *testing.T) {
-	f := newGraphFixture()
-	if _, err := f.invoke(t, `{"query":"x","kinds":["learnings","tools"]}`); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.search.asked[0].Kinds; !slices.Equal(got, []graph.Kind{graph.KindTool}) {
-		t.Errorf("kinds = %v, want only tool", got)
+		t.Errorf("a refused kind searched %d times and embedded %d times", f.search.calls(), len(f.embed.texts))
 	}
 }
 

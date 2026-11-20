@@ -48,6 +48,8 @@ type fakeStore struct {
 	// Each agent's listed delegates; a delegate must be an agent of the
 	// same team and never the agent itself, as the database refuses.
 	delegates map[uuid.UUID][]uuid.UUID
+	// Each agent's tool notes, which only an improvement writes.
+	notes map[uuid.UUID][]db.AgentToolNote
 
 	// What exists in each team to be granted.
 	ownServers map[uuid.UUID]uuid.UUID
@@ -231,6 +233,12 @@ func (s *fakeStore) ClearAgentDelegates(_ context.Context, id uuid.UUID) error {
 	defer s.mu.Unlock()
 	delete(s.delegates, id)
 	return nil
+}
+
+func (s *fakeStore) ListAgentToolNotes(_ context.Context, id uuid.UUID) ([]db.AgentToolNote, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.notes[id]), nil
 }
 
 func (s *fakeStore) ListAgentDelegates(_ context.Context, id uuid.UUID) ([]uuid.UUID, error) {
@@ -585,7 +593,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	s := newFakeStore(plain, full)
 
 	detailKeys := slices.Sorted(slices.Values(append(slices.Clone(summaryKeys),
-		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills", "delegation", "delegates", "web", "browser")))
+		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills", "delegation", "delegates", "web", "browser", "tool_notes")))
 	if got := keysOf(t, call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, one(team, plain.ID), nil).Body.Bytes()); !slices.Equal(got, detailKeys) {
 		t.Errorf("plain agent keys = %v, want %v", got, detailKeys)
 	}
@@ -619,6 +627,37 @@ func TestAnAgentWithNoGrantsHasEmptyArrays(t *testing.T) {
 	rec := call(t, newFakeStore(a), &fakeAuthz{}, memberOf(a.TeamID), http.MethodGet, one(a.TeamID, a.ID), nil)
 	if !strings.Contains(rec.Body.String(), `"mcp_servers":[]`) || !strings.Contains(rec.Body.String(), `"skills":[]`) {
 		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+// An agent's tool notes, which only an approved improvement writes, are
+// shown on its detail and in a replace's answer, and a replace leaves them.
+func TestToolNotesAreShownAndKeptByAReplace(t *testing.T) {
+	t.Parallel()
+
+	a := anAgent(uuid.New(), "triage")
+	s := newFakeStore(a)
+	server := s.server(a.TeamID)
+	s.servers[a.ID] = []db.AgentMcpServer{{AgentID: a.ID, McpServerID: server, TeamID: a.TeamID}}
+	s.notes = map[uuid.UUID][]db.AgentToolNote{a.ID: {{AgentID: a.ID, McpServerID: server, Tool: "fetch", Note: "Send the full URL."}}}
+	want := `"tool_notes":[{"server":"` + server.String() + `","tool":"fetch","note":"Send the full URL."}]`
+
+	rec := call(t, s, &fakeAuthz{}, memberOf(a.TeamID), http.MethodGet, one(a.TeamID, a.ID), nil)
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("detail = %s, want the note", rec.Body)
+	}
+
+	b := body("triage")
+	b["mcp_servers"] = []map[string]any{{"id": server}}
+	rec = call(t, s, &fakeAuthz{allowed: true}, memberOf(a.TeamID), http.MethodPut, one(a.TeamID, a.ID), b)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("replace = %d %s, want the note kept and shown", rec.Code, rec.Body)
+	}
+
+	// The notes are not the request's to send.
+	b["tool_notes"] = []map[string]any{}
+	if rec := call(t, s, &fakeAuthz{allowed: true}, memberOf(a.TeamID), http.MethodPut, one(a.TeamID, a.ID), b); rec.Code != http.StatusBadRequest {
+		t.Errorf("a replace sending tool_notes = %d, want 400", rec.Code)
 	}
 }
 

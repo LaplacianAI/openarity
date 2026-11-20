@@ -35,6 +35,14 @@ type ServerGrant struct {
 	Allow []string  `json:"allow,omitempty"`
 }
 
+// ToolNote is a usage note on one tool for this agent, left by an approved
+// improvement. Read-only here: a PUT neither sends nor clears notes.
+type ToolNote struct {
+	Server uuid.UUID `json:"server"`
+	Tool   string    `json:"tool"`
+	Note   string    `json:"note"`
+}
+
 type summary struct {
 	ID          uuid.UUID `json:"id"`
 	TeamID      uuid.UUID `json:"team_id"`
@@ -74,6 +82,7 @@ type detail struct {
 	Delegates          []uuid.UUID   `json:"delegates"`
 	Web                bool          `json:"web"`
 	Browser            bool          `json:"browser"`
+	ToolNotes          []ToolNote    `json:"tool_notes"`
 }
 
 type Request struct {

@@ -46,17 +46,18 @@ func TestSeededPermissions(t *testing.T) {
 	for role, want := range map[string][]string{
 		"admin": {
 			"agent:write", "approval:decide", "approval:read", "approval:self", "channel:read",
-			"channel:write", "membership:write", "run:write", "sender:approve", "session:read_all",
-			"skill:write", "team:settings", "tool:write", "user:read",
+			"channel:write", "improvement:approve", "membership:write", "run:write", "sender:approve",
+			"session:read_all", "skill:write", "team:settings", "tool:write", "user:read",
 		},
 		// A member who also lets strangers in. Not channel:write: approving a
 		// sender is not the same trust as rewiring the channel it came in on.
 		// Not session:read_all either, so the brain's "moderator", who may
 		// read anyone's direct conversation, is not who this role is.
-		// And it decides the tool calls a team's runs wait on, anyone's.
+		// And it decides the tool calls a team's runs wait on, anyone's, and
+		// the improvements its agents propose to themselves.
 		"approver": {
 			"agent:write", "approval:decide", "approval:read", "approval:self", "channel:read",
-			"run:write", "sender:approve", "skill:write", "tool:write",
+			"improvement:approve", "run:write", "sender:approve", "skill:write", "tool:write",
 		},
 		// Not team:settings: the model every message runs on is a cost
 		// decision, and the search key is a credential.
