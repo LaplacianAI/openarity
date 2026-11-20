@@ -508,6 +508,36 @@ func TestARewriteCutOffEveryTimeKeepsTheAnswerItAlreadyHad(t *testing.T) {
 	}
 }
 
+// A rewrite that comes back with no text is no answer. Put in the draft's
+// place it would leave the caller nothing, and the transcript an empty turn;
+// a critique asking for an action the rewrite has no tool for ends this way.
+func TestAnEmptyRewriteKeepsTheAnswerItAlreadyHad(t *testing.T) {
+	t.Parallel()
+
+	for name, reply := range map[string]turn{
+		"nothing":     answered(text("")),
+		"blank":       answered(text(" \n\t")),
+		"a call only": answered(calling("post_comment", `{}`)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result, skipped := reflectKept(t, &fakeModel{turns: []turn{
+				answered(text("the original draft")),
+				critiqued(true, "post an update"),
+				reply,
+			}})
+			skippedFor(t, skipped, "rewrite", 3, ErrNoRewrite.Error(), "cycle 1")
+			if result.Output != "the original draft" {
+				t.Errorf("Output = %q, want the draft that survived", result.Output)
+			}
+			if last := result.Messages[len(result.Messages)-1]; last.Text() != "the original draft" {
+				t.Errorf("the transcript ends with %+v, want the draft", last)
+			}
+		})
+	}
+}
+
 func TestAFailureWhileGeneratingNamesThePhase(t *testing.T) {
 	t.Parallel()
 

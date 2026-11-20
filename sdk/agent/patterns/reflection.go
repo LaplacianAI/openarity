@@ -33,6 +33,7 @@ const CritiqueToolName = "submit_critique"
 var (
 	ErrNoCycles   = errors.New("the pattern was built with no reflection cycles, so it would never reflect")
 	ErrNoCritique = errors.New("the reflecting call did not submit a critique")
+	ErrNoRewrite  = errors.New("the rewrite came back with no text")
 )
 
 func (l reflection) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
@@ -215,6 +216,11 @@ func (l reflection) refine(
 	if err != nil {
 		// A rewrite never finished is no answer; the one before it stands.
 		return carried{}, err
+	}
+	if strings.TrimSpace(c.text) == "" {
+		// Nor is one that says nothing: a critique asking for something only a
+		// tool could do leaves a rewrite without tools nothing to write.
+		return carried{}, ErrNoRewrite
 	}
 	return c, nil
 }
