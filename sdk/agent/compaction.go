@@ -100,14 +100,20 @@ type CompactionSummary struct {
 	References []string `json:"references,omitempty"`
 	Skills     []string `json:"skills,omitempty"`
 	// Prefix is the SHA-256 of the messages before this one, summaries and
-	// clearings left out, as they were when it was written. A transcript that no longer
-	// starts with them is compacted from scratch.
+	// clearings left out, as they were when it was written. A transcript
+	// that no longer starts with them is compacted from scratch.
 	Prefix string `json:"prefix"`
-	// Cleared marks where a compaction cleared old tool results to, rather
-	// than a summary: it has no summary of its own, the results before it
-	// are sent as handles, and the latest summary before it still stands. A
-	// later run reads it so it does not send them whole again.
-	Cleared bool `json:"cleared,omitempty"`
+}
+
+// ClearingMark marks where a compaction cleared old tool results to, so a
+// later run sends them as handles rather than whole. It has no summary of
+// its own: the latest summary before it still stands. It is a field of its
+// own, not a kind of CompactionSummary, so a reader that predates it takes it
+// for a note rather than for a summary that folds everything before it.
+type ClearingMark struct {
+	// Prefix is the SHA-256 of the messages before this one, as
+	// CompactionSummary.Prefix is.
+	Prefix string `json:"prefix"`
 }
 
 // compactionState is where a run's compaction stands, as indexes into the
@@ -216,7 +222,7 @@ func (h *compactHandle) resume(msgs []Message) []Message {
 	plain := make([]Message, 0, len(msgs))
 	var marks []mark
 	for _, m := range msgs {
-		if m.Compaction != nil {
+		if m.Compaction != nil || m.Clearing != nil {
 			marks = append(marks, mark{at: len(plain), msg: m})
 			continue
 		}
@@ -230,9 +236,10 @@ func (h *compactHandle) resume(msgs []Message) []Message {
 	// moves only where results are cleared to.
 	var s compactionState
 	for _, m := range marks {
-		if c := m.msg.Compaction; c.Cleared {
+		if c := m.msg.Clearing; c != nil {
 			s.cleared, s.prefix = m.at, c.Prefix
 		} else {
+			c := m.msg.Compaction
 			s = compactionState{cut: m.at, cleared: m.at, prefix: c.Prefix, CompactionSummary: *c}
 		}
 	}
@@ -243,13 +250,34 @@ func (h *compactHandle) resume(msgs []Message) []Message {
 	return plain
 }
 
-// cleared records a clearing: the state it leaves, and a mark for the
-// transcript where the cleared results end.
-func (h *compactHandle) cleared(s compactionState) {
+// recordClearing records a clearing: the state it leaves, and a mark for the
+// transcript where the cleared results end. The marks stay in order, as
+// splice needs: results are cleared only up to a point after every mark
+// already written.
+func (h *compactHandle) recordClearing(s compactionState) {
 	h.mu.Lock()
 	h.state = s
 	h.marks = append(h.marks, mark{at: s.cleared, msg: clearingMessage(s.prefix)})
 	h.mu.Unlock()
+}
+
+// holdClearings takes the clearings out of a transcript for a run that does
+// not compact, to be spliced back where they were: a clearing has nothing to
+// tell its model, and a later run that compacts still needs it.
+func (h *compactHandle) holdClearings(msgs []Message) []Message {
+	plain := make([]Message, 0, len(msgs))
+	var marks []mark
+	for _, m := range msgs {
+		if m.Clearing != nil {
+			marks = append(marks, mark{at: len(plain), msg: m})
+			continue
+		}
+		plain = append(plain, m)
+	}
+	h.mu.Lock()
+	h.marks = marks
+	h.mu.Unlock()
+	return plain
 }
 
 // splice puts the summaries back into a transcript the pattern holds, each
@@ -479,11 +507,13 @@ func (c *compactingClient) compact(ctx context.Context, req Request, reason stri
 }
 
 // settle keeps a compaction that wrote no summary: clearing, or a summary
-// that failed.
+// that failed. A clearing is written to the transcript when it moved where
+// results are cleared to; a failed summary that cleared nothing leaves the
+// state as it was.
 func (c *compactingClient) settle(e CompactedEvent) {
 	c.base, c.baseLen = 0, 0
-	if e.Cleared > 0 {
-		c.handle.cleared(c.state)
+	if c.state.cleared != c.handle.current().cleared {
+		c.handle.recordClearing(c.state)
 	} else {
 		c.handle.setState(c.state)
 	}
@@ -672,23 +702,16 @@ func markerMessage(s CompactionSummary) Message {
 	return m
 }
 
-// clearingMessage is a clearing as the transcript keeps it. A compacting run
-// takes it out before the pattern sees the turns, so no model reads it.
+// clearingMessage is a clearing as the transcript keeps it. A run takes it
+// out before the pattern sees the turns, so no model reads it; its text is
+// for a reader that predates ClearingMark.
 func clearingMessage(prefix string) Message {
 	return Message{
 		Role: RoleUser,
 		Content: []Content{{Type: ContentText, Text: "[Tool results before this point were cleared from the model's view " +
 			"to save room; the transcript keeps them whole.]"}},
-		Compaction: &CompactionSummary{Prefix: prefix, Cleared: true},
+		Clearing: &ClearingMark{Prefix: prefix},
 	}
-}
-
-// withoutClearings is a transcript as a run that does not compact sends it:
-// a summary still reads as one, and a clearing has nothing to tell the model.
-func withoutClearings(msgs []Message) []Message {
-	return slices.DeleteFunc(slices.Clone(msgs), func(m Message) bool {
-		return m.Compaction != nil && m.Compaction.Cleared
-	})
 }
 
 func summaryMessage(s CompactionSummary) Message {

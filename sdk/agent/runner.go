@@ -133,12 +133,14 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 
 	var counter *countingClient
 	sending := client
-	splice := func(msgs []Message) []Message { return msgs }
+	// Either way the marks are held out of the pattern's turns and spliced
+	// back into what is saved: a summary or a clearing a compacting run
+	// resumes from, or a clearing alone that a run without Compaction keeps.
+	splice := compact.splice
 	if spec.Compaction == nil {
-		msgs = withoutClearings(msgs)
+		msgs = compact.holdClearings(msgs)
 	} else {
 		msgs = compact.resume(msgs)
-		splice = compact.splice
 		sending = newCompactingClient(client, *spec.Compaction, compact,
 			func(u Usage) { counter.add(u) },
 			func(e Event) { emit(ctx, events, e) })

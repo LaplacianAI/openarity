@@ -180,17 +180,20 @@ more := append(result.Messages, agent.Message{Role: agent.RoleUser, Content: …
 runner.Run(ctx, spec, more, endpoint, events)
 ```
 
-A clearing is written in too, as a message marked with `Message.Compaction`
-whose `Cleared` is true, where the cleared results end. It holds no summary,
-only the hash, so the next run in a session sends those results as handles
-rather than whole. Without it, each follow-up run would start by sending again
-everything the last one had cleared.
+A clearing is written in too, as a message marked with `Message.Clearing`,
+where the cleared results end. It holds no summary, only the hash, so the
+next run in a session sends those results as handles rather than whole.
+Without it, each follow-up run would start by sending again everything the
+last one had cleared. It is a field of its own rather than a kind of summary,
+so code from before it reads it as a short note, not as a summary that
+stands for everything before it.
 
 A summary or a clearing records a hash of the messages before it. A transcript
 edited before one no longer starts with what it stands for, so the run drops
 it and compacts again as it needs. A pattern never sees either message. A run
-without `Compaction` sends a summary as the user message it reads as, and
-leaves a clearing out.
+without `Compaction` sends a summary as the user message it reads as. It
+leaves a clearing out of what it sends but keeps it in the transcript, for the
+next run that compacts.
 
 Each compaction also emits a `CompactedEvent`, for a trace: why it happened,
 what it cleared and folded, the sizes before and after, and the summary.

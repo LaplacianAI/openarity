@@ -112,7 +112,7 @@ func attempt() error {
 	// saved then, its summary in it, handed to a new run.
 	saved := result.Messages[:len(result.Messages)-1]
 	for i, m := range saved {
-		if m.Compaction != nil && !m.Compaction.Cleared {
+		if m.Compaction != nil {
 			fmt.Printf("in the transcript a summary, at message %d of %d\n", i, len(saved))
 		}
 	}
