@@ -1182,7 +1182,7 @@ const BUILT_INS: ChoiceGroup<string>[] = [
       {
         value: "browser_open",
         label: "browser_open",
-        hint: "Asked when a page opens, and covers what is then done on it.",
+        hint: "Asked when a page opens, and covers what is then done on that page's own site.",
       },
       { value: "browser_snapshot", label: "browser_snapshot" },
       { value: "browser_click", label: "browser_click" },

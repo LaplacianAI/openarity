@@ -73,6 +73,9 @@ export function Choice<T extends string>({
 }) {
   const groups = grouped(options);
   const known = new Set(groups.flatMap((g) => g.options.map((o) => o.value as string)));
+  // A value the list does not offer, such as a provider a newer brain saved,
+  // is shown as it is rather than as a blank field; it cannot be chosen again.
+  const stray = value !== "" && !known.has(value) ? value : null;
   return (
     <Select
       value={value}
@@ -86,6 +89,11 @@ export function Choice<T extends string>({
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent position="popper" align="start">
+        {stray ? (
+          <SelectItem value={stray} disabled>
+            {stray}
+          </SelectItem>
+        ) : null}
         {groups.map((g, i) => {
           const items = g.options.map((o) => (
             <SelectItem key={o.value} value={o.value}>

@@ -337,7 +337,11 @@ it("names a browser tool, and says what a rule on the open covers", async () => 
 
   await chooseServer(section, "Built-in tools");
   await choose(within(section).getByLabelText("Tool"), "browser_open");
-  expect(within(section).getByText(/asked when a page opens/i)).toBeInTheDocument();
+  expect(
+    within(section).getByText(
+      "Asked when a page opens, and covers what is then done on that page's own site.",
+    ),
+  ).toBeInTheDocument();
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
   await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
   expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
