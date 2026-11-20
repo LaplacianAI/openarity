@@ -206,6 +206,11 @@ try { window.open("%[1]s/oopif-popup"); } catch (e) {}
 			page("/to-other", fmt.Sprintf(`<!doctype html><title>To other</title>
 <a href="%[1]s/next">Other site</a> <a href="/next">Same site</a>
 <form action="%[1]s/search"><input name="q" placeholder="Where"><button>Send there</button></form>`, other))
+			// A field named action hides the form's own; a button's
+			// formaction sends a form that stays here elsewhere.
+			page("/to-other-hidden", fmt.Sprintf(`<!doctype html><title>Hidden</title>
+<form action="%[1]s/search"><input name="action" value="/search"><input name="q"><button>Hidden there</button></form>
+<form action="/search"><input name="r"><button formaction="%[1]s/search">Away</button><button>Here</button></form>`, other))
 		}
 		// A popup on the site the guard lets through, past what a script
 		// can keep: once open, a page of its own with none of containJS,
@@ -706,6 +711,17 @@ func TestAnActionIsKeptToItsSite(t *testing.T) {
 		}
 		if _, err := p.Click(within30(t), 1, here); !errors.Is(err, ErrOffSite) || !strings.Contains(err.Error(), b.other) {
 			t.Errorf("acting on the other site = %v, want it refused, naming it", err)
+		}
+
+		s = goTo(t, p, srv.base+"/to-other-hidden")
+		if _, err := p.Type(within30(t), refOf(t, s, `"q"`), "secret", true, here); !errors.Is(err, ErrOffSite) {
+			t.Errorf("a form whose field named action hides where it goes = %v, want it refused", err)
+		}
+		if _, err := p.Click(within30(t), refOf(t, s, "Away"), here); !errors.Is(err, ErrOffSite) {
+			t.Errorf("a button whose formaction goes to another site = %v, want it refused", err)
+		}
+		if got, err := p.Click(within30(t), refOf(t, s, "Here"), here); err != nil || !strings.Contains(got.URL, b.host) {
+			t.Errorf("the same form sent here = %v at %s, want it sent", err, got.URL)
 		}
 
 		s = goTo(t, p, srv.base+"/to-other")

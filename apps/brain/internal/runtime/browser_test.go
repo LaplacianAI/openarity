@@ -477,8 +477,10 @@ func TestWhenTheBrowserAsks(t *testing.T) {
 		{"a guest, writes", approval.Writes, guest, nil, true, BrowserToolNames, pageCovers(true, true)},
 		{"a guest, destructive", approval.DestructiveOnly, guest, nil, true, BrowserToolNames, pageCovers(true, true)},
 		// Clicking and typing are writes: in destructive, a run nobody is
-		// present for is let do them unasked.
+		// present for, made for someone who may approve their own, is let do
+		// them unasked; one made for a guest is refused at the open.
 		{"nobody, destructive", approval.DestructiveOnly, nobody, nil, false, BrowserToolNames, ""},
+		{"nobody for a guest, destructive", approval.DestructiveOnly, approval.Actor{Unattended: true}, nil, false, []string{BrowserOpenToolName}, ""},
 		{"nobody, writes", approval.Writes, nobody, nil, false, []string{BrowserOpenToolName}, ""},
 		{"the open allowed, typing asks", approval.DestructiveOnly, person, []approval.Rule{
 			{Kind: "tool", Target: BrowserOpenToolName, Verdict: approval.Allow},
@@ -512,6 +514,16 @@ func TestWhenTheBrowserAsks(t *testing.T) {
 			t.Errorf("%s: the request says %q, want it to cover %q", tc.name, d.byCall["c1"].Summary, tc.covers)
 		case !tc.asks && made[BrowserOpenToolName] == 0 && err == nil:
 			t.Errorf("%s: open neither made nor refused", tc.name)
+		}
+		// A tool a rule denies says so when called, and nothing is made.
+		for _, r := range tc.rules {
+			if r.Verdict != approval.Deny {
+				continue
+			}
+			_, err := callAs(t, pageTool(t, tools, r.Target), "c-"+r.Target, `{"url":"https://example.com/","ref":1,"text":"x"}`)
+			if err == nil || !strings.Contains(err.Error(), "A team rule does not allow "+r.Target) || made[r.Target] != 0 {
+				t.Errorf("%s: %s = %v, made %d; want the rule's refusal", tc.name, r.Target, err, made[r.Target])
+			}
 		}
 	}
 }

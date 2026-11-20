@@ -663,10 +663,15 @@ S=172.31.255.240/29   # the browser's network, from its docker-compose.<name>.ym
 for d in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do
   sudo iptables -I DOCKER-USER -s "$S" -d "$d" -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP
 done
+# The browser's own network is inside 172.16.0.0/12, so its own traffic is
+# let through first: -I puts this rule above the drops.
+sudo iptables -I DOCKER-USER -s "$S" -d "$S" -j ACCEPT
 sudo iptables -I INPUT -s "$S" -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP
 ```
 
-Replies to the worker, which opens the connection, still pass. These rules
+The overlays' subnets all sit inside `172.16.0.0/12`, which the rules drop;
+the first rule keeps the browser's own network open to itself. Replies to the
+worker, which opens the connection, still pass. These rules
 are not applied by `deploy.sh`, and have not been tested in this repository.
 
 ## Logs

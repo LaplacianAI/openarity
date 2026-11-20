@@ -760,14 +760,28 @@ func TestTheOpeningTagFitsInAPreviewsHead(t *testing.T) {
 	}
 }
 
-// The web tools follow the egress rule as the browser's do: a run nobody is
-// present for is refused each call, and an attended one is let through.
+// The web tools follow the egress rule, call by call, untouched by the
+// browser's page-at-a-time gate: reaching the internet is a write for a
+// guest, whom the fixture's run is for, and a guest's write asks in every
+// mode but off: so the guest is asked, and with nobody present it is refused.
 func TestTheWebToolsFollowTheEgressRule(t *testing.T) {
-	for _, unattended := range []bool{true, false} {
+	for _, tc := range []struct {
+		mode       approval.Mode
+		unattended bool
+		want       string
+	}{
+		{approval.All, true, "refused"},
+		{approval.All, false, "asks"},
+		{approval.Writes, true, "refused"},
+		{approval.Writes, false, "asks"},
+		{approval.DestructiveOnly, true, "refused"},
+		{approval.DestructiveOnly, false, "asks"},
+		{approval.Off, true, "made"},
+	} {
 		w := newWebFixture("brave", "k")
-		w.store.settings.ApprovalMode = string(approval.All)
-		w.run.Unattended = unattended
-		w.builder.WithApprovals(&desk{})
+		w.store.settings.ApprovalMode = string(tc.mode)
+		w.run.Unattended = tc.unattended
+		w.builder.WithApprovals(&desk{byCall: map[string]db.Approval{}})
 
 		got := w.build(t)
 
@@ -778,10 +792,16 @@ func TestTheWebToolsFollowTheEgressRule(t *testing.T) {
 			if len(tools) != 1 {
 				t.Fatalf("%s tools = %d", name, len(tools))
 			}
-			_, _, err := tools[0].Call(t.Context(), json.RawMessage(args))
-			refused := err != nil && strings.Contains(err.Error(), "Nobody is present")
-			if refused != unattended {
-				t.Errorf("unattended %v: %s = %v", unattended, name, err)
+			_, err := callAs(t, tools[0], "c1", args)
+			said := "made"
+			switch {
+			case err != nil && strings.Contains(err.Error(), "Nobody is present"):
+				said = "refused"
+			case err != nil && err.Error() == askedTop:
+				said = "asks"
+			}
+			if said != tc.want {
+				t.Errorf("%s, unattended %v: %s %s (%v), want %s", tc.mode, tc.unattended, name, said, err, tc.want)
 			}
 		}
 	}

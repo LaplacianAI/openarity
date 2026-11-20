@@ -113,8 +113,10 @@ type guard struct {
 	tab    context.Context
 	public Public
 	// queue is the tab's requests, wide the browser-wide guard's, and failQ
+	// and wideFail what each could not take: apart, so a flood of other runs'
+	// requests never leaves the tab's own waiting to be failed.
 	// what neither could take.
-	queue, wide, failQ chan paused
+	queue, wide, failQ, wideFail chan paused
 	// unguarded is a hosted browser that would not pause its requests, used
 	// all the same: the read says so. uncontained is one that would not take
 	// containJS, so a page may open a socket or a popup: the read says that.
@@ -147,7 +149,8 @@ type guard struct {
 func startGuard(tab context.Context, public Public, required bool) (*guard, error) {
 	g := &guard{
 		tab: tab, public: public, allowed: map[string]bool{}, watch: map[string]chan struct{}{},
-		queue: make(chan paused, queued), wide: make(chan paused, wideQueued), failQ: make(chan paused, failQueued),
+		queue: make(chan paused, queued), wide: make(chan paused, wideQueued),
+		failQ: make(chan paused, failQueued), wideFail: make(chan paused, failQueued),
 	}
 	if err := chromedp.Listen(tab, g.pause(false)); err != nil {
 		return nil, err
@@ -211,41 +214,11 @@ func (g *guard) closePopups() error {
 	if c == nil || c.Target == nil {
 		return errors.New("the tab has no target to keep popups from")
 	}
-	ours, own := c.Target.TargetID, c.BrowserContextID
-	var mu sync.Mutex
-	closed := map[target.ID]bool{}
-	closing := make(chan target.ID, maxPopups)
-	if err := chromedp.ListenBrowser(g.tab, func(ev any) {
-		var info *target.Info
-		switch e := ev.(type) {
-		case *target.EventTargetCreated:
-			info = e.TargetInfo
-		case *target.EventTargetInfoChanged:
-			info = e.TargetInfo
-		default:
-			return
-		}
-		if info == nil || info.Type != "page" || info.TargetID == ours ||
-			(info.OpenerID != ours && (own == "" || info.BrowserContextID != own)) {
-			return
-		}
-		mu.Lock()
-		seen := closed[info.TargetID]
-		closed[info.TargetID] = true
-		mu.Unlock()
-		if seen {
-			return
-		}
-		select {
-		case closing <- info.TargetID:
-		default:
-			// More popups than are closed at once: the read says the page
-			// is not kept in its tab.
-			g.mu.Lock()
-			g.uncontained = true
-			g.mu.Unlock()
-		}
-	}); err != nil {
+	w := &popups{
+		g: g, ours: c.Target.TargetID, own: c.BrowserContextID,
+		closed: map[target.ID]bool{}, closing: make(chan target.ID, maxPopups),
+	}
+	if err := chromedp.ListenBrowser(g.tab, w.event); err != nil {
 		return err
 	}
 	go func() {
@@ -253,7 +226,7 @@ func (g *guard) closePopups() error {
 			select {
 			case <-g.tab.Done():
 				return
-			case id := <-closing:
+			case id := <-w.closing:
 				_, _ = chromedp.CallBrowser(g.tab, target.CloseTarget, target.CloseTargetParams{TargetID: id})
 			}
 		}
@@ -263,6 +236,60 @@ func (g *guard) closePopups() error {
 		return fmt.Errorf("the browser did not answer: %w", g.tab.Err())
 	}
 	return err
+}
+
+// popups is what closePopups watches: the tab, ours, its browser context,
+// own, and every popup on its way to being closed.
+type popups struct {
+	g       *guard
+	ours    target.ID
+	own     cdp.BrowserContextID
+	mu      sync.Mutex
+	closed  map[target.ID]bool
+	closing chan target.ID
+}
+
+// event runs on chromedp's event loop: it hands each popup to be closed,
+// once, and forgets it when it is gone.
+func (w *popups) event(ev any) {
+	var info *target.Info
+	switch e := ev.(type) {
+	case *target.EventTargetCreated:
+		info = e.TargetInfo
+	case *target.EventTargetInfoChanged:
+		info = e.TargetInfo
+	case *target.EventTargetDestroyed:
+		// Gone: forgotten, so what is kept lasts no longer than the popups.
+		w.mu.Lock()
+		delete(w.closed, e.TargetID)
+		w.mu.Unlock()
+		return
+	default:
+		return
+	}
+	if info == nil || info.Type != "page" || info.TargetID == w.ours ||
+		(info.OpenerID != w.ours && (w.own == "" || info.BrowserContextID != w.own)) {
+		return
+	}
+	w.mu.Lock()
+	seen := w.closed[info.TargetID]
+	w.closed[info.TargetID] = true
+	w.mu.Unlock()
+	if seen {
+		return
+	}
+	select {
+	case w.closing <- info.TargetID:
+	default:
+		// More popups than are closed at once: forgotten, so its next event
+		// tries again, and the read says the page is not kept in its tab.
+		w.mu.Lock()
+		delete(w.closed, info.TargetID)
+		w.mu.Unlock()
+		w.g.mu.Lock()
+		w.g.uncontained = true
+		w.g.mu.Unlock()
+	}
 }
 
 // contain keeps the page in its tab: containJS in every document.
@@ -341,9 +368,9 @@ func (g *guard) await(paused chan struct{}) error {
 // the failers' queue too it stays paused, which holds the page but lets
 // nothing out: a goroutine for each would let a page make as many as it liked.
 func (g *guard) pause(browser bool) func(ev any) {
-	q := g.queue
+	q, failQ := g.queue, g.failQ
 	if browser {
-		q = g.wide
+		q, failQ = g.wide, g.wideFail
 	}
 	return func(ev any) {
 		e, ok := ev.(*fetch.EventRequestPaused)
@@ -362,22 +389,43 @@ func (g *guard) pause(browser bool) func(ev any) {
 			g.mu.Unlock()
 		}
 		select {
-		case g.failQ <- p:
+		case failQ <- p:
 		default:
 		}
 	}
 }
 
-// failer fails what no judge could take.
+// failer fails what no judge could take, the tab's first. The canary is
+// noticed here too: one held back under load is still this guard's.
 func (g *guard) failer() {
 	for {
+		var p paused
 		select {
 		case <-g.tab.Done():
 			return
-		case p := <-g.failQ:
-			g.fail(p)
+		case p = <-g.failQ:
+		default:
+			select {
+			case <-g.tab.Done():
+				return
+			case p = <-g.failQ:
+			case p = <-g.wideFail:
+			}
 		}
+		g.noticeCanary(p)
+		g.fail(p)
 	}
+}
+
+// noticeCanary says the canary's request was paused, when p is one of its
+// own, and whether p is the canary host's at all.
+func (g *guard) noticeCanary(p paused) bool {
+	u, err := url.Parse(p.url)
+	if err != nil || u.Hostname() != canaryHost {
+		return false
+	}
+	g.seen(u.Path)
+	return true
 }
 
 func (g *guard) judge(q chan paused) {
@@ -403,8 +451,7 @@ func (g *guard) refuse(p paused) {
 	// The canary is the brain's own request, whichever guard paused it and
 	// however late: never the page's to report. Only this guard's own, by
 	// its path, says the guard works.
-	if u, err := url.Parse(p.url); err == nil && u.Hostname() == canaryHost {
-		g.seen(u.Path)
+	if g.noticeCanary(p) {
 		g.fail(p)
 		return
 	}

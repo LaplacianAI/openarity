@@ -344,9 +344,17 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   every page, each on its own site. `browser_click` and `browser_type` are
   writes (`approval.Acts`) for anyone, submit or not: a click can buy, and a
   page's script can send what is typed. Destructive was weighed and not
-  chosen: in `destructive` mode a run clicks and submits unasked, a
-  scheduled one too, and a team that wants otherwise uses `writes` or a
-  rule. A denied open leaves the run no browser. Keeping a page across a pause was weighed
+  chosen, a maintainer's decision recorded here: in `destructive` mode a run
+  clicks and submits unasked, and a scheduled one made for someone who may
+  approve their own does so with nobody present, and a
+  team that wants otherwise uses `writes` or a rule. Rules per tool: one
+  that asks for any browser tool is asked at the open, and an allow on the
+  open alone does not stop it; one that denies the open leaves the run no
+  browser; one that denies the click or the typing removes only that tool,
+  and the request stops saying it covers it, though a denied click does not
+  stop `browser_type` with `submit` sending a form. The site kept to is the
+  exact host asked for and landed on, checked on the action after a link,
+  not on the link. Keeping a page across a pause was weighed
   and refused: a Bright Data session ends with its connection, and a tab left
   without its guard attached runs on with nothing pausing its requests.
 - **The hub's graph finds every agent, and only its own tools and skills.**

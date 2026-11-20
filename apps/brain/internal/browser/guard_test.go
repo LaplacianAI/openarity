@@ -12,6 +12,7 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/target"
 )
 
 func TestWhatARequestReaches(t *testing.T) {
@@ -160,11 +161,15 @@ func TestClipCutsOnARune(t *testing.T) {
 func TestARequestNoJudgeCanTakeIsFailedAndOnlyTheTabsCounted(t *testing.T) {
 	t.Parallel()
 
-	g := &guard{tab: t.Context(), queue: make(chan paused), wide: make(chan paused), failQ: make(chan paused, 300)}
+	g := &guard{
+		tab: t.Context(), queue: make(chan paused), wide: make(chan paused),
+		failQ: make(chan paused, 150), wideFail: make(chan paused, 150),
+	}
 	handled := make(chan struct{})
 	go func() {
 		defer close(handled)
-		for _, browser := range []bool{false, true} {
+		// Other runs' flood first: it must leave the tab's own room.
+		for _, browser := range []bool{true, false} {
 			for range 200 {
 				g.pause(browser)(&fetch.EventRequestPaused{RequestID: "r1", Request: &network.Request{URL: "https://example.com/"}})
 			}
@@ -178,8 +183,25 @@ func TestARequestNoJudgeCanTakeIsFailedAndOnlyTheTabsCounted(t *testing.T) {
 	if b, n, shed := g.Blocked(); len(b) != 0 || n != 0 || shed != 200 {
 		t.Errorf("named %v, refused %d, held back %d; want only the tab's 200 held back", b, n, shed)
 	}
-	if len(g.failQ) != cap(g.failQ) {
-		t.Errorf("%d handed to be failed, want the %d the queue holds", len(g.failQ), cap(g.failQ))
+	if len(g.failQ) != cap(g.failQ) || len(g.wideFail) != cap(g.wideFail) {
+		t.Errorf("handed to be failed: the tab's %d, browser-wide %d; want each queue's own %d, %d",
+			len(g.failQ), len(g.wideFail), cap(g.failQ), cap(g.wideFail))
+	}
+}
+
+// The canary's own request held back under load and failed by a failer is
+// still noticed as paused: the guard paused it.
+func TestACanaryHeldBackIsStillNoticed(t *testing.T) {
+	t.Parallel()
+
+	g := &guard{tab: t.Context(), watch: map[string]chan struct{}{}, failQ: make(chan paused, 1), wideFail: make(chan paused, 1)}
+	sub := g.watching("/sub-a")
+	g.wideFail <- paused{url: "http://" + canaryHost + "/sub-a", browser: true}
+	go g.failer()
+	select {
+	case <-sub:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the canary was failed and not noticed")
 	}
 }
 
@@ -258,5 +280,41 @@ func TestAReadIsHeldToItsLimit(t *testing.T) {
 	got := clamp(Snapshot{Title: strings.Repeat("é", maxTitle), URL: "https://a.example/" + strings.Repeat("a", maxURL)})
 	if len(got.Title) > maxTitle+len("…") || len(got.URL) > maxURL+len("…") || !utf8.ValidString(got.Title) {
 		t.Errorf("title %d bytes, address %d bytes; want at most %d and %d, on a rune", len(got.Title), len(got.URL), maxTitle, maxURL)
+	}
+}
+
+// A popup is handed to be closed once, whatever events it sends; one that
+// finds the closer full is tried again on its next, and the read says the
+// page was not kept in its tab; one that is gone is forgotten. Another run's
+// page, and the tab itself, are left alone.
+func TestEachPopupIsClosedOnceAndRetriedWhenFull(t *testing.T) {
+	t.Parallel()
+
+	g := &guard{tab: t.Context()}
+	w := &popups{g: g, ours: "tab", own: "ctx", closed: map[target.ID]bool{}, closing: make(chan target.ID, 1)}
+	popup := func(id target.ID) *target.Info {
+		return &target.Info{TargetID: id, Type: "page", OpenerID: "tab", BrowserContextID: "ctx"}
+	}
+	w.event(&target.EventTargetCreated{TargetInfo: &target.Info{TargetID: "tab", Type: "page", BrowserContextID: "ctx"}})
+	w.event(&target.EventTargetCreated{TargetInfo: &target.Info{TargetID: "theirs", Type: "page", BrowserContextID: "other"}})
+	w.event(&target.EventTargetCreated{TargetInfo: popup("a")})
+	w.event(&target.EventTargetInfoChanged{TargetInfo: popup("a")})
+	w.event(&target.EventTargetCreated{TargetInfo: popup("b")})
+	if len(w.closing) != 1 || <-w.closing != "a" {
+		t.Fatal("the first popup was not handed to be closed, once, alone")
+	}
+	g.mu.Lock()
+	if !g.uncontained {
+		t.Error("a popup the closer could not take is not said")
+	}
+	g.mu.Unlock()
+	w.event(&target.EventTargetInfoChanged{TargetInfo: popup("b")})
+	if len(w.closing) != 1 || <-w.closing != "b" {
+		t.Error("the popup that found the closer full was not tried again")
+	}
+	w.event(&target.EventTargetDestroyed{TargetID: "a"})
+	w.event(&target.EventTargetDestroyed{TargetID: "b"})
+	if len(w.closed) != 0 {
+		t.Errorf("popups gone are still kept: %v", w.closed)
 	}
 }

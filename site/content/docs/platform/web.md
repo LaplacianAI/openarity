@@ -101,11 +101,11 @@ A run opens the browser at its first call and lets it go when the run ends,
 and a run that stops to wait for an approval comes back to a fresh page. So
 the browser is approved a page at a time, and only `browser_open` ever asks:
 
-| Mode | A person who may approve their own | A guest | A run nobody is present for |
-| --- | --- | --- | --- |
-| `all`, `writes` | `browser_open` asks once | `browser_open` asks once | refused: only `browser_open` is offered, and says why |
-| `destructive` | nothing asks | `browser_open` asks once | nothing asks: it may click and submit unseen |
-| `off` | nothing asks | nothing asks | nothing asks |
+| Mode | A person who may approve their own | A guest | Nobody present, for a person who may approve their own | Nobody present, for anyone else |
+| --- | --- | --- | --- | --- |
+| `all`, `writes` | `browser_open` asks once | `browser_open` asks once | refused: only `browser_open` is offered, and says why | refused, the same |
+| `destructive` | nothing asks | `browser_open` asks once | nothing asks: it may click and submit unseen | refused, the same |
+| `off` | nothing asks | nothing asks | nothing asks | nothing asks |
 
 `browser_click` and `browser_type` are writes, with or without a submit: a
 click can buy, and a page's own script can send what is typed. They are asked
@@ -119,9 +119,24 @@ until the next `browser_open`; **Approve for this run** (`--for-run`) covers
 every page the run opens, each on its own site. Where nothing asks, nothing is
 kept to a site. The text typed is not shown to the approver.
 
-Clicking and typing are writes, not destructive: a team in `destructive` mode
-has its runs click and submit without asking, a scheduled run's too. A team
-that wants them asked uses `writes`, or a rule.
+What keeping to a site does not do:
+
+- **It checks the next action, not the click that leaves.** A link to another
+  site is followed, and that page is read, as `web_fetch` would read it; only
+  what is done on it after is refused.
+- **A site is a host,** exactly: not its scheme, not its port, and not
+  `www.` and the bare name as one. The host asked for and the host the page
+  lands on both count, so a redirect, an open redirect included, widens it to
+  where it lands.
+- **Only the page itself.** A frame from another site in the page is not
+  checked apart from the page around it, and a page's own script may still
+  send what is typed wherever it likes, as it could before.
+
+Clicking and typing are writes, not destructive, by the maintainers' choice:
+a team in `destructive` mode has its runs click and submit without asking,
+and a scheduled run made for someone who may approve their own does so with
+nobody present. A team that wants them asked uses
+`writes`, or a rule on `browser_click` and `browser_type`.
 
 A team's rules, per tool:
 
