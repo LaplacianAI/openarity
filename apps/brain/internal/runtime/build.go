@@ -57,6 +57,7 @@ type Builder struct {
 	graph          *GraphDeps
 	search         *SearchDeps
 	fetch          *FetchDeps
+	browsers       *BrowserDeps
 	delegates      *DelegateDeps
 	workshop       Workshop
 	registry       Registry
@@ -90,6 +91,7 @@ type Built struct {
 	Agent       string
 	Unavailable []Unavailable
 	servers     *runServers
+	browser     *runBrowser
 	// answerable is every tool a person could be asked about, by the name a
 	// request records, as it is before the gate: what a resume makes once
 	// the call is approved.
@@ -102,6 +104,7 @@ func (b Built) Close() {
 	if b.servers != nil {
 		b.servers.close()
 	}
+	b.browser.close()
 }
 
 func Patterns() []agent.Pattern {
@@ -145,9 +148,12 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 
 	// The builder reads the web for servers' docs and a skill's source.
 	web := run.Hub || a.Web || run.Builder
+	// A browser runs a page's scripts and acts on it, so it is a grant of its
+	// own. The builder is never the hub and has no agent, so it has none.
+	browse := (run.Hub || a.Browser) && settings.BrowserProvider != noBrowserProvider
 	var held catalogue
 	if a.ID != uuid.Nil {
-		held, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, gates, &built)
+		held, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, browse, gates, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -225,18 +231,29 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		for _, t := range tools {
 			// Reaching the internet is a read for a person who is there, and a
 			// write for a guest or a run nobody is present for.
-			var actor approval.Actor
-			if gates != nil {
-				actor = gates.actor
-			}
 			built.answerable[t.Name] = t
-			gated, refused := gates.gate(t, target{name: t.Name, class: approval.ClassFor(approval.Egress, actor)})
+			gated, refused := gates.gate(t, target{name: t.Name, class: approval.ClassFor(approval.Egress, gates.actorOf())})
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)
 				continue
 			}
 			built.Spec.Tools = append(built.Spec.Tools, gated)
 		}
+	}
+
+	if browse {
+		r, tools, unavailable := b.browserFor(ctx, run.TeamID, settings)
+		built.browser = r
+		built.Unavailable = append(built.Unavailable, unavailable...)
+		for _, t := range tools {
+			built.answerable[t.Name] = t
+		}
+		gated, refused, asks := gates.gateBrowser(tools)
+		if r != nil {
+			r.bound = asks
+		}
+		built.Unavailable = append(built.Unavailable, refused...)
+		built.Spec.Tools = append(built.Spec.Tools, gated...)
 	}
 
 	if a.ID != uuid.Nil {
@@ -320,7 +337,7 @@ type catalogue struct {
 	byServer map[string][]uuid.UUID
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web bool, gates *policy, built *Built) (catalogue, error) {
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web, browse bool, gates *policy, built *Built) (catalogue, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
 		return catalogue{}, fmt.Errorf("reading the agent's MCP servers: %w", err)
@@ -373,7 +390,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 			if !n.keepsTool(name) {
 				continue
 			}
-			if reserved(name, hub, web) {
+			if reserved(name, hub, web, browse) {
 				built.Unavailable = append(built.Unavailable, Unavailable{
 					Name:   name,
 					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, name),
@@ -409,7 +426,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 // client checks it.
 var toolNameShape = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
-func reserved(name string, hub, web bool) bool {
+func reserved(name string, hub, web, browse bool) bool {
 	switch name {
 	// Every run compacts, and the SDK refuses a second read_output.
 	case GraphToolName, DelegateToolName, agent.ReadOutputToolName, AttachmentsToolName, ReadAttachmentToolName:
@@ -422,6 +439,9 @@ func reserved(name string, hub, web bool) bool {
 		return hub
 	case WebSearchToolName, WebFetchToolName:
 		return web
+	}
+	if slices.Contains(BrowserToolNames, name) {
+		return browse
 	}
 	return false
 }

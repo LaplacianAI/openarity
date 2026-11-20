@@ -134,6 +134,23 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # The browser tools' tests drive real browsers and skip without them:
+      # this one, and Lightpanda, started as a step below because it needs a
+      # command of its own. The image is the tag
+      # docker-compose.headless-shell.yml ships, pinned to what it named when
+      # this was written. Chrome needs more /dev/shm than Docker's 64 MB. Its
+      # pages are served by the tests on the runner, which the container
+      # reaches as host.docker.internal. The image has no shell tools for a
+      # health check, so a step waits for it instead.
+      headless-shell:
+        image: chromedp/headless-shell:159.0.8154.13@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9
+        ports:
+          - 9222:9222
+        options: >-
+          --add-host=host.docker.internal:host-gateway
+          --add-host=other.test:host-gateway
+          --shm-size=1g
+
     env:
       BRAIN_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/openarity_test?sslmode=disable
       BRAIN_TEST_FALKOR_URL: redis://localhost:6379
@@ -143,6 +160,10 @@ jobs:
       BRAIN_TEST_S3_BUCKET: openarity
       BRAIN_TEST_S3_ACCESS_KEY: openarity
       BRAIN_TEST_S3_SECRET_KEY: openarity-ci-secret
+      BRAIN_TEST_BROWSER_URL: http://localhost:9222,ws://127.0.0.1:9223
+      BRAIN_TEST_BROWSER_HOST: host.docker.internal
+      # Another site on the same host, for a frame from another site.
+      BRAIN_TEST_BROWSER_OTHER_HOST: other.test
 
     steps:
       - uses: actions/checkout@v7
@@ -245,6 +266,33 @@ jobs:
 
       - name: Build
         run: make build
+
+      # Lightpanda is the staging browser, so its tests run too. A step, not a
+      # service: it takes the command docker-compose.lightpanda.yml gives it.
+      - name: Start Lightpanda
+        run: |
+          docker run -d --name lightpanda -p 9223:9222 \
+            --add-host=host.docker.internal:host-gateway \
+            --add-host=other.test:host-gateway \
+            lightpanda/browser:1.0.4@sha256:a9d899882899802bc3a6b82622a7ca394f8e1b828452869a0965d2e5097e6116 \
+            /bin/lightpanda serve --host 0.0.0.0 --port 9222 --advertise-host 127.0.0.1
+
+      # The host as the browsers reach it, for the test that a page reaches
+      # nothing the guard refuses: host-gateway is docker0's address. With no
+      # address the step fails, as the test would otherwise not run.
+      - name: Wait for the browsers
+        run: |
+          ip=$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1 | head -n1)
+          test -n "$ip" || { echo "docker0 has no IPv4 address" >&2; exit 1; }
+          echo "BRAIN_TEST_BROWSER_HOST_IP=$ip" >> "$GITHUB_ENV"
+          for port in 9222 9223; do
+            for _ in $(seq 1 30); do
+              curl -sf "http://127.0.0.1:$port/json/version" >/dev/null && continue 2
+              sleep 2
+            done
+            echo "no browser answered on $port" >&2
+            exit 1
+          done
 
       # Race detector on; fails below the threshold set in the Makefile.
       - name: Test and coverage
