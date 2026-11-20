@@ -1,5 +1,6 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ArrowRight, ChevronDown, Info } from "lucide-react";
 import { Popover } from "radix-ui";
 import { Fragment, type ReactNode, useId, useState } from "react";
 
@@ -95,6 +96,28 @@ function useNamed(
  * One part of the agent: its name and what it covers on the left from 1024px,
  * the fields on the right. Parts are divided by a rule, not boxed.
  */
+/**
+ * The grant waits for a sandbox: it can be set now, and the agent has a
+ * workspace once the team chooses where sandboxes run.
+ */
+function NoSandbox() {
+  return (
+    <p className="flex items-start gap-2 text-xs text-muted-foreground">
+      <Info aria-hidden className="mt-px size-3.5 shrink-0" />
+      <span className="min-w-0">
+        This team has no sandbox yet, so the workspace waits until one is chosen.{" "}
+        <Link
+          to="/ui/settings"
+          className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
+        >
+          Choose a sandbox in team settings
+          <ArrowRight aria-hidden className="size-3" />
+        </Link>
+      </span>
+    </p>
+  );
+}
+
 function Section({
   title,
   about,
@@ -159,6 +182,10 @@ export function AgentForm({
   // Suggested, not imposed: the team's own model first, then those its agents
   // run on. A name the gateway knows that nobody uses yet can still be typed.
   const teamModel = settings.data?.model?.name ?? null;
+  // Known only once the settings are read: until then, say nothing rather
+  // than warn a team that has a sandbox.
+  const noSandbox =
+    settings.data !== undefined && (settings.data.sandbox?.provider ?? "none") === "none";
   const models = [
     ...new Set([teamModel, ...names.agents.map((a) => a.model?.name)].filter(Boolean)),
   ] as string[];
@@ -359,6 +386,19 @@ export function AgentForm({
           checked={draft.browser}
           onCheckedChange={(browser) => set({ browser })}
         />
+      </Section>
+
+      <Section
+        title="Workspace"
+        about="Running commands and working with files, in the sandbox chosen in Settings."
+      >
+        <SwitchField
+          label="Can work in a workspace"
+          description="It can run commands and read, write and search files in the conversation's own sandbox, shared with the other agents working on it. The sandbox reaches the public internet and nothing private; its commands are approved as changes are. The hub never has one."
+          checked={draft.workspace}
+          onCheckedChange={(workspace) => set({ workspace })}
+        />
+        {noSandbox ? <NoSandbox /> : null}
       </Section>
 
       <Section
