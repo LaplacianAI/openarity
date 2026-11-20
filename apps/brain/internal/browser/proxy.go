@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -46,16 +47,17 @@ type Proxy struct {
 	forward *httputil.ReverseProxy
 	slots   chan struct{}
 	logger  *slog.Logger
-	// port is the destination ports dialed, webPort but in tests.
-	port func(uint16) bool
-	// idle is tunnelIdleTimeout but in tests.
-	idle time.Duration
+	// allowPort is the destination ports dialed, and idle how long a tunnel
+	// may carry nothing: webPort and tunnelIdleTimeout, which only tests
+	// change.
+	allowPort func(uint16) bool
+	idle      time.Duration
 }
 
 // NewProxy is a proxy that dials what allow allows, on a web port, and never
 // a link-local address.
 func NewProxy(allow func(netip.Addr) bool, logger *slog.Logger) *Proxy {
-	p := &Proxy{slots: make(chan struct{}, proxyConnections), logger: logger, port: webPort, idle: tunnelIdleTimeout}
+	p := &Proxy{slots: make(chan struct{}, proxyConnections), logger: logger, allowPort: webPort, idle: tunnelIdleTimeout}
 	p.dialer = &net.Dialer{
 		Timeout: proxyDialTimeout,
 		// Control runs on each address a name resolved to, just before it is
@@ -65,7 +67,7 @@ func NewProxy(allow func(netip.Addr) bool, logger *slog.Logger) *Proxy {
 			switch {
 			case err != nil || !reachable(ap.Addr(), allow):
 				return errRefused
-			case !p.port(ap.Port()):
+			case !p.allowPort(ap.Port()):
 				return errPort
 			}
 			return nil
@@ -147,7 +149,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // tunnel joins the browser to the address it named, once that is dialed.
 func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
-	if _, _, err := net.SplitHostPort(r.Host); err != nil {
+	if !hostAndPort(r.Host) {
 		http.Error(w, "CONNECT names a host and a port", http.StatusBadRequest)
 		return
 	}
@@ -179,16 +181,18 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Both ends are closed once nothing has crossed either way for idle.
-	idle := time.AfterFunc(p.idle, func() {
+	// Both ends are closed once nothing has crossed either way for idle. A
+	// write the other end does not take for that long counts as nothing.
+	idle := &idleClose{after: p.idle}
+	idle.t = time.AfterFunc(p.idle, func() {
 		_ = in.Close()
 		_ = out.Close()
 	})
-	defer idle.Stop()
+	defer idle.stop()
 	var wg sync.WaitGroup
 	pipe := func(dst net.Conn, src io.Reader) {
 		defer wg.Done()
-		if _, err := io.Copy(activity{dst, idle, p.idle}, src); err != nil {
+		if _, err := io.Copy(activity{dst, idle}, src); err != nil {
 			// Broken, not finished: neither end has more to say.
 			_ = in.Close()
 			_ = out.Close()
@@ -216,16 +220,49 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// idleClose is a tunnel's idle timer, put off by every write until the
+// tunnel is done: a pipe still copying then cannot set it again.
+type idleClose struct {
+	t     *time.Timer
+	after time.Duration
+	mu    sync.Mutex
+	done  bool
+}
+
+func (c *idleClose) putOff() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.done {
+		c.t.Reset(c.after)
+	}
+}
+
+func (c *idleClose) stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.done = true
+	c.t.Stop()
+}
+
 // activity is a tunnel's end that puts off its idle close with every write.
 type activity struct {
 	net.Conn
-	idle  *time.Timer
-	after time.Duration
+	idle *idleClose
 }
 
 func (a activity) Write(b []byte) (int, error) {
-	a.idle.Reset(a.after)
+	a.idle.putOff()
 	return a.Conn.Write(b)
+}
+
+// hostAndPort is a CONNECT's target: a host, and a port by number.
+func hostAndPort(target string) bool {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil || host == "" {
+		return false
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && n > 0
 }
 
 // refuse answers a request the proxy did not carry, and logs its host only:
@@ -241,7 +278,15 @@ func (p *Proxy) refuse(w http.ResponseWriter, host string, err error) {
 		p.logger.Debug("The browser's proxy refused a port that is not a web one", "host", host)
 		http.Error(w, "the browser may reach ports 80, 443, 8080 and 8443 only", http.StatusForbidden)
 	default:
-		p.logger.Warn("The browser's proxy could not reach a host", "host", host, "error", err)
+		// A site that is down, slow or unknown is a page's ordinary failure;
+		// anything else is the proxy's own and worth a look.
+		level := slog.LevelWarn
+		var dns *net.DNSError
+		var ne net.Error
+		if errors.As(err, &dns) || (errors.As(err, &ne) && ne.Timeout()) || errors.Is(err, syscall.ECONNREFUSED) {
+			level = slog.LevelInfo
+		}
+		p.logger.Log(context.Background(), level, "The browser's proxy could not reach a host", "host", host, "error", err)
 		http.Error(w, "could not be reached", http.StatusBadGateway)
 	}
 }

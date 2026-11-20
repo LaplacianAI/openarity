@@ -100,3 +100,26 @@ func TestABrowserProxyThatStopsStopsTheWorker(t *testing.T) {
 		t.Error("a proxy stopped with the worker stopped it again")
 	}
 }
+
+// A worker stopped by its proxy exits as failed, even when it stopped
+// cleanly, and one stopped for any other reason ends as it ran.
+func TestAWorkerStoppedByItsProxyExitsAsFailed(t *testing.T) {
+	ctx, stop := context.WithCancelCause(t.Context())
+	stop(errProxyStopped)
+	if err := workerError(ctx, nil); !errors.Is(err, errProxyStopped) {
+		t.Errorf("a clean stop for the proxy = %v", err)
+	}
+	ran := errors.New("the durable runtime failed")
+	if err := workerError(ctx, ran); !errors.Is(err, errProxyStopped) || !errors.Is(err, ran) {
+		t.Errorf("a failed run stopped for the proxy = %v", err)
+	}
+
+	ctx, stop = context.WithCancelCause(t.Context())
+	stop(context.Canceled)
+	if err := workerError(ctx, nil); err != nil {
+		t.Errorf("a shutdown = %v", err)
+	}
+	if err := workerError(ctx, ran); !errors.Is(err, ran) || errors.Is(err, errProxyStopped) {
+		t.Errorf("a failed run = %v", err)
+	}
+}

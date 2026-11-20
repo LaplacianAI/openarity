@@ -673,7 +673,9 @@ Measured with each of the four, on Docker Desktop, a page asking for:
 The proxy dials ports 80, 443, 8080 and 8443 only, so it relays no mail,
 SSH or scan from the host's address; a site on any other port is refused. It
 holds 512 requests and tunnels at once for every browser on the network
-together, and closes a tunnel that has carried nothing for five minutes.
+together, and closes a tunnel that has carried nothing for five minutes: a
+page's event stream or websocket that stays silent longer than that is cut,
+and the page reconnects as it would after any dropped connection.
 
 > **Browserless: the proxy is in the URL a team saves.** Browserless takes
 > Chrome's flags only from the address it is dialed at, so its overlay cannot
@@ -684,6 +686,9 @@ together, and closes a tunnel that has carried nothing for five minutes.
 
 Before turning an overlay on:
 
+- **Sites on other ports stop loading.** A run that browsed a public site on
+  `:3000`, `:5173` or `:8000`, a staging one say, gets a 403 naming the four
+  ports. Serve it on one of them.
 - **Update the worker first, then the overlay.** A browser on the internal
   network with a worker that serves no proxy, an older image or an empty
   `OPENARITY_BROWSER_PROXY_BIND`, reaches nothing. It fails closed, and says
@@ -697,9 +702,12 @@ Before turning an overlay on:
   network the overlay gives them both.
 - **One worker per network address.** A port already taken stops the worker
   at start, naming `BROWSER_PROXY_BIND`. Workers in containers of their own
-  each bind their own; two on the host's network collide.
-- **A proxy that stops stops the worker.** Its restart policy brings it back
-  with one, and runs it held resume as after any restart.
+  each bind their own; two on the host's network collide, and the one that
+  lost restarts, with Docker's growing delay, until the port is free.
+- **A proxy that stops stops the worker.** Its restart policy
+  (`restart: unless-stopped`) brings it back with one. Every run the worker
+  held stops with it, browser or not, and resumes from its last finished
+  step, as after any restart or deploy.
 
 Host firewall rules are no longer needed for these overlays. A browser run
 another way needs the same: no route out but through a proxy like this one.

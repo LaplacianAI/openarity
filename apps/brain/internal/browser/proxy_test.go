@@ -45,7 +45,7 @@ func proxied(t *testing.T, public bool) (*Proxy, *http.Client) {
 	t.Helper()
 	p := NewProxy(func(a netip.Addr) bool { return public && a.IsLoopback() }, slog.New(slog.DiscardHandler))
 	// The tests' sites are on any port.
-	p.port = func(uint16) bool { return true }
+	p.allowPort = func(uint16) bool { return true }
 	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)
 	at, _ := url.Parse(srv.URL)
@@ -199,7 +199,7 @@ func TestPastItsConnectionsTheProxyRefuses(t *testing.T) {
 func TestATunnelEndsWhenTheProxyStops(t *testing.T) {
 	site := newUpstream(t)
 	p := NewProxy(func(a netip.Addr) bool { return a.IsLoopback() }, slog.New(slog.DiscardHandler))
-	p.port = func(uint16) bool { return true }
+	p.allowPort = func(uint16) bool { return true }
 	ctx, stop := context.WithCancel(t.Context())
 	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -270,11 +270,14 @@ func TestTheProxyRefusesWhatIsNotPublic(t *testing.T) {
 	}
 }
 
-// A CONNECT must name a port; without one nothing is dialed.
+// A CONNECT must name a host and a port by number; without them nothing
+// is dialed.
 func TestACONNECTWithNoPortIsRefused(t *testing.T) {
 	p, _ := proxied(t, true)
-	if status, _ := connect(t, p, "localhost"); status != http.StatusBadRequest {
-		t.Errorf("CONNECT localhost = %d, want a bad request", status)
+	for _, target := range []string{"localhost", ":443", "localhost:", "localhost:http", "localhost:0", "localhost:70000"} {
+		if status, _ := connect(t, p, target); status != http.StatusBadRequest {
+			t.Errorf("CONNECT %q = %d, want a bad request", target, status)
+		}
 	}
 }
 

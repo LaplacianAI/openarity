@@ -46,13 +46,19 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 	if err := startBrowserProxy(ctx, cfg, logger, stop); err != nil {
 		return err
 	}
-	if err := worker.New(cfg.PostgresDSN, logger, jobs...).Run(ctx); err != nil {
-		return err
+	// The proxy is not waited for: its tunnels end with ctx, cut mid-page
+	// rather than drained, as the browser's run is being stopped anyway.
+	return workerError(ctx, worker.New(cfg.PostgresDSN, logger, jobs...).Run(ctx))
+}
+
+// workerError is what the worker ended with, ran, and why it was stopped if
+// that was its proxy: a worker that stopped cleanly because the proxy died
+// still exits as failed, so it is started again.
+func workerError(ctx context.Context, ran error) error {
+	if cause := context.Cause(ctx); errors.Is(cause, errProxyStopped) {
+		return errors.Join(cause, ran)
 	}
-	if err := context.Cause(ctx); errors.Is(err, errProxyStopped) {
-		return err
-	}
-	return nil
+	return ran
 }
 
 // errProxyStopped is the worker stopping because its browser proxy did: a
@@ -79,7 +85,7 @@ func startBrowserProxy(ctx context.Context, cfg *config.Config, logger *slog.Log
 func serveBrowserProxy(ctx context.Context, p *browser.Proxy, l net.Listener, stop context.CancelCauseFunc) {
 	err := p.Serve(ctx, l)
 	if ctx.Err() == nil {
-		stop(fmt.Errorf("%w: %w", errProxyStopped, err))
+		stop(errors.Join(errProxyStopped, err))
 	}
 }
 
