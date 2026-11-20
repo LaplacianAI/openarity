@@ -122,6 +122,8 @@ type compactionState struct {
 	cut     int    // the first message after the latest summary; 0 before one
 	cleared int    // the first message whose tool results are not cleared
 	prefix  string // the SHA-256 of the messages before cleared
+	// The latest summary. Its own Prefix is of the messages before cut, and
+	// differs from prefix once a clearing has moved past it.
 	CompactionSummary
 }
 
@@ -156,7 +158,8 @@ const (
 )
 
 // compactHandle is the part of a compaction the Run shares with its caller,
-// and the summaries it has written, to splice into the transcript.
+// and the summaries and clearings it has written, to splice into the
+// transcript.
 type compactHandle struct {
 	force atomic.Bool
 
@@ -166,8 +169,8 @@ type compactHandle struct {
 	full  []Message
 }
 
-// mark is a summary message and where it goes: before the message at at in
-// the transcript with its summaries left out.
+// mark is a summary or a clearing and where it goes: before the message at
+// at in the transcript with its marks left out.
 type mark struct {
 	at  int
 	msg Message
@@ -200,8 +203,8 @@ func (h *compactHandle) summarised(s compactionState) {
 	h.mu.Unlock()
 }
 
-// reset forgets every summary: the conversation no longer starts with what
-// they stand for.
+// reset forgets every summary and clearing: the conversation no longer
+// starts with what they stand for.
 func (h *compactHandle) reset() {
 	h.mu.Lock()
 	h.state, h.marks = compactionState{}, nil
@@ -214,33 +217,24 @@ func (h *compactHandle) current() compactionState {
 	return h.state
 }
 
-// resume takes the summaries out of a transcript and returns the rest, which
-// is what the pattern works on. The latest summary is where the run carries
-// on from; prepare checks the transcript still starts with what it stands for
-// before the first request, and drops every summary if not.
+// resume takes the summaries and clearings out of a transcript and returns
+// the rest, which is what the pattern works on. The latest summary is where
+// the run carries on from, and a clearing after it where results are cleared
+// to; prepare checks the transcript still starts with what they stand for
+// before the first request, and drops every mark if not.
 func (h *compactHandle) resume(msgs []Message) []Message {
-	plain := make([]Message, 0, len(msgs))
-	var marks []mark
-	for _, m := range msgs {
-		if m.Compaction != nil || m.Clearing != nil {
-			marks = append(marks, mark{at: len(plain), msg: m})
-			continue
-		}
-		plain = append(plain, m)
-	}
+	plain, marks := splitMarks(msgs, func(m Message) bool { return m.Compaction != nil || m.Clearing != nil })
 	h.reset()
 	if len(marks) == 0 {
 		return plain
 	}
-	// A summary sets where the run carries on from; a clearing after it
-	// moves only where results are cleared to.
 	var s compactionState
 	for _, m := range marks {
-		if c := m.msg.Clearing; c != nil {
-			s.cleared, s.prefix = m.at, c.Prefix
-		} else {
-			c := m.msg.Compaction
-			s = compactionState{cut: m.at, cleared: m.at, prefix: c.Prefix, CompactionSummary: *c}
+		switch summary, clearing := m.msg.Compaction, m.msg.Clearing; {
+		case clearing != nil:
+			s.cleared, s.prefix = m.at, clearing.Prefix
+		default:
+			s = compactionState{cut: m.at, cleared: m.at, prefix: summary.Prefix, CompactionSummary: *summary}
 		}
 	}
 	h.mu.Lock()
@@ -265,14 +259,9 @@ func (h *compactHandle) recordClearing(s compactionState) {
 // not compact, to be spliced back where they were: a clearing has nothing to
 // tell its model, and a later run that compacts still needs it.
 func (h *compactHandle) holdClearings(msgs []Message) []Message {
-	plain := make([]Message, 0, len(msgs))
-	var marks []mark
-	for _, m := range msgs {
-		if m.Clearing != nil {
-			marks = append(marks, mark{at: len(plain), msg: m})
-			continue
-		}
-		plain = append(plain, m)
+	plain, marks := splitMarks(msgs, func(m Message) bool { return m.Clearing != nil })
+	if len(marks) == 0 {
+		return msgs
 	}
 	h.mu.Lock()
 	h.marks = marks
@@ -280,8 +269,23 @@ func (h *compactHandle) holdClearings(msgs []Message) []Message {
 	return plain
 }
 
-// splice puts the summaries back into a transcript the pattern holds, each
-// where the turns it stands for end.
+// splitMarks takes out the messages isMark picks, each with where it went:
+// the count of messages kept before it.
+func splitMarks(msgs []Message, isMark func(Message) bool) ([]Message, []mark) {
+	plain := make([]Message, 0, len(msgs))
+	var marks []mark
+	for _, m := range msgs {
+		if isMark(m) {
+			marks = append(marks, mark{at: len(plain), msg: m})
+			continue
+		}
+		plain = append(plain, m)
+	}
+	return plain, marks
+}
+
+// splice puts the summaries and clearings back into a transcript the
+// pattern holds, each where the turns it stands for end.
 func (h *compactHandle) splice(msgs []Message) []Message {
 	h.mu.Lock()
 	marks := h.marks
@@ -440,7 +444,9 @@ func (c *compactingClient) estimate(req Request, view []Message) int {
 func (c *compactingClient) compact(ctx context.Context, req Request, reason string) {
 	msgs := req.Messages
 	before := c.estimate(req, c.view(msgs))
-	keep := c.keepFrom(msgs)
+	// Never back past a clearing: its mark is already written, and the
+	// marks must stay in order.
+	keep := max(c.keepFrom(msgs), c.state.cleared)
 
 	// Clearing first: no model call.
 	prev := c.state
@@ -508,8 +514,8 @@ func (c *compactingClient) compact(ctx context.Context, req Request, reason stri
 
 // settle keeps a compaction that wrote no summary: clearing, or a summary
 // that failed. A clearing is written to the transcript when it moved where
-// results are cleared to; a failed summary that cleared nothing leaves the
-// state as it was.
+// results are cleared to, which is when compact cleared any; a failed summary
+// that cleared nothing leaves the state as it was.
 func (c *compactingClient) settle(e CompactedEvent) {
 	c.base, c.baseLen = 0, 0
 	if c.state.cleared != c.handle.current().cleared {

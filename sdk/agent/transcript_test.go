@@ -434,8 +434,36 @@ func TestAClearingReadsAsANoteToCodeThatPredatesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), `"compaction"`) {
-		t.Fatalf("a clearing is stored as %s; an older reader would take it for a summary", raw)
+	// Message as it was before ClearingMark.
+	var old struct {
+		Role       Role               `json:"role"`
+		Content    []Content          `json:"content,omitempty"`
+		Compaction *CompactionSummary `json:"compaction,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.Compaction != nil || old.Role != RoleUser || len(old.Content) != 1 || old.Content[0].Text == "" {
+		t.Fatalf("code from before clearings reads %s as %+v; want a plain user note, not a summary", raw, old)
+	}
+}
+
+func TestASummaryNeverFoldsShortOfAClearing(t *testing.T) {
+	r := rig(Compaction{AfterMessages: 10, KeepTokens: 100_000})
+	msgs := conversation(10, func(int) string { return "x" })
+	// A clearing at 19, later than the 15 this run's own keep would pick.
+	state := compactionState{cleared: 19, prefix: digest(msgs[:19])}
+	r.client.state = state
+	r.handle.recordClearing(state)
+
+	r.send(t, msgs)
+
+	if got := r.client.state.cut; got < 19 {
+		t.Fatalf("the summary folds to %d, short of the clearing at 19: the marks would be out of order", got)
+	}
+	at := clearingsIn(r.handle.splice(msgs))
+	if len(at) != 1 || at[0] != 19 {
+		t.Fatalf("the clearing is spliced at %v; want it kept at 19", at)
 	}
 }
 
