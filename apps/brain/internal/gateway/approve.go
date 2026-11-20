@@ -85,9 +85,9 @@ type chat struct {
 // requests in the conversation, and a word that names none of them ("yes
 // sure") is what they wrote. Only a code decides. A bare yes or no, while
 // the sender has a request waiting and the message asks the bot, decides
-// nothing and is told the code to reply with: it may answer the bot's own
-// question rather than the request, and read as an ordinary message it would
-// give up the very request it meant to approve. In a group, a "yes" to nobody
+// nothing and is told the code to reply with: a yes names no request, and read
+// as an ordinary message it would give up the very request it meant to
+// approve. In a group, a "yes" to nobody
 // in particular is not one, while "yes 7K2F" is, as the footer asks for it,
 // mention or not.
 func answerTyped(ctx context.Context, c chat, addressed bool) (outcome, bool, error) {
