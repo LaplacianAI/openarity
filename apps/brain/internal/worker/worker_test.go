@@ -244,7 +244,10 @@ func TestTheWorkerHandsDBOSItsOwnExecutorID(t *testing.T) {
 // deploy stopped.
 func TestTheWorkerKeepsOneVersionAcrossBuilds(t *testing.T) {
 	c := New("postgres://brain@db.internal/brain", discardLogger(), &fakeJob{name: "reaper"}).config()
-	if c.ApplicationVersion != AppVersion || AppVersion == "" {
-		t.Errorf("ApplicationVersion = %q, want the fixed %q", c.ApplicationVersion, AppVersion)
+	if appVersion == "" {
+		t.Fatal("appVersion is empty, so DBOS falls back to a hash of the binary")
+	}
+	if c.ApplicationVersion != appVersion {
+		t.Errorf("ApplicationVersion = %q, want the fixed %q", c.ApplicationVersion, appVersion)
 	}
 }
