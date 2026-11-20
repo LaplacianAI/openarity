@@ -118,7 +118,7 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	ask.Spec.Tools = []agent.Tool{critiqueTool()}
 	review := react{aside: true, must: CritiqueToolName}
 
-	call, resp, ok, err := reviewOnce(ctx, in, ask, review, msgs)
+	call, resp, ok, err := reviewOnce(ctx, ask, review, msgs)
 	if err != nil {
 		return critique{}, err
 	}
@@ -129,13 +129,13 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 		// asked to submit it, it usually does. Only its text is handed back,
 		// in a user turn after the draft: the reply's reasoning, any stray
 		// call and an empty turn are left out, as a provider may refuse them.
-		// Once, in the same step, and the verdict is read from the call,
-		// never guessed from the prose.
-		if err := ctx.Err(); err != nil {
-			return critique{}, err
+		// It is asked once more, in the same step, and the verdict is still
+		// read from the call, never guessed from the prose.
+		if cancelled := ctx.Err(); cancelled != nil {
+			return critique{}, cancelled
 		}
 		withReview := append(slices.Clone(msgs), submitAgain(resp.Message.Text()))
-		if call, _, ok, err = reviewOnce(ctx, in, ask, review, withReview); err != nil {
+		if call, _, ok, err = reviewOnce(ctx, ask, review, withReview); err != nil {
 			return critique{}, err
 		}
 		if !ok {
@@ -157,13 +157,13 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 // off at max_tokens is an error; otherwise it reports the critique the reply
 // submitted, if it submitted one.
 func reviewOnce(
-	ctx context.Context, in, ask agent.Input, review react, msgs []agent.Message,
+	ctx context.Context, ask agent.Input, review react, msgs []agent.Message,
 ) (agent.ToolCall, agent.Response, bool, error) {
 	resp, err := review.call(ctx, ask, msgs)
 	if err != nil {
 		return agent.ToolCall{}, resp, false, err
 	}
-	in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
+	ask.Emit(ctx, agent.UsageEvent{Model: ask.Spec.Model.Name, Usage: resp.Usage})
 	if resp.Finish == agent.FinishLength {
 		return agent.ToolCall{}, resp, false, agent.ErrTruncated
 	}
@@ -176,11 +176,14 @@ func reviewOnce(
 }
 
 // submitAgain is the turn after a review written out rather than submitted:
-// the review, fenced off as the model's own words, then the ask. A reply that
-// wrote nothing gets the ask alone.
+// the review, fenced off as the model's own words, then the ask. A review may
+// quote the draft or what a tool returned, so a closing tag inside it is
+// broken, and the fence ends where the pattern ends it. A reply that wrote
+// nothing gets an ask that refers to nothing.
 func submitAgain(review string) agent.Message {
-	text := submitNow
+	text := submitFresh
 	if review = strings.TrimSpace(review); review != "" {
+		review = strings.ReplaceAll(review, "</review>", "< /review>")
 		text = "Your review of the answer was:\n\n<review>\n" + review + "\n</review>\n\n" + submitNow
 	}
 	return agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: text}}}
@@ -261,6 +264,9 @@ var reflecting = agent.Content{
 // calling the tool.
 const submitNow = "Submit that judgement now: call " + CritiqueToolName +
 	" with it. Do not write it out again."
+
+// submitFresh follows a reflecting turn that wrote nothing at all.
+const submitFresh = "Judge the answer above now: call " + CritiqueToolName + " with your judgement."
 
 var refining = agent.Content{
 	Type: agent.ContentText,
