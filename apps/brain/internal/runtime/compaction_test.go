@@ -7,29 +7,42 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
-// A run compacts at a tenth of its budget, never past the ceiling, and never
-// below the floor: under it, what a compaction keeps is already over the line.
-func TestARunCompactsAtATenthOfItsBudgetBetweenTheFloorAndTheCeiling(t *testing.T) {
+// A run compacts at a tenth of its budget, held between the team's least and
+// most tokens: under the least, what a compaction keeps is already over the line.
+func TestARunCompactsAtATenthOfItsBudgetBetweenTheTeamsLines(t *testing.T) {
 	t.Parallel()
-
 	for _, tc := range []struct {
-		budget int64
-		want   int
+		least, most int32
+		budget      int64
+		want        int
 	}{
-		{5_000_000, 60_000},
-		{1_000_000, 60_000},
-		{700_000, 60_000},
-		{550_000, 55_000},
-		{500_000, 50_000},
-		{300_000, 50_000},
-		{150_000, 50_000},
-		{100_000, 50_000},
-		{1, 50_000},
+		{50_000, 60_000, 5_000_000, 60_000},
+		{50_000, 60_000, 700_000, 60_000},
+		{50_000, 60_000, 550_000, 55_000},
+		{50_000, 60_000, 500_000, 50_000},
+		{50_000, 60_000, 1, 50_000},
+		{40_000, 40_000, 2_000_000, 40_000},
+		{40_000, 40_000, 100_000, 40_000},
+		{30_000, 1_000_000, 2_000_000, 200_000},
+		{100_000, 150_000, 500_000, 100_000},
 	} {
-		got := compactionFor(42, tc.budget)
+		s := defaultTeamSettings()
+		s.CompactionMessages, s.CompactionTokensMin, s.CompactionTokensMax = 42, tc.least, tc.most
+		got := compactionFor(s, tc.budget)
 		if got.AfterInputTokens != tc.want || got.AfterMessages != 42 {
-			t.Errorf("compactionFor(42, %d) = %+v, want %d tokens and the team's 42 messages", tc.budget, got, tc.want)
+			t.Errorf("compactionFor(%d to %d, budget %d) = %+v, want %d tokens and the team's 42 messages",
+				tc.least, tc.most, tc.budget, got, tc.want)
 		}
+	}
+}
+
+// A team that never saved its settings compacts where the brain always did.
+func TestATeamWithoutSettingsCompactsBetween50And60Thousand(t *testing.T) {
+	t.Parallel()
+	s := defaultTeamSettings()
+	if s.CompactionTokensMin != 50_000 || s.CompactionTokensMax != 60_000 || s.CompactionMessages != defaultCompactionMessages {
+		t.Errorf("defaults = %d to %d tokens, %d messages; want 50,000 to 60,000 and %d",
+			s.CompactionTokensMin, s.CompactionTokensMax, s.CompactionMessages, defaultCompactionMessages)
 	}
 }
 
@@ -128,12 +141,13 @@ func TestTheWrapUpPricesTheNextCallAsTheBudgetCountsIt(t *testing.T) {
 	}
 }
 
-// The floor is under the ceiling, or a run with a small budget would compact
-// past a line it can never be under.
-func TestTheCompactionFloorIsUnderTheCeiling(t *testing.T) {
+// The default least is under the default most, or a run with a small budget
+// would compact past a line it can never be under.
+func TestTheDefaultCompactionLinesAreInOrder(t *testing.T) {
 	t.Parallel()
-	if compactFloor >= compactCeiling {
-		t.Errorf("compactFloor %d is not under compactCeiling %d", compactFloor, compactCeiling)
+	if defaultCompactionTokensMin >= defaultCompactionTokensMax {
+		t.Errorf("defaultCompactionTokensMin %d is not under defaultCompactionTokensMax %d",
+			defaultCompactionTokensMin, defaultCompactionTokensMax)
 	}
 }
 

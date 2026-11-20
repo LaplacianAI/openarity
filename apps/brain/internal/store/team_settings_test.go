@@ -24,9 +24,10 @@ func searchKeyPath(team, id uuid.UUID) string {
 func settings(team uuid.UUID) db.UpsertTeamSettingsParams {
 	return db.UpsertTeamSettingsParams{
 		SandboxProvider: "none", BrowserProvider: "none",
-		TeamID:             team,
-		SearchProvider:     "none",
-		CompactionMessages: 100,
+		TeamID:              team,
+		SearchProvider:      "none",
+		CompactionMessages:  100,
+		CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
 	}
 }
 
@@ -131,6 +132,10 @@ func TestTheColumnDefaultsAreTheSpecsDefaults(t *testing.T) {
 		t.Fatalf("GetTeamSettings: %v", err)
 	}
 
+	if got.CompactionTokensMin != 50_000 || got.CompactionTokensMax != 60_000 {
+		t.Errorf("token defaults = %d to %d, want 50,000 to 60,000, the spec's",
+			got.CompactionTokensMin, got.CompactionTokensMax)
+	}
 	if got.SearchProvider != "none" || got.Learning || got.CompactionMessages != 100 ||
 		got.ModelName != nil || got.SearchSecretID != nil || got.ApprovalMode != "off" {
 		t.Errorf("defaults = provider %q, learning %v, compaction %d, model %v, secret %v, approvals %q; "+
@@ -290,6 +295,18 @@ func TestTeamSettingsRefuseWhatTheAPIWould(t *testing.T) {
 		"compaction above 10000": {
 			func(p *db.UpsertTeamSettingsParams) { p.CompactionMessages = 10001 },
 			"team_settings_compaction_range",
+		},
+		"least tokens below 30,000": {
+			func(p *db.UpsertTeamSettingsParams) { p.CompactionTokensMin = 29_999 },
+			"team_settings_compaction_tokens_min_range",
+		},
+		"most tokens above 1,000,000": {
+			func(p *db.UpsertTeamSettingsParams) { p.CompactionTokensMax = 1_000_001 },
+			"team_settings_compaction_tokens_max_range",
+		},
+		"least tokens above most": {
+			func(p *db.UpsertTeamSettingsParams) { p.CompactionTokensMin, p.CompactionTokensMax = 70_000, 60_000 },
+			"team_settings_compaction_tokens_order",
 		},
 	} {
 		t.Run(label, func(t *testing.T) {

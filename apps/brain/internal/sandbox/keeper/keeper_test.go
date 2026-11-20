@@ -103,7 +103,7 @@ func (w *world) useSandbox(provider, url string) {
 		w.t.Fatal(err)
 	}
 	p := db.UpsertTeamSettingsParams{
-		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100,
+		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
 		SandboxProvider: provider, BrowserProvider: "none", SandboxSecretID: &w.keyID,
 	}
 	if url != "" {
@@ -607,7 +607,7 @@ func TestATeamWithNoSandboxIsToldToChooseOne(t *testing.T) {
 
 	w := newWorld(t)
 	if _, err := w.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
-		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100, SandboxProvider: "none", BrowserProvider: "none",
+		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000, SandboxProvider: "none", BrowserProvider: "none",
 	}); err != nil {
 		t.Fatal(err)
 	}

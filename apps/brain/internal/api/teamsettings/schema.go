@@ -40,14 +40,16 @@ type hubRef struct {
 }
 
 type settings struct {
-	Model              *modelRef  `json:"model"`
-	Search             search     `json:"search"`
-	Sandbox            sandbox    `json:"sandbox"`
-	Browser            browser    `json:"browser"`
-	Learning           bool       `json:"learning"`
-	CompactionMessages int32      `json:"compaction_messages"`
-	Hub                *hubRef    `json:"hub"`
-	UpdatedAt          *time.Time `json:"updated_at"`
+	Model               *modelRef  `json:"model"`
+	Search              search     `json:"search"`
+	Sandbox             sandbox    `json:"sandbox"`
+	Browser             browser    `json:"browser"`
+	Learning            bool       `json:"learning"`
+	CompactionMessages  int32      `json:"compaction_messages"`
+	CompactionTokensMin int32      `json:"compaction_tokens_min"`
+	CompactionTokensMax int32      `json:"compaction_tokens_max"`
+	Hub                 *hubRef    `json:"hub"`
+	UpdatedAt           *time.Time `json:"updated_at"`
 }
 
 type searchRequest struct {
@@ -80,5 +82,8 @@ type settingsRequest struct {
 	Browser            *browserRequest `json:"browser"`
 	Learning           bool            `json:"learning"`
 	CompactionMessages int32           `json:"compaction_messages"`
-	Hub                *string         `json:"hub"`
+	// Left out, the stored value stays, as a sandbox does.
+	CompactionTokensMin *int32  `json:"compaction_tokens_min"`
+	CompactionTokensMax *int32  `json:"compaction_tokens_max"`
+	Hub                 *string `json:"hub"`
 }

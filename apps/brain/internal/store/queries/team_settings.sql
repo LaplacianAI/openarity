@@ -10,14 +10,15 @@ INSERT INTO team_settings (
     team_id,
     model_name, model_max_tokens, model_temperature,
     search_provider, search_url, search_secret_id,
-    learning, compaction_messages, hub_agent_id,
+    learning, compaction_messages, compaction_tokens_min, compaction_tokens_max, hub_agent_id,
     sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
     browser_provider, browser_url, browser_secret_id
 ) VALUES (
     sqlc.arg(team_id),
     sqlc.narg(model_name), sqlc.narg(model_max_tokens), sqlc.narg(model_temperature),
     sqlc.arg(search_provider), sqlc.narg(search_url), sqlc.narg(search_secret_id),
-    sqlc.arg(learning), sqlc.arg(compaction_messages), sqlc.narg(hub_agent_id),
+    sqlc.arg(learning), sqlc.arg(compaction_messages),
+    sqlc.arg(compaction_tokens_min), sqlc.arg(compaction_tokens_max), sqlc.narg(hub_agent_id),
     sqlc.arg(sandbox_provider), sqlc.narg(sandbox_url), sqlc.narg(sandbox_secret_id), sqlc.narg(sandbox_template),
     sqlc.arg(browser_provider), sqlc.narg(browser_url), sqlc.narg(browser_secret_id)
 )
@@ -30,6 +31,8 @@ ON CONFLICT (team_id) DO UPDATE SET
     search_secret_id    = EXCLUDED.search_secret_id,
     learning            = EXCLUDED.learning,
     compaction_messages = EXCLUDED.compaction_messages,
+    compaction_tokens_min = EXCLUDED.compaction_tokens_min,
+    compaction_tokens_max = EXCLUDED.compaction_tokens_max,
     hub_agent_id        = EXCLUDED.hub_agent_id,
     sandbox_provider    = EXCLUDED.sandbox_provider,
     sandbox_url         = EXCLUDED.sandbox_url,

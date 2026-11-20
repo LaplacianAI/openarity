@@ -427,6 +427,8 @@ describe("defining an agent", () => {
           search: { provider: "none", url: null, key_set: false },
           learning: false,
           compaction_messages: 40,
+          compaction_tokens_min: 50_000,
+          compaction_tokens_max: 60_000,
           hub: null,
         },
       },

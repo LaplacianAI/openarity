@@ -3212,10 +3212,16 @@ type TeamSettings struct {
 	// Browser What the team's runs drive pages in.
 	Browser BrowserSettings `json:"browser" yaml:"browser"`
 
-	// CompactionMessages Messages in a run's request past which it compacts. A run also
-	// compacts when its next request would read more than a tenth of
-	// its token budget, or 100,000 tokens, whichever is less.
+	// CompactionMessages Messages in a run's request past which it compacts.
 	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
+
+	// CompactionTokensMax The most a run's next request may read before it compacts. 60,000 until saved.
+	CompactionTokensMax int32 `json:"compaction_tokens_max" yaml:"compaction_tokens_max"`
+
+	// CompactionTokensMin A run also compacts when its next request would read more than a
+	// tenth of its token budget, held between compaction_tokens_min and
+	// compaction_tokens_max. 50,000 until saved.
+	CompactionTokensMin int32 `json:"compaction_tokens_min" yaml:"compaction_tokens_min"`
 
 	// Hub The agent that answers a run started for the team rather than
 	// for an agent. Null for the built-in orchestrator, which it is
@@ -3242,6 +3248,14 @@ type TeamSettingsRequest struct {
 	// Browser Absent from a request, the stored browser is kept.
 	Browser            *BrowserSettingsRequest `json:"browser,omitempty" yaml:"browser,omitempty"`
 	CompactionMessages int32                   `json:"compaction_messages" yaml:"compaction_messages"`
+
+	// CompactionTokensMax Left out, the stored value stays.
+	CompactionTokensMax *int32 `json:"compaction_tokens_max,omitempty" yaml:"compaction_tokens_max,omitempty"`
+
+	// CompactionTokensMin Left out, the stored value stays, so a client that predates it
+	// cannot reset it. Must not be above compaction_tokens_max once the
+	// stored values fill in what is left out.
+	CompactionTokensMin *int32 `json:"compaction_tokens_min,omitempty" yaml:"compaction_tokens_min,omitempty"`
 
 	// Hub The name of an agent in this team, ignoring case. Null or absent
 	// for the built-in orchestrator.
@@ -5442,7 +5456,7 @@ type ClientInterface interface {
 	//
 	// Any member may read them. A team that never saved reads the
 	// defaults: no model, search off, no browser, learning off, compaction at 100
-	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
 	//
@@ -5466,6 +5480,10 @@ type ClientInterface interface {
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -5487,6 +5505,10 @@ type ClientInterface interface {
 	// A self-hosted provider's URL whose host is an address rather than a
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8165,7 +8187,7 @@ func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID opena
 //
 // Any member may read them. A team that never saved reads the
 // defaults: no model, search off, no browser, learning off, compaction at 100
-// messages, the built-in orchestrator as its hub, and `updated_at`
+// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
 //
@@ -8199,6 +8221,10 @@ func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...R
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -8230,6 +8256,10 @@ func (c *Client) SaveTeamSettingsWithBody(ctx context.Context, id TeamID, conten
 // A self-hosted provider's URL whose host is an address rather than a
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+//
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -14841,7 +14871,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Any member may read them. A team that never saved reads the
 	// defaults: no model, search off, no browser, learning off, compaction at 100
-	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
 	//
@@ -14867,6 +14897,10 @@ type ClientWithResponsesInterface interface {
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -14888,6 +14922,10 @@ type ClientWithResponsesInterface interface {
 	// A self-hosted provider's URL whose host is an address rather than a
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21337,7 +21375,7 @@ func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, i
 //
 // Any member may read them. A team that never saved reads the
 // defaults: no model, search off, no browser, learning off, compaction at 100
-// messages, the built-in orchestrator as its hub, and `updated_at`
+// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
 //
@@ -21369,6 +21407,10 @@ func (c *ClientWithResponses) GetTeamSettingsWithResponse(ctx context.Context, i
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -21396,6 +21438,10 @@ func (c *ClientWithResponses) SaveTeamSettingsWithBodyWithResponse(ctx context.C
 // A self-hosted provider's URL whose host is an address rather than a
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+//
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
