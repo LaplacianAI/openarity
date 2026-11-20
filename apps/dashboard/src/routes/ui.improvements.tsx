@@ -71,6 +71,13 @@ function Improvements() {
 
   // The box answers at once; the address and the brain follow once typing pauses.
   const [typed, setTyped] = useState(q ?? "");
+  // And the box follows the address when it changes from outside, as Back
+  // does, so a stale box never writes its old words back.
+  const [lastQ, setLastQ] = useState(q);
+  if (q !== lastQ) {
+    setLastQ(q);
+    setTyped(q ?? "");
+  }
   useEffect(() => {
     if (typed.trim() === (q ?? "")) return;
     const t = setTimeout(
@@ -120,7 +127,9 @@ function Improvements() {
 
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team to see its improvements." />
-      ) : perms.isPending ? null : (
+      ) : perms.isPending ? (
+        <Loading />
+      ) : (
         <Tabs
           value={tab}
           onValueChange={(v) =>
@@ -167,15 +176,7 @@ function Improvements() {
             </div>
           </div>
           {list.isPending ? (
-            <div className="space-y-2" role="status" aria-label="Loading improvements">
-              {[0, 1].map((i) => (
-                <div key={i} className="max-w-[75ch] space-y-3 rounded-lg bg-card px-4 py-3">
-                  <Skeleton className="h-4 w-48" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-20 w-full" />
-                </div>
-              ))}
-            </div>
+            <Loading />
           ) : list.isError ? (
             <ErrorState
               what="the improvements"
@@ -221,6 +222,21 @@ function Improvements() {
           )}
         </Tabs>
       )}
+    </div>
+  );
+}
+
+/** Cards being read: the shape of one, so the page does not jump when they come. */
+function Loading() {
+  return (
+    <div className="space-y-2" role="status" aria-label="Loading improvements">
+      {[0, 1].map((i) => (
+        <div key={i} className="max-w-[75ch] space-y-3 rounded-lg bg-card px-4 py-3">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-20 w-full" />
+        </div>
+      ))}
     </div>
   );
 }

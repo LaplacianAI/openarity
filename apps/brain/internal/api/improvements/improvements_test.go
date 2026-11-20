@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -312,8 +313,8 @@ func TestRevertAfterAnEditIsRefused(t *testing.T) {
 	if _, err := w.raw.Exec(t.Context(), `UPDATE agents SET max_steps = 12 WHERE id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := w.decide(t, p.ID, "revert"); rec.Code != http.StatusConflict {
-		t.Fatalf("revert = %d %s, want 409", rec.Code, rec.Body)
+	if rec := w.decide(t, p.ID, "revert"); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "cannot be put back") {
+		t.Fatalf("revert = %d %s, want 409 saying it cannot be put back", rec.Code, rec.Body)
 	}
 	if s := w.status(t, p.ID); s != "applied" {
 		t.Errorf("status = %s, want still applied", s)
@@ -757,5 +758,53 @@ func TestRunsSayWhereTheyAreReadOnlyToThoseWhoMay(t *testing.T) {
 	w.holds[readEveryConvo] = true
 	if r := runs()[direct]; !r.Readable || r.SessionID == nil || *r.SessionID != directSession {
 		t.Errorf("direct run for a moderator = %+v, want readable in %s", r, directSession)
+	}
+}
+
+// Two approvals at once on different proposals for one agent: the target is
+// held first, so one applies and the other finds itself withdrawn. Neither
+// deadlocks into a server error.
+func TestTwoApprovalsOnOneAgentDoNotDeadlock(t *testing.T) {
+	w := newWorld(t)
+	for i := range 20 {
+		a := w.agent(t, fmt.Sprintf("bot-%d", i))
+		first := w.mustPropose(t, w.instructionsChange(t, a))
+		second := w.instructionsChange(t, a)
+		second.After.Agent.Agent.Instructions = "Ask for the order id first."
+		other := w.mustPropose(t, second)
+
+		codes := make(chan int, 2)
+		var wg sync.WaitGroup
+		for _, id := range []uuid.UUID{first.ID, other.ID} {
+			wg.Go(func() { codes <- w.decide(t, id, "approve").Code })
+		}
+		wg.Wait()
+		close(codes)
+		got := map[int]int{}
+		for c := range codes {
+			got[c]++
+		}
+		if got[http.StatusOK] != 1 || got[http.StatusConflict] != 1 {
+			t.Fatalf("round %d: codes = %v, want one 200 and one 409", i, got)
+		}
+	}
+}
+
+// Rejecting writes nothing to the agent, so the approve permission alone
+// decides it; approving still needs the write.
+func TestRejectNeedsOnlyTheApprovePermission(t *testing.T) {
+	w := newWorld(t)
+	a := w.agent(t, "support-bot")
+	p := w.mustPropose(t, w.instructionsChange(t, a))
+	w.holds = map[authz.Action]bool{approveAction: true}
+
+	if rec := w.decide(t, p.ID, "approve"); rec.Code != http.StatusForbidden {
+		t.Errorf("approve without agent:write = %d, want 403", rec.Code)
+	}
+	if rec := w.decide(t, p.ID, "reject"); rec.Code != http.StatusOK {
+		t.Errorf("reject = %d %s, want 200", rec.Code, rec.Body)
+	}
+	if s := w.status(t, p.ID); s != "rejected" {
+		t.Errorf("status = %s, want rejected", s)
 	}
 }

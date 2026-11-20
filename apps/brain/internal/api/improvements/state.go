@@ -62,7 +62,26 @@ type FileState struct {
 	Text      *string `json:"text,omitempty"`
 }
 
-// canonical puts a state in one order, so equal states compare equal.
+// cloned is a copy whose slices are its own, so putting it in order leaves
+// the caller's untouched. A nil allow-list stays nil: it means every tool.
+func (s AgentState) cloned() AgentState {
+	s.Agent.MCPServers = slices.Clone(s.Agent.MCPServers)
+	for i := range s.Agent.MCPServers {
+		s.Agent.MCPServers[i].Allow = slices.Clone(s.Agent.MCPServers[i].Allow)
+	}
+	s.Agent.Skills = slices.Clone(s.Agent.Skills)
+	s.Agent.Delegates = slices.Clone(s.Agent.Delegates)
+	s.Notes = slices.Clone(s.Notes)
+	return s
+}
+
+func (s AgentState) sortedNotes() []ToolNote {
+	s.canonical()
+	return s.Notes
+}
+
+// canonical puts a state in one order, so equal states compare equal. It
+// sorts in place: callers holding someone else's state clone it first.
 func (s *AgentState) canonical() {
 	slices.SortFunc(s.Agent.MCPServers, func(a, b agents.ServerGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
 	for i := range s.Agent.MCPServers {
@@ -104,6 +123,7 @@ func (s *SkillState) canonical() {
 
 // sameAgent is whether two agent states are the same agent setup.
 func sameAgent(a, b AgentState) bool {
+	a, b = a.cloned(), b.cloned()
 	a.canonical()
 	b.canonical()
 	return jsonEqual(a, b)
@@ -113,6 +133,7 @@ func sameAgent(a, b AgentState) bool {
 // The text is the proposal's copy, and the media type is sniffed from the
 // bytes when they are stored, so neither says anything the hash does not.
 func sameSkill(a, b SkillState) bool {
+	a.Files, b.Files = slices.Clone(a.Files), slices.Clone(b.Files)
 	a.canonical()
 	b.canonical()
 	return jsonEqual(withoutText(a), withoutText(b))

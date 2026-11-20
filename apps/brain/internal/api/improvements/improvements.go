@@ -209,9 +209,14 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Deciding a change needs what making it by hand needs, beside the
-	// approve permission the route already checked.
-	for _, need := range writesFor(Kind(row.Kind)) {
+	// Making or undoing a change needs what making it by hand needs, beside
+	// the approve permission the route already checked. Rejecting writes
+	// nothing to the agent or skill, so approve alone decides it.
+	var needs []authz.Action
+	if req.Action != actionReject {
+		needs = writesFor(Kind(row.Kind))
+	}
+	for _, need := range needs {
 		if !h.can(r, u, teamID, need) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -226,7 +231,7 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	case errors.Is(err, errChanged):
-		http.Error(w, "the "+targetWord(row)+" changed since this was proposed; reject it, and the next proposal is made from it as it is now", http.StatusConflict)
+		http.Error(w, changedMessage(targetWord(row), req.Action), http.StatusConflict)
 		return
 	case errors.As(err, &state), errors.As(err, &rule):
 		http.Error(w, err.Error(), http.StatusConflict)
@@ -240,10 +245,22 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 		"team_id", teamID, "improvement_id", row.ID, "kind", row.Kind, "action", req.Action, "user_id", u.ID)
 	v, err := h.view(r, u, out)
 	if err != nil {
-		api.Fail(w, h.logger, u, "failed to read the improvement", err)
+		// The decision is committed; failing the response now would say it was not.
+		h.logger.ErrorContext(r.Context(), "Failed to read the decided improvement",
+			"improvement_id", out.ID, "error", err)
+		api.WriteJSON(w, h.logger, http.StatusOK, map[string]any{"id": out.ID, "status": out.Status})
 		return
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, v)
+}
+
+// changedMessage says why a decision on a target changed since was refused,
+// and what is left to do.
+func changedMessage(target, action string) string {
+	if action == actionRevert {
+		return "the " + target + " changed since this was applied, so it cannot be put back automatically; undo the change by hand"
+	}
+	return "the " + target + " changed since this was proposed, so it cannot be applied; reject it"
 }
 
 func writesFor(k Kind) []authz.Action {

@@ -2,7 +2,9 @@ package improvements
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -374,5 +376,34 @@ func TestLineDiffKeepsOrderAndFindsTheUnchangedLines(t *testing.T) {
 	}
 	if d := lineDiff(nil, splitLines("one\ntwo\n")); len(d) != 2 || d[0].op != opAdd {
 		t.Errorf("an added file = %v", d)
+	}
+}
+
+// A long file edited in one place diffs only the middle, and a middle too big
+// for the table is shown as removed then added rather than built.
+func TestLineDiffOfALongFileStaysCheap(t *testing.T) {
+	long := make([]string, 4000)
+	for i := range long {
+		long[i] = fmt.Sprintf("line %d", i)
+	}
+	edited := slices.Clone(long)
+	edited[2000] = "changed"
+	d := lineDiff(long, edited)
+	changes := 0
+	for _, l := range d {
+		if l.op != opSame {
+			changes++
+		}
+	}
+	if len(d) != 4001 || changes != 2 {
+		t.Errorf("one edited line in 4000 gave %d lines, %d changed", len(d), changes)
+	}
+
+	a, b := make([]string, 1500), make([]string, 1500)
+	for i := range a {
+		a[i], b[i] = fmt.Sprintf("a%d", i), fmt.Sprintf("b%d", i)
+	}
+	if d := lineDiff(a, b); len(d) != 3000 || d[0].op != opDel || d[1500].op != opAdd {
+		t.Errorf("a wholly rewritten long file = %d lines", len(d))
 	}
 }

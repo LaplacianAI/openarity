@@ -54,3 +54,26 @@ describe("withContext", () => {
     expect(withContext(lineDiff("a", "a"), 2)).toEqual([{ kind: "same", text: "a" }]);
   });
 });
+
+describe("a long file", () => {
+  it("diffs only what lies between the lines both sides share", () => {
+    const long = Array.from({ length: 4000 }, (_, i) => `line ${i}`);
+    const edited = [...long];
+    edited[2000] = "changed";
+    const d = lineDiff(long.join("\n"), edited.join("\n"));
+    expect(d).toHaveLength(4001);
+    expect(d.filter((l) => l.kind !== "same")).toEqual([
+      { kind: "del", text: "line 2000" },
+      { kind: "add", text: "changed" },
+    ]);
+  });
+
+  it("shows a middle too big for the table as removed then added", () => {
+    const a = Array.from({ length: 1500 }, (_, i) => `a${i}`).join("\n");
+    const b = Array.from({ length: 1500 }, (_, i) => `b${i}`).join("\n");
+    const d = lineDiff(a, b);
+    expect(d).toHaveLength(3000);
+    expect(d[0]?.kind).toBe("del");
+    expect(d[1500]?.kind).toBe("add");
+  });
+});

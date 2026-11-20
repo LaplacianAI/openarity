@@ -666,17 +666,17 @@ WHERE team_id = $2 AND status = 'waiting' AND id <> $1
 `
 
 type WithdrawImprovementProposalsParams struct {
-	By      *uuid.UUID
-	TeamID  uuid.UUID
-	SkillID *uuid.UUID
-	AgentID uuid.UUID
+	AppliedID *uuid.UUID
+	TeamID    uuid.UUID
+	SkillID   *uuid.UUID
+	AgentID   uuid.UUID
 }
 
 // The other proposals waiting on the same target, which the one just applied
 // has made stale.
 func (q *Queries) WithdrawImprovementProposals(ctx context.Context, arg WithdrawImprovementProposalsParams) error {
 	_, err := q.db.Exec(ctx, withdrawImprovementProposals,
-		arg.By,
+		arg.AppliedID,
 		arg.TeamID,
 		arg.SkillID,
 		arg.AgentID,

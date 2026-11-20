@@ -84,6 +84,16 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 
 	var out db.ImprovementProposal
 	err := d.store.InTx(ctx, func(q *db.Queries) error {
+		// The target is held before the proposal. Approving withdraws the other
+		// proposals on the same target, so two approvals that each held their
+		// own proposal and then waited on the target would hold what the other
+		// needs. In this order the second waits on the target holding nothing,
+		// and then finds its proposal withdrawn.
+		if action != actionReject {
+			if err := lockTarget(ctx, q, teamID, id); err != nil {
+				return err
+			}
+		}
 		row, err := q.LockImprovementProposal(ctx, db.LockImprovementProposalParams{ID: id, TeamID: teamID})
 		if err != nil {
 			return err
@@ -115,7 +125,7 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 				return err
 			}
 			return q.WithdrawImprovementProposals(ctx, db.WithdrawImprovementProposalsParams{
-				By: &id, TeamID: teamID, AgentID: row.AgentID, SkillID: row.SkillID,
+				AppliedID: &id, TeamID: teamID, AgentID: row.AgentID, SkillID: row.SkillID,
 			})
 
 		case actionRevert:
@@ -133,6 +143,29 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 	return out, err
 }
 
+// statusFor is the status a proposal must be in for the action.
+func statusFor(action string) string {
+	if action == actionRevert {
+		return "applied"
+	}
+	return "waiting"
+}
+
+// lockTarget holds the agent or skill a proposal changes: the skill for a
+// skill_edit, the agent for everything else.
+func lockTarget(ctx context.Context, q *db.Queries, teamID, id uuid.UUID) error {
+	row, err := q.GetImprovementProposal(ctx, db.GetImprovementProposalParams{ID: id, TeamID: teamID})
+	if err != nil {
+		return err
+	}
+	if Kind(row.Kind) == KindSkillEdit && row.SkillID != nil {
+		_, err = q.LockSkill(ctx, db.LockSkillParams{ID: *row.SkillID, TeamID: teamID})
+	} else {
+		_, err = q.LockAgent(ctx, db.LockAgentParams{ID: row.AgentID, TeamID: teamID})
+	}
+	return mapChanged(err)
+}
+
 // prepareSkill builds and stores the skill a decision will write, outside
 // the transaction. The transaction then checks the skill is still what this
 // was built from, so a read here that races an edit is refused there.
@@ -146,6 +179,11 @@ func (d Decider) prepareSkill(ctx context.Context, teamID, id uuid.UUID, action 
 		}
 		if p, err = decode(row); err != nil {
 			return err
+		}
+		// A decision the status refuses stores nothing for the reaper to clear;
+		// the transaction asks again, on the locked row.
+		if want := statusFor(action); row.Status != want {
+			return errState{row.Status}
 		}
 		if row.SkillID != nil {
 			if stored, err = q.ListSkillFiles(ctx, *row.SkillID); err != nil {
@@ -212,7 +250,7 @@ func (d Decider) apply(ctx context.Context, q *db.Queries, p Proposal, dir *skil
 		if err != nil {
 			return err
 		}
-		return q.SetImprovementProposalAfter(ctx, db.SetImprovementProposalAfterParams{ID: row.ID, After: raw})
+		return mapWrite(q.SetImprovementProposalAfter(ctx, db.SetImprovementProposalAfterParams{ID: row.ID, After: raw}))
 
 	case KindInstructions, KindDescription, KindSkillGrant, KindSkillDrop, KindServerGrant, KindServerDrop,
 		KindToolsNarrow, KindBuiltinTool, KindToolNote, KindLimits, KindDelegation, KindPattern:

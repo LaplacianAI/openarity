@@ -20,8 +20,8 @@ type diffLine struct {
 }
 
 // splitLines is the lines of s, with an empty string having none, so a file
-// that was added shows no phantom blank line being removed. Each line is made
-// safe: the text is a model's.
+// that was added shows no phantom blank line being removed. lineDiff makes
+// each line safe to print, since the text is a model's.
 func splitLines(s string) []string {
 	if s == "" {
 		return nil
@@ -29,10 +29,44 @@ func splitLines(s string) []string {
 	return strings.Split(strings.TrimSuffix(strings.ReplaceAll(s, "\r\n", "\n"), "\n"), "\n")
 }
 
-// lineDiff is a longest-common-subsequence line diff. Proposals change
-// instructions and skill files, tens of lines, so the quadratic table costs
-// nothing.
+// maxCells bounds the table: past it the changed middle is shown as removed,
+// then added, which is still exact if less tidy. A proposal may carry 2 MiB.
+const maxCells = 1_000_000
+
+// lineDiff is a longest-common-subsequence line diff of what lies between the
+// lines both sides share at the start and the end, which is all of an edit to
+// one part of a long file.
 func lineDiff(a, b []string) []diffLine {
+	head := 0
+	for head < len(a) && head < len(b) && a[head] == b[head] {
+		head++
+	}
+	tail := 0
+	for tail < len(a)-head && tail < len(b)-head && a[len(a)-1-tail] == b[len(b)-1-tail] {
+		tail++
+	}
+	out := make([]diffLine, 0, len(a)+len(b)-head-tail)
+	for _, l := range a[:head] {
+		out = append(out, diffLine{opSame, cli.Line(l)})
+	}
+	out = append(out, middleDiff(a[head:len(a)-tail], b[head:len(b)-tail])...)
+	for _, l := range a[len(a)-tail:] {
+		out = append(out, diffLine{opSame, cli.Line(l)})
+	}
+	return out
+}
+
+func middleDiff(a, b []string) []diffLine {
+	if len(a)*len(b) > maxCells {
+		out := make([]diffLine, 0, len(a)+len(b))
+		for _, l := range a {
+			out = append(out, diffLine{opDel, cli.Line(l)})
+		}
+		for _, l := range b {
+			out = append(out, diffLine{opAdd, cli.Line(l)})
+		}
+		return out
+	}
 	lcs := make([][]int, len(a)+1)
 	for i := range lcs {
 		lcs[i] = make([]int, len(b)+1)

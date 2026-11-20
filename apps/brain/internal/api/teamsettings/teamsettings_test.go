@@ -839,6 +839,18 @@ func TestAnUnknownFieldIsRefused(t *testing.T) {
 	}
 }
 
+// A client from before the rename still sends learning. It is refused, never
+// read as improvement switched off. The refusal names no field, as none does.
+func TestTheOldLearningKeyIsRefused(t *testing.T) {
+	e := newEnv()
+
+	rec := e.save(t, `{"model":null,"search":{"provider":"none"},"learning":true,"compaction_messages":100}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Firecrawl: a cloud provider that needs a key, and a self-hosted one where a
 // key is optional because an instance may run with authentication off.

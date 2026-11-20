@@ -7,8 +7,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, TriangleAlert, UserRoundX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { decideImprovement } from "@/api";
+import { ApiError } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
 import type { Improvement, ImprovementChange, ImprovementDecision } from "@/api/types";
 import { StatusPill } from "@/components/status";
@@ -70,6 +71,7 @@ function DiffRow({ line }: { line: DiffLine | Folded }) {
         <span aria-hidden className={cn(SIGN, "text-succeeded")}>
           +
         </span>
+        <span className="sr-only">added: </span>
         <span>{line.text}</span>
       </ins>
     );
@@ -80,6 +82,7 @@ function DiffRow({ line }: { line: DiffLine | Folded }) {
         <span aria-hidden className={cn(SIGN, "text-failed")}>
           −
         </span>
+        <span className="sr-only">removed: </span>
         <span>{line.text}</span>
       </del>
     );
@@ -117,6 +120,7 @@ function Change({ change }: { change: ImprovementChange }) {
             <li key={`-${n.name}`}>
               <del className="text-failed [text-decoration:none]">
                 <span aria-hidden>− </span>
+                <span className="sr-only">removed: </span>
                 {n.name}
               </del>
             </li>
@@ -124,6 +128,7 @@ function Change({ change }: { change: ImprovementChange }) {
             <li key={`+${n.name}`}>
               <ins className="text-succeeded no-underline">
                 <span aria-hidden>+ </span>
+                <span className="sr-only">added: </span>
                 {n.name}
               </ins>
             </li>
@@ -141,6 +146,7 @@ function Change({ change }: { change: ImprovementChange }) {
   } else {
     body = (
       <p className="text-sm break-words">
+        <span className="sr-only">from </span>
         <del className="text-muted-foreground [text-decoration:none]">
           {change.before ?? "none"}
         </del>
@@ -180,8 +186,23 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
   const decide = useMutation({
     mutationFn: (d: ImprovementDecision) => decideImprovement(teamId, item.id, d),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["improvements", teamId] }),
+    // A refusal means what the card shows is out of date: another approval
+    // withdrew it, or its agent changed. The list is read again; a card still
+    // in this tab keeps the reason under it.
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409) {
+        qc.invalidateQueries({ queryKey: ["improvements", teamId] });
+      }
+    },
     onSettled: () => setConfirming(null),
   });
+  // The button pressed is gone or disabled once a decision fails, so focus
+  // goes to the reason rather than to the page.
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (decide.error) errorRef.current?.focus();
+  }, [decide.error]);
+  const askId = useId();
 
   const action: {
     label: string;
@@ -207,6 +228,10 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
   const asking = action.find((a) => a.do === confirming && a.ask);
   const canDecide = !perms.isPending && perms.can(APPROVE);
   const lacking = canDecide ? missingWrites(item.kind, perms.can) : [];
+  // Rejecting writes nothing, so it needs only the approve permission; the
+  // rest need the write the change makes.
+  const offered = lacking.length > 0 ? action.filter((a) => a.do === "reject") : action;
+  const withheld = action.find((a) => !offered.includes(a));
   const readable = item.runs.filter((r) => r.readable);
   const hidden = item.runs.length - readable.length;
   const decidedAt = item.status === "reverted" ? item.reverted_at : (item.decided_at ?? null);
@@ -290,69 +315,73 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
       ) : null}
 
       {action.length > 0 && canDecide ? (
-        lacking.length > 0 ? (
-          <p data-no-answer className="text-xs text-muted-foreground">
-            Deciding this takes{" "}
-            {lacking.map((p, i) => (
-              <span key={p}>
-                {i > 0 ? " and " : null}
-                <Mono className="text-foreground">{p}</Mono>
-              </span>
-            ))}
-            , which a team admin can grant.
-          </p>
-        ) : (
-          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-rule pt-3">
-            {asking ? (
-              <>
-                <span className="mr-auto text-sm" role="status">
-                  {asking.ask}
+        <div className="space-y-2 border-t border-rule pt-3">
+          {withheld ? (
+            <p data-no-answer className="text-xs text-muted-foreground">
+              {withheld.do === "approve" ? "Approving" : "Reverting"} this takes{" "}
+              {lacking.map((p, i) => (
+                <span key={p}>
+                  {i > 0 ? " and " : null}
+                  <Mono className="text-foreground">{p}</Mono>
                 </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={decide.isPending}
-                  onClick={() => {
-                    returnTo.current = asking.do;
-                    setConfirming(null);
-                  }}
-                >
-                  Keep it
-                </Button>
-                <Button
-                  ref={confirmRef}
-                  size="sm"
-                  variant="destructive"
-                  loading={decide.isPending}
-                  onClick={() => decide.mutate({ action: asking.do })}
-                >
-                  {asking.label}
-                </Button>
-              </>
-            ) : (
-              action.map((a) => (
-                <Button
-                  key={a.do}
-                  size="sm"
-                  variant={a.primary ? "default" : "outline"}
-                  loading={decide.isPending && a.primary}
-                  disabled={decide.isPending}
-                  data-act={a.do}
-                  onClick={() => {
-                    if (a.ask) setConfirming(a.do);
-                    else decide.mutate({ action: a.do });
-                  }}
-                >
-                  {a.label}
-                </Button>
-              ))
-            )}
-          </div>
-        )
+              ))}
+              , which a team admin can grant.
+            </p>
+          ) : null}
+          {offered.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {asking ? (
+                <>
+                  <span id={askId} className="mr-auto text-sm" role="status">
+                    {asking.ask}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={decide.isPending}
+                    onClick={() => {
+                      returnTo.current = asking.do;
+                      setConfirming(null);
+                    }}
+                  >
+                    Keep it
+                  </Button>
+                  <Button
+                    ref={confirmRef}
+                    size="sm"
+                    variant="destructive"
+                    aria-describedby={askId}
+                    loading={decide.isPending}
+                    onClick={() => decide.mutate({ action: asking.do })}
+                  >
+                    {asking.label}
+                  </Button>
+                </>
+              ) : (
+                offered.map((a) => (
+                  <Button
+                    key={a.do}
+                    size="sm"
+                    variant={a.primary ? "default" : "outline"}
+                    loading={decide.isPending && a.primary}
+                    disabled={decide.isPending}
+                    data-act={a.do}
+                    onClick={() => {
+                      if (a.ask) setConfirming(a.do);
+                      else decide.mutate({ action: a.do });
+                    }}
+                  >
+                    {a.label}
+                  </Button>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       {decide.error ? (
-        <p role="alert" className="text-xs text-failed">
+        <p ref={errorRef} tabIndex={-1} role="alert" className="text-xs text-failed outline-none">
           {decide.error.message}
         </p>
       ) : null}

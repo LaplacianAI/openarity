@@ -3,6 +3,7 @@ package improvements
 import (
 	"encoding/hex"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -133,6 +134,8 @@ func TestMarks(t *testing.T) {
 		{"unchanged limits", KindLimits, func(s *AgentState) {}, nil},
 		{"description changes discovery", KindDescription, func(s *AgentState) { s.Agent.Description = "x" }, []string{MarkChangesDiscovery}},
 		{"pattern changes behaviour", KindPattern, func(s *AgentState) { s.Agent.Pattern = "plan" }, []string{MarkChangesBehaviour}},
+		{"instructions change behaviour", KindInstructions, func(s *AgentState) { s.Agent.Instructions = "j" }, []string{MarkChangesBehaviour}},
+		{"a tool note changes behaviour", KindToolNote, func(s *AgentState) {}, []string{MarkChangesBehaviour}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, a := pair(tc.change)
@@ -141,6 +144,25 @@ func TestMarks(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("a skill body edit changes behaviour, a reference edit does not", func(t *testing.T) {
+		before := SkillState{Name: "x", Body: "b", Files: []FileState{{Path: "references/a.md", SHA256: "1"}}}
+		body, ref := before, before
+		body.Body = "c"
+		ref.Files = []FileState{{Path: "references/a.md", SHA256: "2"}}
+		if got := Marks(KindSkillEdit, Snapshot{Skill: &before}, Snapshot{Skill: &body}); !slices.Equal(got, []string{MarkChangesBehaviour}) {
+			t.Errorf("body edit marks = %v", got)
+		}
+		if got := Marks(KindSkillEdit, Snapshot{Skill: &before}, Snapshot{Skill: &ref}); got != nil {
+			t.Errorf("reference edit marks = %v", got)
+		}
+	})
+
+	t.Run("a snapshot without its agent marks nothing rather than panicking", func(t *testing.T) {
+		if got := Marks(KindLimits, Snapshot{}, Snapshot{}); got != nil {
+			t.Errorf("Marks = %v", got)
+		}
+	})
 
 	t.Run("dropping a budget raises cost", func(t *testing.T) {
 		b, a := base(), base()
@@ -186,4 +208,130 @@ func TestCheckSkillEditFiles(t *testing.T) {
 			t.Error("an edit without the old text, which a revert needs, was allowed")
 		}
 	})
+}
+
+// A note whose tool has since been taken away stays as it was, and does not
+// block the next note; the one a proposal adds or changes is still held.
+func TestCheckNoteLeavesAnOrphanAlone(t *testing.T) {
+	server := uuid.New()
+	withNotes := func(notes ...ToolNote) AgentState {
+		s := base()
+		s.Agent.MCPServers = []agents.ServerGrant{{ID: server, Allow: []string{"search", "fetch"}}}
+		s.Notes = notes
+		return s
+	}
+	orphan := ToolNote{Server: server, Tool: "gone", Note: "old advice"}
+	fresh := ToolNote{Server: server, Tool: "search", Note: "quote the query"}
+
+	b := withNotes(orphan)
+	if err := Check(KindToolNote, Snapshot{Agent: &b}, Snapshot{Agent: ptr(withNotes(orphan, fresh))}); err != nil {
+		t.Errorf("a new note beside an orphan was refused: %v", err)
+	}
+	edited := ToolNote{Server: server, Tool: "gone", Note: "new advice"}
+	if err := Check(KindToolNote, Snapshot{Agent: &b}, Snapshot{Agent: ptr(withNotes(edited))}); err == nil {
+		t.Error("editing a note on a tool the agent may not call was allowed")
+	}
+	two := ToolNote{Server: server, Tool: "fetch", Note: "send the full URL"}
+	if err := Check(KindToolNote, Snapshot{Agent: &b}, Snapshot{Agent: ptr(withNotes(orphan, fresh, two))}); err == nil {
+		t.Error("adding two notes was allowed")
+	}
+	again := ToolNote{Server: server, Tool: "search", Note: "and cite it"}
+	if err := Check(KindToolNote, Snapshot{Agent: &b}, Snapshot{Agent: ptr(withNotes(orphan, fresh, again))}); err == nil {
+		t.Error("two notes on one tool were allowed")
+	}
+}
+
+// A server_drop removes the dropped server's notes and leaves every other
+// note exactly as it was.
+func TestServerDropKeepsTheOtherNotes(t *testing.T) {
+	s1, s2 := uuid.New(), uuid.New()
+	b := base()
+	b.Agent.MCPServers = []agents.ServerGrant{{ID: s1}, {ID: s2}}
+	b.Notes = []ToolNote{{Server: s2, Tool: "b", Note: "two"}, {Server: s1, Tool: "a", Note: "one"}}
+
+	clean := base()
+	clean.Agent.MCPServers = []agents.ServerGrant{{ID: s2}}
+	clean.Notes = []ToolNote{{Server: s2, Tool: "b", Note: "two"}}
+	if err := Check(KindServerDrop, Snapshot{Agent: &b}, Snapshot{Agent: &clean}); err != nil {
+		t.Errorf("a clean drop was refused: %v", err)
+	}
+
+	sneaky := clean
+	sneaky.Notes = []ToolNote{{Server: s2, Tool: "b", Note: "rewritten"}}
+	if err := Check(KindServerDrop, Snapshot{Agent: &b}, Snapshot{Agent: &sneaky}); err == nil {
+		t.Error("a drop that rewrote another server's note was allowed")
+	}
+}
+
+// Comparing states leaves the caller's own slices in the order they were.
+func TestComparingDoesNotReorderTheCallersState(t *testing.T) {
+	x, y := uuid.MustParse("ffffffff-0000-0000-0000-000000000000"), uuid.MustParse("00000000-0000-0000-0000-00000000000f")
+	s := base()
+	s.Agent.Skills = []uuid.UUID{x, y}
+	s.Agent.MCPServers = []agents.ServerGrant{{ID: x, Allow: []string{"b", "a"}}, {ID: y}}
+	s.Notes = []ToolNote{{Server: x, Tool: "z", Note: "n"}, {Server: y, Tool: "a", Note: "n"}}
+	other := base()
+
+	agentDiff(s, other)
+	sameAgent(s, other)
+
+	if s.Agent.Skills[0] != x || s.Agent.MCPServers[0].ID != x || s.Agent.MCPServers[0].Allow[0] != "b" || s.Notes[0].Server != x {
+		t.Errorf("the state was reordered: %+v", s)
+	}
+}
+
+// Every field of an agent is either named by the kind rules or caught by
+// the catch-all. A field added to agents.Request that this test does not
+// see cleared makes it fail, so the rules are told about it.
+func TestEveryAgentFieldIsChecked(t *testing.T) {
+	var r agents.Request
+	v := reflect.ValueOf(&r).Elem()
+	fill(v)
+	if got := unnamed(r); !reflect.DeepEqual(got, agents.Request{}) {
+		t.Errorf("unnamed leaves fields the kinds never name: %+v", got)
+	}
+
+	// And a difference in a field no kind names is refused by every kind.
+	b, a := base(), base()
+	a.Agent.Model.Name = "other"
+	if err := Check(KindInstructions, Snapshot{Agent: &b}, Snapshot{Agent: &a}); err == nil {
+		t.Error("an instructions proposal changed the model")
+	}
+}
+
+// fill sets every field of v to something other than its zero value.
+func fill(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if v.Field(i).CanSet() {
+				fill(v.Field(i))
+			}
+		}
+	case reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+		fill(v.Elem())
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		fill(v.Index(0))
+	case reflect.Map:
+		v.Set(reflect.MakeMap(v.Type()))
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(1)
+	case reflect.Float32, reflect.Float64:
+		v.SetFloat(1)
+	case reflect.Array:
+		for i := range v.Len() {
+			fill(v.Index(i))
+		}
+	case reflect.Uint8, reflect.Uint, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v.SetUint(1)
+	case reflect.Invalid, reflect.Uintptr, reflect.Complex64, reflect.Complex128, reflect.Chan,
+		reflect.Func, reflect.Interface, reflect.UnsafePointer:
+		// No agent field is of these kinds.
+	}
 }

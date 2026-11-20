@@ -77,6 +77,8 @@ const (
 	fWeb          = "web"
 	fBrowser      = "browser"
 	fNotes        = "notes"
+	// Any field of the agent this list does not name, which no kind may change.
+	fOther = "other"
 )
 
 var agentKinds = map[Kind][]string{
@@ -97,6 +99,7 @@ var agentKinds = map[Kind][]string{
 
 // agentDiff names every field in which two agent states differ.
 func agentDiff(a, b AgentState) []string {
+	a, b = a.cloned(), b.cloned()
 	a.canonical()
 	b.canonical()
 	x, y := a.Agent, b.Agent
@@ -126,7 +129,21 @@ func agentDiff(a, b AgentState) []string {
 	add(fWeb, flag(x.Web) == flag(y.Web))
 	add(fBrowser, flag(x.Browser) == flag(y.Browser))
 	add(fNotes, jsonEqual(a.Notes, b.Notes))
+	// Every field named above blanked, what is left must match: a field added
+	// to the agent later is refused by every kind until a kind names it.
+	add(fOther, jsonEqual(unnamed(x), unnamed(y)))
 	return out
+}
+
+// unnamed is an agent request with every field agentDiff names cleared.
+func unnamed(r agents.Request) agents.Request {
+	r.Name, r.Description, r.Kind, r.Instructions = "", "", "", ""
+	r.Model.Name, r.Model.Temperature, r.Model.MaxTokens = "", nil, 0
+	r.Pattern, r.MaxSteps, r.SteerContinuations = "", 0, 0
+	r.OutputSchema, r.Parser, r.ParserModel = nil, false, nil
+	r.MCPServers, r.Skills, r.TokenBudget = nil, nil, nil
+	r.Delegation, r.Delegates, r.Web, r.Browser = nil, nil, nil, nil
+	return r
 }
 
 func delegationOf(r agents.Request) string {
@@ -208,7 +225,8 @@ func checkAgentKind(kind Kind, b, a AgentState) error {
 				return refuse("a server_drop removes the notes on that server's tools")
 			}
 		}
-		if len(b.Notes)-len(a.Notes) != countNotes(b, removed[0]) {
+		kept := slices.DeleteFunc(slices.Clone(b.Notes), func(n ToolNote) bool { return n.Server == removed[0] })
+		if !sameNotes(kept, a.Notes) {
 			return refuse("a server_drop changes only the dropped server's notes")
 		}
 	case KindToolsNarrow:
@@ -276,14 +294,10 @@ func changedGrants(b, a AgentState, skip []uuid.UUID) bool {
 	return false
 }
 
-func countNotes(s AgentState, server uuid.UUID) int {
-	n := 0
-	for _, note := range s.Notes {
-		if note.Server == server {
-			n++
-		}
-	}
-	return n
+// sameNotes is whether two sets of notes are the same, in any order.
+func sameNotes(x, y []ToolNote) bool {
+	a, b := AgentState{Notes: x}, AgentState{Notes: y}
+	return jsonEqual(a.cloned().sortedNotes(), b.cloned().sortedNotes())
 }
 
 // checkNarrow holds a tools_narrow to one grant's allow-list, cut: the same
@@ -320,8 +334,10 @@ func checkNarrow(b, a AgentState) error {
 	return nil
 }
 
-// checkNote holds a tool_note to one note added, changed or removed, on a
-// server the agent holds and a tool the grant allows.
+// checkNote holds a tool_note to one note added, changed or removed. The note
+// it adds or changes is on a server the agent holds and a tool the grant
+// allows; the others are left as they are, even one whose tool a person has
+// since taken away, which the run never tells and must not block the next.
 func checkNote(b, a AgentState) error {
 	key := func(n ToolNote) string { return n.Server.String() + "\x00" + n.Tool }
 	before := map[string]string{}
@@ -330,14 +346,18 @@ func checkNote(b, a AgentState) error {
 	}
 	after := map[string]ToolNote{}
 	for _, n := range a.Notes {
+		if _, twice := after[key(n)]; twice {
+			return refuse("a tool has one note; %q has two", n.Tool)
+		}
 		after[key(n)] = n
 	}
 
 	changed := 0
 	for k, n := range after {
-		if before[k] != n.Note {
-			changed++
+		if old, had := before[k]; had && old == n.Note {
+			continue
 		}
+		changed++
 		if strings.TrimSpace(n.Note) == "" || utf8.RuneCountInString(n.Note) > 1000 || n.Tool == "" {
 			return refuse("a tool note is 1-1000 characters on a named tool")
 		}
@@ -450,6 +470,9 @@ func normMeta(m map[string]string) map[string]string {
 // Marks are what the page warns of. A pure function of the change.
 func Marks(kind Kind, before, after Snapshot) []string {
 	var out []string
+	if needsAgent(kind) && (before.Agent == nil || after.Agent == nil) {
+		return out
+	}
 	switch kind {
 	case KindServerGrant:
 		out = append(out, MarkWidensAccess)
@@ -468,7 +491,8 @@ func Marks(kind Kind, before, after Snapshot) []string {
 		}
 	case KindDescription:
 		out = append(out, MarkChangesDiscovery)
-	case KindPattern:
+	case KindPattern, KindInstructions, KindToolNote:
+		// What the agent is told, and so what it does.
 		out = append(out, MarkChangesBehaviour)
 	case KindSkillNew:
 		if after.Skill != nil && after.Skill.AllowedTools != nil {
@@ -478,13 +502,24 @@ func Marks(kind Kind, before, after Snapshot) []string {
 			out = append(out, MarkChangesCode)
 		}
 	case KindSkillEdit:
+		if before.Skill == nil || after.Skill == nil {
+			return out
+		}
+		if before.Skill.Body != after.Skill.Body {
+			out = append(out, MarkChangesBehaviour)
+		}
 		if hasScripts(before.Skill.Files, after.Skill.Files) {
 			out = append(out, MarkChangesCode)
 		}
-	case KindInstructions, KindSkillGrant, KindSkillDrop, KindServerDrop, KindToolsNarrow, KindToolNote:
-		// They narrow, or change only text the page shows in full.
+	case KindSkillGrant, KindSkillDrop, KindServerDrop, KindToolsNarrow:
+		// They narrow what the agent holds, or grant a skill the team has.
 	}
 	return out
+}
+
+// needsAgent is whether a kind's marks read the agent on both sides.
+func needsAgent(kind Kind) bool {
+	return kind == KindBuiltinTool || kind == KindDelegation || kind == KindLimits
 }
 
 func widens(b, a agents.Request) bool {

@@ -44,8 +44,8 @@ RETURNING *;
 -- has made stale.
 -- name: WithdrawImprovementProposals :exec
 UPDATE improvement_proposals
-SET status = 'withdrawn', withdrawn_by = sqlc.arg('by')
-WHERE team_id = sqlc.arg('team_id') AND status = 'waiting' AND id <> sqlc.arg('by')
+SET status = 'withdrawn', withdrawn_by = sqlc.arg('applied_id')
+WHERE team_id = sqlc.arg('team_id') AND status = 'waiting' AND id <> sqlc.arg('applied_id')
   AND CASE WHEN sqlc.narg('skill_id')::uuid IS NULL
            THEN kind <> 'skill_edit' AND agent_id = sqlc.arg('agent_id')
            ELSE skill_id = sqlc.narg('skill_id')::uuid END;

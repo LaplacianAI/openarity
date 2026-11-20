@@ -403,19 +403,39 @@ describe("deciding", () => {
     expect(seen.some((s) => s.method === "POST")).toBe(false);
   });
 
-  it("shows a 409's reason on the card and leaves the card where it is", async () => {
-    const reason =
-      "support-bot changed since this was proposed; reject it and let the next one be proposed from the current agent";
-    brain({
+  it("shows a 409's reason on the card, focused, and reads the list again", async () => {
+    const reason = "the agent changed since this was proposed, so it cannot be applied; reject it";
+    const seen = brain({
       ...team(APPROVER),
       ...lists([proposal("p1")]),
       [DECIDE]: { status: 409, text: reason },
     });
     at();
     await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(reason);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(reason);
+    expect(alert).toHaveFocus();
     expect(screen.getByText(/Closed the ticket/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    // The card may be stale (withdrawn by another approval), so the list is read again.
+    await waitFor(() =>
+      expect(
+        seen.filter((x) => x.method === "GET" && x.path.includes("status=waiting")).length,
+      ).toBeGreaterThan(1),
+    );
+  });
+
+  it("reads each diff line to a screen reader as added or removed", async () => {
+    brain({ ...team(APPROVER), ...lists([proposal("p1")]) });
+    at();
+    const del = await screen.findByText("Answer the customer, then close the ticket.");
+    expect(del.closest("del")).toHaveTextContent(
+      "removed: Answer the customer, then close the ticket.",
+    );
+    const ins = screen.getByText(
+      "Confirm the order id with the customer before closing the ticket.",
+    );
+    expect(ins.closest("ins")).toHaveTextContent("added: Confirm the order id");
   });
 
   it("offers nothing to decide to a member, who may only read what was applied", async () => {
@@ -423,7 +443,7 @@ describe("deciding", () => {
     at();
     await screen.findByText(/Closed the ticket/);
     expect(screen.queryByRole("button", { name: "Revert" })).toBeNull();
-    expect(screen.queryByText(/Deciding this takes/)).toBeNull();
+    expect(screen.queryByText(/this takes/)).toBeNull();
   });
 
   it.each([
@@ -434,9 +454,21 @@ describe("deciding", () => {
   ] as const)("a %s needs %s... and names the one missing: %s", async (kind, actions, missing) => {
     brain({ ...team([...actions]), ...lists([proposal("p1", { kind })]) });
     at();
-    const note = await screen.findByText(/Deciding this takes/);
+    const note = await screen.findByText(/Approving this takes/);
     expect(note).toHaveTextContent(missing);
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    // Rejecting writes nothing, so the approve permission is enough for it.
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+  });
+
+  it("withholds Revert, and offers nothing else, without the write it undoes", async () => {
+    brain({
+      ...team(["improvement:approve"]),
+      ...lists([proposal("p1", { status: "applied" })]),
+    });
+    at("/ui/improvements?tab=applied");
+    expect(await screen.findByText(/Reverting this takes/)).toHaveTextContent("agent:write");
+    expect(screen.queryByRole("button", { name: "Revert" })).toBeNull();
   });
 
   it("offers a skill edit with skill:write alone, without agent:write", async () => {
