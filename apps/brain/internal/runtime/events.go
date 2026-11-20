@@ -58,6 +58,9 @@ type usagePayload struct {
 	InputTokens       int    `json:"input_tokens"`
 	OutputTokens      int    `json:"output_tokens"`
 	CachedInputTokens int    `json:"cached_input_tokens"`
+	// CacheWriteTokens is the part of InputTokens the call wrote to the
+	// provider's cache. The budget counts it in full, as any fresh token.
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 	// Spent is the run's total as its budget counts it, a cached token as a
 	// tenth of one: not input plus output.
 	Spent int64 `json:"spent"`
@@ -285,7 +288,7 @@ func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker stri
 
 	if err := appendEvent(ctx, s, runID, worker, "usage", usagePayload{
 		Model: e.Model, InputTokens: e.Usage.InputTokens, OutputTokens: e.Usage.OutputTokens,
-		CachedInputTokens: e.Usage.CachedInputTokens, Spent: spent,
+		CachedInputTokens: e.Usage.CachedInputTokens, CacheWriteTokens: e.Usage.CacheWriteTokens, Spent: spent,
 	}); err != nil {
 		return err
 	}

@@ -89,10 +89,10 @@ func run(t *testing.T, p Pattern, m ModelClient) (Result, error) {
 func TestUsageAddTotalsEveryField(t *testing.T) {
 	t.Parallel()
 
-	got := Usage{InputTokens: 1, OutputTokens: 2, CachedInputTokens: 3}
-	got.Add(Usage{InputTokens: 10, OutputTokens: 20, CachedInputTokens: 30})
+	got := Usage{InputTokens: 1, OutputTokens: 2, CachedInputTokens: 3, CacheWriteTokens: 4}
+	got.Add(Usage{InputTokens: 10, OutputTokens: 20, CachedInputTokens: 30, CacheWriteTokens: 40})
 
-	want := Usage{InputTokens: 11, OutputTokens: 22, CachedInputTokens: 33}
+	want := Usage{InputTokens: 11, OutputTokens: 22, CachedInputTokens: 33, CacheWriteTokens: 44}
 	if got != want {
 		t.Errorf("Add() = %+v, want %+v", got, want)
 	}

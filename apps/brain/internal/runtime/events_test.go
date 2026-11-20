@@ -241,6 +241,27 @@ func TestEachSDKEventBecomesItsRow(t *testing.T) {
 		// 20 fresh, 100 cached as 10, and 30 written.
 		t.Errorf("usage payload = %s", got[3].Payload)
 	}
+	if _, ok := usage["cache_write_tokens"]; ok {
+		t.Errorf("a call that wrote nothing to the cache says it did: %s", got[3].Payload)
+	}
+}
+
+// A call that wrote to the provider's cache says how much on its row, and its
+// writes, already in its input, count against the budget in full.
+func TestACacheWriteIsOnTheUsageRowAndSpentInFull(t *testing.T) {
+	t.Parallel()
+
+	h := newHeldRun(t)
+
+	st := feed(t, h.store, h.id, agent.UsageEvent{Model: "claude-sonnet", Usage: agent.Usage{
+		InputTokens: 40_337, OutputTokens: 7, CacheWriteTokens: 40_188,
+	}})
+	wantNoStop(t, st)
+
+	usage := payload[map[string]any](t, h.events(t)[0])
+	if usage["cache_write_tokens"] != 40_188.0 || usage["input_tokens"] != 40_337.0 || usage["spent"] != 40_344.0 {
+		t.Errorf("usage payload = %v, want 40,188 written, 40,337 in, 40,344 spent", usage)
+	}
 }
 
 // A pattern's own step left out is a row of its own, saying what and why, so
