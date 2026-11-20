@@ -14,7 +14,8 @@ import (
 // Reflection answers, then reviews and rewrites its answer up to cycles
 // times. A cycle is two steps, a review and a rewrite; a review the model
 // writes out rather than submits is asked for once more inside its step, so
-// a step may make two calls.
+// a step may make two calls. A review or rewrite that fails ends the run with
+// the answer it was working on, and a SkippedEvent says why.
 func Reflection(cycles int) agent.Pattern { return reflection{cycles: cycles} }
 
 func ReflectionStreaming(cycles int) agent.Pattern {
@@ -33,6 +34,7 @@ const CritiqueToolName = "submit_critique"
 var (
 	ErrNoCycles   = errors.New("the pattern was built with no reflection cycles, so it would never reflect")
 	ErrNoCritique = errors.New("the reflecting call did not submit a critique")
+	ErrNoRewrite  = errors.New("the rewrite came back with no text")
 )
 
 func (l reflection) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
@@ -215,6 +217,11 @@ func (l reflection) refine(
 	if err != nil {
 		// A rewrite never finished is no answer; the one before it stands.
 		return carried{}, err
+	}
+	if strings.TrimSpace(c.text) == "" {
+		// Nor is one that says nothing: empty, blank, or only a call, which this
+		// step has no tools to run.
+		return carried{}, ErrNoRewrite
 	}
 	return c, nil
 }
