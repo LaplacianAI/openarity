@@ -13,8 +13,28 @@ import (
 )
 
 const (
+	AppName = "openarity-brain"
+	// appVersion is fixed, not DBOS's default hash of the binary: a worker
+	// dequeues only workflows of its own version, so with the hash a run
+	// stopped by one deploy is never picked up by the next. A run's workflow
+	// is one step that rebuilds the run from its rows, so any build can carry
+	// on any run.
+	//
+	// A workflow keeps the version it was enqueued with, and neither a resume
+	// nor a second enqueue of its id restamps it. So a change here strands
+	// every run queued or PENDING under the old value: change it only when a
+	// workflow's registered name, input type or steps change in a way such a
+	// run cannot replay, and restamp with the runbook in DECISIONS.md.
+	// DBOS__APPVERSION, if set, overrides this.
+	appVersion = "openarity-brain-v1"
+)
+
+const (
 	shutdownGrace = 30 * time.Second
-	AppName       = "openarity-brain"
+	// startupTimeout bounds the system database's connect and migrations.
+	// A signal cannot cut them short, as DBOS's context is made without
+	// ctx's cancellation.
+	startupTimeout = 60 * time.Second
 )
 
 func executorID() string {
@@ -45,10 +65,12 @@ func New(dsn string, logger *slog.Logger, jobs ...Job) *Worker {
 
 func (w *Worker) config() dbos.Config {
 	return dbos.Config{
-		AppName:     AppName,
-		DatabaseURL: w.dsn,
-		Logger:      w.logger,
-		ExecutorID:  executorID(),
+		AppName:                AppName,
+		ApplicationVersion:     appVersion,
+		DatabaseURL:            w.dsn,
+		Logger:                 w.logger,
+		ExecutorID:             executorID(),
+		SystemDBStartupTimeout: startupTimeout,
 	}
 }
 
@@ -58,11 +80,18 @@ func (w *Worker) Run(ctx context.Context) error {
 			"doing nothing — a process that looks healthy and erases nothing")
 	}
 
-	d, err := dbos.NewContext(ctx, w.config())
+	// Not ctx itself: a signal cancelling ctx would reach every workflow as
+	// a cancellation, which DBOS records for good. Shutdown, below, stops them
+	// as a shutdown instead, leaving them PENDING for the next worker.
+	d, err := dbos.NewContext(context.WithoutCancel(ctx), w.config())
 	if err != nil {
 		return fmt.Errorf("start the durable runtime: %w", err)
 	}
-	defer func() { _ = dbos.Shutdown(d, shutdownGrace) }()
+	defer func() {
+		if err := dbos.Shutdown(d, shutdownGrace); err != nil {
+			w.logger.Warn("The durable runtime did not shut down cleanly", "error", err)
+		}
+	}()
 
 	schedules, err := w.register(d)
 	if err != nil {
@@ -71,6 +100,16 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	if err := d.Launch(); err != nil {
 		return fmt.Errorf("launch the durable runtime: %w", err)
+	}
+	// The API enqueues a run with no version, and DBOS hands such a workflow
+	// only to a worker of the latest version: the highest version_timestamp,
+	// set when a version is first registered and moved to now by this call.
+	// One launch of any other build, a rollback say, would otherwise leave
+	// every new run queued for good. The context's version, not appVersion,
+	// as DBOS__APPVERSION overrides the config.
+	version := dbos.GetApplicationVersion(d)
+	if err := dbos.SetLatestApplicationVersion(d, version); err != nil {
+		return fmt.Errorf("make %s the latest version: %w", version, err)
 	}
 
 	if len(schedules) > 0 {
