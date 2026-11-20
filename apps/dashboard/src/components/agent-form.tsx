@@ -15,6 +15,7 @@ import {
   listSkills,
 } from "@/api";
 import type { Delegation, MCPServerGrant } from "@/api/types";
+import { Choice } from "@/components/choices";
 import { type Picked, Picker, type SearchResult } from "@/components/picker";
 import { Field, TextArea } from "@/components/registry-bits";
 import { Input } from "@/components/ui/input";
@@ -256,18 +257,12 @@ export function AgentForm({
             </datalist>
           </Field>
           <Field label="Pattern" htmlFor="agent-pattern" hint="How it works through a task.">
-            <select
+            <Choice
               id="agent-pattern"
               value={draft.pattern}
-              onChange={(e) => set({ pattern: e.target.value })}
-              className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 md:text-sm"
-            >
-              {patterns.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+              options={patterns.map((p) => ({ value: p, label: p }))}
+              onChange={(pattern) => set({ pattern })}
+            />
           </Field>
         </div>
       </Section>

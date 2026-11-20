@@ -907,15 +907,14 @@ describe("editing an agent", () => {
       await opened();
 
       const pattern = screen.getByLabelText(/^pattern$/i);
+      expect(pattern).toHaveTextContent("react");
+      pattern.focus();
+      await userEvent.keyboard("{ArrowDown}");
       await waitFor(() =>
-        expect(
-          within(pattern)
-            .getAllByRole("option")
-            .map((o) => o.textContent),
-        ).toEqual(["plan", "react"]),
+        expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["plan", "react"]),
       );
-      expect(pattern).toHaveValue("react");
-      await userEvent.selectOptions(pattern, "plan");
+      await userEvent.click(screen.getByRole("option", { name: "plan" }));
+      expect(pattern).toHaveTextContent("plan");
       expect((await save(seen)).pattern).toBe("plan");
     });
 
@@ -925,7 +924,7 @@ describe("editing an agent", () => {
       const { seen } = editing({ ...stored, pattern: "custom-triage" }, loops);
       await opened();
 
-      expect(screen.getByLabelText(/^pattern$/i)).toHaveValue("custom-triage");
+      expect(screen.getByLabelText(/^pattern$/i)).toHaveTextContent("custom-triage");
       await touch();
       expect((await save(seen)).pattern).toBe("custom-triage");
     });
