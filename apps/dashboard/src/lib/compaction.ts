@@ -70,6 +70,19 @@ export function checkCompaction(d: CompactionDraft): CompactionProblems {
   return problems;
 }
 
+/** The three fields as numbers, or null while any of them is not one in range. */
+export function parsedCompaction(
+  d: CompactionDraft,
+): { messages: number; least: number; most: number } | null {
+  const p = checkCompaction(d);
+  if (p.messages || p.least || p.most || p.pair) return null;
+  const messages = parseWhole(d.messages);
+  const least = parseWhole(d.least);
+  const most = parseWhole(d.most);
+  if (messages === null || least === null || most === null) return null;
+  return { messages, least, most };
+}
+
 /** The sentence a Save shows for the first problem, or null for none. */
 export function firstProblem(p: CompactionProblems): string | null {
   if (p.messages) return `Messages before a run compacts: ${lower(p.messages)}`;
@@ -89,8 +102,9 @@ function lower(s: string): string {
 export function explain(d: CompactionDraft): string | null {
   const p = checkCompaction(d);
   if (p.least || p.most || p.pair) return null;
-  const least = parseWhole(d.least) as number;
-  const most = parseWhole(d.most) as number;
+  const least = parseWhole(d.least);
+  const most = parseWhole(d.most);
+  if (least === null || most === null) return null;
   if (least === most) return `Every run compacts at ${grouped(most)} tokens.`;
   return (
     "A run compacts at a tenth of its token budget, but never below " +

@@ -198,9 +198,19 @@ describe("each group on its own", () => {
       browser: { provider: "none" },
       learning: true,
       compaction_messages: 250,
-      compaction_tokens_min: 50_000,
-      compaction_tokens_max: 60_000,
       hub: null,
+    });
+  });
+
+  // The token lines are optional on the wire: only Compaction's own Save
+  // sends them, so a stale tab saving another group cannot reset them.
+  it("sends the token lines only from Compaction's Save", () => {
+    const d = { ...draftOf(BRAVE), tokensMin: "70,000", tokensMax: "90,000" };
+    expect(groupRequest("learning", d, BRAVE)).not.toHaveProperty("compaction_tokens_min");
+    expect(groupRequest("learning", d, BRAVE)).not.toHaveProperty("compaction_tokens_max");
+    expect(groupRequest("compaction", d, BRAVE)).toMatchObject({
+      compaction_tokens_min: 70_000,
+      compaction_tokens_max: 90_000,
     });
   });
 
@@ -289,8 +299,6 @@ it("saves the learning switch without touching the key", async () => {
     browser: { provider: "none" },
     learning: true,
     compaction_messages: 250,
-    compaction_tokens_min: 50_000,
-    compaction_tokens_max: 60_000,
     hub: null,
   });
   expect(await within(group("Learning")).findByText("Saved")).toBeInTheDocument();

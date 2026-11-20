@@ -47,6 +47,7 @@ import {
   grouped,
   isDefault,
   MESSAGES,
+  parsedCompaction,
   parseWhole,
   TOKENS,
   tidied,
@@ -337,14 +338,19 @@ function withGroup(group: Group, d: SettingsDraft, stored: TeamSettings): Settin
 /**
  * The request one group's Save sends. The brain takes the settings whole, so
  * every other group is sent as the brain holds it, and its unsaved edits are
- * neither sent nor lost.
+ * neither sent nor lost. The token lines are optional on the wire, so only
+ * Compaction's own Save sends them: another group's Save, from a tab opened
+ * before someone else changed them, leaves them as the brain holds them.
  */
 export function groupRequest(
   group: Group,
   d: SettingsDraft,
   stored: TeamSettings,
 ): TeamSettingsRequest | string {
-  return settingsRequest(withGroup(group, d, stored), stored);
+  const body = settingsRequest(withGroup(group, d, stored), stored);
+  if (typeof body === "string" || group === "compaction") return body;
+  const { compaction_tokens_min: _min, compaction_tokens_max: _max, ...rest } = body;
+  return rest;
 }
 
 function wholeNumber(raw: string): number | null {
@@ -378,9 +384,10 @@ export function settingsRequest(
     }
   }
 
-  const compaction = compactionOf(d);
-  const compactionProblem = firstProblem(checkCompaction(compaction));
-  if (compactionProblem) return compactionProblem;
+  const compaction = parsedCompaction(compactionOf(d));
+  if (compaction === null) {
+    return firstProblem(checkCompaction(compactionOf(d))) ?? "Check the compaction settings.";
+  }
 
   const search: TeamSettingsRequest["search"] = { provider: d.provider };
   const selfHosted = SELF_HOSTED.includes(d.provider);
@@ -420,10 +427,9 @@ export function settingsRequest(
     sandbox,
     browser,
     learning: d.learning,
-    // checkCompaction has made sure each is a number in range.
-    compaction_messages: parseWhole(compaction.messages) as number,
-    compaction_tokens_min: parseWhole(compaction.least) as number,
-    compaction_tokens_max: parseWhole(compaction.most) as number,
+    compaction_messages: compaction.messages,
+    compaction_tokens_min: compaction.least,
+    compaction_tokens_max: compaction.most,
     // Whole, as the rest is: null sends the team back to the built-in orchestrator.
     hub: d.hub?.name ?? null,
   };
@@ -625,7 +631,7 @@ function CompactionSection({
   return (
     <Section
       title="Compaction"
-      about="When a run folds its earlier turns into a summary, so a long task keeps fitting. Runs already started keep the settings they began with."
+      about="When a run folds its earlier turns into a summary, so a long task keeps fitting. A run reads these when it starts, and again when it resumes."
       {...section}
       onSave={save}
     >
@@ -689,6 +695,8 @@ function CompactionSection({
           className="-ml-3"
           onClick={() => {
             setLeft(new Set());
+            // The button goes once the fields hold the defaults; keep focus in the section.
+            document.getElementById(COMPACTION_IDS.messages)?.focus();
             onChange({
               messages: String(DEFAULTS.messages),
               least: grouped(DEFAULTS.least),

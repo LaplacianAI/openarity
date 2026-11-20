@@ -1,9 +1,12 @@
 package teamsettings
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // withTokens is a save of everything else as body has it, with these token
@@ -81,6 +84,7 @@ func TestATokenLineOutsideItsRangeIsRefusedAndChangesNothing(t *testing.T) {
 		"most above 1,000,000":    {"50000", "1000001", "compaction_tokens_max"},
 		"least above most":        {"70000", "60000", "compaction_tokens_min, 70000, must not be above compaction_tokens_max, 60000"},
 		"most under stored least": {"", "45000", "compaction_tokens_min, 50000, must not be above compaction_tokens_max, 45000"},
+		"least over stored most":  {"65000", "", "compaction_tokens_min, 65000, must not be above compaction_tokens_max, 60000"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv()
@@ -104,5 +108,34 @@ func TestTheTokenRangeIncludesItsEnds(t *testing.T) {
 
 	if got.CompactionTokensMin != 30_000 || got.CompactionTokensMax != 1_000_000 {
 		t.Errorf("returned %d to %d, want 30,000 to 1,000,000", got.CompactionTokensMin, got.CompactionTokensMax)
+	}
+}
+
+// Two saves, one of only the lowest line and one of only the highest, each
+// pass against what was stored and cross once both are written. The table's
+// check refuses the second; the caller is told to read again, not that the
+// server broke.
+func TestASaveThatCrossesAnotherSavesLinesIsAConflict(t *testing.T) {
+	e := newEnv()
+	e.stored("none", nil, nil)
+	e.store.upsertErr = fmt.Errorf("saving: %w", &pgconn.PgError{
+		Code: "23514", ConstraintName: "team_settings_compaction_tokens_order",
+	})
+
+	rec := e.save(t, withTokens("55000", ""))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "read them again") {
+		t.Errorf("status %d %q, want 409 saying to read again", rec.Code, rec.Body)
+	}
+}
+
+// Another check failing is not a race between two saves.
+func TestAnotherCheckFailingIsStillAServerError(t *testing.T) {
+	e := newEnv()
+	e.stored("none", nil, nil)
+	e.store.upsertErr = &pgconn.PgError{Code: "23514", ConstraintName: "team_settings_compaction_tokens_min_range"}
+
+	if rec := e.save(t, withTokens("55000", "")); rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
 	}
 }

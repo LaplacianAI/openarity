@@ -5455,8 +5455,8 @@ type ClientInterface interface {
 	// GetTeamSettings Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
-	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// defaults: no model, search off, no browser, learning off, compaction at 100
+	// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
 	//
@@ -5480,6 +5480,10 @@ type ClientInterface interface {
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -5501,6 +5505,10 @@ type ClientInterface interface {
 	// A self-hosted provider's URL whose host is an address rather than a
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8178,8 +8186,8 @@ func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID opena
 // GetTeamSettings Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
-// messages, the built-in orchestrator as its hub, and `updated_at`
+// defaults: no model, search off, no browser, learning off, compaction at 100
+// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
 //
@@ -8213,6 +8221,10 @@ func (c *Client) GetTeamSettings(ctx context.Context, id TeamID, reqEditors ...R
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -8244,6 +8256,10 @@ func (c *Client) SaveTeamSettingsWithBody(ctx context.Context, id TeamID, conten
 // A self-hosted provider's URL whose host is an address rather than a
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+//
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -14854,8 +14870,8 @@ type ClientWithResponsesInterface interface {
 	// GetTeamSettingsWithResponse Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
-	// messages, the built-in orchestrator as its hub, and `updated_at`
+	// defaults: no model, search off, no browser, learning off, compaction at 100
+	// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
 	//
@@ -14881,6 +14897,10 @@ type ClientWithResponsesInterface interface {
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -14902,6 +14922,10 @@ type ClientWithResponsesInterface interface {
 	// A self-hosted provider's URL whose host is an address rather than a
 	// name must be a public one, or within the deployment's
 	// `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+	//
+	// The token lines are the other exception: leave out
+	// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+	// one is kept, so a client that predates them cannot reset them.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21350,8 +21374,8 @@ func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, i
 // GetTeamSettingsWithResponse Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
-// messages, the built-in orchestrator as its hub, and `updated_at`
+// defaults: no model, search off, no browser, learning off, compaction at 100
+// messages or 50,000 to 60,000 tokens, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
 //
@@ -21383,6 +21407,10 @@ func (c *ClientWithResponses) GetTeamSettingsWithResponse(ctx context.Context, i
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
 //
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /teams/{id}/settings (the `SaveTeamSettings` operationId).
@@ -21410,6 +21438,10 @@ func (c *ClientWithResponses) SaveTeamSettingsWithBodyWithResponse(ctx context.C
 // A self-hosted provider's URL whose host is an address rather than a
 // name must be a public one, or within the deployment's
 // `MCP_PRIVATE_NETWORKS`. A name is checked when the brain connects.
+//
+// The token lines are the other exception: leave out
+// `compaction_tokens_min` or `compaction_tokens_max` and the stored
+// one is kept, so a client that predates them cannot reset them.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

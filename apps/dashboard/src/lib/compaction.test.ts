@@ -5,6 +5,7 @@ import {
   firstProblem,
   grouped,
   isDefault,
+  parsedCompaction,
   parseWhole,
   tidied,
 } from "./compaction";
@@ -84,6 +85,19 @@ describe("explain", () => {
   it("says nothing the brain would refuse", () => {
     expect(explain({ ...ok, least: "70000" })).toBeNull();
     expect(explain({ ...ok, most: "abc" })).toBeNull();
+  });
+});
+
+describe("parsedCompaction", () => {
+  it("gives the three numbers once all are in range", () => {
+    expect(parsedCompaction(ok)).toEqual({ messages: 100, least: 50_000, most: 60_000 });
+  });
+
+  it("gives nothing while any field is wrong", () => {
+    expect(parsedCompaction({ ...ok, messages: "9" })).toBeNull();
+    expect(parsedCompaction({ ...ok, least: "abc" })).toBeNull();
+    expect(parsedCompaction({ ...ok, most: "1,000,001" })).toBeNull();
+    expect(parsedCompaction({ ...ok, least: "70,000" })).toBeNull();
   });
 });
 

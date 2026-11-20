@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	browserpkg "github.com/LaplacianAI/openarity/apps/brain/internal/browser"
@@ -147,10 +148,24 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 				h.forget(r.Context(), teamID, path)
 			}
 		}
+		if raced(err) {
+			http.Error(w, "the team's compaction settings changed while saving; read them again and retry", http.StatusConflict)
+			return
+		}
 		api.Fail(w, h.logger, u, "failed to save team settings", err)
 		return
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, view(saved, hub))
+}
+
+// raced is a save whose token lines were checked against settings another
+// save changed before this one wrote: one sent only the lowest, the other
+// only the highest, and together they cross. The table refuses the pair, so
+// nothing is wrong in it; the caller reads the settings again and retries.
+func raced(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "23514" &&
+		pg.ConstraintName == "team_settings_compaction_tokens_order"
 }
 
 func (h *handler) stored(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, bool, error) {

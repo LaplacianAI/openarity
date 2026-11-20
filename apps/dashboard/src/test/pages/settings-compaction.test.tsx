@@ -151,6 +151,8 @@ it("offers the defaults only when they are not what is there, and fills them wit
   expect(least(section)).toHaveValue("50,000");
   expect(most(section)).toHaveValue("60,000");
   expect(section.queryByRole("button", { name: /use the defaults/i })).toBeNull();
+  // The button is gone, so focus moves to the first field rather than the page.
+  expect(section.getByLabelText(/messages before a run compacts/i)).toHaveFocus();
   expect(section.getByText("Unsaved changes")).toBeInTheDocument();
   expect(put(seen)).toBeUndefined();
 });
