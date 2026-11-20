@@ -190,6 +190,9 @@ func TestReachingTheInternetIsAReadOnlyForAPersonWhoIsThere(t *testing.T) {
 		{Egress, person, Read},
 		{Egress, Actor{}, Write},
 		{Egress, Actor{CanSelf: true, Unattended: true}, Write},
+		// Acting on a page can submit or buy, for a person who is there too.
+		{Acts, person, Write},
+		{Acts, Actor{}, Write},
 		{"teleport", person, Destructive},
 	} {
 		if got := ClassFor(c.b, c.a); got != c.want {

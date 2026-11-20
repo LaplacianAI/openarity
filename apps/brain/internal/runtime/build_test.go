@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -302,13 +303,27 @@ func serve(t *testing.T, tools ...string) *mcpServer {
 	return s
 }
 
-// unreachable is the address of a server that has gone away.
+// unreachable is the address of a server that has gone away: it hangs up on
+// every connection. The port stays held for the test, so a parallel test's
+// server cannot be given it and answer in its place, as a closed one's can.
 func unreachable(t *testing.T) string {
 	t.Helper()
 
-	gone := httptest.NewServer(http.NotFoundHandler())
-	gone.Close()
-	return gone.URL
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	return "http://" + l.Addr().String()
 }
 
 func (s *mcpServer) waitClosed(t *testing.T, want int32) {

@@ -71,8 +71,113 @@ In a transcript, `oa runs events` shows a page as
 A team can also give its runs a browser: one that opens a page, runs its
 scripts, and can be clicked and typed into. The team's hub has it; any other
 agent has it when it is defined with `browser: true`, which is a grant of its
-own, apart from `web`. The tools that drive it come in a later release; this
-sets up the browser they use.
+own, apart from `web`.
+
+| Tool | What it does |
+| --- | --- |
+| `browser_open(url)` | opens a page and reads it |
+| `browser_snapshot()` | reads the open page again, as it is now |
+| `browser_click(ref)` | clicks a control, then reads the page it leaves |
+| `browser_type(ref, text, submit)` | puts text in a field, sends its form when `submit` is true, then reads the page |
+| `browser_screenshot()` | the page as a picture, for what its text does not say |
+
+A read is the page's text with every link, button and field numbered:
+
+```text
+# Flights
+[1 field text] "to" = ""  [2 button] Search
+[3 link] Deals (/deals)
+```
+
+`ref` is that number, good until the next read; a page's own text that looks
+like one is escaped. A read keeps at most 200,000 characters of the page, and
+leaves out what a password field holds. `browser_type` takes at most 4,000
+characters, and in a select it chooses the option with that name or value.
+After a click or a submit the read waits for the page it goes to, up to 15
+seconds; what a page fetches for itself later may come only with
+`browser_snapshot`. No call takes more than 30 seconds.
+
+A run opens the browser at its first call and lets it go when the run ends,
+and a run that stops to wait for an approval comes back to a fresh page. So
+the browser is approved a page at a time, and only `browser_open` ever asks:
+
+| Mode | A person who may approve their own | A guest | Nobody present, for a person who may approve their own | Nobody present, for anyone else |
+| --- | --- | --- | --- | --- |
+| `all`, `writes` | `browser_open` asks once | `browser_open` asks once | refused: only `browser_open` is offered, and says why | refused, the same |
+| `destructive` | nothing asks | `browser_open` asks once | nothing asks: it may click and submit unseen | refused, the same |
+| `off` | nothing asks | nothing asks | nothing asks | nothing asks |
+
+`browser_click` and `browser_type` are writes, with or without a submit: a
+click can buy, and a page's own script can send what is typed. They are asked
+for at the open, where waiting loses nothing, and the request says so (`and:
+click and type on the page it opens, on its own site only`). What is then done
+on that page is not asked again, **on that page's site only**: a link may lead
+to another site, and the page is read there, but a click or typing on it is
+refused until `browser_open` opens it, which asks again. So is a button or a
+submit that would send its form to another site. **Approve** covers the page
+until the next `browser_open`; **Approve for this run** (`--for-run`) covers
+every page the run opens, each on its own site. Where nothing asks, nothing is
+kept to a site. The text typed is not shown to the approver.
+
+What keeping to a site does not do:
+
+- **It checks the next action, not the click that leaves.** A link to another
+  site is followed, and that page is read, as `web_fetch` would read it; only
+  what is done on it after is refused.
+- **A site is a host,** exactly: not its scheme, not its port, and not
+  `www.` and the bare name as one. The host asked for and the host the page
+  lands on both count, so a redirect, an open redirect included, widens it to
+  where it lands.
+- **Only the page itself.** A frame from another site in the page is not
+  checked apart from the page around it, and a page's own script may still
+  send what is typed wherever it likes, as it could before.
+
+Clicking and typing are writes, not destructive, by the maintainers' choice:
+a team in `destructive` mode has its runs click and submit without asking,
+and a scheduled run made for someone who may approve their own does so with
+nobody present. A team that wants them asked uses
+`writes`, or a rule on `browser_click` and `browser_type`.
+
+A team's rules, per tool:
+
+- A rule that asks for any of the five is asked at the open, with its
+  `require_other`; an allow rule on `browser_open` alone does not stop it.
+- A rule that denies `browser_open` leaves the run no browser: only the open
+  is offered, and says why.
+- A rule that denies `browser_click` or `browser_type` removes that one, and
+  the request no longer says it covers it. Denying the click alone does not
+  stop a form being sent: `browser_type` with `submit` sends it.
+
+**What a page may reach.** Every request the page's tab makes, its scripts,
+images, frames, styles, fetches and redirects included, is paused for the
+brain to allow, and one to an address that is not public is blocked. The read
+names up to ten of them and counts the rest. On a browser of the team's own,
+requests are also paused browser-wide, so a popup's or a frame's from another
+site are checked too. A page may open no socket of any kind (a websocket,
+`WebSocketStream`, WebTransport, WebRTC), start no worker, and open no popup.
+A link or form that targets another window opens in the page's own, and a
+popup that opens all the same is closed. A page that needs any of these may
+look blank or partly loaded; the tools tell the model so. A page that asks for
+more than a thousand requests at once has the rest held back, and the read
+says so.
+
+On a browser runs share, each run's browser-wide guard sees every run's
+requests, judged on a small queue of its own; what it cannot take in time is
+failed, never let through. So a page that floods the browser can make another
+run's requests fail, and a request from anything else that uses the browser
+to a private address fails too.
+
+A browser of the team's own is proved at start. It is sent to an address that
+is always refused, then asked to fetch another from a page, each by a path of
+its own: unless the guard pauses both, the browser is not used, whatever other
+runs' guards pause at the same time. It also gets a browser context of its own for each run, so no cookie
+or storage is carried from one run to the next. A hosted browser that will not
+let its requests be paused, or will not keep the page in its tab, is used all
+the same, since what it reaches is its provider's network, and every read
+says so.
+
+On Bright Data a session takes one page: each `browser_open` makes a new one,
+and a click that would go to another page may fail.
 
 The browser is set once per team, in **Settings › Browser** or with `oa`:
 
@@ -110,14 +215,30 @@ machine, after opening one page:
 | Browserless | 4 GB | about 600 MiB |
 | Steel | 3.8 GB | about 980 MiB |
 
-Lightpanda is a browser built for automation and draws nothing, so a few sites
-do not work in it yet; the others are Chrome. headless-shell answers only at
+Lightpanda is a browser built for automation, and draws a plain version of a
+page without its styles, so a few sites do not work in it yet; the others are
+Chrome. headless-shell answers only at
 an address, never a name, so a team saves `http://172.31.255.218:9222`. None
 of the self-hosted ones but Browserless asks for a key, so whatever reaches
 their port drives them: keep them on the network the overlay gives them.
 
 ## Not built
 
+- **DNS rebinding through the browser.** The browser resolves a name itself,
+  after the brain judged it, so a name whose answer changes in between is out
+  of the check's reach. For a browser of the team's own, its network is the
+  boundary that holds: the deployment guide's "A browser" gives the host
+  rules that keep it off private and link-local addresses.
+- **A connection opened ahead of a request.** `<link rel=preconnect>` and DNS
+  prefetch can reach an address without a request Fetch pauses. They carry no
+  data the page chose, and the same network rules stand behind them.
+- **Uploads, downloads, a second tab, and a page kept across an approval.**
+- **A frame from another site in a process of its own.** Chrome with site
+  isolation runs one as a target apart from the tab, so it gets none of the
+  script that locks sockets and workers; its requests are still paused
+  browser-wide. headless-shell runs such a frame in the page, where the tab's
+  guard covers it, and Lightpanda loads none. Accepted: the browser's own
+  network is what keeps such a socket off private addresses.
 - **DNS rebinding through Firecrawl.** Firecrawl resolves the name itself, so a
   name whose answer changes between the brain's check and Firecrawl's lookup is
   out of the brain's reach. A self-hosted Firecrawl needs network rules of its

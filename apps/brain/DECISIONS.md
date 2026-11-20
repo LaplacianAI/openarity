@@ -280,6 +280,83 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   pause every request for the brain to allow. The staging browser is
   Lightpanda, about 63 MiB after a page against 300 to 980 MiB for the
   Chrome-based three.
+- **The brain dials the browser itself, and a browser of the team's own must
+  let its requests be checked.** chromedp dials with a websocket dialer of
+  its own that nothing can sit in front of, so `internal/browser` hands it a
+  connection made with `coder/websocket` over the guarded client
+  `MCP_PRIVATE_NETWORKS` builds, through an allocator shaped as chromedp's
+  remote one. Then `Fetch.enable` pauses every request the page makes, and
+  only a host whose every address is public goes on. A self-hosted browser
+  that refuses to pause is not used, since it sits on the team's network; a
+  hosted one is used anyway, since what it reaches is its provider's. The
+  page is read by one script, not the accessibility tree, because Lightpanda
+  runs scripts but lays nothing out; a control is found by the
+  `data-oa-ref` the read stamped on it.
+- **What Fetch cannot see, a page may not do, and the guard is proved.**
+  Fetch on the tab pauses the requests of the page's own tab and frames, but
+  no socket of any kind, no shared worker's and no other tab's; and
+  `Network.setBlockedURLs` stops no websocket handshake either, measured. So a
+  script run before the page's own, in every frame, takes away every socket
+  (`WebSocket`, `WebSocketStream`, WebTransport, WebRTC), every worker (no
+  script of ours reaches into one to take its socket away) and
+  `window.open`, and sends a link or form aimed at another window into its
+  own. That script is best effort: a page's own listener, after ours, can
+  still send a form to a popup. So a browser of the team's own is also
+  paused browser-wide (`Fetch.enable` on the browser target), which reaches
+  popups, shared workers and frames from other sites. On a browser runs
+  share, a run's browser-wide guard pauses other runs' requests too and
+  judges them by the same rule; what it refuses there is not named in the
+  run's read, as it may be another run's. Measured on headless-shell and
+  Lightpanda, with an address the browser can reach and the guard refuses
+  and a second site on the same host: nothing gets there, and the popup a
+  listener sends does without the browser-wide guard. A popup that opens
+  all the same has no script of ours, and its socket nothing pauses
+  (measured: it reached the refused address), so every page target the tab
+  opens, or that opens in its browser context, is closed as it appears; the
+  race between its opening and its close is the browser's, and in the test
+  the popup's page was never served. The browser-wide guard judges on a
+  queue of its own, small, so other runs' requests never hold the tab's
+  judges; what neither queue takes is failed by two failers, never let
+  through, and only the tab's own are counted in its read. A frame from
+  another site in a process of its own gets no script of ours: accepted,
+  and left with DNS rebinding and a preconnect's bare connection to the
+  browser's network; headless-shell runs such a frame in the page. A
+  browser of the team's own is sent to an address that is always refused,
+  and asked to fetch another from a page, each by a random path matched
+  exactly, before it is used, so one that acknowledges `Fetch.enable` and
+  pauses nothing, or pauses navigations only, is found out, whatever other
+  runs' canaries on a shared browser are doing; and each run gets a browser
+  context of its own. A
+  browser that does not answer in time is a failure, never a refusal, so a
+  hosted one is not used unguarded for being slow; one that refuses is, and
+  every read says so.
+- **The browser is approved a page at a time, and only the open asks.** A
+  pause for a person ends the run's process and with it the page, so an ask
+  on a click would leave nothing to click. `browser_open` asks at the
+  strictest verdict of every browser tool the run is offered, and what is
+  then done on that page is made without asking, on the site that open was
+  for: a link may lead away, but a click or typing there, or a form sent
+  there, is refused until `browser_open` opens it, which asks. The check
+  runs in the same script as the action, so the page cannot move between
+  them. Without it one approval would cover typing into any site an
+  injected page led the model to; the text typed is still not shown to the
+  approver, a trade made knowingly. Approving the open for the run covers
+  every page, each on its own site. `browser_click` and `browser_type` are
+  writes (`approval.Acts`) for anyone, submit or not: a click can buy, and a
+  page's script can send what is typed. Destructive was weighed and not
+  chosen, a maintainer's decision recorded here: in `destructive` mode a run
+  clicks and submits unasked, and a scheduled one made for someone who may
+  approve their own does so with nobody present, and a
+  team that wants otherwise uses `writes` or a rule. Rules per tool: one
+  that asks for any browser tool is asked at the open, and an allow on the
+  open alone does not stop it; one that denies the open leaves the run no
+  browser; one that denies the click or the typing removes only that tool,
+  and the request stops saying it covers it, though a denied click does not
+  stop `browser_type` with `submit` sending a form. The site kept to is the
+  exact host asked for and landed on, checked on the action after a link,
+  not on the link. Keeping a page across a pause was weighed
+  and refused: a Bright Data session ends with its connection, and a tab left
+  without its guard attached runs on with nothing pausing its requests.
 - **The hub's graph finds every agent, and only its own tools and skills.**
   Its reach is the team's other agents, to hand work to, and the tools and
   skills the hub agent holds, since those are all it can call or load; the

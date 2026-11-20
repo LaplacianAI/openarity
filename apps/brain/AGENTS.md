@@ -75,6 +75,7 @@ apps/brain/
     replies.go         newReplyJob and the reply client: what a reply URL may reach
     websearch.go       newSearchers: a team's search provider, built from its settings
     webfetch.go        newFetch: the plain fetch, a team's Firecrawl, and the public-host check
+    browser.go         newBrowsers: a team's browser, its session API and its websocket on the guarded dialer
     logger.go          newLogger()
   internal/config/     configuration: load, validate, redact
   internal/server/     the two listeners: build, run, shut down; mounts Routers
@@ -149,6 +150,7 @@ apps/brain/
     report.go          a child's answer, wrapped as data for the parent to read
     websearch.go       web_search(query, limit) and webTools, from the settings Build read
     webfetch.go        web_fetch(url), the page in an envelope, kept whole and previewed like any result
+    browser.go         browser_open, _snapshot, _click, _type, _screenshot: one page a run, opened by its first call
   internal/websearch/  the port: Provider, Hit, Searcher, and the one guarded client
     <provider>/        searxng, brave, tavily, firecrawl: each exports New
   internal/webfetch/   the port: Page, Fetcher, and a client that dials public addresses only
@@ -157,6 +159,8 @@ apps/brain/
   internal/browser/    the port: Provider, Opener, Session; where a run's browser is, over CDP
                        fixed.go: browserless, lightpanda, cdp, brightdata, one address each
                        sessions.go: steel, browserbase, hyperbrowser, anchor, kernel, a session each
+                       conn.go: the websocket, dialed over the guarded client; guard.go: every request judged
+                       page.go: open, read, click, type, screenshot; snapshot.js: the page as numbered text
   internal/sandbox/    the port: Rooms, Spec, Endpoint; where a team's command MCP servers run
     <provider>/        e2b, daytona, sandboxd: each exports New
     keeper/            a team's rooms, for any owner: the lock, the spec hash, the health wait, the token; Ensure

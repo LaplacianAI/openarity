@@ -650,6 +650,30 @@ Lightpanda refuses a request by a name it was not told, and headless-shell
 one by any name at all, which is why its URL is an address. Staging, and
 `deploy.sh`, add the one `BROWSER_STACK` names in `.env`.
 
+The brain pauses every request a page's tab makes and lets through only
+public addresses, but the browser looks a name up again itself, and a
+worker's websocket in Chrome is never paused. So the network is what keeps a
+page off the host and the rest of a private network: on a cloud VM, off
+`169.254.169.254` above all. Docker's own rules let a container reach both.
+A starting point, for the browser's subnet in the table, to fit to the host's
+own firewall before relying on it:
+
+```sh
+S=172.31.255.240/29   # the browser's network, from its docker-compose.<name>.yml
+for d in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do
+  sudo iptables -I DOCKER-USER -s "$S" -d "$d" -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP
+done
+# The browser's own network is inside 172.16.0.0/12, so its own traffic is
+# let through first: -I puts this rule above the drops.
+sudo iptables -I DOCKER-USER -s "$S" -d "$S" -j ACCEPT
+sudo iptables -I INPUT -s "$S" -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP
+```
+
+The overlays' subnets all sit inside `172.16.0.0/12`, which the rules drop;
+the first rule keeps the browser's own network open to itself. Replies to the
+worker, which opens the connection, still pass. These rules
+are not applied by `deploy.sh`, and have not been tested in this repository.
+
 ## Logs
 
 The brain, the worker and a migration each log JSON lines to stdout (text in
