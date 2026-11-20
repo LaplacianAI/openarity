@@ -319,6 +319,33 @@ func TestEachPopupIsClosedOnceAndRetriedWhenFull(t *testing.T) {
 	}
 }
 
+// A close that fails on a popup already gone is not said; on one still
+// there it is, and the popup is tried again on its next event.
+func TestAFailedCloseIsSaidOnlyForAPopupStillThere(t *testing.T) {
+	t.Parallel()
+
+	g := &guard{tab: t.Context()}
+	w := &popups{g: g, ours: "tab", own: "ctx", closed: map[target.ID]bool{}, closing: make(chan target.ID, 4)}
+	popup := &target.Info{TargetID: "a", Type: "page", OpenerID: "tab", BrowserContextID: "ctx"}
+	w.event(&target.EventTargetCreated{TargetInfo: popup})
+	<-w.closing
+	w.event(&target.EventTargetDestroyed{TargetID: "a"})
+	w.notClosed("a")
+	if g.uncontained {
+		t.Error("a popup already gone is said to be uncontained")
+	}
+	w.event(&target.EventTargetCreated{TargetInfo: popup})
+	<-w.closing
+	w.notClosed("a")
+	if !g.uncontained {
+		t.Error("a popup that failed to close is not said")
+	}
+	w.event(&target.EventTargetInfoChanged{TargetInfo: popup})
+	if len(w.closing) != 1 {
+		t.Error("a popup that failed to close was not tried again")
+	}
+}
+
 // The failers take the tab's own first, and stop with the tab.
 func TestTheFailersTakeTheTabsFirstAndStopWithIt(t *testing.T) {
 	t.Parallel()
@@ -336,9 +363,15 @@ func TestTheFailersTakeTheTabsFirstAndStopWithIt(t *testing.T) {
 		}
 	}
 	if p, ok := g.nextToFail(); !ok || !p.browser {
-		t.Errorf("with the tab's done: %+v, %v; want a browser-wide one", p, ok)
+		t.Errorf("with the tab's own taken: %+v, %v; want a browser-wide one", p, ok)
 	}
 	cancel()
+	g.failQ <- paused{url: "https://tab.example/3"}
+	for range 20 {
+		if p, ok := g.nextToFail(); ok {
+			t.Fatalf("with the tab done: %+v taken; want none", p)
+		}
+	}
 	stopped := make(chan struct{})
 	go func() { defer close(stopped); g.failer() }()
 	select {

@@ -227,7 +227,7 @@ func (g *guard) closePopups() error {
 				return
 			case id := <-w.closing:
 				if _, err := chromedp.CallBrowser(g.tab, target.CloseTarget, target.CloseTargetParams{TargetID: id}); err != nil && g.tab.Err() == nil {
-					w.unclosed(id)
+					w.notClosed(id)
 				}
 			}
 		}
@@ -284,6 +284,18 @@ func (w *popups) event(ev any) {
 	default:
 		// More popups than are closed at once.
 		w.unclosed(info.TargetID)
+	}
+}
+
+// notClosed is a popup whose close failed. One already gone failed only
+// because it was: chromedp runs a target's destroyed event before the reply
+// the browser sent after it, so it is no longer kept, and nothing escaped.
+func (w *popups) notClosed(id target.ID) {
+	w.mu.Lock()
+	kept := w.closed[id]
+	w.mu.Unlock()
+	if kept {
+		w.unclosed(id)
 	}
 }
 
@@ -417,6 +429,11 @@ func (g *guard) failer() {
 // nextToFail is the tab's own when one waits, else whichever comes first;
 // false once the tab is done.
 func (g *guard) nextToFail() (paused, bool) {
+	// First: once the tab is done, a select below may still pick a ready
+	// queue over Done.
+	if g.tab.Err() != nil {
+		return paused{}, false
+	}
 	select {
 	case <-g.tab.Done():
 		return paused{}, false

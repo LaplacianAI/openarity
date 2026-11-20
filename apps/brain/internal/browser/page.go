@@ -158,8 +158,9 @@ func (p *Page) Close() {
 // Unguarded is a hosted browser that would not pause its requests.
 func (p *Page) Unguarded() bool { return p.guard != nil && p.guard.unguarded }
 
-// Uncontained is a hosted browser that would not keep the page in its tab: a
-// page may open a socket or a popup there.
+// Uncontained is a page not kept in its tab: a hosted browser that would not
+// take containJS, where a page may open a socket or a popup, or a popup that
+// could not be closed.
 func (p *Page) Uncontained() bool {
 	if p.guard == nil {
 		return false
