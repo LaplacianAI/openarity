@@ -512,7 +512,7 @@ func TestAnAgentRowBecomesTheSpecItDescribes(t *testing.T) {
 			}
 
 			got := built.Spec
-			if want := (agent.Compaction{AfterMessages: 100, AfterInputTokens: 100_000}); got.Compaction == nil ||
+			if want := (agent.Compaction{AfterMessages: 100, AfterInputTokens: 60_000}); got.Compaction == nil ||
 				*got.Compaction != want {
 				t.Errorf("compaction = %+v, want %+v: the default team setting and a tenth of the default budget, "+
 					"capped", got.Compaction, want)

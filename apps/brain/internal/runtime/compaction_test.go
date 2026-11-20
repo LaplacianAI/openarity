@@ -16,9 +16,10 @@ func TestARunCompactsAtATenthOfItsBudgetBetweenTheFloorAndTheCeiling(t *testing.
 		budget int64
 		want   int
 	}{
-		{5_000_000, 100_000},
-		{1_000_000, 100_000},
-		{700_000, 70_000},
+		{5_000_000, 60_000},
+		{1_000_000, 60_000},
+		{700_000, 60_000},
+		{550_000, 55_000},
 		{500_000, 50_000},
 		{300_000, 50_000},
 		{150_000, 50_000},
@@ -96,6 +97,43 @@ func TestTheWrapUpKeepsRoomForWhatTheRunWrites(t *testing.T) {
 	// 115k left: one call is 2 × 50k + the 16k floor; it fits no longer.
 	if w := l.spent(885_000, wrote(50_000, 3_000)); w == nil || w.Left != 115_000 {
 		t.Fatalf("wrap %+v, want the wrap-up with 115k left", w)
+	}
+}
+
+// The next call is priced as the budget counts it. A 60k call that is 50k
+// cached costs 15k, so 100k left of 200k is room for it; the same call with
+// nothing cached costs 60k, and 100k is not room for two of it and an answer.
+// A provider counting more cached than it read prices as all cached, 6k,
+// never less: with 20k left that is too little room, not endless room.
+func TestTheWrapUpPricesTheNextCallAsTheBudgetCountsIt(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		cached int
+		left   int64
+		wraps  bool
+	}{
+		"mostly cached":                     {50_000, 100_000, false},
+		"nothing cached":                    {0, 100_000, true},
+		"more cached than read, room":       {90_000, 100_000, false},
+		"more cached than read, near spent": {90_000, 20_000, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newSoftLines(200_000, 200_000)
+			l.hold(&fakeRun{})
+			e := agent.UsageEvent{Usage: agent.Usage{InputTokens: 60_000, CachedInputTokens: c.cached, OutputTokens: 1_000}}
+			if w := l.spent(200_000-c.left, e); (w != nil) != c.wraps {
+				t.Errorf("wrap-up = %+v with %d left, want wrapped %v", w, c.left, c.wraps)
+			}
+		})
+	}
+}
+
+// The floor is under the ceiling, or a run with a small budget would compact
+// past a line it can never be under.
+func TestTheCompactionFloorIsUnderTheCeiling(t *testing.T) {
+	t.Parallel()
+	if compactFloor >= compactCeiling {
+		t.Errorf("compactFloor %d is not under compactCeiling %d", compactFloor, compactCeiling)
 	}
 }
 
