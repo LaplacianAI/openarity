@@ -324,18 +324,84 @@ func skippedFor(t *testing.T, got []agent.SkippedEvent, what string, step int, w
 // A reflecting turn that answers in prose rather than calling the tool leaves
 // the pattern with no verdict. Guessing from the text is how "no major changes
 // needed, though I would note…" gets read as approval; failing the run is how
-// a finished answer reaches nobody. So the draft stands, and the skip says why.
-func TestAReflectingTurnThatSubmitsNothingKeepsTheDraft(t *testing.T) {
+// a finished answer reaches nobody. So it is asked once more, and if that
+// submits nothing either, the draft stands and the skip says why.
+func TestAReflectingTurnThatSubmitsNothingTwiceKeepsTheDraft(t *testing.T) {
 	t.Parallel()
 
-	result, skipped := reflectKept(t, &fakeModel{turns: []turn{
+	model := &fakeModel{turns: []turn{
 		answered(text("a draft")),
 		answered(text("looks good to me")),
-	}})
+		answered(text("as I said, it looks good")),
+	}}
+	result, skipped := reflectKept(t, model)
 	if result.Output != "a draft" || result.Steps != 2 {
 		t.Errorf("Output %q in %d steps, want the draft in 2", result.Output, result.Steps)
 	}
-	skippedFor(t, skipped, "critique", 2, ErrNoCritique.Error(), "cycle 1")
+	if len(model.calls) != 3 {
+		t.Errorf("the model was called %d times, want the draft and the review asked twice", len(model.calls))
+	}
+	skippedFor(t, skipped, "critique", 2, ErrNoCritique.Error(), "asked twice", "cycle 1")
+}
+
+// A model that thinks will not be told which tool to call, so the client asks
+// without saying and the review often comes back written out. Asked again,
+// with that review before it, the model submits it, and the verdict is used:
+// staging's team-lead lost its review this way in 11 runs of 23.
+func TestAReviewWrittenOutIsAskedForAgainAndUsed(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeModel{turns: []turn{
+		answered(text("Paris is the capital of Germany.")),
+		answered(text("That is wrong: Germany's capital is Berlin.")),
+		critiqued(true, "Germany's capital is Berlin."),
+		answered(text("Berlin is the capital of Germany.")),
+	}}
+	events := make(chan agent.Event, 64)
+	result, err := Reflection(1).Run(t.Context(), agent.Input{
+		Spec: reflectSpec(), Messages: ask("what is the capital of Germany?"), Model: model, Events: events,
+	})
+	close(events)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Output != "Berlin is the capital of Germany." || result.Steps != 3 {
+		t.Errorf("Output %q in %d steps, want the rewrite in 3", result.Output, result.Steps)
+	}
+
+	if len(model.calls) != 4 {
+		t.Fatalf("the model was called %d times, want 4", len(model.calls))
+	}
+	again := model.calls[2]
+	if again.MustCall != CritiqueToolName {
+		t.Errorf("the second ask must call %q, want %q", again.MustCall, CritiqueToolName)
+	}
+	n := len(again.Messages)
+	if n < 2 || again.Messages[n-2].Text() != "That is wrong: Germany's capital is Berlin." ||
+		again.Messages[n-1].Role != agent.RoleUser || !strings.Contains(again.Messages[n-1].Text(), CritiqueToolName) {
+		t.Errorf("the second ask ends %+v, want the written review, then a user turn naming %s",
+			again.Messages[max(n-2, 0):], CritiqueToolName)
+	}
+	// The written review is the critic's, never the person's: the rewrite
+	// reads the draft and the submitted critique, not the prose.
+	for _, m := range model.calls[3].Messages {
+		if m.Text() == "That is wrong: Germany's capital is Berlin." {
+			t.Error("the rewrite was shown the review written out")
+		}
+	}
+
+	var usages, skips int
+	for e := range events {
+		switch e.(type) {
+		case agent.UsageEvent:
+			usages++
+		case agent.SkippedEvent:
+			skips++
+		}
+	}
+	if usages != 4 || skips != 0 {
+		t.Errorf("%d usage events and %d skips, want one usage per call and no skip", usages, skips)
+	}
 }
 
 // The critique is asked for by name, so a model that can be told to call it is.

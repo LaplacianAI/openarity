@@ -111,26 +111,39 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	ask := in
 	ask.Spec.System = append(slices.Clone(in.Spec.System), reflecting)
 	ask.Spec.Tools = []agent.Tool{critiqueTool()}
+	review := react{aside: true, must: CritiqueToolName}
 
-	resp, err := react{aside: true, must: CritiqueToolName}.call(ctx, ask, msgs)
+	resp, err := review.call(ctx, ask, msgs)
 	if err != nil {
 		return critique{}, err
 	}
 	in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
-
 	if resp.Finish == agent.FinishLength {
 		return critique{}, agent.ErrTruncated
 	}
 
-	var call agent.ToolCall
-	for _, c := range resp.Message.ToolCalls {
-		if c.Name == CritiqueToolName {
-			call = c
-			break
+	call, ok := critiqueIn(resp)
+	if !ok {
+		// A model that thinks will not be told which tool to call, so the
+		// client asks without saying, and it often writes its review out
+		// instead. Asked again with that review before it, it submits it.
+		// Once, in the same step: the verdict is read from the call, never
+		// guessed from the prose.
+		again := append(slices.Clone(msgs), resp.Message, agent.Message{
+			Role:    agent.RoleUser,
+			Content: []agent.Content{{Type: agent.ContentText, Text: submitNow}},
+		})
+		resp, err = review.call(ctx, ask, again)
+		if err != nil {
+			return critique{}, err
 		}
-	}
-	if call.Name == "" {
-		return critique{}, ErrNoCritique
+		in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
+		if resp.Finish == agent.FinishLength {
+			return critique{}, agent.ErrTruncated
+		}
+		if call, ok = critiqueIn(resp); !ok {
+			return critique{}, fmt.Errorf("%w, though asked twice", ErrNoCritique)
+		}
 	}
 
 	var verdict critique
@@ -141,6 +154,16 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 		return critique{}, fmt.Errorf("%w: it asked for changes without saying which", ErrNoCritique)
 	}
 	return verdict, nil
+}
+
+// critiqueIn is the critique a response submitted, if it submitted one.
+func critiqueIn(resp agent.Response) (agent.ToolCall, bool) {
+	for _, c := range resp.Message.ToolCalls {
+		if c.Name == CritiqueToolName {
+			return c, true
+		}
+	}
+	return agent.ToolCall{}, false
 }
 
 func (l reflection) refine(
@@ -213,6 +236,11 @@ var reflecting = agent.Content{
 		"agreeable is not useful here, and neither is inventing faults in an answer that is " +
 		"already right. Then call " + CritiqueToolName + " once.",
 }
+
+// submitNow follows a reflecting turn that wrote its review rather than
+// calling the tool.
+const submitNow = "Submit that judgement now: call " + CritiqueToolName +
+	" with it. Do not write it out again."
 
 var refining = agent.Content{
 	Type: agent.ContentText,
