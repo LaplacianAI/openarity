@@ -192,6 +192,12 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	if c.BrowserProxyBind != "" {
+		if err := checkHostPort("BROWSER_PROXY_BIND", c.BrowserProxyBind); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	if err := checkWebhookPublicURL(c.WebhookPublicURL, c.Environment); err != nil {
 		errs = append(errs, err)
 	}

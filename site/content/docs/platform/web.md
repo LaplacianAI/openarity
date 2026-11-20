@@ -205,8 +205,15 @@ until it times out.
 To run one beside the brain, `make browser name=<one>` in `deployment/` starts
 it on a network of its own, shared only with the worker, and each
 `docker-compose.<name>.yml` says the address to name in
-`OPENARITY_MCP_PRIVATE_NETWORKS` and the URL a team saves. Measured on one
-machine, after opening one page:
+`OPENARITY_MCP_PRIVATE_NETWORKS` and the URL a team saves. That network is
+internal: it routes nowhere, so the browser's one way out is a proxy the
+worker serves on it (`OPENARITY_BROWSER_PROXY_BIND`). The proxy dials public
+addresses only and decides on the address it connects to, so whatever a page
+asks for and however a name answers, nothing private is reached: not the
+host, not the cloud's metadata address, not the worker's other neighbours.
+Browserless takes the proxy in the URL a team saves, as its overlay shows;
+without it, it reaches nothing. Measured on one machine, after opening one
+page:
 
 | Browser | Image | Memory |
 | --- | --- | --- |
@@ -224,14 +231,12 @@ their port drives them: keep them on the network the overlay gives them.
 
 ## Not built
 
-- **DNS rebinding through the browser.** The browser resolves a name itself,
-  after the brain judged it, so a name whose answer changes in between is out
-  of the check's reach. For a browser of the team's own, its network is the
-  boundary that holds: the deployment guide's "A browser" gives the host
-  rules that keep it off private and link-local addresses.
-- **A connection opened ahead of a request.** `<link rel=preconnect>` and DNS
-  prefetch can reach an address without a request Fetch pauses. They carry no
-  data the page chose, and the same network rules stand behind them.
+- **DNS rebinding through a browser you run elsewhere.** The browser resolves
+  a name itself, after the brain judged it, so a name whose answer changes in
+  between is out of the check's reach. The overlays here close it with the
+  worker's proxy, which looks the name up once and connects to what it
+  checked; a browser run another way needs the same: no route out but
+  through a proxy like it.
 - **Uploads, downloads, a second tab, and a page kept across an approval.**
 - **A frame from another site in a process of its own.** Chrome with site
   isolation runs one as a target apart from the tab, so it gets none of the

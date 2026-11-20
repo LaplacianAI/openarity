@@ -80,6 +80,12 @@ type Config struct {
 	// nothing up; empty is unset, so it cannot say that.
 	MCPRegistryURL string `env:"MCP_REGISTRY_URL" envDefault:"https://registry.modelcontextprotocol.io"`
 
+	/* Browser Configuration */
+	// BrowserProxyBind is where the worker serves the proxy that is a
+	// self-hosted browser's only way out, on the browser's own network: it
+	// dials public addresses only. Empty, and there is none.
+	BrowserProxyBind string `env:"BROWSER_PROXY_BIND" envDefault:""`
+
 	/* Sandbox Configuration */
 	// SandboxImage overrides the image a team's command MCP server's room
 	// starts from on sandboxd and Daytona. Empty means the brain's own choice:
@@ -109,7 +115,7 @@ func (c *Config) String() string {
 			"PostgresDSN:%s FalkorDBURL:%s RedisURL:%s "+
 			"SecretsBackend:%s SecretsAddr:%s "+
 			"ObjectsBackend:%s ObjectsPath:%s ObjectsEndpoint:%s ObjectsBucket:%s "+
-			"LLMBaseURL:%s SkillImportHosts:%v MCPPrivateNetworks:%v MCPRegistryURL:%s "+
+			"LLMBaseURL:%s SkillImportHosts:%v MCPPrivateNetworks:%v MCPRegistryURL:%s BrowserProxyBind:%s "+
 			"EmbeddingBaseURL:%s EmbeddingModel:%s EmbeddingDimensions:%d TeamPurgeAfter:%s SandboxImage:%s SandboxIdle:%s}",
 		c.Environment,
 		c.LogLevel,
@@ -130,6 +136,7 @@ func (c *Config) String() string {
 		c.SkillImportHosts,
 		c.MCPPrivateNetworks,
 		redactURL(c.MCPRegistryURL),
+		c.BrowserProxyBind,
 		redactURL(c.EmbeddingBaseURL),
 		c.EmbeddingModel,
 		c.EmbeddingDimensions,

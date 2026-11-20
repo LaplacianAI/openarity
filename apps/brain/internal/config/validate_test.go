@@ -57,7 +57,7 @@ func TestValidateRejectsWrongSchemePerField(t *testing.T) {
 func TestValidateRejectsBadBinds(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []string{"OPENARITY_API_BIND", "OPENARITY_WEBHOOK_BIND"} {
+	for _, key := range []string{"OPENARITY_API_BIND", "OPENARITY_WEBHOOK_BIND", "OPENARITY_BROWSER_PROXY_BIND"} {
 		for _, bad := range []string{"localhost", "127.0.0.1:abc", "127.0.0.1:99999"} {
 			if _, err := load(map[string]string{key: bad}); err == nil {
 				t.Errorf("%s=%q accepted", key, bad)

@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/browser"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
@@ -12,6 +15,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
@@ -35,6 +39,21 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 			return err
 		}
 		logger.ErrorContext(ctx, "Starting with an erasure already overdue", "error", err)
+	}
+
+	if cfg.BrowserProxyBind != "" {
+		// Listened on before the worker starts, so a bind that cannot be had
+		// stops it rather than leaving the browser with no way out.
+		l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.BrowserProxyBind)
+		if err != nil {
+			return fmt.Errorf("the browser's proxy cannot listen on BROWSER_PROXY_BIND %s: %w", cfg.BrowserProxyBind, err)
+		}
+		proxy := browser.NewProxy(hub.Public, logger)
+		go func() {
+			if err := proxy.Serve(ctx, l); err != nil {
+				logger.ErrorContext(ctx, "The browser's proxy stopped, so a self-hosted browser reaches nothing", "error", err)
+			}
+		}()
 	}
 
 	return worker.New(cfg.PostgresDSN, logger, jobs...).Run(ctx)

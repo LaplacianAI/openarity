@@ -161,6 +161,7 @@ apps/brain/
                        sessions.go: steel, browserbase, hyperbrowser, anchor, kernel, a session each
                        conn.go: the websocket, dialed over the guarded client; guard.go: every request judged
                        page.go: open, read, click, type, screenshot; snapshot.js: the page as numbered text
+                       proxy.go: the worker's forward proxy, a self-hosted browser's one way out, to public addresses only
   internal/sandbox/    the port: Rooms, Spec, Endpoint; where a team's command MCP servers run
     <provider>/        e2b, daytona, sandboxd: each exports New
     keeper/            a team's rooms, for any owner: the lock, the spec hash, the health wait, the token; Ensure

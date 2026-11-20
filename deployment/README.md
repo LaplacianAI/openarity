@@ -651,28 +651,30 @@ one by any name at all, which is why its URL is an address. Staging, and
 `deploy.sh`, add the one `BROWSER_STACK` names in `.env`.
 
 The brain pauses every request a page's tab makes and lets through only
-public addresses, but the browser looks a name up again itself, and a
-worker's websocket in Chrome is never paused. So the network is what keeps a
-page off the host and the rest of a private network: on a cloud VM, off
-`169.254.169.254` above all. Docker's own rules let a container reach both.
-A starting point, for the browser's subnet in the table, to fit to the host's
-own firewall before relying on it:
+public addresses, but the browser looks a name up again itself, and some of
+what a page does is never paused. So the browser's network is `internal`: it
+routes nowhere, not to the host, not to `169.254.169.254`, not to the
+internet. Its one way out is a proxy the worker serves on it
+(`OPENARITY_BROWSER_PROXY_BIND=0.0.0.0:3128`, set by the overlay), which the
+browser is started pointed at, as `http://worker:3128`. The proxy dials public
+addresses only, and decides on the address it connects to: a name that
+answers one way to the brain and another to the browser is never looked up
+by the browser at all.
 
-```sh
-S=172.31.255.240/29   # the browser's network, from its docker-compose.<name>.yml
-for d in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do
-  sudo iptables -I DOCKER-USER -s "$S" -d "$d" -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP
-done
-# The browser's own network is inside 172.16.0.0/12, so its own traffic is
-# let through first: -I puts this rule above the drops.
-sudo iptables -I DOCKER-USER -s "$S" -d "$S" -j ACCEPT
-sudo iptables -I INPUT -s "$S" -m conntrack ! --ctstate ESTABLISHED,RELATED -j DROP
-```
+Measured with each of the four, on Docker Desktop, a page asking for:
 
-The overlays' subnets all sit inside `172.16.0.0/12`, which the rules drop;
-the first rule keeps the browser's own network open to itself. Replies to the
-worker, which opens the connection, still pass. These rules
-are not applied by `deploy.sh`, and have not been tested in this repository.
+| Address | Without the proxy | Through it |
+| --- | --- | --- |
+| `https://example.com/` | no name resolves | loaded |
+| a container on the browser's network | reached | refused |
+| `169.254.169.254`, the host | no route | refused |
+| `169.254.169.254.nip.io`, `localtest.me` (public names, private answers) | no name resolves | refused |
+
+Browserless takes Chrome's flags only in the address it is dialed at, so a
+team saves the proxy there (its overlay shows the URL); without it, the
+browser reaches nothing. Host firewall rules are no longer needed for these
+overlays. A browser run another way needs the same: no route out but through
+a proxy like this one.
 
 ## Logs
 
