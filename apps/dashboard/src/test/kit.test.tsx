@@ -100,6 +100,22 @@ describe("facts", () => {
     expect(writeText).toHaveBeenCalledWith(id);
   });
 
+  it("wraps the whole value when asked, and still truncates by default", () => {
+    const url = "https://hooks.example.com/hooks/slack/s1/interactivity";
+    const { rerender } = mount(<CopyId value={url} label="Request URL" />);
+    expect(screen.getByTitle(url)).toHaveClass("truncate");
+
+    rerender(
+      <TooltipProvider>
+        <CopyId value={url} label="Request URL" wrap />
+      </TooltipProvider>,
+    );
+    const shown = screen.getByTitle(url);
+    expect(shown).toHaveClass("break-all");
+    expect(shown).not.toHaveClass("truncate");
+    expect(screen.getByRole("button", { name: `Copy the Request URL ${url}` })).toBeInTheDocument();
+  });
+
   it("says a time the way a person would, and keeps it current", () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     vi.setSystemTime(new Date("2026-11-03T10:00:00Z"));

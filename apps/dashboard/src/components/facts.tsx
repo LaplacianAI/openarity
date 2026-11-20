@@ -31,10 +31,8 @@ export function KeyValue({ label, children }: { label: string; children: ReactNo
 /**
  * An id in mono, cut to fit, with a button that copies the whole of it. The
  * full id is the button's name, so a screen reader hears what it will copy.
- */
-/**
- * `wrap` shows the whole value over as many lines as it takes, for an address
- * a person pastes elsewhere and checks by its end; an id truncates.
+ * With `wrap` the whole value shows over as many lines as it takes, for an
+ * address a person pastes elsewhere and checks by its end.
  */
 export function CopyId({
   value,

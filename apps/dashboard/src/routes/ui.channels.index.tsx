@@ -310,6 +310,14 @@ function ChannelDetail({
             <KeyValue label={channel.hook_url ? "Webhook URL" : "Webhook path"}>
               <Mono className="break-all text-foreground">POST {hookAddress(channel)}</Mono>
             </KeyValue>
+            {channel.provider === SLACK ? (
+              <KeyValue label={channel.hook_url ? "Interactivity URL" : "Interactivity path"}>
+                <Mono className="break-all text-foreground">
+                  POST {hookAddress(channel)}
+                  {INTERACTIVITY}
+                </Mono>
+              </KeyValue>
+            ) : null}
             <KeyValue label="Signing secret">
               {channel.provider === SLACK
                 ? "In the secret store, as pasted from the Slack app's settings."
@@ -354,7 +362,7 @@ function ChannelDetail({
           <KeyValue label="Waiting senders">
             {channel.notify_strangers
               ? "Told once that they are waiting, and again when let in."
-              : "Not told anything. Their messages wait in Approvals."}
+              : "Not told anything. Their messages wait in Sender approvals."}
             {canWrite ? (
               <NotifyStrangers teamId={teamId} channel={channel} onChanged={onChanged} />
             ) : null}
@@ -1233,7 +1241,7 @@ function ConnectSheet({
 /** One numbered step of a setup, its number in the trace's step circle. */
 function SetupStep({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
-    // minmax(0, 1fr): a long address truncates inside the step rather than
+    // minmax(0, 1fr): a long address stays inside the step rather than
     // widening the dialog past its edge.
     <li className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
       <span
@@ -1312,50 +1320,60 @@ function SlackSetup({
  * and is turned on here too for an app made before the manifest had it.
  */
 function SlackLastStep({ channel }: { channel: CreatedChannel }) {
+  const path = hookPath(channel);
   return (
-    <ol className="space-y-5 text-sm" aria-label="One step left in Slack">
-      <SetupStep n={1} title="Point Event Subscriptions here">
+    <>
+      {channel.hook_url ? null : (
         <p className="text-xs text-muted-foreground">
-          In the app's settings, open Event Subscriptions under Features and replace the Request URL
-          with this one. Slack checks it straight away and shows Verified.
+          This brain has no public address, so Slack cannot reach it. On its webhook listener the
+          paths are <Mono className="break-all">{path}</Mono> for events and{" "}
+          <Mono className="break-all">{`${path}${INTERACTIVITY}`}</Mono> for Interactivity.
         </p>
-        <SlackAddress channel={channel} suffix="" label="Request URL" />
-      </SetupStep>
-      <SetupStep n={2} title="Point Interactivity here">
-        <p className="text-xs text-muted-foreground">
-          Open Interactivity &amp; Shortcuts, turn Interactivity on, and replace its Request URL
-          with this one. The Approve and Decline buttons under an approval answer here; without it
-          they do nothing.
-        </p>
-        <SlackAddress channel={channel} suffix={INTERACTIVITY} label="Interactivity Request URL" />
-      </SetupStep>
-      <SetupStep n={3} title="Save Changes, then try it">
-        <p className="text-xs text-muted-foreground">
-          Save on both pages. Then message the bot, or mention it in a channel it is in: someone
-          writing for the first time waits under Sender approvals until you let them in.
-        </p>
-      </SetupStep>
-    </ol>
+      )}
+      <ol className="space-y-5 text-sm" aria-label="One step left in Slack">
+        <SetupStep n={1} title="Point Event Subscriptions here">
+          <p className="text-xs text-muted-foreground">
+            In the app's settings, open Event Subscriptions under Features and replace the Request
+            URL with this one. Slack checks it straight away and shows Verified.
+          </p>
+          <SlackAddress channel={channel} label="Request URL" />
+        </SetupStep>
+        <SetupStep n={2} title="Point Interactivity here">
+          <p className="text-xs text-muted-foreground">
+            Open Interactivity &amp; Shortcuts, turn Interactivity on, and replace its Request URL
+            with this one. The buttons under an approval answer here; without it they do nothing.
+            Slack does not check this one: try it with an approval.
+          </p>
+          <SlackAddress
+            channel={channel}
+            suffix={INTERACTIVITY}
+            label="Interactivity Request URL"
+          />
+        </SetupStep>
+        <SetupStep n={3} title="Save Changes, then try it">
+          <p className="text-xs text-muted-foreground">
+            Save on both pages. Then message the bot, or mention it in a channel it is in: someone
+            writing for the first time waits under Sender approvals until you let them in.
+          </p>
+        </SetupStep>
+      </ol>
+    </>
   );
 }
 
-/** One of a Slack channel's addresses to paste, or its path where the brain has no public one. */
+/** One of a Slack channel's addresses to paste; none where the brain has no public one. */
 function SlackAddress({
   channel,
-  suffix,
+  suffix = "",
   label,
 }: {
   channel: CreatedChannel;
-  suffix: string;
+  suffix?: string;
   label: string;
 }) {
-  if (channel.hook_url) return <CopyId value={`${channel.hook_url}${suffix}`} label={label} wrap />;
-  return (
-    <p className="text-xs text-muted-foreground">
-      This brain has no public address, so Slack cannot reach it. The path is{" "}
-      <Mono className="break-all">{`${hookPath(channel)}${suffix}`}</Mono> on its webhook listener.
-    </p>
-  );
+  return channel.hook_url ? (
+    <CopyId value={`${channel.hook_url}${suffix}`} label={label} wrap />
+  ) : null;
 }
 
 /**
@@ -1405,7 +1423,7 @@ function CreatedDialog({
               <DialogTitle>Connected {channel.name}</DialogTitle>
               <DialogDescription>
                 The bot now sends its messages here. Message it to try it: someone writing for the
-                first time waits under Approvals until you let them in.
+                first time waits under Sender approvals until you let them in.
               </DialogDescription>
             </DialogHeader>
             <SetupWarnings warnings={channel.warnings} />

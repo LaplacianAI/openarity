@@ -471,6 +471,20 @@ describe("a channel's sheet", () => {
     expect(within(sheet).getByText("Webhook URL")).toBeInTheDocument();
     expect(within(sheet).getByText(`POST ${HOOK_URL}`)).toBeInTheDocument();
     expect(within(sheet).getByText(/in the secret store/i)).toBeInTheDocument();
+    expect(within(sheet).queryByText(/interactivity/i)).not.toBeInTheDocument();
+  });
+
+  // Closing the setup dialog loses nothing: Slack's second address is here too.
+  it("gives a Slack channel's Interactivity URL beside its events URL", async () => {
+    const hook = "https://hooks.example.com/hooks/slack/s1";
+    const slack = { ...support, id: "s1", provider: "slack", name: "acme", hook_url: hook };
+    brain({ ...team([]), "GET /teams/{id}/channels": { body: { items: [slack] } } });
+    at();
+
+    const sheet = await opened("acme");
+    expect(within(sheet).getByText(`POST ${hook}`)).toBeInTheDocument();
+    expect(within(sheet).getByText("Interactivity URL")).toBeInTheDocument();
+    expect(within(sheet).getByText(`POST ${hook}/interactivity`)).toBeInTheDocument();
   });
 
   // One the brain gave no URL for keeps its path, rather than a guess.
@@ -773,7 +787,9 @@ describe("a slack channel", () => {
     await userEvent.type(screen.getByLabelText(/^signing secret$/i), SECRET);
     await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
     const dialog = await screen.findByRole("dialog", { name: /one step left in slack/i });
-    expect(dialog.textContent).toMatch(/no public address/i);
+    // Said once for both addresses, not under each step.
+    expect(dialog.textContent?.match(/no public address/gi)).toHaveLength(1);
+    expect(within(dialog).queryByRole("button", { name: /^copy the/i })).not.toBeInTheDocument();
     expect(dialog.textContent).toContain("/hooks/slack/s1");
     expect(dialog.textContent).toContain("/hooks/slack/s1/interactivity");
   });
