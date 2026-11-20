@@ -32,3 +32,7 @@ globalThis.ResizeObserver ??= class {
   unobserve() {}
   disconnect() {}
 };
+
+// jsdom does not scroll, and a Radix select scrolls its highlighted option
+// into view as it opens.
+Element.prototype.scrollIntoView ??= () => {};

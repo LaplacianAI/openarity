@@ -12,7 +12,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { type ComponentType, Fragment, StrictMode, Suspense } from "react";
 import { vi } from "vitest";
 
@@ -286,4 +287,14 @@ export function showAt(at: string, routes: [path: string, route: AnyRoute][], st
     </Wrap>,
   );
   return router;
+}
+
+/**
+ * Chooses an option in one of the dashboard's selects. It opens from the
+ * keyboard, as jsdom has no pointer capture for a press to open it.
+ */
+export async function choose(trigger: HTMLElement, name: string | RegExp) {
+  trigger.focus();
+  await userEvent.keyboard("{ArrowDown}");
+  await userEvent.click(await screen.findByRole("option", { name }));
 }
