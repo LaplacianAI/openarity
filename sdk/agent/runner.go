@@ -134,7 +134,9 @@ func (r *Runner) run(ctx context.Context, spec Spec, msgs []Message,
 	var counter *countingClient
 	sending := client
 	splice := func(msgs []Message) []Message { return msgs }
-	if spec.Compaction != nil {
+	if spec.Compaction == nil {
+		msgs = withoutClearings(msgs)
+	} else {
 		msgs = compact.resume(msgs)
 		splice = compact.splice
 		sending = newCompactingClient(client, *spec.Compaction, compact,

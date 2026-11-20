@@ -296,3 +296,123 @@ func TestARunContinuedByASteerKeepsItsSummaryOutOfThePattern(t *testing.T) {
 			r.model.summaries(), len(summariesIn(result.Messages)))
 	}
 }
+
+// clearing compacts past 20,000 tokens and keeps about 1,000 word for word,
+// so twelve 2,000-token results are cleared rather than summarised.
+var clearing = Spec{Pattern: "handing", MaxSteps: 1, Compaction: &Compaction{AfterInputTokens: 20_000, KeepTokens: 1_000}}
+
+func clearingsIn(msgs []Message) []int {
+	var at []int
+	for i, m := range msgs {
+		if m.Compaction != nil && m.Compaction.Cleared {
+			at = append(at, i)
+		}
+	}
+	return at
+}
+
+func compactionsIn(events chan Event) int {
+	close(events)
+	n := 0
+	for e := range events {
+		if _, ok := e.(CompactedEvent); ok {
+			n++
+		}
+	}
+	return n
+}
+
+func TestAClearingIsWrittenIntoTheTranscriptWhereTheClearedResultsEnd(t *testing.T) {
+	r := newTranscriptRig(t)
+	msgs := conversation(12, func(int) string { return strings.Repeat("d", 8000) })
+
+	result, run := r.run(t, clearing, msgs)
+
+	at := clearingsIn(result.Messages)
+	if r.model.summaries() != 0 || len(at) != 1 || run.Summary() != "" {
+		t.Fatalf("clearings at %v after %d summaries; want one clearing and no summary", at, r.model.summaries())
+	}
+	if mark := result.Messages[at[0]].Compaction; mark.Prefix != digest(msgs[:at[0]]) || mark.Summary != "" {
+		t.Fatalf("the clearing at %d holds %+v; want the digest of the messages before it", at[0], mark)
+	}
+	if !strings.Contains(text(r.model.requests()[0].Messages[at[0]-1]), "cleared to save room") {
+		t.Fatalf("the result before the clearing was sent whole")
+	}
+	if plain := withoutSummaries(result.Messages); digest(plain[:len(msgs)]) != digest(msgs) {
+		t.Fatalf("taking the clearing out does not give back every message the run had")
+	}
+}
+
+func TestTheNextRunInASessionSendsWhatTheLastOneClearedAsHandles(t *testing.T) {
+	session, err := Open("s1", &keeping{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := clearing
+	spec.Session = session
+	newTranscriptRig(t).run(t, spec, conversation(12, func(int) string { return strings.Repeat("d", 8000) }))
+	saved, _ := session.Messages(t.Context())
+
+	again := newTranscriptRig(t)
+	events := make(chan Event, 100)
+	if _, err := again.runner.Start(t.Context(), spec, append(saved, say(RoleUser, "and the tests?")), Endpoint{}, events).Wait(); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if n := compactionsIn(events); n != 0 {
+		t.Fatalf("the next run compacted %d time(s); it should start from the clearing its session saved", n)
+	}
+	sent := again.model.requests()[0].Messages
+	if !strings.Contains(text(sent[2]), "cleared to save room") {
+		t.Fatalf("the next run sent a cleared result whole: %.60q", text(sent[2]))
+	}
+	if strings.Contains(textOf(sent), "were cleared from the model's view") {
+		t.Fatalf("the clearing's own message was sent to the model")
+	}
+	for _, got := range again.pattern.received() {
+		if len(clearingsIn(got)) != 0 {
+			t.Fatalf("the pattern was handed a clearing; it works on the turns alone")
+		}
+	}
+}
+
+func TestAClearingAfterASummaryKeepsTheSummary(t *testing.T) {
+	msgs := conversation(6, func(int) string { return "x" })
+	summary := markerMessage(CompactionSummary{Summary: "Goal: kept.", Prefix: digest(msgs[:3])})
+	transcript := slices.Concat(msgs[:3], []Message{summary}, msgs[3:9], []Message{clearingMessage(digest(msgs[:9]))}, msgs[9:])
+
+	h := &compactHandle{}
+	plain := h.resume(transcript)
+
+	s := h.current()
+	if s.cut != 3 || s.cleared != 9 || s.Summary != "Goal: kept." || s.prefix != digest(msgs[:9]) {
+		t.Fatalf("resumed to cut %d, cleared %d, summary %q; want 3, 9 and the summary", s.cut, s.cleared, s.Summary)
+	}
+	if digest(plain) != digest(msgs) || digest(h.splice(plain)) != digest(transcript) {
+		t.Fatalf("resume and splice do not give back the transcript they were handed")
+	}
+}
+
+func TestASummaryAfterAClearingStandsAlone(t *testing.T) {
+	msgs := conversation(6, func(int) string { return "x" })
+	transcript := slices.Concat(msgs[:3], []Message{clearingMessage(digest(msgs[:3]))},
+		msgs[3:7], []Message{markerMessage(CompactionSummary{Summary: "Goal: later.", Prefix: digest(msgs[:7])})}, msgs[7:])
+
+	h := &compactHandle{}
+	h.resume(transcript)
+
+	if s := h.current(); s.cut != 7 || s.cleared != 7 || s.Summary != "Goal: later." || s.prefix != digest(msgs[:7]) {
+		t.Fatalf("resumed to cut %d, cleared %d, summary %q; want the later summary alone", s.cut, s.cleared, s.Summary)
+	}
+}
+
+func TestARunThatDoesNotCompactSendsNoClearing(t *testing.T) {
+	r := newTranscriptRig(t)
+	msgs := []Message{say(RoleUser, "task"), clearingMessage("abc"), say(RoleUser, "go on")}
+
+	r.run(t, Spec{Pattern: "handing", MaxSteps: 1}, msgs)
+
+	if sent := r.model.requests()[0].Messages; len(sent) != 2 || strings.Contains(textOf(sent), "cleared") {
+		t.Fatalf("a run without Compaction sent %d messages; want the clearing left out", len(sent))
+	}
+}
