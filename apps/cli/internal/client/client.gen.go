@@ -3212,10 +3212,16 @@ type TeamSettings struct {
 	// Browser What the team's runs drive pages in.
 	Browser BrowserSettings `json:"browser" yaml:"browser"`
 
-	// CompactionMessages Messages in a run's request past which it compacts. A run also
-	// compacts when its next request would read more than a tenth of
-	// its token budget, or 100,000 tokens, whichever is less.
+	// CompactionMessages Messages in a run's request past which it compacts.
 	CompactionMessages int32 `json:"compaction_messages" yaml:"compaction_messages"`
+
+	// CompactionTokensMax The most a run's next request may read before it compacts. 60,000 until saved.
+	CompactionTokensMax int32 `json:"compaction_tokens_max" yaml:"compaction_tokens_max"`
+
+	// CompactionTokensMin A run also compacts when its next request would read more than a
+	// tenth of its token budget, held between compaction_tokens_min and
+	// compaction_tokens_max. 50,000 until saved.
+	CompactionTokensMin int32 `json:"compaction_tokens_min" yaml:"compaction_tokens_min"`
 
 	// Hub The agent that answers a run started for the team rather than
 	// for an agent. Null for the built-in orchestrator, which it is
@@ -3242,6 +3248,14 @@ type TeamSettingsRequest struct {
 	// Browser Absent from a request, the stored browser is kept.
 	Browser            *BrowserSettingsRequest `json:"browser,omitempty" yaml:"browser,omitempty"`
 	CompactionMessages int32                   `json:"compaction_messages" yaml:"compaction_messages"`
+
+	// CompactionTokensMax Left out, the stored value stays.
+	CompactionTokensMax *int32 `json:"compaction_tokens_max,omitempty" yaml:"compaction_tokens_max,omitempty"`
+
+	// CompactionTokensMin Left out, the stored value stays, so a client that predates it
+	// cannot reset it. Must not be above compaction_tokens_max once the
+	// stored values fill in what is left out.
+	CompactionTokensMin *int32 `json:"compaction_tokens_min,omitempty" yaml:"compaction_tokens_min,omitempty"`
 
 	// Hub The name of an agent in this team, ignoring case. Null or absent
 	// for the built-in orchestrator.
@@ -5441,7 +5455,7 @@ type ClientInterface interface {
 	// GetTeamSettings Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, no browser, learning off, compaction at 100
+	// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
 	// messages, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
@@ -8164,7 +8178,7 @@ func (c *Client) ListSessionRuns(ctx context.Context, id TeamID, sessionID opena
 // GetTeamSettings Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, no browser, learning off, compaction at 100
+// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
 // messages, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.
@@ -14840,7 +14854,7 @@ type ClientWithResponsesInterface interface {
 	// GetTeamSettingsWithResponse Read a team's settings
 	//
 	// Any member may read them. A team that never saved reads the
-	// defaults: no model, search off, no browser, learning off, compaction at 100
+	// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
 	// messages, the built-in orchestrator as its hub, and `updated_at`
 	// null. The search key is never returned; `search.key_set` says
 	// whether there is one.
@@ -21336,7 +21350,7 @@ func (c *ClientWithResponses) ListSessionRunsWithResponse(ctx context.Context, i
 // GetTeamSettingsWithResponse Read a team's settings
 //
 // Any member may read them. A team that never saved reads the
-// defaults: no model, search off, no browser, learning off, compaction at 100
+// defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
 // messages, the built-in orchestrator as its hub, and `updated_at`
 // null. The search key is never returned; `search.key_set` says
 // whether there is one.

@@ -12,11 +12,13 @@ import (
 const settingsPath = "/teams/" + teamID + "/settings"
 
 const neverSaved = `{"model":null,"search":{"provider":"none","url":null,"key_set":false},
-  "learning":false,"compaction_messages":100,"updated_at":null}`
+  "learning":false,"compaction_messages":100,"compaction_tokens_min":50000,"compaction_tokens_max":60000,
+  "updated_at":null}`
 
 const braveSaved = `{"model":{"name":"gpt-5","max_tokens":4096,"temperature":0.2},
   "search":{"provider":"brave","url":null,"key_set":true},
-  "learning":false,"compaction_messages":250,"updated_at":"2026-10-21T09:00:00Z"}`
+  "learning":false,"compaction_messages":250,"compaction_tokens_min":80000,"compaction_tokens_max":90000,
+  "updated_at":"2026-10-21T09:00:00Z"}`
 
 const ossSaved = `{"model":null,
   "search":{"provider":"firecrawl-oss","url":"http://firecrawl:3002","key_set":true},

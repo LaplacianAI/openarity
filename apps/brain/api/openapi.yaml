@@ -2753,7 +2753,7 @@ paths:
       summary: Read a team's settings
       description: |
         Any member may read them. A team that never saved reads the
-        defaults: no model, search off, no browser, learning off, compaction at 100
+        defaults: no model, search off, no browser, learning off, compaction at 100 messages or 50,000 to 60,000 tokens
         messages, the built-in orchestrator as its hub, and `updated_at`
         null. The search key is never returned; `search.key_set` says
         whether there is one.
@@ -6541,7 +6541,7 @@ components:
 
     TeamSettings:
       type: object
-      required: [search, sandbox, browser, learning, compaction_messages]
+      required: [search, sandbox, browser, learning, compaction_messages, compaction_tokens_min, compaction_tokens_max]
       description: |
         `model`, `hub` and `updated_at` are always sent, null when unset;
         optional here only so a generated client decodes null as absent
@@ -6565,10 +6565,22 @@ components:
           format: int32
           minimum: 10
           maximum: 10000
+          description: Messages in a run's request past which it compacts.
+        compaction_tokens_min:
+          type: integer
+          format: int32
+          minimum: 30000
+          maximum: 1000000
           description: |
-            Messages in a run's request past which it compacts. A run also
-            compacts when its next request would read more than a tenth of
-            its token budget, or 100,000 tokens, whichever is less.
+            A run also compacts when its next request would read more than a
+            tenth of its token budget, held between compaction_tokens_min and
+            compaction_tokens_max. 50,000 until saved.
+        compaction_tokens_max:
+          type: integer
+          format: int32
+          minimum: 30000
+          maximum: 1000000
+          description: The most a run's next request may read before it compacts. 60,000 until saved.
         hub:
           $ref: "#/components/schemas/HubRef"
           nullable: true
@@ -6701,6 +6713,21 @@ components:
           format: int32
           minimum: 10
           maximum: 10000
+        compaction_tokens_min:
+          type: integer
+          format: int32
+          minimum: 30000
+          maximum: 1000000
+          description: |
+            Left out, the stored value stays, so a client that predates it
+            cannot reset it. Must not be above compaction_tokens_max once the
+            stored values fill in what is left out.
+        compaction_tokens_max:
+          type: integer
+          format: int32
+          minimum: 30000
+          maximum: 1000000
+          description: Left out, the stored value stays.
         hub:
           type: string
           nullable: true

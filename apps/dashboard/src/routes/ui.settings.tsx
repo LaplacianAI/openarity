@@ -37,6 +37,20 @@ import { SwitchField } from "@/components/ui/switch";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
 import { LeaveGuard } from "@/components/unsaved";
 import { NO_MODEL } from "@/lib/ask";
+import {
+  type CompactionDraft,
+  type CompactionProblems,
+  checkCompaction,
+  DEFAULTS,
+  explain,
+  firstProblem,
+  grouped,
+  isDefault,
+  MESSAGES,
+  parseWhole,
+  TOKENS,
+  tidied,
+} from "@/lib/compaction";
 
 export const Route = createFileRoute("/ui/settings")({
   component: Settings,
@@ -142,10 +156,6 @@ const E2B_TEMPLATE = /^[a-z0-9][a-z0-9_.-]*(\/[a-z0-9][a-z0-9_.-]*)?$/;
 /** How many agents one search for the hub offers. */
 const PICK_PAGE = 20;
 
-/** The brain's own bounds; checked here so a typo is caught before a round trip. */
-const MIN_COMPACTION = 10;
-const MAX_COMPACTION = 10000;
-
 function Settings() {
   const { teamId, teams } = useCurrentTeam();
   const teamName = teams.find((t) => t.id === teamId)?.name;
@@ -241,7 +251,10 @@ export type SettingsDraft = {
   /** A self-hosted browser only: reach it with no key. */
   dropBrowserKey: boolean;
   learning: boolean;
+  /** Messages, and the token lines, as typed: compared by value. */
   compaction: string;
+  tokensMin: string;
+  tokensMax: string;
   /** The chosen hub agent; null for the built-in orchestrator. */
   hub: Picked | null;
 };
@@ -268,17 +281,20 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     dropBrowserKey: false,
     learning: s.learning,
     compaction: String(s.compaction_messages),
+    tokensMin: grouped(s.compaction_tokens_min),
+    tokensMax: grouped(s.compaction_tokens_max),
     hub: s.hub,
   };
 }
 
 /** The groups of the page, each saved on its own. */
-export type Group = "model" | "hub" | "search" | "sandbox" | "browser" | "learning";
+export type Group = "model" | "hub" | "compaction" | "search" | "sandbox" | "browser" | "learning";
 
 /** Which of the draft's fields each group owns. */
 const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
   model: ["modelOn", "modelName", "maxTokens", "temperature"],
-  hub: ["hub", "compaction"],
+  hub: ["hub"],
+  compaction: ["compaction", "tokensMin", "tokensMax"],
   search: ["provider", "url", "key", "dropKey"],
   sandbox: ["sandbox", "sandboxURL", "sandboxTemplate", "sandboxKey"],
   browser: ["browser", "browserURL", "browserKey", "dropBrowserKey"],
@@ -293,10 +309,22 @@ function same(a: SettingsDraft[keyof SettingsDraft], b: SettingsDraft[keyof Sett
   return a === b;
 }
 
+/** Fields compared by the number they hold: "60000" is the stored 60,000. */
+const BY_VALUE = new Set<keyof SettingsDraft>(["compaction", "tokensMin", "tokensMax"]);
+
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
   const base = draftOf(stored);
-  return FIELDS[group].some((f) => !same(d[f], base[f]));
+  return FIELDS[group].some((f) =>
+    BY_VALUE.has(f)
+      ? (parseWhole(d[f] as string) ?? d[f]) !== (parseWhole(base[f] as string) ?? base[f])
+      : !same(d[f], base[f]),
+  );
+}
+
+/** The compaction fields of a draft, as lib/compaction checks them. */
+function compactionOf(d: SettingsDraft): CompactionDraft {
+  return { messages: d.compaction, least: d.tokensMin, most: d.tokensMax };
 }
 
 /** What the brain holds, with one group's fields taken from the draft. */
@@ -350,10 +378,9 @@ export function settingsRequest(
     }
   }
 
-  const compaction = wholeNumber(d.compaction);
-  if (compaction === null || compaction < MIN_COMPACTION || compaction > MAX_COMPACTION) {
-    return `Compaction must be between ${MIN_COMPACTION} and ${MAX_COMPACTION} messages.`;
-  }
+  const compaction = compactionOf(d);
+  const compactionProblem = firstProblem(checkCompaction(compaction));
+  if (compactionProblem) return compactionProblem;
 
   const search: TeamSettingsRequest["search"] = { provider: d.provider };
   const selfHosted = SELF_HOSTED.includes(d.provider);
@@ -393,7 +420,10 @@ export function settingsRequest(
     sandbox,
     browser,
     learning: d.learning,
-    compaction_messages: compaction,
+    // checkCompaction has made sure each is a number in range.
+    compaction_messages: parseWhole(compaction.messages) as number,
+    compaction_tokens_min: parseWhole(compaction.least) as number,
+    compaction_tokens_max: parseWhole(compaction.most) as number,
     // Whole, as the rest is: null sends the team back to the built-in orchestrator.
     hub: d.hub?.name ?? null,
   };
@@ -542,7 +572,180 @@ function Section({
   );
 }
 
-const GROUPS: Group[] = ["model", "hub", "search", "sandbox", "browser", "learning"];
+type SectionProps = Omit<Parameters<typeof Section>[0], "title" | "about" | "children">;
+
+/** The ids of the fields, in the order a Save that stops focuses them. */
+const COMPACTION_IDS = {
+  messages: "settings-compaction",
+  least: "settings-compaction-least",
+  most: "settings-compaction-most",
+} as const;
+
+/**
+ * When a run compacts: past a count of messages, or once its next request
+ * would read a tenth of its budget, held between two lines. Nothing is said
+ * while a field is typed in: a field is checked when the reader leaves it, and
+ * all of them when Save is pressed, which focuses the first that is wrong.
+ */
+function CompactionSection({
+  draft,
+  onChange,
+  section,
+}: {
+  draft: CompactionDraft;
+  onChange: (patch: Partial<CompactionDraft>) => void;
+  section: SectionProps;
+}) {
+  const [left, setLeft] = useState<Set<keyof CompactionDraft>>(() => new Set());
+  const problems = checkCompaction(draft);
+  // A field speaks once the reader has left it; a refused Save speaks for all.
+  const said = (f: keyof CompactionDraft) =>
+    left.has(f) || section.problem ? problems[f] : undefined;
+  const pair =
+    (left.has("least") && left.has("most")) || section.problem ? problems.pair : undefined;
+  const sentence = explain(draft);
+  const pairId = "settings-compaction-pair";
+  const rangeId = "settings-compaction-range";
+
+  const leave = (f: keyof CompactionDraft) => {
+    setLeft((s) => new Set(s).add(f));
+    const tidy = tidied(draft[f]);
+    if (tidy !== draft[f]) onChange({ [f]: tidy });
+  };
+
+  const save = () => {
+    const bad = firstBad(problems);
+    if (bad) {
+      setLeft(new Set(["messages", "least", "most"]));
+      document.getElementById(COMPACTION_IDS[bad])?.focus();
+    }
+    section.onSave();
+  };
+
+  return (
+    <Section
+      title="Compaction"
+      about="When a run folds its earlier turns into a summary, so a long task keeps fitting. Runs already started keep the settings they began with."
+      {...section}
+      onSave={save}
+    >
+      <Field
+        label="Messages before a run compacts"
+        htmlFor={COMPACTION_IDS.messages}
+        hint={`${grouped(MESSAGES.min)} to ${grouped(MESSAGES.max)}.`}
+        error={said("messages")}
+      >
+        <Input
+          id={COMPACTION_IDS.messages}
+          inputMode="numeric"
+          autoComplete="off"
+          className="max-w-40 tabular-nums"
+          value={draft.messages}
+          onChange={(e) => onChange({ messages: e.target.value })}
+          onBlur={() => leave("messages")}
+        />
+      </Field>
+
+      <fieldset className="min-w-0 space-y-2">
+        <legend className="text-sm font-medium">
+          Tokens a request may read before it compacts
+        </legend>
+        <div className="grid max-w-md gap-3 sm:grid-cols-2">
+          {(["least", "most"] as const).map((f) => (
+            <Field
+              key={f}
+              label={f === "least" ? "At least" : "At most"}
+              htmlFor={COMPACTION_IDS[f]}
+              error={said(f)}
+            >
+              <TokensInput
+                id={COMPACTION_IDS[f]}
+                value={draft[f]}
+                aria-invalid={pair ? true : undefined}
+                aria-describedby={[rangeId, pair ? pairId : null].filter(Boolean).join(" ")}
+                onChange={(value) => onChange({ [f]: value })}
+                onBlur={() => leave(f)}
+              />
+            </Field>
+          ))}
+        </div>
+        <p id={rangeId} className="text-xs text-muted-foreground">
+          {grouped(TOKENS.min)} to {grouped(TOKENS.max)} each.
+        </p>
+        {pair ? (
+          <p id={pairId} className="text-xs text-destructive">
+            {pair}
+          </p>
+        ) : sentence ? (
+          <p className="max-w-prose text-sm">{sentence}</p>
+        ) : null}
+      </fieldset>
+
+      {section.canWrite && !isDefault(draft) ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="-ml-3"
+          onClick={() => {
+            setLeft(new Set());
+            onChange({
+              messages: String(DEFAULTS.messages),
+              least: grouped(DEFAULTS.least),
+              most: grouped(DEFAULTS.most),
+            });
+          }}
+        >
+          Use the defaults
+        </Button>
+      ) : null}
+    </Section>
+  );
+}
+
+/** The first field a refused Save focuses: messages, then at least, then at most. */
+function firstBad(p: CompactionProblems): keyof typeof COMPACTION_IDS | null {
+  if (p.messages) return "messages";
+  if (p.least || p.pair) return "least";
+  if (p.most) return "most";
+  return null;
+}
+
+/**
+ * A count of tokens: typed with or without grouping, its unit inside the
+ * field. The aria props Field joins to it land on the input itself.
+ */
+function TokensInput({
+  onChange,
+  ...input
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
+}) {
+  return (
+    <div className="relative">
+      <Input
+        {...input}
+        inputMode="numeric"
+        autoComplete="off"
+        className="pr-16 tabular-nums"
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
+      >
+        tokens
+      </span>
+    </div>
+  );
+}
+
+const GROUPS: Group[] = ["model", "hub", "compaction", "search", "sandbox", "browser", "learning"];
 
 function SettingsForm({
   teamId,
@@ -691,20 +894,19 @@ function SettingsForm({
           }
           searchKey={["agents", teamId]}
         />
-        <Field
-          label="Messages before a transcript compacts"
-          htmlFor="settings-compaction"
-          hint={`${MIN_COMPACTION} to ${MAX_COMPACTION}. A run also compacts when its next request would read a tenth of its token budget, at least 50,000 and at most 100,000 tokens.`}
-        >
-          <Input
-            id="settings-compaction"
-            inputMode="numeric"
-            className="max-w-40"
-            value={draft.compaction}
-            onChange={(e) => set("hub", { compaction: e.target.value })}
-          />
-        </Field>
       </Section>
+
+      <CompactionSection
+        draft={compactionOf(draft)}
+        onChange={(patch) =>
+          set("compaction", {
+            ...(patch.messages === undefined ? {} : { compaction: patch.messages }),
+            ...(patch.least === undefined ? {} : { tokensMin: patch.least }),
+            ...(patch.most === undefined ? {} : { tokensMax: patch.most }),
+          })
+        }
+        section={props("compaction")}
+      />
 
       <Section
         title="Web search"

@@ -434,7 +434,7 @@ func TestAProviderErrorIsAToolErrorAndTheRunGoesOn(t *testing.T) {
 	if _, err := f.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
 		SandboxProvider: "none", BrowserProvider: "none",
 		TeamID: f.team, ModelName: new("team/model"), ModelMaxTokens: new(int32(2048)),
-		SearchProvider: "searxng", SearchUrl: &url, CompactionMessages: 100,
+		SearchProvider: "searxng", SearchUrl: &url, CompactionMessages: 100, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
 	}); err != nil {
 		t.Fatal(err)
 	}

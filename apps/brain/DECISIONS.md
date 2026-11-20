@@ -25,11 +25,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   - During a rolling deploy a worker from before writes no cached count, so
     its runs count every token whole, as they did. The backfill ran before
     them and does not come back for them.
-- **A run compacts at 60,000 tokens of context, not 100,000.** Review
+- **A run compacts at 60,000 tokens of context by default, not 100,000.** Review
   delegates spent their last ten or twenty steps at 70,000 to 120,000,
   carrying tool output they were done with; a compaction left about 26,000.
   The cost is a compaction about twice as often, each a summary call and one
   request whose context is not cached yet.
+- **A team sets its own token lines, both of them.** `compaction_tokens_min`
+  and `compaction_tokens_max` are team settings, 50,000 and 60,000 until
+  saved, each from 30,000 to 1,000,000 and the least never above the most:
+  the table checks all three, and the handler checks the pair a save leaves,
+  each value the request leaves out taken from what is stored, so a client
+  from before the fields neither resets them nor saves a pair out of order.
+  Below 30,000 a run would compact almost every step. The SDK already takes
+  the line as `Compaction.AfterInputTokens`, so nothing in it changed.
 - **A budget has two soft lines before its cap, and they measure different
   things.** With a tenth of the budget left the run compacts; when one more
   call would not fit (twice the last call's input plus room for an answer:
@@ -48,10 +56,11 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   fails at `MaxSteps` and keeps what it had, as one stopped at its budget does.
 - **Compaction is the SDK's; the brain sets its thresholds and records it.**
   Past `compaction_messages`, or when the next request would read
-  `min(100k, max(budget/10, 50k))` tokens. The 50k floor is there because a
-  compaction keeps the latest ~15k tokens, the prompt and the tools: a line
-  under that is crossed again at once, and a small run spends its budget
-  summarising itself. A small budget is held by its soft lines instead. The summary is a message in the transcript,
+  `min(most, max(budget/10, least))` tokens, the team's
+  `compaction_tokens_max` and `compaction_tokens_min`. The least is there
+  because a compaction keeps the latest ~15k tokens, the prompt and the
+  tools: a line under that is crossed again at once, and a small run spends
+  its budget summarising itself. A small budget is held by its soft lines instead. The summary is a message in the transcript,
   marked `compaction`, as Claude Code and opencode keep theirs: the runner
   splices it back into every save, so the Postgres store's rewrite of the whole
   transcript keeps it, and a resumed run carries on from it with no model call

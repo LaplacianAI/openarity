@@ -352,9 +352,9 @@ func (t *transcript) showStep() {
 }
 
 func usageText(p payload) string {
-	text := grouped(p.InputTokens) + " in / " + grouped(p.OutputTokens) + " out"
+	text := cli.Grouped(p.InputTokens) + " in / " + cli.Grouped(p.OutputTokens) + " out"
 	if p.CachedInputTokens > 0 {
-		text += " · " + grouped(p.CachedInputTokens) + " cached"
+		text += " · " + cli.Grouped(p.CachedInputTokens) + " cached"
 	}
 	return text
 }
@@ -786,7 +786,7 @@ func (t *transcript) stats(run *client.Run) string {
 		tokens = run.InputTokens + run.OutputTokens
 	}
 	if tokens > 0 {
-		parts = append(parts, grouped(tokens)+" tokens")
+		parts = append(parts, cli.Grouped(tokens)+" tokens")
 	}
 
 	if run != nil && run.StartedAt != nil && run.FinishedAt != nil && !run.FinishedAt.Before(*run.StartedAt) {
@@ -1001,21 +1001,4 @@ func took(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dm %02ds", int(d/time.Minute), int(d%time.Minute/time.Second))
 	}
-}
-
-// grouped is n with thousands separated: 1,677.
-func grouped(n int64) string {
-	digits := strconv.FormatInt(n, 10)
-	sign := ""
-	if n < 0 {
-		sign, digits = "-", digits[1:]
-	}
-	var b strings.Builder
-	for i, d := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(d)
-	}
-	return sign + b.String()
 }

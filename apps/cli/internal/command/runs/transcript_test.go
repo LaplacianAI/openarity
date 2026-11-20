@@ -581,11 +581,6 @@ func TestDurationsAndCountsReadNaturally(t *testing.T) {
 			t.Errorf("took(%dms) = %q, want %q", ms, got, want)
 		}
 	}
-	for n, want := range map[int64]string{0: "0", 999: "999", 1000: "1,000", 1677: "1,677", 1234567: "1,234,567", -1677: "-1,677"} {
-		if got := grouped(n); got != want {
-			t.Errorf("grouped(%d) = %q, want %q", n, got, want)
-		}
-	}
 }
 
 // The stats line counts from the run when it was read and from the usage

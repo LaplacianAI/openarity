@@ -144,7 +144,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if err != nil {
 		return Built{}, err
 	}
-	built.Spec.Compaction = compactionFor(settings.CompactionMessages, budgetOf(run.TokenBudget))
+	built.Spec.Compaction = compactionFor(settings, budgetOf(run.TokenBudget))
 
 	// The builder reads the web for servers' docs and a skill's source.
 	web := run.Hub || a.Web || run.Builder

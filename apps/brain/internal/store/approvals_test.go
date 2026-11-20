@@ -373,7 +373,7 @@ func TestApprovalSettingsAreTheirOwnWrite(t *testing.T) {
 	}
 
 	if _, err := s.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
-		TeamID: f.team, SearchProvider: "none", CompactionMessages: 40, SandboxProvider: "none", BrowserProvider: "none",
+		TeamID: f.team, SearchProvider: "none", CompactionMessages: 40, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000, SandboxProvider: "none", BrowserProvider: "none",
 	}); err != nil {
 		t.Fatalf("UpsertTeamSettings: %v", err)
 	}

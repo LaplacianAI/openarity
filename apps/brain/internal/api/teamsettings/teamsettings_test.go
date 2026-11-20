@@ -60,24 +60,26 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		return db.TeamSetting{}, f.upsertErr
 	}
 	row := db.TeamSetting{
-		TeamID:             p.TeamID,
-		ModelName:          p.ModelName,
-		ModelMaxTokens:     p.ModelMaxTokens,
-		ModelTemperature:   p.ModelTemperature,
-		SearchProvider:     p.SearchProvider,
-		SearchUrl:          p.SearchUrl,
-		SearchSecretID:     p.SearchSecretID,
-		Learning:           p.Learning,
-		CompactionMessages: p.CompactionMessages,
-		HubAgentID:         p.HubAgentID,
-		SandboxProvider:    p.SandboxProvider,
-		BrowserProvider:    p.BrowserProvider,
-		BrowserUrl:         p.BrowserUrl,
-		BrowserSecretID:    p.BrowserSecretID,
-		SandboxUrl:         p.SandboxUrl,
-		SandboxSecretID:    p.SandboxSecretID,
-		SandboxTemplate:    p.SandboxTemplate,
-		UpdatedAt:          time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
+		TeamID:              p.TeamID,
+		ModelName:           p.ModelName,
+		ModelMaxTokens:      p.ModelMaxTokens,
+		ModelTemperature:    p.ModelTemperature,
+		SearchProvider:      p.SearchProvider,
+		SearchUrl:           p.SearchUrl,
+		SearchSecretID:      p.SearchSecretID,
+		Learning:            p.Learning,
+		CompactionMessages:  p.CompactionMessages,
+		CompactionTokensMin: p.CompactionTokensMin,
+		CompactionTokensMax: p.CompactionTokensMax,
+		HubAgentID:          p.HubAgentID,
+		SandboxProvider:     p.SandboxProvider,
+		BrowserProvider:     p.BrowserProvider,
+		BrowserUrl:          p.BrowserUrl,
+		BrowserSecretID:     p.BrowserSecretID,
+		SandboxUrl:          p.SandboxUrl,
+		SandboxSecretID:     p.SandboxSecretID,
+		SandboxTemplate:     p.SandboxTemplate,
+		UpdatedAt:           time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 	}
 	f.row = &row
 	return row, nil
@@ -237,7 +239,10 @@ func (e *env) stored(provider string, secretID *uuid.UUID, url *string) {
 		SearchSecretID:     secretID,
 		SearchUrl:          url,
 		CompactionMessages: 100,
-		UpdatedAt:          time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC),
+		// The table's defaults, as a row saved before the columns has them.
+		CompactionTokensMin: 50_000,
+		CompactionTokensMax: 60_000,
+		UpdatedAt:           time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -265,9 +270,11 @@ type wire struct {
 		URL      *string `json:"url"`
 		KeySet   bool    `json:"key_set"`
 	} `json:"browser"`
-	Learning           bool  `json:"learning"`
-	CompactionMessages int32 `json:"compaction_messages"`
-	Hub                *struct {
+	Learning            bool  `json:"learning"`
+	CompactionMessages  int32 `json:"compaction_messages"`
+	CompactionTokensMin int32 `json:"compaction_tokens_min"`
+	CompactionTokensMax int32 `json:"compaction_tokens_max"`
+	Hub                 *struct {
 		ID   uuid.UUID `json:"id"`
 		Name string    `json:"name"`
 	} `json:"hub"`

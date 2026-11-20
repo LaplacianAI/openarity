@@ -21,6 +21,10 @@ import (
 const (
 	KeyAPI            = "api_key"
 	defaultCompaction = 100
+	// The brain's line before teams could set it, kept for a team that
+	// never saved its settings.
+	defaultCompactionTokensMin = 50_000
+	defaultCompactionTokensMax = 60_000
 )
 
 type Store interface {
@@ -133,6 +137,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := params(teamID, req, secretID, hub)
+	p.CompactionTokensMin, p.CompactionTokensMax = compactionTokens(req, stored)
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
 	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
@@ -290,11 +295,13 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 			Template: row.SandboxTemplate,
 			KeySet:   row.SandboxSecretID != nil,
 		},
-		Browser:            browserView(row),
-		Learning:           row.Learning,
-		CompactionMessages: row.CompactionMessages,
-		Hub:                hub,
-		UpdatedAt:          &row.UpdatedAt,
+		Browser:             browserView(row),
+		Learning:            row.Learning,
+		CompactionMessages:  row.CompactionMessages,
+		CompactionTokensMin: row.CompactionTokensMin,
+		CompactionTokensMax: row.CompactionTokensMax,
+		Hub:                 hub,
+		UpdatedAt:           &row.UpdatedAt,
 	}
 	if row.ModelName != nil && row.ModelMaxTokens != nil {
 		s.Model = &modelRef{Name: *row.ModelName, MaxTokens: *row.ModelMaxTokens, Temperature: row.ModelTemperature}
@@ -304,9 +311,11 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 
 func defaults() settings {
 	return settings{
-		Search:             search{Provider: providerNone},
-		Sandbox:            sandbox{Provider: string(sandboxpkg.None)},
-		Browser:            browser{Provider: string(browserpkg.None)},
-		CompactionMessages: defaultCompaction,
+		Search:              search{Provider: providerNone},
+		Sandbox:             sandbox{Provider: string(sandboxpkg.None)},
+		Browser:             browser{Provider: string(browserpkg.None)},
+		CompactionMessages:  defaultCompaction,
+		CompactionTokensMin: defaultCompactionTokensMin,
+		CompactionTokensMax: defaultCompactionTokensMax,
 	}
 }

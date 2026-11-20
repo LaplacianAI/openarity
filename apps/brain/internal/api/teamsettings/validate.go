@@ -23,7 +23,11 @@ const (
 
 	minCompaction = 10
 	maxCompaction = 10000
-	maxKeyBytes   = 4096
+	// Below this a run would compact almost every step: a compaction keeps
+	// about 15,000 tokens besides the prompt and the tools.
+	minCompactionTokens = 30_000
+	maxCompactionTokens = 1_000_000
+	maxKeyBytes         = 4096
 )
 
 func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr) bool) error {
@@ -35,6 +39,9 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
 		return fmt.Errorf("compaction_messages must be between %d and %d", minCompaction, maxCompaction)
 	}
+	if err := checkCompactionTokens(compactionTokens(req, stored)); err != nil {
+		return err
+	}
 	if err := checkSearch(req.Search, stored, allow); err != nil {
 		return err
 	}
@@ -45,6 +52,39 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 	}
 	if req.Browser != nil {
 		return checkBrowser(*req.Browser, stored, allow)
+	}
+	return nil
+}
+
+// compactionTokens is the pair a save leaves: each value the request gives,
+// else the stored one, else the default.
+func compactionTokens(req settingsRequest, stored *db.TeamSetting) (least, most int32) {
+	least, most = defaultCompactionTokensMin, defaultCompactionTokensMax
+	if stored != nil {
+		least, most = stored.CompactionTokensMin, stored.CompactionTokensMax
+	}
+	if req.CompactionTokensMin != nil {
+		least = *req.CompactionTokensMin
+	}
+	if req.CompactionTokensMax != nil {
+		most = *req.CompactionTokensMax
+	}
+	return least, most
+}
+
+// checkCompactionTokens checks the pair a save leaves, so a request that
+// changes one is held to the other as stored.
+func checkCompactionTokens(least, most int32) error {
+	for _, v := range []struct {
+		name  string
+		value int32
+	}{{"compaction_tokens_min", least}, {"compaction_tokens_max", most}} {
+		if v.value < minCompactionTokens || v.value > maxCompactionTokens {
+			return fmt.Errorf("%s must be between %d and %d", v.name, minCompactionTokens, maxCompactionTokens)
+		}
+	}
+	if least > most {
+		return fmt.Errorf("compaction_tokens_min, %d, must not be above compaction_tokens_max, %d", least, most)
 	}
 	return nil
 }
