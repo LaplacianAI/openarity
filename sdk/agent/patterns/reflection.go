@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
+// Reflection answers, then reviews and rewrites its answer up to cycles
+// times. A cycle is two steps, a review and a rewrite; a review the model
+// writes out rather than submits is asked for once more inside its step, so
+// a step may make two calls.
 func Reflection(cycles int) agent.Pattern { return reflection{cycles: cycles} }
 
 func ReflectionStreaming(cycles int) agent.Pattern {
@@ -111,26 +116,31 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	ask := in
 	ask.Spec.System = append(slices.Clone(in.Spec.System), reflecting)
 	ask.Spec.Tools = []agent.Tool{critiqueTool()}
+	review := react{aside: true, must: CritiqueToolName}
 
-	resp, err := react{aside: true, must: CritiqueToolName}.call(ctx, ask, msgs)
+	call, resp, ok, err := reviewOnce(ctx, ask, review, msgs)
 	if err != nil {
 		return critique{}, err
 	}
-	in.Emit(ctx, agent.UsageEvent{Model: in.Spec.Model.Name, Usage: resp.Usage})
-
-	if resp.Finish == agent.FinishLength {
-		return critique{}, agent.ErrTruncated
-	}
-
-	var call agent.ToolCall
-	for _, c := range resp.Message.ToolCalls {
-		if c.Name == CritiqueToolName {
-			call = c
-			break
+	if !ok {
+		// A model that thinks will not be told which tool to call, so the
+		// openaicompat client drops tool_choice and asks again without it, and
+		// the model often writes its review out instead. Shown that review and
+		// asked to submit it, it usually does. Only its text is handed back,
+		// in a user turn after the draft: the reply's reasoning, any stray
+		// call and an empty turn are left out, as a provider may refuse them.
+		// It is asked once more, in the same step, and the verdict is still
+		// read from the call, never guessed from the prose.
+		if cancelled := ctx.Err(); cancelled != nil {
+			return critique{}, cancelled
 		}
-	}
-	if call.Name == "" {
-		return critique{}, ErrNoCritique
+		withReview := append(slices.Clone(msgs), submitAgain(resp.Message.Text()))
+		if call, _, ok, err = reviewOnce(ctx, ask, review, withReview); err != nil {
+			return critique{}, err
+		}
+		if !ok {
+			return critique{}, fmt.Errorf("%w, though asked twice", ErrNoCritique)
+		}
 	}
 
 	var verdict critique
@@ -141,6 +151,42 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 		return critique{}, fmt.Errorf("%w: it asked for changes without saying which", ErrNoCritique)
 	}
 	return verdict, nil
+}
+
+// reviewOnce makes one reviewing call and records what it used. A reply cut
+// off at max_tokens is an error; otherwise it reports the critique the reply
+// submitted, if it submitted one.
+func reviewOnce(
+	ctx context.Context, ask agent.Input, review react, msgs []agent.Message,
+) (agent.ToolCall, agent.Response, bool, error) {
+	resp, err := review.call(ctx, ask, msgs)
+	if err != nil {
+		return agent.ToolCall{}, resp, false, err
+	}
+	ask.Emit(ctx, agent.UsageEvent{Model: ask.Spec.Model.Name, Usage: resp.Usage})
+	if resp.Finish == agent.FinishLength {
+		return agent.ToolCall{}, resp, false, agent.ErrTruncated
+	}
+	for _, c := range resp.Message.ToolCalls {
+		if c.Name == CritiqueToolName {
+			return c, resp, true, nil
+		}
+	}
+	return agent.ToolCall{}, resp, false, nil
+}
+
+// submitAgain is the turn after a review written out rather than submitted:
+// the review, fenced off as the model's own words, then the ask. A review may
+// quote the draft or what a tool returned, so a closing tag inside it is
+// broken, and the fence ends where the pattern ends it. A reply that wrote
+// nothing gets an ask that refers to nothing.
+func submitAgain(review string) agent.Message {
+	text := submitFresh
+	if review = strings.TrimSpace(review); review != "" {
+		review = strings.ReplaceAll(review, "</review>", "< /review>")
+		text = "Your review of the answer was:\n\n<review>\n" + review + "\n</review>\n\n" + submitNow
+	}
+	return agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: text}}}
 }
 
 func (l reflection) refine(
@@ -213,6 +259,14 @@ var reflecting = agent.Content{
 		"agreeable is not useful here, and neither is inventing faults in an answer that is " +
 		"already right. Then call " + CritiqueToolName + " once.",
 }
+
+// submitNow follows a reflecting turn that wrote its review rather than
+// calling the tool.
+const submitNow = "Submit that judgement now: call " + CritiqueToolName +
+	" with it. Do not write it out again."
+
+// submitFresh follows a reflecting turn that wrote nothing at all.
+const submitFresh = "Judge the answer above now: call " + CritiqueToolName + " with your judgement."
 
 var refining = agent.Content{
 	Type: agent.ContentText,
