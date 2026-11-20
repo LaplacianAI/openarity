@@ -24,7 +24,7 @@ const defaultE2BTemplate = "openarity-sandbox"
 var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
-	"learning", "compaction-messages", "hub", "no-hub",
+	"learning", "compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 	"browser", "browser-url", "browser-key-stdin", "no-browser-key",
 }
@@ -82,6 +82,8 @@ type settingsFlags struct {
 	noKey       bool
 	learning    string
 	compaction  int32
+	tokensMin   int32
+	tokensMax   int32
 	hub         string
 	noHub       bool
 
@@ -208,6 +210,10 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&f.noBrowserKey, "no-browser-key", false, "a self-hosted browser only: reach it with no key")
 	cmd.Flags().StringVar(&f.learning, "learning", "", "on or off")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
+	cmd.Flags().Int32Var(&f.tokensMin, "compaction-tokens-min", 0,
+		"the least a run's next request may read before it compacts, 30000 to 1000000")
+	cmd.Flags().Int32Var(&f.tokensMax, "compaction-tokens-max", 0,
+		"the most a run's next request may read before it compacts, 30000 to 1000000")
 	cmd.Flags().StringVar(&f.hub, "hub", "", "the agent every message reaches first, by name")
 	cmd.Flags().BoolVar(&f.noHub, "no-hub", false, "return the team to the built-in orchestrator")
 	return cmd
@@ -316,6 +322,13 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 	if changed("compaction-messages") {
 		req.CompactionMessages = f.compaction
 	}
+	// Sent only when given: left out, the brain keeps what is stored.
+	if changed("compaction-tokens-min") {
+		req.CompactionTokensMin = &f.tokensMin
+	}
+	if changed("compaction-tokens-max") {
+		req.CompactionTokensMax = &f.tokensMax
+	}
 	switch {
 	case f.noHub:
 		req.Hub = nil
@@ -420,7 +433,7 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 				learning = "on"
 			}
 			table.Row(label("learning"), value(learning))
-			table.Row(label("compaction"), value(strconv.Itoa(int(s.CompactionMessages))+" messages"))
+			table.Row(label("compaction"), value(compactionLine(s)))
 			if s.Hub == nil {
 				table.Row(label("hub"), muted("orchestrator (built in)"))
 			} else {
@@ -477,4 +490,16 @@ func printBrowser(table *printer.Table, opts *cli.Options, b client.BrowserSetti
 		}
 		table.Row(label("browser key"), value(key))
 	}
+}
+
+// compactionLine is when a run compacts, as a person reads it: "100 messages,
+// or 50,000 to 60,000 tokens", the token line being a tenth of the run's
+// budget held between the two.
+func compactionLine(s *client.TeamSettings) string {
+	line := strconv.Itoa(int(s.CompactionMessages)) + " messages, or "
+	if s.CompactionTokensMin == s.CompactionTokensMax {
+		return line + cli.Grouped(int64(s.CompactionTokensMax)) + " tokens"
+	}
+	return line + cli.Grouped(int64(s.CompactionTokensMin)) + " to " +
+		cli.Grouped(int64(s.CompactionTokensMax)) + " tokens, a tenth of the run's budget"
 }

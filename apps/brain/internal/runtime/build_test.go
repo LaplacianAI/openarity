@@ -525,6 +525,27 @@ func TestAnAgentRowBecomesTheSpecItDescribes(t *testing.T) {
 	}
 }
 
+// A team's saved lines reach the run: here a 500,000 budget's tenth, 50,000,
+// is raised to the team's least.
+func TestARunCompactsBetweenItsTeamsSavedLines(t *testing.T) {
+	f := newFixture()
+	settings := defaultTeamSettings()
+	settings.TeamID = f.run.TeamID
+	settings.CompactionMessages, settings.CompactionTokensMin, settings.CompactionTokensMax = 30, 80_000, 90_000
+	f.store.settings = &settings
+	budget := int64(500_000)
+	f.run.TokenBudget = &budget
+
+	built, err := f.builder.Build(t.Context(), f.run, &noSession{}, Lineage{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if want := (agent.Compaction{AfterMessages: 30, AfterInputTokens: 80_000}); built.Spec.Compaction == nil ||
+		*built.Spec.Compaction != want {
+		t.Errorf("compaction = %+v, want %+v: the team's messages, and its least", built.Spec.Compaction, want)
+	}
+}
+
 // --- the agent ---
 
 func TestARunWhoseAgentIsGoneIsRefusedNamingIt(t *testing.T) {

@@ -473,26 +473,28 @@ type TeamMember struct {
 }
 
 type TeamSetting struct {
-	TeamID             uuid.UUID
-	ModelName          *string
-	ModelMaxTokens     *int32
-	ModelTemperature   *float64
-	SearchProvider     string
-	SearchUrl          *string
-	SearchSecretID     *uuid.UUID
-	Learning           bool
-	CompactionMessages int32
-	UpdatedAt          time.Time
-	HubAgentID         *uuid.UUID
-	SandboxProvider    string
-	SandboxUrl         *string
-	SandboxSecretID    *uuid.UUID
-	SandboxTemplate    *string
-	ApprovalMode       string
-	ApprovalTtlMinutes int32
-	BrowserProvider    string
-	BrowserUrl         *string
-	BrowserSecretID    *uuid.UUID
+	TeamID              uuid.UUID
+	ModelName           *string
+	ModelMaxTokens      *int32
+	ModelTemperature    *float64
+	SearchProvider      string
+	SearchUrl           *string
+	SearchSecretID      *uuid.UUID
+	Learning            bool
+	CompactionMessages  int32
+	UpdatedAt           time.Time
+	HubAgentID          *uuid.UUID
+	SandboxProvider     string
+	SandboxUrl          *string
+	SandboxSecretID     *uuid.UUID
+	SandboxTemplate     *string
+	ApprovalMode        string
+	ApprovalTtlMinutes  int32
+	BrowserProvider     string
+	BrowserUrl          *string
+	BrowserSecretID     *uuid.UUID
+	CompactionTokensMin int32
+	CompactionTokensMax int32
 }
 
 type User struct {

@@ -226,7 +226,7 @@ func (f *execFixture) builderRun(t *testing.T) uuid.UUID {
 	model, maxTokens := "team/model", int32(2048)
 	if _, err := f.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
 		SandboxProvider: "none", BrowserProvider: "none",
-		TeamID: f.team, ModelName: &model, ModelMaxTokens: &maxTokens, SearchProvider: "none", CompactionMessages: 100,
+		TeamID: f.team, ModelName: &model, ModelMaxTokens: &maxTokens, SearchProvider: "none", CompactionMessages: 100, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
 	}); err != nil {
 		t.Fatalf("UpsertTeamSettings: %v", err)
 	}

@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -40,6 +40,8 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.BrowserProvider,
 		&i.BrowserUrl,
 		&i.BrowserSecretID,
+		&i.CompactionTokensMin,
+		&i.CompactionTokensMax,
 	)
 	return i, err
 }
@@ -69,7 +71,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
 `
 
 type SetTeamApprovalParams struct {
@@ -105,6 +107,8 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.BrowserProvider,
 		&i.BrowserUrl,
 		&i.BrowserSecretID,
+		&i.CompactionTokensMin,
+		&i.CompactionTokensMax,
 	)
 	return i, err
 }
@@ -125,16 +129,17 @@ INSERT INTO team_settings (
     team_id,
     model_name, model_max_tokens, model_temperature,
     search_provider, search_url, search_secret_id,
-    learning, compaction_messages, hub_agent_id,
+    learning, compaction_messages, compaction_tokens_min, compaction_tokens_max, hub_agent_id,
     sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
     browser_provider, browser_url, browser_secret_id
 ) VALUES (
     $1,
     $2, $3, $4,
     $5, $6, $7,
-    $8, $9, $10,
-    $11, $12, $13, $14,
-    $15, $16, $17
+    $8, $9,
+    $10, $11, $12,
+    $13, $14, $15, $16,
+    $17, $18, $19
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -145,6 +150,8 @@ ON CONFLICT (team_id) DO UPDATE SET
     search_secret_id    = EXCLUDED.search_secret_id,
     learning            = EXCLUDED.learning,
     compaction_messages = EXCLUDED.compaction_messages,
+    compaction_tokens_min = EXCLUDED.compaction_tokens_min,
+    compaction_tokens_max = EXCLUDED.compaction_tokens_max,
     hub_agent_id        = EXCLUDED.hub_agent_id,
     sandbox_provider    = EXCLUDED.sandbox_provider,
     sandbox_url         = EXCLUDED.sandbox_url,
@@ -154,27 +161,29 @@ ON CONFLICT (team_id) DO UPDATE SET
     browser_url         = EXCLUDED.browser_url,
     browser_secret_id   = EXCLUDED.browser_secret_id,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, learning, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
 `
 
 type UpsertTeamSettingsParams struct {
-	TeamID             uuid.UUID
-	ModelName          *string
-	ModelMaxTokens     *int32
-	ModelTemperature   *float64
-	SearchProvider     string
-	SearchUrl          *string
-	SearchSecretID     *uuid.UUID
-	Learning           bool
-	CompactionMessages int32
-	HubAgentID         *uuid.UUID
-	SandboxProvider    string
-	SandboxUrl         *string
-	SandboxSecretID    *uuid.UUID
-	SandboxTemplate    *string
-	BrowserProvider    string
-	BrowserUrl         *string
-	BrowserSecretID    *uuid.UUID
+	TeamID              uuid.UUID
+	ModelName           *string
+	ModelMaxTokens      *int32
+	ModelTemperature    *float64
+	SearchProvider      string
+	SearchUrl           *string
+	SearchSecretID      *uuid.UUID
+	Learning            bool
+	CompactionMessages  int32
+	CompactionTokensMin int32
+	CompactionTokensMax int32
+	HubAgentID          *uuid.UUID
+	SandboxProvider     string
+	SandboxUrl          *string
+	SandboxSecretID     *uuid.UUID
+	SandboxTemplate     *string
+	BrowserProvider     string
+	BrowserUrl          *string
+	BrowserSecretID     *uuid.UUID
 }
 
 // The whole row every time. A save that keeps the search key passes the same
@@ -191,6 +200,8 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.SearchSecretID,
 		arg.Learning,
 		arg.CompactionMessages,
+		arg.CompactionTokensMin,
+		arg.CompactionTokensMax,
 		arg.HubAgentID,
 		arg.SandboxProvider,
 		arg.SandboxUrl,
@@ -222,6 +233,8 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.BrowserProvider,
 		&i.BrowserUrl,
 		&i.BrowserSecretID,
+		&i.CompactionTokensMin,
+		&i.CompactionTokensMax,
 	)
 	return i, err
 }
