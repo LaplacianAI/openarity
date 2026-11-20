@@ -34,10 +34,10 @@ type outcome struct {
 // so a yes is never a steer, never the next run's input, and never gives up
 // the very request it answers. A message that answered is not marked as
 // asking, so no run ever takes it.
-func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery, messageID uuid.UUID, via string) (outcome, error) {
+func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery, t tap, messageID uuid.UUID, via string) (outcome, error) {
 	c := chat{q: q, ch: ch, s: s, m: m, message: messageID}
 	if m.Answer != nil {
-		return answerTap(ctx, c)
+		return answerTap(ctx, c, t)
 	}
 	if !asksUs(ch, s, m) {
 		// "yes 7K2F" answers where its person writes it, a group thread
@@ -45,13 +45,13 @@ func answer(ctx context.Context, q Queries, ch Channel, s db.Session, m Delivery
 		if !answersHere(ch.answering(), SessionKind(s.Kind), m.Inbound) {
 			return outcome{}, nil
 		}
-		out, _, err := answerTyped(ctx, c, false)
+		out, _, err := typedAnswer(ctx, c, false)
 		return out, err
 	}
 	if strings.TrimSpace(m.Text) == "" && len(m.Files) == 0 && len(m.Missed) == 0 {
 		return outcome{unanswered: "the message has no text"}, nil
 	}
-	if out, handled, err := answerTyped(ctx, c, true); handled || err != nil {
+	if out, handled, err := typedAnswer(ctx, c, true); handled || err != nil {
 		return out, err
 	}
 
@@ -249,4 +249,20 @@ func Supersede(ctx context.Context, q Superseding, runID, userID uuid.UUID, via 
 		return nil, fmt.Errorf("queue run %s again: %w", runID, err)
 	}
 	return &row, nil
+}
+
+// typedAnswer reads a typed message as an answer, as answerTyped does, and
+// marks one it was as an answer: whatever it did (decided a request, was told
+// its request is over, was asked which code it meant), it is the person
+// acting on a request, not something said, and leaves the conversation as a
+// tap does. Kept, not dropped, since its notice answers it.
+func typedAnswer(ctx context.Context, c chat, addressed bool) (outcome, bool, error) {
+	out, handled, err := answerTyped(ctx, c, addressed)
+	if err != nil || !handled {
+		return out, handled, err
+	}
+	if err := c.q.MarkMessageAnswer(ctx, c.message); err != nil {
+		return outcome{}, true, fmt.Errorf("mark message %s as an answer: %w", c.message, err)
+	}
+	return out, true, nil
 }

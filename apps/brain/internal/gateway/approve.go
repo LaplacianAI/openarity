@@ -83,10 +83,13 @@ type chat struct {
 // answerTyped decides a typed answer, or says it is not one (handled false):
 // the message is then an ordinary one. A code names one of the sender's own
 // requests in the conversation, and a word that names none of them ("yes
-// sure") is what they wrote. A bare yes or no is an answer only while the
-// sender has a request waiting and the message asks the bot: in a group, a
-// "yes" to nobody in particular is not one, while "yes 7K2F" is, as the
-// footer asks for it, mention or not.
+// sure") is what they wrote. Only a code decides. A bare yes or no, while
+// the sender has a request waiting and the message asks the bot, decides
+// nothing and is told the code to reply with: it may answer the bot's own
+// question rather than the request, and read as an ordinary message it would
+// give up the very request it meant to approve. In a group, a "yes" to nobody
+// in particular is not one, while "yes 7K2F" is, as the footer asks for it,
+// mention or not.
 func answerTyped(ctx context.Context, c chat, addressed bool) (outcome, bool, error) {
 	d, code, ok := typed(c.m.Text, c.ch.answering().Trigger)
 	switch {
@@ -121,11 +124,7 @@ func answerTyped(ctx context.Context, c chat, addressed bool) (outcome, bool, er
 			askable = append(askable, a)
 		}
 	}
-	switch len(askable) {
-	case 1:
-		out, err := c.decide(ctx, askable[0], d, "")
-		return out, true, err
-	case 0:
+	if len(askable) == 0 {
 		out, err := c.tell(ctx, mine[0].RootRunID, waitsForApprover, ReplyNotice{})
 		return out, true, err
 	}
@@ -133,9 +132,12 @@ func answerTyped(ctx context.Context, c chat, addressed bool) (outcome, bool, er
 	for i, a := range askable {
 		codes[i] = fmt.Sprintf("%s %s (%s)", d.word(), a.Code, approval.ToolName(a.Tool))
 	}
+	waiting := "A request is waiting."
+	if len(askable) > 1 {
+		waiting = fmt.Sprintf("%d requests are waiting.", len(askable))
+	}
 	out, err := c.tell(ctx, askable[0].RootRunID,
-		fmt.Sprintf("%d requests are waiting. Reply with the code: %s.", len(askable), strings.Join(codes, ", ")),
-		ReplyNotice{})
+		waiting+" Reply with the code: "+strings.Join(codes, ", ")+".", ReplyNotice{})
 	return out, true, err
 }
 
@@ -159,24 +161,39 @@ func (c chat) answerCode(ctx context.Context, d Decision, code string) (outcome,
 	return out, true, err
 }
 
-// answerTap decides an answer given with the platform's own control. It
-// names its request by id, code or the hash of a poll's option; one that no
-// longer waits is said to be over, and its controls are taken away.
-func answerTap(ctx context.Context, c chat) (outcome, error) {
-	ans := c.m.Answer
-	pending, err := c.q.ListPendingApprovalsBySession(ctx, c.s.ID)
+// A tap is what an answer given with the platform's own control names: a
+// request still waiting and the decision on it, or the sender's own request
+// that is already over. Neither is a tap that names nothing it may act on.
+type tap struct {
+	pending  *db.Approval
+	decision Decision
+	reason   string
+	over     *db.Approval
+}
+
+// acts is whether the tap does anything: one that does not is never stored.
+func (t tap) acts() bool { return t.pending != nil || t.over != nil }
+
+// matchTap finds what an answer given with a control names, by id, code or
+// the hash of a poll's option, before its message is stored. It reads under
+// the session's lock, which EnsureSession took, so what it finds waiting is
+// still waiting when the tap decides it. A poll vote changed after it decided
+// its request names nothing: WhatsApp cannot take a poll back, and a person
+// changing their vote is not changing the decision.
+func matchTap(ctx context.Context, q Queries, teamID uuid.UUID, s db.Session, m Delivery) (tap, error) {
+	ans := m.Answer
+	pending, err := q.ListPendingApprovalsBySession(ctx, s.ID)
 	if err != nil {
-		return outcome{}, fmt.Errorf("requests waiting in session %s: %w", c.s.ID, err)
+		return tap{}, fmt.Errorf("requests waiting in session %s: %w", s.ID, err)
 	}
-	d := ans.Decision
 	for _, a := range pending {
 		switch {
 		case ans.ApprovalID != "" && a.ID.String() == ans.ApprovalID,
 			ans.ApprovalID == "" && ans.Code != "" && strings.EqualFold(a.Code, ans.Code):
-			return c.decide(ctx, a, d, ans.Reason)
+			return tap{pending: &a, decision: ans.Decision, reason: ans.Reason}, nil
 		}
 		if chosen, ok := pollChoice(a.Code, ans.Hashes); ok {
-			return c.decide(ctx, a, chosen, "")
+			return tap{pending: &a, decision: chosen}, nil
 		}
 	}
 
@@ -184,13 +201,25 @@ func answerTap(ctx context.Context, c chat) (outcome, error) {
 	// and only to its own person, so a tap naming someone else's request
 	// learns nothing of it.
 	if id, err := uuid.Parse(ans.ApprovalID); err == nil {
-		a, err := c.q.GetApproval(ctx, db.GetApprovalParams{ID: id, TeamID: c.ch.TeamID})
+		a, err := q.GetApproval(ctx, db.GetApprovalParams{ID: id, TeamID: teamID})
 		switch {
-		case err == nil && a.Status != "pending" && a.RequestedFor != nil && *a.RequestedFor == c.m.UserID:
-			return c.tell(ctx, a.RootRunID, over(a), ReplyNotice{Handle: ans.Handle, Settled: true})
+		case err == nil && a.Status != "pending" && a.RequestedFor != nil && *a.RequestedFor == m.UserID:
+			return tap{over: &a}, nil
 		case err != nil && !errors.Is(err, pgx.ErrNoRows):
-			return outcome{}, fmt.Errorf("request %s: %w", id, err)
+			return tap{}, fmt.Errorf("request %s: %w", id, err)
 		}
+	}
+	return tap{}, nil
+}
+
+// answerTap acts on what matchTap found: decides the request still waiting,
+// or says the sender's own is over and takes its controls away.
+func answerTap(ctx context.Context, c chat, t tap) (outcome, error) {
+	switch {
+	case t.pending != nil:
+		return c.decide(ctx, *t.pending, t.decision, t.reason)
+	case t.over != nil:
+		return c.tell(ctx, t.over.RootRunID, over(*t.over), ReplyNotice{Handle: c.m.Answer.Handle, Settled: true})
 	}
 	return outcome{}, nil
 }

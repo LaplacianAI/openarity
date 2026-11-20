@@ -11,7 +11,7 @@
 -- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
-       (SELECT m.id FROM messages m WHERE m.session_id = r.session_id
+       (SELECT m.id FROM messages m WHERE m.session_id = r.session_id AND NOT m.answer
           AND (sqlc.narg('unread_since')::timestamptz IS NULL OR m.received_at < sqlc.narg('unread_since')::timestamptz)
         ORDER BY m.received_at DESC, m.id DESC LIMIT 1),
        sqlc.arg('kind')::text, sqlc.arg('text')::text

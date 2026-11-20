@@ -265,7 +265,7 @@ func (q *Queries) InsertNotice(ctx context.Context, arg InsertNoticeParams) (int
 const insertReply = `-- name: InsertReply :one
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text)
 SELECT r.team_id, r.id, r.session_id, s.channel_id,
-       (SELECT m.id FROM messages m WHERE m.session_id = r.session_id
+       (SELECT m.id FROM messages m WHERE m.session_id = r.session_id AND NOT m.answer
           AND ($1::timestamptz IS NULL OR m.received_at < $1::timestamptz)
         ORDER BY m.received_at DESC, m.id DESC LIMIT 1),
        $2::text, $3::text

@@ -264,6 +264,7 @@ type Message struct {
 	Asks       bool
 	ConsumedBy *uuid.UUID
 	SenderName string
+	Answer     bool
 }
 
 type Notice struct {

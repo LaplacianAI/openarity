@@ -13,7 +13,7 @@ import (
 )
 
 const countMessagesBySession = `-- name: CountMessagesBySession :one
-SELECT count(*) FROM messages WHERE session_id = $1
+SELECT count(*) FROM messages WHERE session_id = $1 AND NOT answer
 `
 
 func (q *Queries) CountMessagesBySession(ctx context.Context, sessionID uuid.UUID) (int64, error) {
@@ -24,8 +24,8 @@ func (q *Queries) CountMessagesBySession(ctx context.Context, sessionID uuid.UUI
 }
 
 const insertMessage = `-- name: InsertMessage :one
-INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sent_at, sender_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sent_at, sender_name, answer)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (channel_id, external_id) DO NOTHING
 RETURNING id
 `
@@ -38,6 +38,7 @@ type InsertMessageParams struct {
 	Text       string
 	SentAt     *time.Time
 	SenderName string
+	Answer     bool
 }
 
 // InsertMessage returns the id it wrote, and no row at all for a replay. Both
@@ -64,6 +65,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (u
 		arg.Text,
 		arg.SentAt,
 		arg.SenderName,
+		arg.Answer,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -71,8 +73,8 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (u
 }
 
 const listMessagesBySession = `-- name: ListMessagesBySession :many
-SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by, sender_name FROM messages
-WHERE session_id = $1
+SELECT id, channel_id, user_id, external_id, text, sent_at, received_at, session_id, session_seq, asks, consumed_by, sender_name, answer FROM messages
+WHERE session_id = $1 AND NOT answer
   AND (NOT $2::bool
    OR (received_at, id) < ($3::timestamptz, $4::uuid))
 ORDER BY received_at DESC, id DESC
@@ -115,6 +117,7 @@ func (q *Queries) ListMessagesBySession(ctx context.Context, arg ListMessagesByS
 			&i.Asks,
 			&i.ConsumedBy,
 			&i.SenderName,
+			&i.Answer,
 		); err != nil {
 			return nil, err
 		}

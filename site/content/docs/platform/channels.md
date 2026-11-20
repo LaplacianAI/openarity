@@ -381,11 +381,12 @@ it will run with.
   (**Approve**, **Approve for this run**, **Decline…**, which asks for an
   optional reason), a keyboard in Telegram, a poll on WhatsApp. Typing
   `yes 7K2F` or `no 7K2F` works on every channel, in a group too without
-  mentioning the bot (where the channel answers in groups at all), and a bare
-  `yes` or `no` when only one request waits (in a group, only in a message
-  that asks the bot). A code names only the sender's own requests, the waiting
-  one first: `yes` and a word that is none of them is read as what it says.
-  Another bot's message never answers.
+  mentioning the bot (where the channel answers in groups at all). Only a code
+  decides: a bare `yes` or `no` while a request waits decides nothing and is
+  answered with the code to reply with, since it may be answering the agent's
+  own question rather than the request. A code names only the sender's own
+  requests, the waiting one first: `yes` and a word that is none of them is
+  read as what it says. Another bot's message never answers.
 - **Anyone else** (a `guest`, or a request a rule wants someone else to
   answer) is told it went to an approver. No code is shown, and nothing typed
   in the chat decides it: approvers answer on the dashboard's **Tool
@@ -395,9 +396,12 @@ Only the whole message is an answer: `yes 7K2F` inside a sentence is a
 sentence. A code answers only the request it was given for, so an old `yes`
 never approves a newer one. A tap from anyone but the person the request is
 for is told so privately and changes nothing, and once a request is decided its
-buttons are taken away. An answer is never read as a new message: it does not
-steer the run, and it does not give the request up the way writing something
-else does.
+buttons are taken away. Once decided, a request stays decided: a poll vote
+changed afterwards, or a second tap, changes nothing, and a vote that decides
+nothing is not kept at all. An answer, tapped or typed, is never read as a new
+message: it does not steer the run, it does not give the request up the way
+writing something else does, and it is left out of the conversation the agent
+reads back.
 
 A Telegram bot connected before this is pointed at its channel again when the
 brain starts, so it is sent the taps on a prompt's keyboard too.

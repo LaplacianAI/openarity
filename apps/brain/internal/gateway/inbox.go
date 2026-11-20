@@ -43,6 +43,7 @@ type Runs interface {
 	CreateChannelRun(ctx context.Context, arg db.CreateChannelRunParams) (db.Run, error)
 	BuilderCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 	MarkMessageAsks(ctx context.Context, id uuid.UUID) error
+	MarkMessageAnswer(ctx context.Context, id uuid.UUID) error
 	ConsumeMessages(ctx context.Context, arg db.ConsumeMessagesParams) (int64, error)
 	Superseding
 	Approvals
@@ -226,6 +227,23 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery, via stri
 	}
 	d := Delivered{Session: session.ID}
 
+	// An answer given with a control is matched before it is stored: one
+	// naming nothing it may act on (a poll vote changed after it decided) is
+	// refused here, so it never reaches the conversation, the next run's
+	// input or the session's reads. One that acts is kept as the record of
+	// the action, marked so those reads leave it out too.
+	var t tap
+	if m.Answer != nil {
+		if t, err = matchTap(ctx, q, ch.TeamID, session, m); err != nil {
+			return Delivered{}, outcome{}, err
+		}
+		if !t.acts() {
+			out := outcome{unanswered: "an answer to a request that is no longer waiting"}
+			d.Unanswered = out.unanswered
+			return d, out, nil
+		}
+	}
+
 	var sentAt *time.Time
 	if !m.SentAt.IsZero() {
 		at := m.SentAt
@@ -240,6 +258,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery, via stri
 		Text:       m.Text,
 		SentAt:     sentAt,
 		SenderName: CleanName(m.Author.DisplayName),
+		Answer:     m.Answer != nil,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -265,7 +284,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery, via stri
 	}
 
 	d.Message = messageID
-	out, err := answer(ctx, q, ch, session, m, messageID, via)
+	out, err := answer(ctx, q, ch, session, m, t, messageID, via)
 	if err != nil {
 		return Delivered{}, outcome{}, err
 	}

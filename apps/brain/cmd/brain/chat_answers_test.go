@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -180,14 +182,14 @@ func (w *chatWorld) runStatus(t *testing.T) string {
 	return s
 }
 
-// A yes from the person a request is for, who may approve their own, decides
-// it in the chat: approved by them, via the channel, the run queued again and
+// A yes with its code from the person a request is for, who may approve
+// their own, decides it in the chat: approved by them, via the channel, the run queued again and
 // handed back, one notice, and the message never a steer.
 func TestAYesInTheChatApprovesTheRequestAndResumesTheRun(t *testing.T) {
 	w := newChatWorld(t, "member")
 	a := w.ask(t, "c1", "7K2F", time.Hour, false)
 
-	w.say(t, w.user, "m-1", "yes", nil)
+	w.say(t, w.user, "m-1", "yes 7K2F", nil)
 
 	got := w.request(t, a)
 	if got.Status != "approved" || got.DecidedBy == nil || *got.DecidedBy != w.user ||
@@ -224,7 +226,7 @@ func TestAYesFromAChannelWithNowhereToReplyAnswersSilently(t *testing.T) {
 	}
 	a := w.ask(t, "c1", "7K2F", time.Hour, false)
 
-	w.say(t, w.user, "m-1", "yes", nil)
+	w.say(t, w.user, "m-1", "yes 7K2F", nil)
 
 	if got := w.request(t, a); got.Status != "approved" {
 		t.Fatalf("the request is %s, want approved", got.Status)
@@ -237,8 +239,8 @@ func TestAYesFromAChannelWithNowhereToReplyAnswersSilently(t *testing.T) {
 	}
 }
 
-// With two waiting, a bare yes names neither: the codes come back and
-// nothing is decided. The code then decides the one it names.
+// A bare yes names no request, with two waiting as with one: the codes come
+// back and nothing is decided. The code then decides the one it names.
 func TestABareYesWithTwoWaitingAsksWhichAndTheCodeDecides(t *testing.T) {
 	w := newChatWorld(t, "member")
 	first, second := w.ask(t, "c1", "7K2F", time.Hour, false), w.ask(t, "c2", "9ABC", time.Hour, false)
@@ -421,7 +423,7 @@ func TestALateYesFindsTheRequestExpired(t *testing.T) {
 	w := newChatWorld(t, "member")
 	a := w.ask(t, "c1", "7K2F", -time.Minute, false)
 
-	w.say(t, w.user, "m-1", "yes", nil)
+	w.say(t, w.user, "m-1", "yes 7K2F", nil)
 
 	got := w.request(t, a)
 	if got.Status != "expired" || got.DecidedBy != nil || got.DecidedVia == nil || *got.DecidedVia != "sweep" {
@@ -456,7 +458,7 @@ func TestATapDeliveredTwiceIsAnsweredOnce(t *testing.T) {
 func TestATapOnAnAnsweredRequestSaysItIsOver(t *testing.T) {
 	w := newChatWorld(t, "member")
 	a := w.ask(t, "c1", "7K2F", time.Hour, false)
-	w.say(t, w.user, "m-1", "no", nil)
+	w.say(t, w.user, "m-1", "no 7K2F", nil)
 
 	w.say(t, w.user, "tap-1", "Approve", &gateway.Answer{ApprovalID: a.ID.String(), Decision: gateway.Approve})
 
@@ -466,6 +468,9 @@ func TestATapOnAnAnsweredRequestSaysItIsOver(t *testing.T) {
 	n := w.notices(t)
 	if len(n) != 2 || !n[1].detail.Settled || n[1].text != "Declined: create_issue on github." {
 		t.Errorf("notices %+v", n)
+	}
+	if stored, answer := w.stored(t, "tap-1"); !stored || !answer {
+		t.Errorf("the tap told it was over: stored %v, kept as an answer %v; want both, out of the conversation", stored, answer)
 	}
 }
 
@@ -526,6 +531,9 @@ func TestInAGroupACodeAnswersWithoutAMentionAndABareYesDoesNot(t *testing.T) {
 	if got := w.request(t, a); got.Status != "approved" {
 		t.Errorf("the request is %s after yes 7K2F in the group, want approved", got.Status)
 	}
+	if stored, answer := w.stored(t, "m-2"); !stored || !answer {
+		t.Errorf("yes 7K2F without a mention: stored %v, as an answer %v; want both", stored, answer)
+	}
 	if w.asks(t, "m-2") {
 		t.Error("the answer asks a run")
 	}
@@ -536,13 +544,16 @@ func TestInAGroupACodeAnswersWithoutAMentionAndABareYesDoesNot(t *testing.T) {
 func TestATapOnSomeoneElsesAnsweredRequestLearnsNothing(t *testing.T) {
 	w := newChatWorld(t, "member")
 	a := w.ask(t, "c1", "7K2F", time.Hour, false)
-	w.say(t, w.user, "m-1", "no", nil)
+	w.say(t, w.user, "m-1", "no 7K2F", nil)
 	other := w.someone(t, "member")
 
 	w.say(t, other, "tap-1", "Approve", &gateway.Answer{ApprovalID: a.ID.String(), Decision: gateway.Approve})
 
 	if n := w.notices(t); len(n) != 1 {
 		t.Errorf("notices %+v, want only the owner's own decline", n)
+	}
+	if stored, _ := w.stored(t, "tap-1"); stored {
+		t.Error("a tap that acts on nothing of its sender's was stored in the conversation")
 	}
 }
 
@@ -643,5 +654,164 @@ func TestARepeatedCodeNamesTheWaitingRequestThenTheNewest(t *testing.T) {
 	n := w.notices(t)
 	if len(n) != 2 || n[1].text != "7K2F is no longer waiting. Approved: create_event on calendar." {
 		t.Errorf("notices %+v, want the newest answered named", n)
+	}
+}
+
+// stored is whether a message was kept under this id, and whether it was kept
+// as an answer, out of the conversation.
+func (w *chatWorld) stored(t *testing.T, id string) (stored, answer bool) {
+	t.Helper()
+	err := w.raw.QueryRow(t.Context(), `SELECT answer FROM messages WHERE external_id = $1`, id).Scan(&answer)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false
+	}
+	if err != nil {
+		t.Fatalf("read message %s: %v", id, err)
+	}
+	return true, answer
+}
+
+// A vote changed after it decided its request is refused before it is
+// stored: WhatsApp cannot take a poll back, and the decision is final. It
+// changes nothing, says nothing, hands nothing back, and never reaches the
+// conversation, the next run's input or the session's reads.
+func TestAPollVoteChangedAfterItDecidedIsNotStored(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+	yes := sha256.Sum256([]byte(gateway.PollOptions("7K2F")[0]))
+	no := sha256.Sum256([]byte(gateway.PollOptions("7K2F")[1]))
+
+	w.say(t, w.user, "vote-1", "Voted in the poll", &gateway.Answer{Hashes: [][]byte{yes[:]}})
+	w.say(t, w.user, "vote-2", "Voted in the poll", &gateway.Answer{Hashes: [][]byte{no[:]}})
+	w.say(t, w.user, "vote-3", "Voted in the poll", &gateway.Answer{Hashes: [][]byte{yes[:]}})
+
+	if got := w.request(t, a); got.Status != "approved" {
+		t.Errorf("the request is %s after its vote was changed, want still approved", got.Status)
+	}
+	if stored, answer := w.stored(t, "vote-1"); !stored || !answer {
+		t.Errorf("the deciding vote: stored %v, as an answer %v; want both", stored, answer)
+	}
+	for _, id := range []string{"vote-2", "vote-3"} {
+		if stored, _ := w.stored(t, id); stored {
+			t.Errorf("%s, a vote changed after the decision, was stored", id)
+		}
+	}
+	if n := w.notices(t); len(n) != 1 {
+		t.Errorf("notices %+v, want only the decision's", n)
+	}
+	if r := w.runs.got(); len(r) != 1 {
+		t.Errorf("handed back %d times, want once", len(r))
+	}
+}
+
+// An answer, tapped or typed, is the person acting on a request, not something
+// said: the session's reads, its history and the next run's input leave it
+// out. So does a typed answer to a request already decided, which is still
+// told where the request stands. What is not an answer ("yes sure", a code
+// that is not theirs) is what they wrote, and stays.
+func TestAnAnswerTappedOrTypedIsKeptOutOfTheConversation(t *testing.T) {
+	w := newChatWorld(t, "member")
+	first := w.ask(t, "c1", "7K2F", time.Hour, false)
+	w.ask(t, "c2", "9JD3", time.Hour, false)
+
+	w.say(t, w.user, "tap-1", "Approve", &gateway.Answer{ApprovalID: first.ID.String(), Decision: gateway.Approve})
+	w.say(t, w.user, "typed-1", "yes 9JD3", nil)
+	w.say(t, w.user, "typed-2", "no 9JD3", nil)
+	w.say(t, w.user, "said-1", "yes sure", nil)
+
+	for id, want := range map[string]bool{"tap-1": true, "typed-1": true, "typed-2": true, "said-1": false} {
+		if stored, answer := w.stored(t, id); !stored || answer != want {
+			t.Errorf("%s: stored %v, as an answer %v; want stored, as an answer %v", id, stored, answer, want)
+		}
+	}
+	if n := w.notices(t); len(n) != 3 || n[2].text != "9JD3 is no longer waiting. Approved: create_issue on github." {
+		t.Errorf("notices %+v, want the change of mind told the request is over", n)
+	}
+
+	ctx := t.Context()
+	texts := func(got []string) string { return strings.Join(got, " | ") }
+
+	history, err := w.store.ListSessionHistory(ctx, db.ListSessionHistoryParams{SessionID: w.session, Before: 1 << 62, PageSize: 50})
+	if err != nil {
+		t.Fatalf("ListSessionHistory: %v", err)
+	}
+	var said []string
+	for _, h := range history {
+		said = append(said, h.Text)
+	}
+	if got := texts(said); got != "yes sure" {
+		t.Errorf("history = %q, want only what was said", got)
+	}
+
+	since, err := w.store.ListMessagesSinceLastRun(ctx, db.ListMessagesSinceLastRunParams{
+		SessionID: w.session, Before: time.Now().Add(time.Minute), RunID: uuid.New(), Turns: 50,
+	})
+	if err != nil {
+		t.Fatalf("ListMessagesSinceLastRun: %v", err)
+	}
+	said = said[:0]
+	for _, m := range since {
+		said = append(said, m.Text)
+	}
+	if got := texts(said); got != "yes sure" {
+		t.Errorf("the next run's input = %q, want only what was said", got)
+	}
+
+	events, err := w.store.ListSessionEvents(ctx, db.ListSessionEventsParams{SessionID: w.session, PageSize: 50})
+	if err != nil {
+		t.Fatalf("ListSessionEvents: %v", err)
+	}
+	said = said[:0]
+	for _, e := range events {
+		if e.Kind == "message" {
+			var m struct{ Text string }
+			_ = json.Unmarshal(e.Payload, &m)
+			said = append(said, m.Text)
+		}
+	}
+	if got := texts(said); got != "yes sure" {
+		t.Errorf("the session's stream = %q, want only what was said", got)
+	}
+
+	page, err := w.store.ListMessagesBySession(ctx, db.ListMessagesBySessionParams{SessionID: w.session, PageSize: 50})
+	if err != nil {
+		t.Fatalf("ListMessagesBySession: %v", err)
+	}
+	count, err := w.store.CountMessagesBySession(ctx, w.session)
+	if err != nil {
+		t.Fatalf("CountMessagesBySession: %v", err)
+	}
+	if len(page) != 1 || page[0].Text != "yes sure" || count != 1 {
+		t.Errorf("the session's messages = %d (%d counted), want only what was said", len(page), count)
+	}
+}
+
+// Only a code decides. A bare yes with one request waiting may answer the
+// bot's own question rather than the request, so it decides nothing: it is
+// told the code, kept out of the conversation, and gives up nothing, so the
+// request still waits for its code.
+func TestABareYesWithOneWaitingIsToldTheCodeAndDecidesNothing(t *testing.T) {
+	w := newChatWorld(t, "member")
+	a := w.ask(t, "c1", "7K2F", time.Hour, false)
+
+	w.say(t, w.user, "m-1", "yes", nil)
+
+	if got := w.request(t, a); got.Status != "pending" {
+		t.Fatalf("a bare yes left the request %s, want still pending", got.Status)
+	}
+	if s := w.runStatus(t); s != "waiting" {
+		t.Errorf("the run is %s after a bare yes, want still waiting", s)
+	}
+	if n := w.notices(t); len(n) != 1 || n[0].text != "A request is waiting. Reply with the code: yes 7K2F (create_issue on github)." {
+		t.Errorf("notices %+v, want the code to reply with", n)
+	}
+	if stored, answer := w.stored(t, "m-1"); !stored || !answer || w.asks(t, "m-1") {
+		t.Errorf("the bare yes: stored %v, as an answer %v, asks %v; want an answer that asks nothing",
+			stored, answer, w.asks(t, "m-1"))
+	}
+
+	w.say(t, w.user, "m-2", "yes 7K2F", nil)
+	if got := w.request(t, a); got.Status != "approved" {
+		t.Errorf("the request is %s after its code, want approved", got.Status)
 	}
 }
