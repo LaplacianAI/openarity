@@ -122,10 +122,12 @@ rewrites at random and costs a call to do it.
 
 The critique is asked for by name. A model that will not be told which tool to
 call while it thinks, as Claude will not, is asked without it and often writes
-its review out instead. The pattern then asks once more, in the same step, with
-that review before it: "Submit that judgement now." The verdict is still read
-from the call, never from the prose. If the second answer is prose too, the
-answer stands and the run says the self-review was skipped.
+its review out instead. The pattern then asks once more, in the same step:
+the review's text, fenced off as the model's own words, then "Submit that
+judgement now". Only the text goes back, never the reply itself, since its
+reasoning, a stray call or an empty turn could be refused. The verdict is still
+read from the call, never from the prose. If the second answer is prose too,
+the answer stands and the run says the self-review was skipped.
 
 ### Who gets tools
 
@@ -139,10 +141,11 @@ a superset, not a deviation.
 
 ### What it costs
 
-One call to answer, then two per cycle, and it stops early the moment the
-critique approves. A review that has to be asked for twice makes one more call,
-inside its own step. So `Reflection(2)` costs between two and five calls, and the
-budget for the cycles is **reserved before generating**:
+One call to answer, then per cycle a review and, when it asks for changes, a
+rewrite; a review the model writes out rather than submits is asked for once
+more, inside its own step. It stops early the moment the critique approves. So
+`Reflection(2)` costs between two and seven calls, and the budget for the
+cycles, counted in steps, is **reserved before generating**:
 
 ```go
 spec.MaxSteps = in.Spec.MaxSteps - 2*cycles

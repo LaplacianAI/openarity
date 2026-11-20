@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -376,11 +377,20 @@ func TestAReviewWrittenOutIsAskedForAgainAndUsed(t *testing.T) {
 	if again.MustCall != CritiqueToolName {
 		t.Errorf("the second ask must call %q, want %q", again.MustCall, CritiqueToolName)
 	}
-	n := len(again.Messages)
-	if n < 2 || again.Messages[n-2].Text() != "That is wrong: Germany's capital is Berlin." ||
-		again.Messages[n-1].Role != agent.RoleUser || !strings.Contains(again.Messages[n-1].Text(), CritiqueToolName) {
-		t.Errorf("the second ask ends %+v, want the written review, then a user turn naming %s",
-			again.Messages[max(n-2, 0):], CritiqueToolName)
+	// The first ask's conversation, then one user turn holding the review
+	// and the ask: the draft stays the last assistant turn, and the reply is
+	// never replayed as one.
+	first := model.calls[1].Messages
+	if len(again.Messages) != len(first)+1 {
+		t.Fatalf("the second ask has %d messages, want the first's %d and one more", len(again.Messages), len(first))
+	}
+	if last := first[len(first)-1]; last.Role != agent.RoleAssistant || last.Text() != "Paris is the capital of Germany." {
+		t.Errorf("the first ask ends %+v, want the draft", last)
+	}
+	added := again.Messages[len(first)]
+	if added.Role != agent.RoleUser || !strings.Contains(added.Text(), "<review>\nThat is wrong: Germany's capital is Berlin.\n</review>") ||
+		!strings.Contains(added.Text(), CritiqueToolName) {
+		t.Errorf("the added turn is %+v, want a user turn holding the fenced review and naming %s", added, CritiqueToolName)
 	}
 	// The written review is the critic's, never the person's: the rewrite
 	// reads the draft and the submitted critique, not the prose.
@@ -798,4 +808,142 @@ func TestTheCritiqueToolRefusesToBeInvoked(t *testing.T) {
 	if out != "" {
 		t.Errorf("it returned %q as well as an error", out)
 	}
+}
+
+// reviewAskedTwice runs one cycle whose review is written out, then answered
+// by second.
+func reviewAskedTwice(t *testing.T, second turn) (*fakeModel, agent.Result, []agent.SkippedEvent) {
+	t.Helper()
+	model := &fakeModel{turns: []turn{answered(text("a draft")), answered(text("it is fine")), second}}
+	result, skipped := reflectKept(t, model)
+	return model, result, skipped
+}
+
+// Approval on the second ask ends the cycle as approval on the first does.
+func TestASecondAskThatApprovesKeepsTheDraftWithoutARewrite(t *testing.T) {
+	t.Parallel()
+
+	model, result, skipped := reviewAskedTwice(t, critiqued(false, ""))
+	if result.Output != "a draft" || len(model.calls) != 3 || len(skipped) != 0 {
+		t.Errorf("Output %q after %d calls and skips %+v, want the draft after 3 and no skip",
+			result.Output, len(model.calls), skipped)
+	}
+}
+
+// The second ask fails as the first would: cut off, or refused, it keeps the
+// draft and says why, and does not claim it was asked twice for nothing.
+func TestASecondAskThatFailsKeepsTheDraftSayingWhy(t *testing.T) {
+	t.Parallel()
+
+	cut := answered(text("half a crit"))
+	cut.resp.Finish = agent.FinishLength
+	for name, c := range map[string]struct {
+		second turn
+		want   string
+	}{
+		"cut off": {cut, agent.ErrTruncated.Error()},
+		"refused": {turn{err: errors.New("upstream 503")}, "upstream 503"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, result, skipped := reviewAskedTwice(t, c.second)
+			if result.Output != "a draft" {
+				t.Errorf("Output = %q, want the draft", result.Output)
+			}
+			skippedFor(t, skipped, "critique", 2, c.want)
+			if strings.Contains(skipped[0].Reason, "asked twice") {
+				t.Errorf("the reason %q says asked twice, but the second ask failed", skipped[0].Reason)
+			}
+		})
+	}
+}
+
+// A second answer naming any other tool is no critique either, and there is
+// no third ask.
+func TestASecondAskCallingAnotherToolIsNoCritique(t *testing.T) {
+	t.Parallel()
+
+	model, result, skipped := reviewAskedTwice(t, answered(calling("web_search", `{}`)))
+	if result.Output != "a draft" || len(model.calls) != 3 {
+		t.Errorf("Output %q after %d calls, want the draft after 3", result.Output, len(model.calls))
+	}
+	skippedFor(t, skipped, "critique", 2, ErrNoCritique.Error(), "asked twice")
+}
+
+// A reply that only thought, or called something else, wrote no review: the
+// second ask is the ask alone, with no empty fence and no stray call carried.
+func TestAReviewThatWroteNothingIsAskedPlainly(t *testing.T) {
+	t.Parallel()
+
+	thought := agent.Message{Role: agent.RoleAssistant, Reasoning: &agent.Reasoning{Text: "hmm"}}
+	stray := calling("web_search", `{"q": "berlin"}`)
+	for name, first := range map[string]agent.Message{"only thought": thought, "called another tool": stray} {
+		t.Run(name, func(t *testing.T) {
+			model := &fakeModel{turns: []turn{answered(text("a draft")), answered(first), critiqued(false, "")}}
+			reflectKept(t, model)
+			if len(model.calls) != 3 {
+				t.Fatalf("%d calls, want 3", len(model.calls))
+			}
+			msgs := model.calls[2].Messages
+			added := msgs[len(msgs)-1]
+			if added.Role != agent.RoleUser || added.Text() != submitNow {
+				t.Errorf("the second ask ends %+v, want the ask alone", added)
+			}
+			for _, m := range msgs {
+				if len(m.ToolCalls) > 0 || (m.Reasoning != nil && m.Reasoning.Text == "hmm") {
+					t.Errorf("the second ask carries %+v from the first reply", m)
+				}
+			}
+		})
+	}
+}
+
+// Cancelled once the review came back written out, the run stops there: no
+// second ask, and the cancellation, not a missing critique.
+func TestACancelledRunIsNotAskedForItsReviewAgain(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	model := &fakeModel{turns: []turn{answered(text("a draft")), answered(text("it is fine"))}}
+	model.turns[1].before = cancel
+	_, err := Reflection(1).Run(ctx, agent.Input{Spec: reflectSpec(), Messages: ask("hello"), Model: model})
+	if !errors.Is(err, context.Canceled) || len(model.calls) != 2 {
+		t.Errorf("err = %v after %d calls, want the cancellation after 2", err, len(model.calls))
+	}
+}
+
+// Each cycle asks again only if its own review was written out, and a cycle
+// whose second ask fails keeps the rewrite of the cycle before.
+func TestEachCycleAsksAgainOnlyForItsOwnReview(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeModel{turns: []turn{
+		answered(text("draft")),
+		answered(text("needs work")), critiqued(true, "be shorter"), answered(text("rewrite 1")),
+		answered(text("still long")), answered(text("I said it is long")),
+	}}
+	events := make(chan agent.Event, 64)
+	result, err := Reflection(2).Run(t.Context(), agent.Input{
+		Spec: reflectSpec(), Messages: ask("hello"), Model: model, Events: events,
+	})
+	close(events)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Output != "rewrite 1" || len(model.calls) != 6 {
+		t.Errorf("Output %q after %d calls, want rewrite 1 after 6", result.Output, len(model.calls))
+	}
+	var steps []int
+	var skipped []agent.SkippedEvent
+	for e := range events {
+		switch ev := e.(type) {
+		case agent.StepEvent:
+			steps = append(steps, ev.Step)
+		case agent.SkippedEvent:
+			skipped = append(skipped, ev)
+		}
+	}
+	if want := []int{1, 2, 3, 4}; !slices.Equal(steps, want) {
+		t.Errorf("steps = %v, want %v", steps, want)
+	}
+	skippedFor(t, skipped, "critique", 4, "asked twice", "cycle 2")
 }
