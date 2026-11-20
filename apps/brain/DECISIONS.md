@@ -603,41 +603,51 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   can clear the backlog. Same error, opposite handling from `brain reap`, whose
   exit code *is* its report.
 - **A deploy leaves a run's workflow PENDING, on a version the next build
-  runs.** Two DBOS defaults stranded every long run on staging. DBOS's context
-  was made from the signal context, so SIGTERM reached each workflow as a
-  cancellation, which DBOS records as CANCELLED for good; it skips that only
-  when its own `Shutdown` stops the workflow. The worker now hands it
-  `context.WithoutCancel(ctx)` and lets `Shutdown` do the stopping. And DBOS's
-  default application version is a hash of the binary, while a worker dequeues
-  only its own version, so a run the sweep resumed after a deploy sat ENQUEUED
-  forever. The version is fixed instead (`appVersion` in `internal/worker`),
-  since a run's workflow is one step that rebuilds the run from its rows.
-  - **Each worker makes its version the latest.** The API's client enqueues
-    with no version, and DBOS hands such a workflow only to a worker of the
-    latest version, the one whose first launch was newest. One launch of any
-    other build, a rollback say, would leave every new run queued for good.
-  - **The cost of the signal no longer reaching DBOS:** its connect and
-    migrations at startup cannot be cut short, so they are bounded by
-    `startupTimeout` (60s) instead of DBOS's two minutes.
+  runs.** Two DBOS defaults stranded every long run on staging. The worker
+  made DBOS's context from the signal context, so SIGTERM reached each
+  workflow as a cancellation, which DBOS records as CANCELLED for good; it
+  skips that only when its own `Shutdown` stops the workflow. The context is
+  now `context.WithoutCancel(ctx)`, and `Shutdown` does the stopping. And
+  DBOS's default version is a hash of the binary, while a worker dequeues only
+  its own version, so a run the sweep resumed after a deploy sat ENQUEUED for
+  good. `appVersion` in `internal/worker` is fixed instead: a run's workflow is
+  one step that rebuilds the run from its rows, so any build can carry it on.
+  - **Each worker makes its version the latest.** The API enqueues with no
+    version, and DBOS hands that only to a worker of the latest version, the
+    highest `version_timestamp`. That is set when a version is first
+    registered and moved to now by `SetLatestApplicationVersion`, which `Run`
+    calls with the context's own version (`DBOS__APPVERSION` overrides the
+    config). Without it, one launch of any other build would take every new
+    run for good.
+  - **A rollback to a build from before this** launches under a hash, becomes
+    the latest and takes the API's new runs. What waits under
+    `openarity-brain-v1` waits untouched, and is taken up when this build is
+    deployed again, with no restamp.
+  - **Startup cannot be cut short by a signal,** so DBOS's connect and
+    migrations are bounded by `startupTimeout` (60s), not its two minutes.
   - **Every workflow survives a stop, not only runs.** A sweep, purge, drain
     or reply workflow stopped mid-step stays PENDING under the dead worker's
-    executor id, and only runs are taken over (by the run sweep). That is
-    harmless: both queues limit concurrency per worker only, and a scheduled
-    tick or a reply kick is redone by the next one. A few such rows gather per
-    deploy. Never cancel `openarity-runs` rows to clear them.
-  - **This rests on a DBOS internal,** the cause its shutdown cancels with.
-    `TestARunStoppedByASignalIsResumedByTheNextWorker`,
-    `TestAWorkerTakesUpWhatAnyBuildOfThisVersionQueued` and
-    `TestAWorkerTakesUpTheAPIsRunsAfterAnotherBuildLaunched` hold it, with
-    `TestTheWorkerKeepsOneVersionAcrossBuilds`. They need Postgres, so run
-    them with `db=` on every DBOS upgrade.
-  - **Runbook: restamping runs onto the version.** For the first deploy of
-    this change, and for any change to `appVersion`: a workflow keeps the
-    version it was enqueued with, and neither a resume nor a second enqueue
-    restamps it. Deploy, make sure no older worker runs, then wait three
-    minutes: a run the old build cancelled has no queue until the sweep (90s
-    stale, every minute) resumes it. Then check, restamp, and check again until
-    no other version is left:
+    executor id. Only runs are taken over, by the run sweep, and executor ids
+    are random per process, so nothing else ever clears those rows: a few
+    gather per deploy. They block nothing, as both queues limit concurrency
+    per worker only, and the next tick or reply sweep redoes their work.
+    Never cancel `openarity-runs` rows to tidy up: a cancelled run is never
+    taken up again.
+  - **It rests on a DBOS internal,** the cause its shutdown cancels with. The
+    Postgres tests in `internal/worker/shutdown_test.go` hold it, with
+    `TestTheWorkerKeepsOneVersionAcrossBuilds`; run them with `db=` on every
+    DBOS upgrade.
+  - **Restamping** is needed after the first deploy of this change and after
+    any change to `appVersion`, because a workflow keeps the version it was
+    enqueued with and neither a resume nor a second enqueue restamps it. There
+    is no operations page yet, so the steps live here:
+    1. Deploy, and make sure no older worker still runs.
+    2. Wait three minutes: a run the old build cancelled has no queue until
+       the run sweep takes it over (`staleAfter`, 90s) and resumes it (the
+       `runtime-sweep` schedule, every minute).
+    3. Count what is left on another version, restamp it, and count again
+       until nothing is. Where `DBOS__APPVERSION` is set, use its value; better,
+       do not set it in a deployment.
 
     ```sql
     SELECT application_version, status, count(*) FROM dbos.workflow_status
@@ -649,7 +659,7 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
        AND application_version IS DISTINCT FROM 'openarity-brain-v1';
     ```
 
-    Leave the other queues: their work is redone by the next tick or sweep.
+    Leave the other queues: the next tick or sweep redoes their work.
 - **`brain migrate up` creates DBOS's tables as well as ours.** DBOS keeps
   eleven tables under `dbos` and migrates them itself, with no lock: `serve`
   and a worker starting together on a fresh database failed with `duplicate

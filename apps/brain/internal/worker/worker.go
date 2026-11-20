@@ -13,11 +13,7 @@ import (
 )
 
 const (
-	shutdownGrace = 30 * time.Second
-	// The system database's connect and migrations, which a signal cannot
-	// cut short: DBOS's context is made without ctx's cancellation.
-	startupTimeout = 60 * time.Second
-	AppName        = "openarity-brain"
+	AppName = "openarity-brain"
 	// appVersion is fixed, not DBOS's default hash of the binary: a worker
 	// dequeues only workflows of its own version, so with the hash a run
 	// stopped by one deploy is never picked up by the next. A run's workflow
@@ -31,6 +27,14 @@ const (
 	// run cannot replay, and restamp with the runbook in DECISIONS.md.
 	// DBOS__APPVERSION, if set, overrides this.
 	appVersion = "openarity-brain-v1"
+)
+
+const (
+	shutdownGrace = 30 * time.Second
+	// startupTimeout bounds the system database's connect and migrations.
+	// A signal cannot cut them short, as DBOS's context is made without
+	// ctx's cancellation.
+	startupTimeout = 60 * time.Second
 )
 
 func executorID() string {
@@ -98,11 +102,14 @@ func (w *Worker) Run(ctx context.Context) error {
 		return fmt.Errorf("launch the durable runtime: %w", err)
 	}
 	// The API enqueues a run with no version, and DBOS hands such a workflow
-	// only to a worker of the latest version: the one whose first launch was
-	// newest. One launch of any other build, a rollback say, would leave
-	// every new run queued for good. So each worker makes its own the latest.
-	if err := dbos.SetLatestApplicationVersion(d, appVersion); err != nil {
-		return fmt.Errorf("make %s the latest version: %w", appVersion, err)
+	// only to a worker of the latest version: the highest version_timestamp,
+	// set when a version is first registered and moved to now by this call.
+	// One launch of any other build, a rollback say, would otherwise leave
+	// every new run queued for good. The context's version, not appVersion,
+	// as DBOS__APPVERSION overrides the config.
+	version := dbos.GetApplicationVersion(d)
+	if err := dbos.SetLatestApplicationVersion(d, version); err != nil {
+		return fmt.Errorf("make %s the latest version: %w", version, err)
 	}
 
 	if len(schedules) > 0 {
