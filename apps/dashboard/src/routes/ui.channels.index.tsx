@@ -310,6 +310,14 @@ function ChannelDetail({
             <KeyValue label={channel.hook_url ? "Webhook URL" : "Webhook path"}>
               <Mono className="break-all text-foreground">POST {hookAddress(channel)}</Mono>
             </KeyValue>
+            {channel.provider === SLACK ? (
+              <KeyValue label={channel.hook_url ? "Interactivity URL" : "Interactivity path"}>
+                <Mono className="break-all text-foreground">
+                  POST {hookAddress(channel)}
+                  {INTERACTIVITY}
+                </Mono>
+              </KeyValue>
+            ) : null}
             <KeyValue label="Signing secret">
               {channel.provider === SLACK
                 ? "In the secret store, as pasted from the Slack app's settings."
@@ -354,7 +362,7 @@ function ChannelDetail({
           <KeyValue label="Waiting senders">
             {channel.notify_strangers
               ? "Told once that they are waiting, and again when let in."
-              : "Not told anything. Their messages wait in Approvals."}
+              : "Not told anything. Their messages wait in Sender approvals."}
             {canWrite ? (
               <NotifyStrangers teamId={teamId} channel={channel} onChanged={onChanged} />
             ) : null}
@@ -903,11 +911,18 @@ export function channelRequest(d: ChannelDraft): CreateChannelRequest | string {
 }
 
 /**
+ * Where a Slack channel's buttons answer: beside its events, on the same hook.
+ * Keep in step with slack.InteractivitySuffix in the brain.
+ */
+const INTERACTIVITY = "/interactivity";
+
+/**
  * Slack's own page for making an app from a manifest, filled in: a bot that
  * reads the messages it is sent and the channels it is in, answers, and
- * reads the files people share. Slack will not take events without a
- * Request URL, and the real one exists only once the channel does, so the
- * manifest holds a placeholder the person replaces as the last step.
+ * reads the files people share, with Interactivity on for the buttons under
+ * an approval. Slack will not take events without a Request URL, and the
+ * real ones exist only once the channel does, so the manifest holds
+ * placeholders the person replaces as the last step.
  */
 export const SLACK_PLACEHOLDER_URL = "https://example.com/replace-with-the-openarity-request-url";
 
@@ -942,6 +957,10 @@ export function slackManifestURL(channelName: string): string {
       event_subscriptions: {
         request_url: SLACK_PLACEHOLDER_URL,
         bot_events: ["message.channels", "message.groups", "message.im", "message.mpim"],
+      },
+      interactivity: {
+        is_enabled: true,
+        request_url: `${SLACK_PLACEHOLDER_URL}${INTERACTIVITY}`,
       },
       org_deploy_enabled: false,
       socket_mode_enabled: false,
@@ -1225,7 +1244,9 @@ function ConnectSheet({
 /** One numbered step of a setup, its number in the trace's step circle. */
 function SetupStep({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
-    <li className="grid grid-cols-[1.5rem_1fr] gap-x-3 gap-y-1.5">
+    // minmax(0, 1fr): a long address stays inside the step rather than
+    // widening the dialog past its edge.
+    <li className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
       <span
         aria-hidden
         className="flex size-6 items-center justify-center rounded-full bg-card text-xs font-medium tabular-nums shadow-[inset_0_0_0_1px_var(--color-sheet-edge)]"
@@ -1233,7 +1254,7 @@ function SetupStep({ n, title, children }: { n: number; title: string; children:
         {n}
       </span>
       <p className="self-center text-sm font-medium">{title}</p>
-      <div className="col-start-2 space-y-2">{children}</div>
+      <div className="col-start-2 min-w-0 space-y-2">{children}</div>
     </li>
   );
 }
@@ -1296,39 +1317,71 @@ function SlackSetup({
 }
 
 /**
- * The step Slack leaves to the person: the manifest's placeholder Request
- * URL replaced with this channel's. Slack checks it at once, by the
- * challenge the brain echoes back.
+ * What Slack leaves to the person: the manifest's two placeholder addresses
+ * replaced with this channel's. Events are checked at once, by the challenge
+ * the brain echoes back; Interactivity is where an approval's buttons answer,
+ * and is turned on here too for an app made before the manifest had it.
  */
 function SlackLastStep({ channel }: { channel: CreatedChannel }) {
+  const path = hookPath(channel);
+  // With no public address there is no URL under a step, only the paths above.
+  const events = channel.hook_url ? "this one" : "an address that reaches the events path above";
+  const buttons = channel.hook_url
+    ? "this one"
+    : "an address that reaches the Interactivity path above";
   return (
-    <ol className="space-y-4 text-sm" aria-label="One step left in Slack">
-      <SetupStep n={1} title="Open Event Subscriptions in the app">
+    <>
+      {channel.hook_url ? null : (
         <p className="text-xs text-muted-foreground">
-          In the Slack app's settings, under Features.
+          This brain has no public address, so Slack cannot reach it. On its webhook listener the
+          paths are <Mono className="break-all">{path}</Mono> for events and{" "}
+          <Mono className="break-all">{`${path}${INTERACTIVITY}`}</Mono> for Interactivity.
         </p>
-      </SetupStep>
-      <SetupStep n={2} title="Replace the Request URL with this one">
-        {channel.hook_url ? (
-          <CopyId value={channel.hook_url} label="Request URL" />
-        ) : (
+      )}
+      <ol className="space-y-5 text-sm" aria-label="One step left in Slack">
+        <SetupStep n={1} title="Point Event Subscriptions here">
           <p className="text-xs text-muted-foreground">
-            This brain has no public address, so Slack cannot reach it. The path is{" "}
-            <Mono className="break-all">{hookPath(channel)}</Mono> on its webhook listener.
+            In the app's settings, open Event Subscriptions under Features and replace the Request
+            URL with {events}. Slack checks it straight away and shows Verified.
           </p>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Slack checks it straight away and shows Verified.
-        </p>
-      </SetupStep>
-      <SetupStep n={3} title="Save Changes">
-        <p className="text-xs text-muted-foreground">
-          Then message the bot, or mention it in a channel it is in: someone writing for the first
-          time waits under Approvals until you let them in.
-        </p>
-      </SetupStep>
-    </ol>
+          <SlackAddress channel={channel} label="Request URL" />
+        </SetupStep>
+        <SetupStep n={2} title="Point Interactivity here">
+          <p className="text-xs text-muted-foreground">
+            Open Interactivity &amp; Shortcuts, turn Interactivity on, and replace its Request URL
+            with {buttons}. The buttons under an approval answer here; without it they do nothing.
+            Slack does not check this one: try it with an approval.
+          </p>
+          <SlackAddress
+            channel={channel}
+            suffix={INTERACTIVITY}
+            label="Interactivity Request URL"
+          />
+        </SetupStep>
+        <SetupStep n={3} title="Save Changes, then try it">
+          <p className="text-xs text-muted-foreground">
+            Save on both pages. Then message the bot, or mention it in a channel it is in: someone
+            writing for the first time waits under Sender approvals until you let them in.
+          </p>
+        </SetupStep>
+      </ol>
+    </>
   );
+}
+
+/** One of a Slack channel's addresses to paste; none where the brain has no public one. */
+function SlackAddress({
+  channel,
+  suffix = "",
+  label,
+}: {
+  channel: CreatedChannel;
+  suffix?: string;
+  label: string;
+}) {
+  return channel.hook_url ? (
+    <CopyId value={`${channel.hook_url}${suffix}`} label={label} wrap />
+  ) : null;
 }
 
 /**
@@ -1378,7 +1431,7 @@ function CreatedDialog({
               <DialogTitle>Connected {channel.name}</DialogTitle>
               <DialogDescription>
                 The bot now sends its messages here. Message it to try it: someone writing for the
-                first time waits under Approvals until you let them in.
+                first time waits under Sender approvals until you let them in.
               </DialogDescription>
             </DialogHeader>
             <SetupWarnings warnings={channel.warnings} />
@@ -1393,8 +1446,8 @@ function CreatedDialog({
             <DialogHeader>
               <DialogTitle>One step left in Slack</DialogTitle>
               <DialogDescription>
-                {channel.name} is connected here. Slack sends its messages once it has this
-                channel's Request URL.
+                {channel.name} is connected here. Slack sends its messages, and its approval buttons
+                answer, once it has this channel's two addresses.
               </DialogDescription>
             </DialogHeader>
             <SetupWarnings warnings={channel.warnings} />
