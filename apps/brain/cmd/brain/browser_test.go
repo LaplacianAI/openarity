@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -63,5 +67,59 @@ func TestTheBrowsersAreBuiltFromTheTeamsProvider(t *testing.T) {
 	}
 	if d.Client == nil || d.Public == nil || d.Secrets == nil {
 		t.Errorf("deps %+v, want each set", d)
+	}
+}
+
+// brokenListener fails at once, as a listener whose socket is gone does.
+type brokenListener struct{ net.Listener }
+
+func (brokenListener) Accept() (net.Conn, error) { return nil, errors.New("the socket is gone") }
+
+// A browser proxy that stops on its own stops the worker with it, and one
+// stopped with the worker does not.
+func TestABrowserProxyThatStopsStopsTheWorker(t *testing.T) {
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	p := browser.NewProxy(func(netip.Addr) bool { return false }, slog.New(slog.DiscardHandler))
+
+	ctx, stop := context.WithCancelCause(t.Context())
+	defer stop(nil)
+	serveBrowserProxy(ctx, p, brokenListener{l}, stop)
+	if err := context.Cause(ctx); !errors.Is(err, errProxyStopped) {
+		t.Errorf("after the proxy failed, the worker's cause = %v", err)
+	}
+
+	ctx, stop = context.WithCancelCause(t.Context())
+	stop(context.Canceled)
+	stopped := false
+	serveBrowserProxy(ctx, p, l, func(error) { stopped = true })
+	if stopped {
+		t.Error("a proxy stopped with the worker stopped it again")
+	}
+}
+
+// A worker stopped by its proxy exits as failed, even when it stopped
+// cleanly, and one stopped for any other reason ends as it ran.
+func TestAWorkerStoppedByItsProxyExitsAsFailed(t *testing.T) {
+	ctx, stop := context.WithCancelCause(t.Context())
+	stop(errProxyStopped)
+	if err := workerError(ctx, nil); !errors.Is(err, errProxyStopped) {
+		t.Errorf("a clean stop for the proxy = %v", err)
+	}
+	ran := errors.New("the durable runtime failed")
+	if err := workerError(ctx, ran); !errors.Is(err, errProxyStopped) || !errors.Is(err, ran) {
+		t.Errorf("a failed run stopped for the proxy = %v", err)
+	}
+
+	ctx, stop = context.WithCancelCause(t.Context())
+	stop(context.Canceled)
+	if err := workerError(ctx, nil); err != nil {
+		t.Errorf("a shutdown = %v", err)
+	}
+	if err := workerError(ctx, ran); !errors.Is(err, ran) || errors.Is(err, errProxyStopped) {
+		t.Errorf("a failed run = %v", err)
 	}
 }

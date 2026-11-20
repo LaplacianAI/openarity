@@ -9,10 +9,20 @@
 #   cp .env.example .env                        # then fill in the Browserless block
 #   docker compose -f docker-compose.yml -f docker-compose.browserless.yml up -d
 #
+# REQUIRED: the URL a team saves must carry the proxy flags below. Browserless
+# takes Chrome's flags only from the address it is dialed at, so this overlay
+# cannot set them; a URL without them gives a browser that loads nothing, and
+# every page read comes back empty or as an error.
+#
 # A team chooses it in its settings, not here, with the same token as its key:
 #
-#   printf %s "$BROWSERLESS_TOKEN" | oa teams settings set <team> \
-#       --browser browserless --browser-url ws://browserless:3000 --browser-key-stdin
+#   printf %s "$BROWSERLESS_TOKEN" | oa teams settings set <team> --browser browserless \
+#       --browser-url 'ws://browserless:3000?--proxy-server=http://worker:3128&--proxy-bypass-list=%3C-loopback%3E' \
+#       --browser-key-stdin
+#
+# Browserless takes Chrome's flags from the address it is dialed at, not from
+# its environment, so the way out below is named there. Left off, the
+# browser reaches nothing at all.
 #
 # It sits on a network of its own at a fixed address, shared only with the
 # worker, which runs the agents, and only that address is named for the brain
@@ -21,8 +31,13 @@
 #   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.234/32
 #
 # Naming the compose network instead would open Postgres and OpenBao to any
-# URL a team saves. A page the browser opens may still try a private address;
-# the brain refuses each such request before the browser makes it.
+# URL a team saves.
+#
+# Its network is internal: nothing on it routes anywhere. The browser's one
+# way out is the worker's proxy (OPENARITY_BROWSER_PROXY_BIND), which dials
+# public addresses only, deciding on the address it connects to, so a name
+# that answers one way to the brain and another to the browser reaches
+# nothing private either. The brain still pauses each request a page makes.
 
 name: openarity
 
@@ -44,6 +59,10 @@ services:
     restart: unless-stopped
 
   worker:
+    environment:
+      # The browser's way out, on every interface: the browser finds it as
+      # worker, and a second worker serves it too.
+      OPENARITY_BROWSER_PROXY_BIND: 0.0.0.0:3128
     networks:
       - default
       - browser-browserless
@@ -53,6 +72,7 @@ networks:
   # network on this machine, change the subnet, Browserless's address and the
   # /32 in MCP_PRIVATE_NETWORKS together.
   browser-browserless:
+    internal: true
     ipam:
       config:
         - subnet: 172.31.255.232/29

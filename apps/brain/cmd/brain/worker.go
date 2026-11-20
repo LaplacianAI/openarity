@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/browser"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
@@ -12,6 +15,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 )
@@ -37,7 +41,52 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbS
 		logger.ErrorContext(ctx, "Starting with an erasure already overdue", "error", err)
 	}
 
-	return worker.New(cfg.PostgresDSN, logger, jobs...).Run(ctx)
+	ctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	if err := startBrowserProxy(ctx, cfg, logger, stop); err != nil {
+		return err
+	}
+	// The proxy is not waited for: its tunnels end with ctx, cut mid-page
+	// rather than drained, as the browser's run is being stopped anyway.
+	return workerError(ctx, worker.New(cfg.PostgresDSN, logger, jobs...).Run(ctx))
+}
+
+// workerError is what the worker ended with, ran, and why it was stopped if
+// that was its proxy: a worker that stopped cleanly because the proxy died
+// still exits as failed, so it is started again.
+func workerError(ctx context.Context, ran error) error {
+	if cause := context.Cause(ctx); errors.Is(cause, errProxyStopped) {
+		return errors.Join(cause, ran)
+	}
+	return ran
+}
+
+// errProxyStopped is the worker stopping because its browser proxy did: a
+// worker left running without it looks healthy while every self-hosted
+// browser reaches nothing, so it exits and is started again with one.
+var errProxyStopped = errors.New("the browser's proxy stopped")
+
+// startBrowserProxy serves the browser's proxy on BROWSER_PROXY_BIND, if it
+// is set. It listens before the worker starts, so a bind that cannot be had
+// stops the worker rather than leaving the browser with no way out.
+func startBrowserProxy(ctx context.Context, cfg *config.Config, logger *slog.Logger, stop context.CancelCauseFunc) error {
+	if cfg.BrowserProxyBind == "" {
+		return nil
+	}
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.BrowserProxyBind)
+	if err != nil {
+		return fmt.Errorf("the browser's proxy cannot listen on BROWSER_PROXY_BIND %s: %w", cfg.BrowserProxyBind, err)
+	}
+	go serveBrowserProxy(ctx, browser.NewProxy(hub.Public, logger), l, stop)
+	return nil
+}
+
+// serveBrowserProxy runs p on l, and stops the worker if it ends on its own.
+func serveBrowserProxy(ctx context.Context, p *browser.Proxy, l net.Listener, stop context.CancelCauseFunc) {
+	err := p.Serve(ctx, l)
+	if ctx.Err() == nil {
+		stop(errors.Join(errProxyStopped, err))
+	}
 }
 
 func newJobs(

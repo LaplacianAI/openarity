@@ -21,8 +21,11 @@
 #
 #   OPENARITY_MCP_PRIVATE_NETWORKS=172.31.255.218/32
 #
-# A page the browser opens may still try a private address; the brain refuses
-# each such request before the browser makes it.
+# Its network is internal: nothing on it routes anywhere. The browser's one
+# way out is the worker's proxy (OPENARITY_BROWSER_PROXY_BIND), which dials
+# public addresses only, deciding on the address it connects to, so a name
+# that answers one way to the brain and another to the browser reaches
+# nothing private either. The brain still pauses each request a page makes.
 
 name: openarity
 
@@ -36,9 +39,19 @@ services:
         ipv4_address: 172.31.255.218
     # Chrome wants more shared memory than Docker's 64 MB for a page of any size.
     shm_size: 256m
+    # Appended to Chrome's own flags by the image. Chrome sends loopback
+    # direct unless told not to, so it is told: everything goes through the
+    # worker's proxy, which refuses loopback as every private address.
+    command:
+      - --proxy-server=http://worker:3128
+      - --proxy-bypass-list=<-loopback>
     restart: unless-stopped
 
   worker:
+    environment:
+      # The browser's way out, on every interface: the browser finds it as
+      # worker, and a second worker serves it too.
+      OPENARITY_BROWSER_PROXY_BIND: 0.0.0.0:3128
     networks:
       - default
       - browser-headless-shell
@@ -48,6 +61,7 @@ networks:
   # on this machine, change the subnet, Chrome's address, the URL teams save
   # and the /32 in MCP_PRIVATE_NETWORKS together.
   browser-headless-shell:
+    internal: true
     ipam:
       config:
         - subnet: 172.31.255.216/29

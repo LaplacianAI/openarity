@@ -62,6 +62,7 @@ func TestLoadDefaults(t *testing.T) {
 		"TeamPurgeAfter":         "168h0m0s",
 		"SandboxImage":           "",
 		"SandboxIdle":            "30m0s",
+		"BrowserProxyBind":       "",
 	}
 	got := map[string]string{
 		"Environment":            string(cfg.Environment),
@@ -104,6 +105,7 @@ func TestLoadDefaults(t *testing.T) {
 		"TeamPurgeAfter":         cfg.TeamPurgeAfter.String(),
 		"SandboxImage":           cfg.SandboxImage,
 		"SandboxIdle":            cfg.SandboxIdle.String(),
+		"BrowserProxyBind":       cfg.BrowserProxyBind,
 	}
 	for k, w := range want {
 		if got[k] != w {

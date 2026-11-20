@@ -357,6 +357,24 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   not on the link. Keeping a page across a pause was weighed
   and refused: a Bright Data session ends with its connection, and a tab left
   without its guard attached runs on with nothing pausing its requests.
+- **A browser of the team's own has one way out: the worker's proxy.** The
+  guard judges a name and the browser looks it up again, so a name that
+  answers public to one and private to the other is past it, and some of
+  what a page does (a preconnect, a socket in a worker) is never paused. So
+  the overlays put each browser on an `internal` network, which routes
+  nowhere, and start it pointed at a forward proxy the worker serves there
+  (`internal/browser/proxy.go`). The proxy dials with a dialer that refuses
+  any address that is not public, and link-local whatever is allowed, at
+  connect time, so the address checked is the one connected to and nothing
+  is looked up twice. It binds every interface and is found as `worker`, so a
+  second worker serves it too; what else reaches it gets only what the
+  internet already gives. Host firewall rules were the other choice: they
+  differ by host, and the ones written for this were never run. It dials
+  ports 80, 443, 8080 and 8443 only: any port would make it a relay for mail
+  or a scan from the host's address, and those four serve the sites a run
+  visits, staging ones included. A proxy that stops stops the worker, which
+  its restart policy brings back with one: a worker without it looks healthy
+  while every self-hosted browser reaches nothing.
 - **The hub's graph finds every agent, and only its own tools and skills.**
   Its reach is the team's other agents, to hand work to, and the tools and
   skills the hub agent holds, since those are all it can call or load; the

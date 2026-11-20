@@ -657,6 +657,7 @@ Each can stay at its default.
 | `OPENARITY_SKILL_IMPORT_HOSTS`            | empty   | Hosts a skill zip may be imported from, besides GitHub         |
 | `OPENARITY_SKILL_IMPORT_GITHUB_TOKEN_REF` | empty   | `path#key` of a GitHub token, to raise the rate limit          |
 | `OPENARITY_MCP_PRIVATE_NETWORKS`          | empty   | CIDRs MCP discovery may reach, besides public addresses        |
+| `OPENARITY_BROWSER_PROXY_BIND`            | empty   | Where the worker serves a self-hosted browser's one way out    |
 | `OPENARITY_MCP_REGISTRY_URL`              | official | Where a team's builder looks MCP servers up; `none` turns it off |
 | `OPENARITY_EMBEDDING_MODEL`               | empty   | The model that embeds agents, tools and skills for the graph   |
 | `OPENARITY_EMBEDDING_DIMENSIONS`          | `0`     | The width of its vectors, `1` to `4096`; set with the model    |
