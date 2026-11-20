@@ -91,6 +91,11 @@ func clone(msgs []agent.Message) []agent.Message {
 			out[i].Compaction = &summary
 		}
 
+		if m.Clearing != nil {
+			clearing := *m.Clearing
+			out[i].Clearing = &clearing
+		}
+
 		if m.Reasoning != nil {
 			r := *m.Reasoning
 			r.Fields = make(map[string]json.RawMessage, len(m.Reasoning.Fields))

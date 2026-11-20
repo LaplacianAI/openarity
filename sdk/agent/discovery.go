@@ -156,7 +156,7 @@ func recentText(msgs []Message) string {
 	heard := false
 	for i := len(msgs) - 1; i >= 0 && len(turns) < recentTurns; i-- {
 		m := msgs[i]
-		if (m.Role != RoleUser && m.Role != RoleAssistant) || m.Compaction != nil {
+		if (m.Role != RoleUser && m.Role != RoleAssistant) || m.Compaction != nil || m.Clearing != nil {
 			continue
 		}
 		text := strings.TrimSpace(m.Text())
