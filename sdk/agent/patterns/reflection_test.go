@@ -538,6 +538,43 @@ func TestAnEmptyRewriteKeepsTheAnswerItAlreadyHad(t *testing.T) {
 	}
 }
 
+// An empty second rewrite keeps the first, the answer it was working on, not
+// the draft before it.
+func TestAnEmptySecondRewriteKeepsTheFirst(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan agent.Event, 64)
+	s := reflectSpec()
+	s.MaxSteps = 5
+	result, err := Reflection(2).Run(t.Context(), agent.Input{
+		Spec: s, Messages: ask("write something"), Events: events,
+		Model: &fakeModel{turns: []turn{
+			answered(text("draft one")),
+			critiqued(true, "sharper"),
+			answered(text("draft two")),
+			critiqued(true, "post it"),
+			answered(text("")),
+		}},
+	})
+	close(events)
+	if err != nil {
+		t.Fatalf("Run: %v, want the first rewrite kept", err)
+	}
+	var skipped []agent.SkippedEvent
+	for e := range events {
+		if sk, ok := e.(agent.SkippedEvent); ok {
+			skipped = append(skipped, sk)
+		}
+	}
+	skippedFor(t, skipped, "rewrite", 5, ErrNoRewrite.Error(), "cycle 2")
+	if result.Output != "draft two" {
+		t.Errorf("Output = %q, want the first rewrite", result.Output)
+	}
+	if got := texts(result.Messages); got[len(got)-1] != "draft two" || slices.Contains(got, "draft one") {
+		t.Errorf("the transcript holds %q, want it to end with the first rewrite alone", got)
+	}
+}
+
 func TestAFailureWhileGeneratingNamesThePhase(t *testing.T) {
 	t.Parallel()
 

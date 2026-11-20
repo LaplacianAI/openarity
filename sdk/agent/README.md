@@ -318,9 +318,10 @@ pays one call for all of them.
 A pattern's own step never costs the answer. When Reflection's review comes
 back without a readable critique (the model answered in text, the arguments
 were not JSON, the call failed or was cut off), or a rewrite fails or comes
-back with no text, the answer it was working on is returned and a `SkippedEvent` says what was skipped and
-why. ReWOO answers without a plan when the plan it was given cannot be read, is
-longer than `MaxSteps` or was cut off. Only a cancelled run stops.
+back with no text, the answer it was working on is returned and a
+`SkippedEvent` says what was skipped and why. ReWOO answers without a plan
+when the plan it was given cannot be read, is longer than `MaxSteps` or was
+cut off. Only a cancelled run stops.
 
 The review asks for its critique by name, `Request.MustCall`, which the
 OpenAI-compatible client sends as `tool_choice`. It is a hint: Claude refuses

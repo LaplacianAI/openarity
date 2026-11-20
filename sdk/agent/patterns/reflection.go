@@ -14,7 +14,8 @@ import (
 // Reflection answers, then reviews and rewrites its answer up to cycles
 // times. A cycle is two steps, a review and a rewrite; a review the model
 // writes out rather than submits is asked for once more inside its step, so
-// a step may make two calls.
+// a step may make two calls. A review or rewrite that fails ends the run with
+// the answer it was working on, and a SkippedEvent says why.
 func Reflection(cycles int) agent.Pattern { return reflection{cycles: cycles} }
 
 func ReflectionStreaming(cycles int) agent.Pattern {
@@ -218,8 +219,8 @@ func (l reflection) refine(
 		return carried{}, err
 	}
 	if strings.TrimSpace(c.text) == "" {
-		// Nor is one that says nothing: a critique asking for something only a
-		// tool could do leaves a rewrite without tools nothing to write.
+		// Nor is one that says nothing: empty, blank, or only a call, which this
+		// step has no tools to run.
 		return carried{}, ErrNoRewrite
 	}
 	return c, nil
