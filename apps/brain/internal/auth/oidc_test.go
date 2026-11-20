@@ -318,8 +318,21 @@ func TestOIDCPicksUpARotatedKey(t *testing.T) {
 
 	s.publish(s.key(1))
 	token := sign(t, s.key(1), s.claims(nil))
-	if _, err := v.Verify(t.Context(), token); err != nil {
-		t.Fatalf("token from the rotated key: %v", err)
+
+	// go-oidc signals a fetch done before it clears it, so a Verify that
+	// lands in between, as this one can straight after the first, is handed
+	// the old key set; the next fetches afresh. CI met it once. A verifier
+	// that never refetches still fails, at the deadline.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := v.Verify(t.Context(), token)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("token from the rotated key: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
