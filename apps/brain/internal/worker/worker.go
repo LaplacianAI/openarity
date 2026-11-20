@@ -15,6 +15,12 @@ import (
 const (
 	shutdownGrace = 30 * time.Second
 	AppName       = "openarity-brain"
+	// AppVersion is fixed, not DBOS's default hash of the binary: a worker
+	// dequeues only workflows of its own version, so with the hash a run
+	// stopped by one deploy is never picked up by the next. A run's workflow
+	// is one step that rebuilds the run from its rows, so any build can carry
+	// on any run. Change it only when a workflow's name or input changes.
+	AppVersion = "openarity-brain-v1"
 )
 
 func executorID() string {
@@ -45,10 +51,11 @@ func New(dsn string, logger *slog.Logger, jobs ...Job) *Worker {
 
 func (w *Worker) config() dbos.Config {
 	return dbos.Config{
-		AppName:     AppName,
-		DatabaseURL: w.dsn,
-		Logger:      w.logger,
-		ExecutorID:  executorID(),
+		AppName:            AppName,
+		ApplicationVersion: AppVersion,
+		DatabaseURL:        w.dsn,
+		Logger:             w.logger,
+		ExecutorID:         executorID(),
 	}
 }
 
@@ -58,7 +65,10 @@ func (w *Worker) Run(ctx context.Context) error {
 			"doing nothing — a process that looks healthy and erases nothing")
 	}
 
-	d, err := dbos.NewContext(ctx, w.config())
+	// Not ctx itself: a signal cancelling ctx would reach every workflow as
+	// a cancellation, which DBOS records for good. Shutdown, below, stops them
+	// as a shutdown instead, leaving them PENDING for the next worker.
+	d, err := dbos.NewContext(context.WithoutCancel(ctx), w.config())
 	if err != nil {
 		return fmt.Errorf("start the durable runtime: %w", err)
 	}

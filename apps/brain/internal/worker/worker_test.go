@@ -238,3 +238,13 @@ func TestTheWorkerHandsDBOSItsOwnExecutorID(t *testing.T) {
 		t.Errorf("DatabaseURL = %q, want the DSN the worker was given", first.DatabaseURL)
 	}
 }
+
+// A worker dequeues only its own version's workflows, so the version must
+// outlive a build: DBOS's default, a hash of the binary, strands every run a
+// deploy stopped.
+func TestTheWorkerKeepsOneVersionAcrossBuilds(t *testing.T) {
+	c := New("postgres://brain@db.internal/brain", discardLogger(), &fakeJob{name: "reaper"}).config()
+	if c.ApplicationVersion != AppVersion || AppVersion == "" {
+		t.Errorf("ApplicationVersion = %q, want the fixed %q", c.ApplicationVersion, AppVersion)
+	}
+}

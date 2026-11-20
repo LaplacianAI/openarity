@@ -602,6 +602,18 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   must not be fatal there: refusing to start would deadlock the only thing that
   can clear the backlog. Same error, opposite handling from `brain reap`, whose
   exit code *is* its report.
+- **A deploy leaves a run's workflow PENDING, on a version the next build
+  runs.** Two defaults stranded every long run on staging. DBOS's context was
+  made from the signal context, so SIGTERM reached each workflow as a
+  cancellation, which DBOS records as CANCELLED for good; it skips that only
+  when its own `Shutdown` stops the workflow. The worker now hands it
+  `context.WithoutCancel(ctx)` and lets `Shutdown` do the stopping. And DBOS's
+  default application version is a hash of the binary, while a worker dequeues
+  only its own version, so a run the sweep resumed after a deploy sat ENQUEUED
+  forever. `worker.AppVersion` is fixed instead, since a run's workflow is one
+  step that rebuilds the run from its rows. Both were measured against DBOS
+  v1.2.0 in a probe, and `TestARunStoppedByASignalIsResumedByTheNextWorker`
+  holds the first.
 - **`brain migrate up` creates DBOS's tables as well as ours.** DBOS keeps
   eleven tables under `dbos` and migrates them itself, with no lock: `serve`
   and a worker starting together on a fresh database failed with `duplicate
