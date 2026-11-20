@@ -42,6 +42,23 @@ const denyAll = "0.0.0.0/0"
 // Any domain rule also leaves 8.8.8.8 fully open, so the sandbox can resolve
 // names; that is E2B's doing and cannot be turned off while a domain is
 // allowed.
+// network is the room's network: its list, or, for a public room, every
+// address but the private ones. E2B takes CIDRs in denyOut, and with nothing
+// allowed it lets the rest through.
+func (c *Client) network(ctx context.Context, s sandbox.Spec) (network, error) {
+	switch s.Network {
+	case sandbox.NetworkListed:
+		return c.egress(ctx, s.Egress)
+	case sandbox.NetworkPublic:
+		if len(s.Egress) > 0 {
+			return network{}, fmt.Errorf("%w: a public room lists no hosts", sandbox.ErrRefused)
+		}
+		return network{DenyOut: sandbox.PrivateNetworks}, nil
+	default:
+		return network{}, fmt.Errorf("%w: no network %q", sandbox.ErrRefused, s.Network)
+	}
+}
+
 func (c *Client) egress(ctx context.Context, hp []sandbox.HostPort) (network, error) {
 	n := network{DenyOut: []string{denyAll}}
 	allow := map[string]bool{}

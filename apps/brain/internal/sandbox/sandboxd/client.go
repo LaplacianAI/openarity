@@ -50,6 +50,10 @@ type createBody struct {
 	Env    map[string]string `json:"env"`
 	Egress []egressBody      `json:"egress"`
 	Labels map[string]string `json:"labels"`
+	// sandboxd serves a public room through its proxy, and gives a
+	// workspace room its /workspace and its size.
+	Network   string `json:"network,omitempty"`
+	Workspace bool   `json:"workspace,omitempty"`
 }
 
 func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
@@ -58,6 +62,9 @@ func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 		Env:    nonNil(s.Env),
 		Egress: make([]egressBody, 0, len(s.Egress)),
 		Labels: nonNil(s.Labels),
+
+		Network:   string(s.Network),
+		Workspace: s.Workspace,
 	}
 	for _, e := range s.Egress {
 		body.Egress = append(body.Egress, egressBody{Host: e.Host, Port: e.Port})

@@ -81,6 +81,11 @@ type Want struct {
 	// the database could test a guessed password against.
 	Secrets map[string]string `json:"-"`
 	Egress  []sandbox.HostPort
+	// Network and Workspace are the room's, as sandbox.Spec has them. They
+	// are left out of the hash when unset, so a room made before they
+	// existed is still the one wanted.
+	Network   sandbox.Network `json:",omitempty"`
+	Workspace bool            `json:",omitempty"`
 	// Port is the room's port that is served, Path the part of its address
 	// that callers use, and HealthPath what answers 200 when it is ready.
 	Port       int
@@ -356,6 +361,7 @@ func (k *Keeper) create(ctx context.Context, rooms sandbox.Rooms, o Owner, team 
 
 	roomID, err := rooms.Create(ctx, sandbox.Spec{
 		Image: w.Image, Env: env, Egress: w.Egress,
+		Network: w.Network, Workspace: w.Workspace,
 		Labels: map[string]string{
 			"openarity-team":       team.String(),
 			"openarity-owner-kind": o.Kind,

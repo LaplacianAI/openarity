@@ -605,3 +605,49 @@ func TestStartRefusesACommandTooLargeToFrame(t *testing.T) {
 		}
 	}
 }
+
+// A public room reaches every address but a private one: E2B lets through
+// what denyOut does not name when nothing is allowed.
+func TestAPublicRoomDeniesOnlyPrivateAddresses(t *testing.T) {
+	f := &fake{api: okCreate}
+	if _, err := newClient(f).Create(t.Context(), sandbox.Spec{Image: templateID, Network: sandbox.NetworkPublic, Workspace: true}); err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]map[string]any
+	_ = json.Unmarshal(f.last(t).Body, &body)
+	if _, ok := body["network"]["allowOut"]; ok {
+		t.Error("a public room sent allowOut")
+	}
+	deny, _ := body["network"]["denyOut"].([]any)
+	got := map[string]bool{}
+	for _, d := range deny {
+		if s, ok := d.(string); ok {
+			got[s] = true
+		}
+	}
+	for _, want := range []string{"10.0.0.0/8", "169.254.0.0/16", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fe80::/10"} {
+		if !got[want] {
+			t.Errorf("denyOut %v lacks %s", deny, want)
+		}
+	}
+	if got["0.0.0.0/0"] {
+		t.Error("a public room denied everything")
+	}
+}
+
+func TestAPublicRoomThatListsHostsIsRefused(t *testing.T) {
+	for name, s := range map[string]sandbox.Spec{
+		"hosts":              {Image: "t", Network: sandbox.NetworkPublic, Egress: []sandbox.HostPort{{Host: "a.example.com", Port: 443}}},
+		"an unknown network": {Image: "t", Network: "host"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fake{api: okCreate}
+			if _, err := newClient(f).Create(t.Context(), s); !errors.Is(err, sandbox.ErrRefused) {
+				t.Fatalf("err = %v, want ErrRefused", err)
+			}
+			if len(f.calls) != 0 {
+				t.Error("a refused spec still reached E2B")
+			}
+		})
+	}
+}

@@ -40,9 +40,39 @@ type Spec struct {
 	Image  string
 	Env    map[string]string
 	Egress []HostPort
+	// Network is what the room may reach: NetworkListed, its Egress and
+	// nothing else; or NetworkPublic, every public address and no private,
+	// loopback or link-local one, with Egress empty. A provider that cannot
+	// keep a public room off private addresses refuses it with ErrRefused,
+	// rather than make a room that reaches them.
+	Network Network
+	// Workspace is a room an agent works in, which needs a writable
+	// /workspace and room to build and run things. The room image has the
+	// directory; a provider that sizes rooms per request sizes this one for
+	// work, and one whose template sets the size leaves it to the template.
+	Workspace bool
 	// Labels find a room again; a provider without labels keeps them as
 	// metadata or ignores them.
 	Labels map[string]string
+}
+
+// A Network is what a room may reach.
+type Network string
+
+const (
+	// NetworkListed is the zero value: the room's Egress, and nothing else.
+	NetworkListed Network = ""
+	// NetworkPublic is the public internet and nothing private.
+	NetworkPublic Network = "public"
+)
+
+// PrivateNetworks are the ranges a public room must never reach, for a
+// provider that takes them as a deny list: private, carrier-grade NAT,
+// loopback, link-local (cloud metadata among it), and their IPv6 kin.
+var PrivateNetworks = []string{
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+	"172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15",
+	"::1/128", "fc00::/7", "fe80::/10",
 }
 
 // An Endpoint reaches a port in a room: its base URL, and the headers the

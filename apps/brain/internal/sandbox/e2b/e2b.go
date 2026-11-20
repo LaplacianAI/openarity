@@ -108,7 +108,7 @@ func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 	if s.Image == "" {
 		return "", fmt.Errorf("%w: no E2B template is set", sandbox.ErrRefused)
 	}
-	n, err := c.egress(ctx, s.Egress)
+	n, err := c.network(ctx, s)
 	if err != nil {
 		return "", err
 	}
