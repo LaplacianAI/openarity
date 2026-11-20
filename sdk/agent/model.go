@@ -33,10 +33,14 @@ const (
 	FinishFilter    FinishReason = "content_filter"
 )
 
+// Usage is what a call read and wrote. InputTokens is everything the model
+// read, CachedInputTokens and CacheWriteTokens among it: a token read from
+// the provider's cache, and one written to it on this call.
 type Usage struct {
 	InputTokens       int
 	OutputTokens      int
 	CachedInputTokens int
+	CacheWriteTokens  int
 }
 
 type Response struct {
@@ -84,4 +88,5 @@ func (u *Usage) Add(other Usage) {
 	u.InputTokens += other.InputTokens
 	u.OutputTokens += other.OutputTokens
 	u.CachedInputTokens += other.CachedInputTokens
+	u.CacheWriteTokens += other.CacheWriteTokens
 }

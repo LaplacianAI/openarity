@@ -19,6 +19,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     APIs report it (LiteLLM included). A gateway passing on Anthropic's own
     counts, which keep cache reads apart, would be held to the input and
     undercount the cache; check a new gateway's usage before trusting it.
+  - A cache write counts in full, as any fresh token, though the provider
+    bills it at about 1.25 times: a weight of its own would be a second
+    constant in `run_spent` and `costOf` to keep in step, for a quarter of a
+    token. The SDK counts writes in `input_tokens` even where the gateway
+    reports them apart, as OmniRoute does; before it did, a call that missed
+    the cache read as about 150 tokens instead of 40,000, compaction fired
+    late, and the budget missed every write. The usage event carries
+    `cache_write_tokens` for Grafana; `runs` has no column for it.
   - The `spent` a usage event records is the budget's count from this
     change on, and input plus output before it. Nothing reads it but the
     trace, but a chart of it steps down at the change.

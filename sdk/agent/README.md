@@ -100,6 +100,14 @@ stores nothing, so where that slice lives is yours to decide.
 written outside this module gets the right number without knowing to try, and a
 run that failed half way still reports what it spent.
 
+`Usage.InputTokens` is everything the model read. `CachedInputTokens` is the
+part read from the provider's cache, and `CacheWriteTokens` the part written to
+it on that call. Some gateways, OmniRoute among them, report cache writes
+outside `prompt_tokens`; the OpenAI-compatible client adds them back, so a call
+that missed the cache is not counted as a handful of tokens. It adds them only
+when the gateway says they are outside, or when `prompt_tokens` is too small to
+hold them, so a gateway that counts them inside is never counted twice.
+
 **`events chan<- Event`** is optional; pass `nil` to ignore it. `TextEvent`,
 `ReasoningEvent`, `ToolCallEvent`, `ToolResultEvent`, `UsageEvent`, `StepEvent`
 and `SteerEvent` arrive as the run happens.

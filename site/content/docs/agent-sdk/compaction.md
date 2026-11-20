@@ -31,8 +31,9 @@ spec := agent.Spec{
 ```
 
 Before each request the run estimates its size: what the last call read,
-measured, plus what was added since. Past either threshold it compacts first,
-cheapest way first:
+measured, plus what was added since. The measure is `Usage.InputTokens`, cache
+writes included, so a call that missed the provider's cache counts at its full
+size. Past either threshold it compacts first, cheapest way first:
 
 1. **Clear.** Tool results older than the latest turns become a one-line
    handle. No model call. If that is enough, it stops here.

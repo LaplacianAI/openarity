@@ -566,14 +566,6 @@ func fromCompletion(c openai.ChatCompletion, model string) (agent.Response, erro
 	}, nil
 }
 
-func usageOf(u openai.CompletionUsage) agent.Usage {
-	return agent.Usage{
-		InputTokens:       int(u.PromptTokens),
-		OutputTokens:      int(u.CompletionTokens),
-		CachedInputTokens: int(u.PromptTokensDetails.CachedTokens),
-	}
-}
-
 // finishReason maps the wire's vocabulary onto ours.
 //
 // An unrecognised value becomes FinishStop rather than an error: gateways
