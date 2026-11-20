@@ -145,7 +145,7 @@ func TestCreateRefusesARequestThatNamesAMountOrAnythingElseItDoesNotKnow(t *test
 		`{"image":"x","privileged":true}`,
 		`{"image":"x","user":"0"}`,
 		`{"image":"x","cap_add":["ALL"]}`,
-		`{"image":"x","network":"host"}`,
+		`{"image":"x","network_mode":"host"}`,
 		`not json`,
 		`{"image":"x"} {"image":"y"}`,
 	} {

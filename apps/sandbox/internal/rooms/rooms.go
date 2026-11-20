@@ -49,6 +49,12 @@ const (
 	userLabelPrefix = "user."
 	// HomeDir is where HOME points: a tmpfs, because the root is read-only.
 	HomeDir = "/home/sandbox"
+	// WorkspaceDir is a workspace room's working directory, a tmpfs of its
+	// own.
+	WorkspaceDir = "/workspace"
+	// NetworkPublic is a room that reaches the internet, and nothing
+	// private, through the guard's proxy, rather than a list of hosts.
+	NetworkPublic = "public"
 	// NobodyUser is the user every room runs as.
 	NobodyUser = "65534"
 )
@@ -64,15 +70,25 @@ type Limits struct {
 	// package's download and its unpacked copy. A tmpfs is memory, charged to
 	// the room's own limit, so it can never be filled past Memory.
 	HomeBytes int64
+
+	// A workspace room is an agent's, which builds and runs things, so it
+	// gets more than a server's: WorkspaceMemory and WorkspaceCPUs in place
+	// of Memory and NanoCPUs, and a /workspace of WorkspaceBytes, which is
+	// memory too and so within WorkspaceMemory.
+	WorkspaceMemory int64
+	WorkspaceCPUs   int64 // nano CPUs
+	WorkspaceBytes  int64
 }
 
 // DefaultLimits are 768 MiB, 256 pids, half a CPU, a 512 MiB home and a
-// 64 MiB /tmp, 3 GiB in all. An npx server's package and its cache can pass
+// 64 MiB /tmp, 3 GiB in all; a workspace room has 1.5 GiB and a CPU, with a
+// 512 MiB /workspace. An npx server's package and its cache can pass
 // 64 MiB on their own, which a smaller home refused with nothing logged.
 func DefaultLimits() Limits {
 	return Limits{
 		Memory: 768 << 20, PidsLimit: 256, NanoCPUs: 500_000_000, MemoryBudget: 3 << 30,
 		TmpBytes: 64 << 20, HomeBytes: 512 << 20,
+		WorkspaceMemory: 1536 << 20, WorkspaceCPUs: 1_000_000_000, WorkspaceBytes: 512 << 20,
 	}
 }
 
@@ -83,6 +99,21 @@ type Spec struct {
 	Env    map[string]string `json:"env"`
 	Egress []guard.Host      `json:"egress"`
 	Labels map[string]string `json:"labels"`
+	// Network is "" for a room that reaches only its Egress, or
+	// NetworkPublic.
+	Network string `json:"network,omitempty"`
+	// Workspace is a room an agent works in: more memory and CPU, and a
+	// /workspace to work in.
+	Workspace bool `json:"workspace,omitempty"`
+}
+
+// memory is what a room of this spec may use, which is what it takes of the
+// budget.
+func (l Limits) memory(sp Spec) int64 {
+	if sp.Workspace {
+		return l.WorkspaceMemory
+	}
+	return l.Memory
 }
 
 // Engine is the daemon.
@@ -103,7 +134,7 @@ type Engine interface {
 
 // Egress is the guard.
 type Egress interface {
-	Open(id string, bind netip.Addr, hosts []guard.Host) error
+	Open(id string, bind netip.Addr, hosts []guard.Host, public bool) error
 	Close(id string)
 }
 
@@ -282,6 +313,15 @@ func Validate(sp Spec) error {
 	if err := guard.Validate(sp.Egress); err != nil {
 		return fmt.Errorf("%w: %w", ErrRefused, err)
 	}
+	switch sp.Network {
+	case "":
+	case NetworkPublic:
+		if len(sp.Egress) > 0 {
+			return fmt.Errorf("%w: a public room reaches every public host, so it lists none", ErrRefused)
+		}
+	default:
+		return fmt.Errorf("%w: the network is %q or empty, not %q", ErrRefused, NetworkPublic, sp.Network)
+	}
 	return nil
 }
 
@@ -308,13 +348,20 @@ func (s *Service) Create(ctx context.Context, sp Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if int64(len(nets)+1)*s.limits.Memory > s.limits.MemoryBudget {
+	used := s.limits.memory(sp)
+	for _, n := range nets {
+		// Every spec is written here as JSON; one unreadable would count as a
+		// server's, which every room was before workspaces.
+		other, _ := specOf(n)
+		used += s.limits.memory(other)
+	}
+	if used > s.limits.MemoryBudget {
 		return "", ErrBusy
 	}
 	if err := s.engine.CreateNetwork(ctx, networkName(id), map[string]string{roomLabel: id, specLabel: string(spec)}); err != nil {
 		return "", err
 	}
-	if err := s.open(ctx, id, sp.Egress); err != nil {
+	if err := s.open(ctx, id, sp); err != nil {
 		s.teardown(ctx, id)
 		return "", err
 	}
@@ -322,7 +369,7 @@ func (s *Service) Create(ctx context.Context, sp Spec) (string, error) {
 }
 
 // open joins sandboxd to the room's network and listens on its address there.
-func (s *Service) open(ctx context.Context, id string, egress []guard.Host) error {
+func (s *Service) open(ctx context.Context, id string, sp Spec) error {
 	self, err := s.selfContainer(ctx)
 	if err != nil {
 		return err
@@ -342,8 +389,8 @@ func (s *Service) open(ctx context.Context, id string, egress []guard.Host) erro
 	if err != nil {
 		return fmt.Errorf("sandboxd's address on the room's network: %w", err)
 	}
-	if len(egress) > 0 {
-		if err := s.egress.Open(id, addr, egress); err != nil {
+	if public := sp.Network == NetworkPublic; public || len(sp.Egress) > 0 {
+		if err := s.egress.Open(id, addr, sp.Egress, public); err != nil {
 			if errors.Is(err, guard.ErrUnavailable) {
 				return fmt.Errorf("%w: %w", ErrRefused, err)
 			}
@@ -379,7 +426,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			s.logger.Error("a room's spec is unreadable", "room", id, "err", err.Error())
 			continue
 		}
-		if err := s.open(ctx, id, sp.Egress); err != nil {
+		if err := s.open(ctx, id, sp); err != nil {
 			s.logger.Error("reopening a room's egress", "room", id, "err", err.Error())
 		}
 	}
@@ -539,6 +586,25 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 	// run it, so it is the one place a room may execute from.
 	tmp := ",size=" + strconv.FormatInt(l.TmpBytes, 10)
 	home := ",size=" + strconv.FormatInt(l.HomeBytes, 10)
+	tmpfs := map[string]string{
+		"/tmp":  "rw,noexec,nosuid,nodev" + tmp,
+		HomeDir: "rw,exec,nosuid,nodev" + home + ",uid=65534,gid=65534,mode=0700",
+	}
+	memory, cpus := l.Memory, l.NanoCPUs
+	if sp.Workspace {
+		// An agent builds and runs what it writes, so its workspace executes.
+		tmpfs[WorkspaceDir] = "rw,exec,nosuid,nodev,size=" + strconv.FormatInt(l.WorkspaceBytes, 10) + ",uid=65534,gid=65534,mode=0700"
+		memory, cpus = l.WorkspaceMemory, l.WorkspaceCPUs
+	}
+	if sp.Network == NetworkPublic {
+		// The room has no route and no DNS: every client that honours these
+		// goes through the guard's proxy, which resolves and checks for it.
+		proxy := "http://" + net.JoinHostPort(selfIP, strconv.Itoa(guard.ProxyPort))
+		for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+			env = append(env, k+"="+proxy)
+		}
+		env = append(env, "NO_PROXY=localhost,127.0.0.1,::1", "no_proxy=localhost,127.0.0.1,::1")
+	}
 	return docker.Container{
 		Image:      sp.Image,
 		Entrypoint: argv,
@@ -548,19 +614,16 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 		HostConfig: docker.HostConfig{
 			ReadonlyRootfs: true,
 			Privileged:     false,
-			Tmpfs: map[string]string{
-				"/tmp":  "rw,noexec,nosuid,nodev" + tmp,
-				HomeDir: "rw,exec,nosuid,nodev" + home + ",uid=65534,gid=65534,mode=0700",
-			},
-			CapDrop:       []string{"ALL"},
-			SecurityOpt:   []string{"no-new-privileges"},
-			PidsLimit:     l.PidsLimit,
-			Memory:        l.Memory,
-			MemorySwap:    l.Memory,
-			NanoCPUs:      l.NanoCPUs,
-			NetworkMode:   networkName(id),
-			ExtraHosts:    hosts,
-			RestartPolicy: docker.RestartPolicy{Name: "no"},
+			Tmpfs:          tmpfs,
+			CapDrop:        []string{"ALL"},
+			SecurityOpt:    []string{"no-new-privileges"},
+			PidsLimit:      l.PidsLimit,
+			Memory:         memory,
+			MemorySwap:     memory,
+			NanoCPUs:       cpus,
+			NetworkMode:    networkName(id),
+			ExtraHosts:     hosts,
+			RestartPolicy:  docker.RestartPolicy{Name: "no"},
 		},
 	}
 }

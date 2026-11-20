@@ -222,7 +222,7 @@ func TestOneHostOnAPortIsDialledWithoutReadingTheClient(t *testing.T) {
 	g := New(quiet())
 	g.dial = up.dial
 	port := freePort(t)
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}, false); err != nil {
 		t.Fatal(err)
 	}
 	defer g.Close("r1")
@@ -245,7 +245,7 @@ func TestSeveralHostsOnAPortAreToldApartBySNIAndTheHelloIsReplayed(t *testing.T)
 	g.dial = up.dial
 	port := freePort(t)
 	hosts := []Host{{"a.example.com", port}, {"b.example.com", port}}
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts, false); err != nil {
 		t.Fatal(err)
 	}
 	defer g.Close("r1")
@@ -269,7 +269,7 @@ func TestAnUnlistedNameOnASharedPortIsRefusedAndNeverDialled(t *testing.T) {
 	g.dial = up.dial
 	port := freePort(t)
 	hosts := []Host{{"a.example.com", port}, {"b.example.com", port}}
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts, false); err != nil {
 		t.Fatal(err)
 	}
 	defer g.Close("r1")
@@ -297,7 +297,7 @@ func TestClosingARoomStopsItsListenersAndCutsConnections(t *testing.T) {
 	g := New(quiet())
 	g.dial = up.dial
 	port := freePort(t)
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}, false); err != nil {
 		t.Fatal(err)
 	}
 	c := connect(t, port)
@@ -317,7 +317,7 @@ func TestClosingARoomStopsItsListenersAndCutsConnections(t *testing.T) {
 func TestOpenRefusesTwoPlaintextHostsOnOnePort(t *testing.T) {
 	t.Parallel()
 	g := New(quiet())
-	err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"a.example.com", 25}, {"b.example.com", 25}})
+	err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"a.example.com", 25}, {"b.example.com", 25}}, false)
 	if err == nil {
 		g.Close("r1")
 		t.Fatal("opened")

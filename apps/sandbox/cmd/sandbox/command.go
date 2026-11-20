@@ -58,7 +58,8 @@ const usage = `usage: sandbox shim [--listen ADDR] -- COMMAND [ARGS...]
   serve  the self-hosted sandbox provider: rooms on a rootless Docker daemon.
          Environment: SANDBOXD_TOKEN, SANDBOXD_PUBLIC_URL, SANDBOXD_DOCKER_SOCKET
          (required); SANDBOXD_CONTAINER (default $HOSTNAME), SANDBOXD_MEMORY_BUDGET,
-         SANDBOXD_ROOM_MEMORY, SANDBOXD_ROOM_HOME, SANDBOXD_ROOM_PIDS, SANDBOXD_ROOM_CPUS (optional)
+         SANDBOXD_ROOM_MEMORY, SANDBOXD_ROOM_HOME, SANDBOXD_ROOM_PIDS, SANDBOXD_ROOM_CPUS,
+         SANDBOXD_WORKSPACE_MEMORY, SANDBOXD_WORKSPACE_BYTES, SANDBOXD_WORKSPACE_CPUS (optional)
          SANDBOXD_IMAGES: the image prefixes a room may run, comma-separated
          (default ghcr.io/laplacianai/openarity-sandbox); SANDBOXD_PULL: images
          to pull in the background at start, each one allowed (optional);
@@ -176,6 +177,9 @@ func parseServe(args []string, env func(string) string) (command, error) {
 		{"SANDBOXD_ROOM_HOME", &s.limits.HomeBytes, 1},
 		{"SANDBOXD_ROOM_PIDS", &s.limits.PidsLimit, 1},
 		{"SANDBOXD_ROOM_CPUS", &s.limits.NanoCPUs, 1e9},
+		{"SANDBOXD_WORKSPACE_MEMORY", &s.limits.WorkspaceMemory, 1},
+		{"SANDBOXD_WORKSPACE_BYTES", &s.limits.WorkspaceBytes, 1},
+		{"SANDBOXD_WORKSPACE_CPUS", &s.limits.WorkspaceCPUs, 1e9},
 	} {
 		v := env(n.name)
 		if v == "" {
@@ -194,6 +198,13 @@ func parseServe(args []string, env func(string) string) (command, error) {
 	// would be killed for filling it rather than told it is full.
 	if s.limits.HomeBytes > s.limits.Memory {
 		return command{}, errors.New("SANDBOXD_ROOM_HOME is more than SANDBOXD_ROOM_MEMORY: the home directory is memory, charged to the room")
+	}
+	if s.limits.WorkspaceMemory > s.limits.MemoryBudget {
+		return command{}, errors.New("SANDBOXD_WORKSPACE_MEMORY is more than SANDBOXD_MEMORY_BUDGET: no workspace could be made")
+	}
+	// /workspace and the home are both memory in a workspace room.
+	if s.limits.WorkspaceBytes+s.limits.HomeBytes > s.limits.WorkspaceMemory {
+		return command{}, errors.New("SANDBOXD_WORKSPACE_BYTES and SANDBOXD_ROOM_HOME are more than SANDBOXD_WORKSPACE_MEMORY: both are memory, charged to the room")
 	}
 	if s.images, err = parseImages(env("SANDBOXD_IMAGES")); err != nil {
 		return command{}, err

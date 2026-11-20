@@ -1,6 +1,7 @@
 // Package guard is a room's only way out. A room's network is internal, and
 // each host the room may reach resolves, in the room, to sandboxd's address on
-// that network. The guard listens there, works out which listed host a
+// that network; a public room reaches the rest of the internet through the
+// guard's proxy (proxy.go). The guard listens there, works out which listed host a
 // connection is for, dials it, and relays the bytes. TLS stays end to end:
 // the guard reads the server name from the ClientHello and nothing else.
 package guard
@@ -86,6 +87,8 @@ func validHost(h Host) error {
 type Guard struct {
 	logger *slog.Logger
 	dial   func(ctx context.Context, network, address string) (net.Conn, error)
+	// proxyPort is ProxyPort but in tests, which listen on loopback.
+	proxyPort int
 
 	mu    sync.Mutex
 	rooms map[string]*room
@@ -97,27 +100,36 @@ func New(logger *slog.Logger) *Guard {
 		panic("guard: a nil logger")
 	}
 	d := &net.Dialer{Timeout: 10 * time.Second, Control: refusePrivate}
-	return &Guard{logger: logger, dial: d.DialContext, rooms: map[string]*room{}}
+	return &Guard{logger: logger, dial: d.DialContext, proxyPort: ProxyPort, rooms: map[string]*room{}}
 }
 
 type room struct {
 	id        string
 	hosts     []Host
 	listeners []net.Listener
+	stopProxy func() // a public room's; nil otherwise
 
 	mu    sync.Mutex
 	conns map[net.Conn]struct{}
 	done  bool
 }
 
-// Open listens, for each distinct port in hosts, on bind. Opening a room that
-// is open replaces it.
-func (g *Guard) Open(id string, bind netip.Addr, hosts []Host) error {
+// Open listens, for each distinct port in hosts, on bind, and on ProxyPort
+// when the room is public. Opening a room that is open replaces it.
+func (g *Guard) Open(id string, bind netip.Addr, hosts []Host, public bool) error {
 	if err := Validate(hosts); err != nil {
 		return err
 	}
 	g.Close(id)
 	r := &room{id: id, hosts: hosts, conns: map[net.Conn]struct{}{}}
+	if public {
+		addr := net.JoinHostPort(bind.String(), strconv.Itoa(g.proxyPort))
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
+		if err != nil {
+			return fmt.Errorf("%w: the proxy's port %d: %w", ErrUnavailable, g.proxyPort, err)
+		}
+		r.stopProxy = g.serveProxy(r, l)
+	}
 	seen := map[int]bool{}
 	for _, h := range hosts {
 		if seen[h.Port] {
@@ -158,6 +170,9 @@ func (r *room) close() {
 	r.mu.Unlock()
 	for _, l := range r.listeners {
 		_ = l.Close()
+	}
+	if r.stopProxy != nil {
+		r.stopProxy()
 	}
 	for c := range conns {
 		_ = c.Close()
