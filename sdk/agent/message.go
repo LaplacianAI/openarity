@@ -27,6 +27,9 @@ type Message struct {
 	// Compaction marks a summary a compacting run wrote into its transcript.
 	// It is sent to a model as the user message it reads as.
 	Compaction *CompactionSummary `json:"compaction,omitempty"`
+	// Clearing marks where a compacting run cleared old tool results to. It
+	// is never sent to a model.
+	Clearing *ClearingMark `json:"clearing,omitempty"`
 	// Reasoning is what the model thought on its way to this turn, when the
 	// provider says.
 	Reasoning *Reasoning `json:"reasoning,omitempty"`

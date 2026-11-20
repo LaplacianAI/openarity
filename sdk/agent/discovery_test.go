@@ -317,6 +317,17 @@ func TestEachTurnIsClipped(t *testing.T) {
 	}
 }
 
+// A compaction's marks are the run's bookkeeping, not the person's words, so
+// tools are never picked for them.
+func TestToolsAreNotPickedForACompactionsMarks(t *testing.T) {
+	t.Parallel()
+
+	msgs := []Message{say(RoleUser, "list today's unread mail"), clearingMessage("abc")}
+	if got := recentText(msgs); got != "list today's unread mail" {
+		t.Errorf("recentText = %q, want only what the person said", got)
+	}
+}
+
 // Whatever goes wrong, a ReWOO run is sent every tool, as before Select.
 func TestReWOOIsSentEverythingWhenNothingIsPicked(t *testing.T) {
 	t.Parallel()

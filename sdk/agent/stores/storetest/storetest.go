@@ -412,6 +412,30 @@ func Run(t *testing.T, open func(t *testing.T) agent.Store) {
 		}
 	})
 
+	t.Run("a compaction's clearing comes back as a clearing", func(t *testing.T) {
+		store := open(t)
+		clearing := &agent.ClearingMark{Prefix: "abc"}
+		msgs := []agent.Message{
+			{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "task"}}},
+			{
+				Role: agent.RoleUser, Clearing: clearing,
+				Content: []agent.Content{{Type: agent.ContentText, Text: "[Tool results before this point were cleared.]"}},
+			},
+		}
+		if err := store.Save(t.Context(), "s1", msgs); err != nil {
+			t.Fatalf("Save() = %v", err)
+		}
+		clearing.Prefix = "edited"
+
+		back, err := store.Messages(t.Context(), "s1")
+		if err != nil {
+			t.Fatalf("Messages() = %v", err)
+		}
+		if got := back[1]; got.Clearing == nil || got.Clearing.Prefix != "abc" || got.Compaction != nil {
+			t.Fatalf("the clearing came back as %+v; a resumed run would send what it cleared whole", got)
+		}
+	})
+
 	t.Run("saving from a position keeps what is before it and replaces the rest", func(t *testing.T) {
 		store := open(t)
 		partial, ok := store.(agent.SavingFrom)

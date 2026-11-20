@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -62,7 +64,7 @@ func textOf(msgs []Message) string {
 }
 
 func withoutSummaries(msgs []Message) []Message {
-	return slices.DeleteFunc(slices.Clone(msgs), func(m Message) bool { return m.Compaction != nil })
+	return slices.DeleteFunc(slices.Clone(msgs), func(m Message) bool { return m.Compaction != nil || m.Clearing != nil })
 }
 
 type transcriptRig struct {
@@ -294,5 +296,237 @@ func TestARunContinuedByASteerKeepsItsSummaryOutOfThePattern(t *testing.T) {
 	if r.model.summaries() != 1 || len(summariesIn(result.Messages)) != 1 {
 		t.Fatalf("summarised %d time(s), %d summaries kept; a continuation carries on from the one it has",
 			r.model.summaries(), len(summariesIn(result.Messages)))
+	}
+}
+
+// clearingSpec compacts past 20,000 tokens and keeps about 1,000 word for
+// word, so twelve 2,000-token results are cleared rather than summarised.
+var clearingSpec = Spec{Pattern: "handing", MaxSteps: 1, Compaction: &Compaction{AfterInputTokens: 20_000, KeepTokens: 1_000}}
+
+func clearingsIn(msgs []Message) []int {
+	var at []int
+	for i, m := range msgs {
+		if m.Clearing != nil {
+			at = append(at, i)
+		}
+	}
+	return at
+}
+
+func compactionsIn(events chan Event) int {
+	close(events)
+	n := 0
+	for e := range events {
+		if _, ok := e.(CompactedEvent); ok {
+			n++
+		}
+	}
+	return n
+}
+
+func TestAClearingIsWrittenIntoTheTranscriptWhereTheClearedResultsEnd(t *testing.T) {
+	r := newTranscriptRig(t)
+	msgs := conversation(12, func(int) string { return strings.Repeat("d", 8000) })
+
+	result, run := r.run(t, clearingSpec, msgs)
+
+	at := clearingsIn(result.Messages)
+	if r.model.summaries() != 0 || len(at) != 1 || run.Summary() != "" {
+		t.Fatalf("clearings at %v after %d summaries; want one clearing and no summary", at, r.model.summaries())
+	}
+	if m := result.Messages[at[0]]; m.Clearing.Prefix != digest(msgs[:at[0]]) || m.Compaction != nil {
+		t.Fatalf("the clearing at %d holds %+v; want the digest of the messages before it", at[0], m)
+	}
+	if !strings.Contains(text(r.model.requests()[0].Messages[at[0]-1]), "cleared to save room") {
+		t.Fatalf("the result before the clearing was sent whole")
+	}
+	if plain := withoutSummaries(result.Messages); digest(plain[:len(msgs)]) != digest(msgs) {
+		t.Fatalf("taking the clearing out does not give back every message the run had")
+	}
+}
+
+func TestTheNextRunInASessionSendsWhatTheLastOneClearedAsHandles(t *testing.T) {
+	session, err := Open("s1", &keeping{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := clearingSpec
+	spec.Session = session
+	newTranscriptRig(t).run(t, spec, conversation(12, func(int) string { return strings.Repeat("d", 8000) }))
+	saved, _ := session.Messages(t.Context())
+
+	again := newTranscriptRig(t)
+	events := make(chan Event, 100)
+	if _, err := again.runner.Start(t.Context(), spec, append(saved, say(RoleUser, "and the tests?")), Endpoint{}, events).Wait(); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if n := compactionsIn(events); n != 0 {
+		t.Fatalf("the next run compacted %d time(s); it should start from the clearing its session saved", n)
+	}
+	sent := again.model.requests()[0].Messages
+	if !strings.Contains(text(sent[2]), "cleared to save room") {
+		t.Fatalf("the next run sent a cleared result whole: %.60q", text(sent[2]))
+	}
+	if strings.Contains(textOf(sent), "were cleared from the model's view") {
+		t.Fatalf("the clearing's own message was sent to the model")
+	}
+	for _, got := range again.pattern.received() {
+		if len(clearingsIn(got)) != 0 {
+			t.Fatalf("the pattern was handed a clearing; it works on the turns alone")
+		}
+	}
+}
+
+func TestAClearingAfterASummaryKeepsTheSummary(t *testing.T) {
+	msgs := conversation(6, func(int) string { return "x" })
+	summary := markerMessage(CompactionSummary{Summary: "Goal: kept.", Prefix: digest(msgs[:3])})
+	transcript := slices.Concat(msgs[:3], []Message{summary}, msgs[3:9], []Message{clearingMessage(digest(msgs[:9]))}, msgs[9:])
+
+	h := &compactHandle{}
+	plain := h.resume(transcript)
+
+	s := h.current()
+	if s.cut != 3 || s.cleared != 9 || s.Summary != "Goal: kept." || s.prefix != digest(msgs[:9]) {
+		t.Fatalf("resumed to cut %d, cleared %d, summary %q; want 3, 9 and the summary", s.cut, s.cleared, s.Summary)
+	}
+	if digest(plain) != digest(msgs) || digest(h.splice(plain)) != digest(transcript) {
+		t.Fatalf("resume and splice do not give back the transcript they were handed")
+	}
+}
+
+func TestASummaryAfterAClearingStandsAlone(t *testing.T) {
+	msgs := conversation(6, func(int) string { return "x" })
+	transcript := slices.Concat(msgs[:3], []Message{clearingMessage(digest(msgs[:3]))},
+		msgs[3:7], []Message{markerMessage(CompactionSummary{Summary: "Goal: later.", Prefix: digest(msgs[:7])})}, msgs[7:])
+
+	h := &compactHandle{}
+	h.resume(transcript)
+
+	if s := h.current(); s.cut != 7 || s.cleared != 7 || s.Summary != "Goal: later." || s.prefix != digest(msgs[:7]) {
+		t.Fatalf("resumed to cut %d, cleared %d, summary %q; want the later summary alone", s.cut, s.cleared, s.Summary)
+	}
+}
+
+func TestARunThatDoesNotCompactSendsNoClearingAndKeepsIt(t *testing.T) {
+	session, err := Open("s1", &keeping{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newTranscriptRig(t)
+	msgs := []Message{say(RoleUser, "task"), clearingMessage("abc"), say(RoleUser, "go on"), clearingMessage("def"), say(RoleUser, "and on")}
+
+	result, _ := r.run(t, Spec{Pattern: "handing", MaxSteps: 1, Session: session}, msgs)
+
+	if sent := r.model.requests()[0].Messages; len(sent) != 3 || strings.Contains(textOf(sent), "cleared") {
+		t.Fatalf("a run without Compaction sent %d messages; want the clearings left out", len(sent))
+	}
+	saved, _ := session.Messages(t.Context())
+	for name, got := range map[string][]Message{"result": result.Messages, "session": saved} {
+		if at := clearingsIn(got); !slices.Equal(at, []int{1, 3}) || got[1].Clearing.Prefix != "abc" || got[3].Clearing.Prefix != "def" {
+			t.Fatalf("the %s holds clearings at %v; want both kept where they were, for a run that compacts", name, at)
+		}
+	}
+}
+
+func TestAClearingReadsAsANoteToCodeThatPredatesIt(t *testing.T) {
+	raw, err := json.Marshal(clearingMessage("abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Message as it was before ClearingMark.
+	var old struct {
+		Role       Role               `json:"role"`
+		Content    []Content          `json:"content,omitempty"`
+		Compaction *CompactionSummary `json:"compaction,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.Compaction != nil || old.Role != RoleUser || len(old.Content) != 1 || old.Content[0].Text == "" {
+		t.Fatalf("code from before clearings reads %s as %+v; want a plain user note, not a summary", raw, old)
+	}
+}
+
+func TestASummaryNeverFoldsShortOfAClearing(t *testing.T) {
+	r := rig(Compaction{AfterMessages: 10, KeepTokens: 100_000})
+	msgs := conversation(10, func(int) string { return "x" })
+	// A clearing at 19, later than the 15 this run's own keep would pick.
+	state := compactionState{cleared: 19, prefix: digest(msgs[:19])}
+	r.client.state = state
+	r.handle.recordClearing(state)
+
+	r.send(t, msgs)
+
+	if got := r.client.state.cut; got < 19 {
+		t.Fatalf("the summary folds to %d, short of the clearing at 19: the marks would be out of order", got)
+	}
+	at := clearingsIn(r.handle.splice(msgs))
+	if len(at) != 1 || at[0] != 19 {
+		t.Fatalf("the clearing is spliced at %v; want it kept at 19", at)
+	}
+}
+
+func TestAClearingIsWrittenWhenTheSummaryAfterItFails(t *testing.T) {
+	r := newTranscriptRig(t)
+	r.model.fail = errors.New("the gateway is down")
+	// Twenty results and 15,000 tokens kept: clearing the rest is not enough,
+	// so the run summarises, and the summary fails.
+	msgs := conversation(20, func(int) string { return strings.Repeat("d", 8000) })
+	spec := Spec{Pattern: "handing", MaxSteps: 1, Compaction: &Compaction{AfterInputTokens: 20_000}}
+
+	result, _ := r.run(t, spec, msgs)
+
+	at := clearingsIn(result.Messages)
+	if r.model.summaries() != 1 || len(summariesIn(result.Messages)) != 0 || len(at) != 1 {
+		t.Fatalf("%d summary call(s), clearings at %v; want the failed summary's clearing kept", r.model.summaries(), at)
+	}
+	if result.Messages[at[0]].Clearing.Prefix != digest(msgs[:at[0]]) {
+		t.Fatalf("the clearing does not hold the digest of the messages before it")
+	}
+}
+
+func TestTwoClearingsInARunAreKeptInOrderAndTheLaterStands(t *testing.T) {
+	r := rig(Compaction{AfterInputTokens: 20_000, KeepTokens: 1_000})
+	r.model.usage = Usage{InputTokens: 3_000}
+	msgs := conversation(12, func(int) string { return strings.Repeat("d", 8000) })
+	r.send(t, msgs)
+	first := r.handle.current().cleared
+	more := conversation(10, func(int) string { return strings.Repeat("e", 8000) })
+	msgs = append(msgs, more[1:]...)
+	r.model.usage = Usage{InputTokens: 25_000}
+	r.send(t, msgs)
+	r.send(t, msgs)
+
+	saved := r.handle.splice(msgs)
+	at := clearingsIn(saved)
+	if len(at) != 2 || at[0] != first || at[1] <= at[0]+1 {
+		t.Fatalf("clearings at %v; want two, in order, the first at %d", at, first)
+	}
+	h := &compactHandle{}
+	h.resume(saved)
+	if got := h.current(); got.cleared != r.handle.current().cleared || got.prefix != r.handle.current().prefix {
+		t.Fatalf("resumed to cleared %d; want the later clearing's %d", got.cleared, r.handle.current().cleared)
+	}
+}
+
+func TestATranscriptEditedBeforeItsClearingIsClearedFromScratch(t *testing.T) {
+	done, _ := newTranscriptRig(t).run(t, clearingSpec, conversation(12, func(int) string { return strings.Repeat("d", 8000) }))
+	edited := slices.Clone(done.Messages)
+	edited[0] = say(RoleUser, "a different task")
+
+	again := newTranscriptRig(t)
+	events := make(chan Event, 100)
+	result, err := again.runner.Start(t.Context(), clearingSpec, edited, Endpoint{}, events).Wait()
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if n := compactionsIn(events); n != 1 {
+		t.Fatalf("compacted %d time(s); a clearing of another conversation must not stand in for this one", n)
+	}
+	plain := withoutSummaries(result.Messages)
+	if at := clearingsIn(result.Messages); len(at) != 1 || result.Messages[at[0]].Clearing.Prefix != digest(plain[:at[0]]) {
+		t.Fatalf("clearings at %v; want only the new one, over the edited messages", at)
 	}
 }
