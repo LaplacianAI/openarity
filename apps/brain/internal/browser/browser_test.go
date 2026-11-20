@@ -161,11 +161,16 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func serve(t *testing.T, f *fakeAPI) string {
+// serve hands back the fake's address and a client of its own. Not
+// http.DefaultClient: every httptest server's Close drops the idle
+// connections of the default transport, so a parallel test closing its fake
+// could cut the connection another test was about to send a POST on, and a
+// POST is not retried.
+func serve(t *testing.T, f *fakeAPI) (string, *http.Client) {
 	t.Helper()
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	return srv.URL
+	return srv.URL, srv.Client()
 }
 
 // Each session provider makes a session with its key on the call, as it
@@ -207,7 +212,8 @@ func TestASessionProviderMakesAndEndsASession(t *testing.T) {
 		t.Run(string(tc.p), func(t *testing.T) {
 			t.Parallel()
 			f := &fakeAPI{created: tc.created}
-			o, err := open(tc.p, serve(t, f), secret, http.DefaultClient)
+			base, client := serve(t, f)
+			o, err := open(tc.p, base, secret, client)
 			if err != nil {
 				t.Fatalf("open: %v", err)
 			}
@@ -257,7 +263,8 @@ func TestASessionThatCannotBeMadeSaysSo(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			o, _ := open(Browserbase, serve(t, tc.f), secret, http.DefaultClient)
+			base, client := serve(t, tc.f)
+			o, _ := open(Browserbase, base, secret, client)
 			_, err := o.Open(t.Context())
 			if err == nil || !strings.Contains(err.Error(), "browserbase") || !strings.Contains(err.Error(), tc.says) ||
 				strings.Contains(err.Error(), secret) {
@@ -273,7 +280,8 @@ func TestAReleaseThatFailsIsAnError(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeAPI{created: `{"session_id":"k1","cdp_ws_url":"wss://k1"}`}
-	o, _ := open(Kernel, serve(t, f), secret, http.DefaultClient)
+	base, client := serve(t, f)
+	o, _ := open(Kernel, base, secret, client)
 	s, err := o.Open(t.Context())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -291,8 +299,8 @@ func TestASelfHostedSteelIsReachedWhereItWasFound(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeAPI{created: `{"id":"s1","websocketUrl":"ws://localhost:3000/"}`}
-	base := serve(t, f)
-	o, err := New(Steel, base, "", http.DefaultClient)
+	base, client := serve(t, f)
+	o, err := New(Steel, base, "", client)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
