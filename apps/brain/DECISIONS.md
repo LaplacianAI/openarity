@@ -4,6 +4,32 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
 
 ## Decisions worth not relitigating
 
+- **A cached token counts as a tenth, in the budget and on the dashboard.**
+  The provider bills a token it reads from its cache at about a tenth of a
+  fresh one, and on staging 84% of the review team's input was cached:
+  counted whole, a delegate rereading 100,000 tokens a step ran out of a 2M
+  budget it had paid for a fifth of, and the spend alert fired at five times
+  the bill. `runs.cached_input_tokens` sits beside the totals, and the weight
+  is written once, in the SQL function `run_spent`: `AddRunUsage` returns it,
+  and the dashboard's tokens and the spike alert sum it. `costOf` in
+  `internal/runtime` prices the wrap-up's next call the same way and must
+  agree. Ignoring cache reads outright would let a run loop on its context
+  for nothing, so they count, cheaply. What follows from it:
+  - The cached count is taken as part of the input, as the OpenAI-compatible
+    APIs report it (LiteLLM included). A gateway passing on Anthropic's own
+    counts, which keep cache reads apart, would be held to the input and
+    undercount the cache; check a new gateway's usage before trusting it.
+  - The `spent` a usage event records is the budget's count from this
+    change on, and input plus output before it. Nothing reads it but the
+    trace, but a chart of it steps down at the change.
+  - During a rolling deploy a worker from before writes no cached count, so
+    its runs count every token whole, as they did. The backfill ran before
+    them and does not come back for them.
+- **A run compacts at 60,000 tokens of context, not 100,000.** Review
+  delegates spent their last ten or twenty steps at 70,000 to 120,000,
+  carrying tool output they were done with; a compaction left about 26,000.
+  The cost is a compaction about twice as often, each a summary call and one
+  request whose context is not cached yet.
 - **A budget has two soft lines before its cap, and they measure different
   things.** With a tenth of the budget left the run compacts; when one more
   call would not fit (twice the last call's input plus room for an answer:

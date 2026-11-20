@@ -387,6 +387,7 @@ type Run struct {
 	Unattended        bool
 	WaitedSeconds     int32
 	WaitingSince      *time.Time
+	CachedInputTokens int64
 }
 
 type RunEvent struct {

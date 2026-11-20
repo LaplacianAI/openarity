@@ -87,7 +87,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 1
       },
@@ -129,8 +129,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 3,
+        "x": 3,
         "y": 1
       },
       "targets": [
@@ -186,15 +186,15 @@
       "id": 4,
       "type": "stat",
       "title": "Tokens",
-      "description": "Input and output tokens, delegates included.",
+      "description": "Tokens as a run's budget counts them, delegates included: a token read from the provider's cache counts as a tenth of one.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
+        "w": 3,
+        "x": 6,
         "y": 1
       },
       "targets": [
@@ -207,7 +207,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT coalesce(sum(input_tokens + output_tokens), 0) AS value FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent)"
+          "rawSql": "SELECT coalesce(sum(run_spent(input_tokens, cached_input_tokens, output_tokens)), 0) AS value FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent)"
         }
       ],
       "fieldConfig": {
@@ -237,8 +237,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 12,
+        "w": 3,
+        "x": 15,
         "y": 1
       },
       "targets": [
@@ -281,8 +281,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 16,
+        "w": 3,
+        "x": 18,
         "y": 1
       },
       "targets": [
@@ -345,8 +345,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
+        "w": 3,
+        "x": 21,
         "y": 1
       },
       "targets": [
@@ -364,6 +364,107 @@
       ],
       "fieldConfig": {
         "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Cache reads",
+      "description": "Input tokens the provider served from its cache, whole. They are part of the input and cost about a tenth of a fresh token.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT coalesce(sum(cached_input_tokens), 0) AS value FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 25,
+      "type": "stat",
+      "title": "Cache hit",
+      "description": "The share of input tokens read from the provider's cache. Low means each step pays for its whole context again.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT 100.0 * sum(cached_input_tokens) / nullif(sum(input_tokens), 0) AS value FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "—"
+        },
         "overrides": []
       },
       "options": {
@@ -433,7 +534,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Tokens by agent",
-      "description": "Tokens spent in each interval, by the agent that spent them.",
+      "description": "Tokens spent in each interval, by the agent that spent them, counted as the budget counts them: a cached token as a tenth.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${datasource}"
@@ -454,7 +555,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(created_at, $__interval, 0), agent_name AS metric, sum(input_tokens + output_tokens) AS value FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent) GROUP BY 1, 2 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(created_at, $__interval, 0), agent_name AS metric, sum(run_spent(input_tokens, cached_input_tokens, output_tokens)) AS value FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent) GROUP BY 1, 2 ORDER BY 1"
         }
       ],
       "fieldConfig": {
@@ -621,7 +722,7 @@
       "id": 14,
       "type": "table",
       "title": "Agents",
-      "description": "Each agent over the range: how much it ran, failed and spent.",
+      "description": "Each agent over the range: how much it ran, failed and spent. Tokens count a cached token as a tenth; cache reads are shown whole beside them.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "${datasource}"
@@ -642,7 +743,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT agent_name AS \"Agent\", count(*) AS \"Runs\", count(*) FILTER (WHERE status = 'failed') AS \"Failed\", round(100.0 * count(*) FILTER (WHERE status = 'failed') / nullif(count(*) FILTER (WHERE status IN ('succeeded', 'failed', 'cancelled')), 0), 1) AS \"Failed %\", sum(input_tokens + output_tokens) AS \"Tokens\", round(avg(input_tokens + output_tokens)) AS \"Tokens per run\", round((percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM finished_at - started_at)))::numeric, 1) AS \"Median s\", max(created_at) AS \"Last run\" FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent) GROUP BY agent_name ORDER BY \"Tokens\" DESC"
+          "rawSql": "SELECT agent_name AS \"Agent\", count(*) AS \"Runs\", count(*) FILTER (WHERE status = 'failed') AS \"Failed\", round(100.0 * count(*) FILTER (WHERE status = 'failed') / nullif(count(*) FILTER (WHERE status IN ('succeeded', 'failed', 'cancelled')), 0), 1) AS \"Failed %\", sum(run_spent(input_tokens, cached_input_tokens, output_tokens)) AS \"Tokens (cache ×0.1)\", sum(cached_input_tokens) AS \"Cache reads\", round(100.0 * sum(cached_input_tokens) / nullif(sum(input_tokens), 0), 1) AS \"Cache hit %\", round(avg(run_spent(input_tokens, cached_input_tokens, output_tokens))) AS \"Tokens per run (cache ×0.1)\", round((percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM finished_at - started_at)))::numeric, 1) AS \"Median s\", max(created_at) AS \"Last run\" FROM runs WHERE $__timeFilter(created_at) AND team_id IN ($team) AND agent_name IN ($agent) GROUP BY agent_name ORDER BY \"Tokens (cache ×0.1)\" DESC"
         }
       ],
       "fieldConfig": {
@@ -685,7 +786,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT t.name AS \"Team\", count(*) AS \"Runs\", sum(r.input_tokens + r.output_tokens) AS \"Tokens\" FROM runs r JOIN teams t ON t.id = r.team_id WHERE $__timeFilter(r.created_at) AND r.team_id IN ($team) AND r.agent_name IN ($agent) GROUP BY t.name ORDER BY \"Tokens\" DESC"
+          "rawSql": "SELECT t.name AS \"Team\", count(*) AS \"Runs\", sum(run_spent(r.input_tokens, r.cached_input_tokens, r.output_tokens)) AS \"Tokens (cache ×0.1)\", sum(r.cached_input_tokens) AS \"Cache reads\" FROM runs r JOIN teams t ON t.id = r.team_id WHERE $__timeFilter(r.created_at) AND r.team_id IN ($team) AND r.agent_name IN ($agent) GROUP BY t.name ORDER BY \"Tokens (cache ×0.1)\" DESC"
         }
       ],
       "fieldConfig": {
@@ -765,7 +866,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT root.created_at AS \"When\", root.agent_name AS \"Root agent\", count(r.id) - 1 AS \"Delegates\", max(r.depth) AS \"Depth\", sum(r.input_tokens + r.output_tokens) AS \"Tokens\", root.id AS \"Run\" FROM runs root JOIN runs r ON r.root_run_id = root.id WHERE $__timeFilter(root.created_at) AND root.team_id IN ($team) AND root.parent_run_id IS NULL GROUP BY root.id, root.created_at, root.agent_name HAVING count(r.id) > 1 ORDER BY \"Delegates\" DESC LIMIT 20"
+          "rawSql": "SELECT root.created_at AS \"When\", root.agent_name AS \"Root agent\", count(r.id) - 1 AS \"Delegates\", max(r.depth) AS \"Depth\", sum(run_spent(r.input_tokens, r.cached_input_tokens, r.output_tokens)) AS \"Tokens (cache ×0.1)\", root.id AS \"Run\" FROM runs root JOIN runs r ON r.root_run_id = root.id WHERE $__timeFilter(root.created_at) AND root.team_id IN ($team) AND root.parent_run_id IS NULL GROUP BY root.id, root.created_at, root.agent_name HAVING count(r.id) > 1 ORDER BY \"Delegates\" DESC LIMIT 20"
         }
       ],
       "fieldConfig": {

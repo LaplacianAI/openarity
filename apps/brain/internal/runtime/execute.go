@@ -543,7 +543,7 @@ func runOf(r db.ClaimRunRow) db.Run {
 		RootRunID: r.RootRunID, ParentToolCall: r.ParentToolCall, Depth: r.Depth,
 		AgentID: r.AgentID, AgentName: r.AgentName, UserID: r.UserID, Status: r.Status,
 		Input: r.Input, Output: r.Output, Error: r.Error, InputTokens: r.InputTokens,
-		OutputTokens: r.OutputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
+		OutputTokens: r.OutputTokens, CachedInputTokens: r.CachedInputTokens, Worker: r.Worker, HeartbeatAt: r.HeartbeatAt,
 		CancelRequestedAt: r.CancelRequestedAt, CreatedAt: r.CreatedAt,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, TokenBudget: r.TokenBudget,
 		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,

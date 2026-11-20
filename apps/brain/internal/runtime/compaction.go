@@ -18,11 +18,16 @@ import (
 const (
 	// compactCeiling is the most a run's next request may read before it
 	// compacts. A run's own budget lowers it to a tenth of the budget, so no
-	// single call spends more than that, but never below compactFloor: a
+	// single call reads more than that, but never below compactFloor: a
 	// compaction keeps the latest ~15,000 tokens, the prompt and the tools,
 	// so a lower line is crossed again at once and the run spends its budget
 	// summarising. A small budget is kept by its soft lines instead.
-	compactCeiling = 100_000
+	//
+	// 60,000, not more: a review delegate at 100,000 spent its last ten or
+	// twenty steps rereading tool output it was done with, and a compaction
+	// on staging left about 26,000, so this still leaves room for several
+	// steps between compactions.
+	compactCeiling = 60_000
 	compactFloor   = 50_000
 	// defaultCompactionMessages is team_settings.compaction_messages' default,
 	// for a team that never saved its settings.
@@ -143,7 +148,7 @@ func (l *softLines) spent(spent int64, e agent.UsageEvent) *wrapUpPayload {
 		return nil
 	}
 	l.wrote = max(l.wrote, int64(e.Usage.OutputTokens))
-	if left >= 2*int64(e.Usage.InputTokens)+l.reserve() {
+	if left >= 2*costOf(e.Usage)+l.reserve() {
 		return nil
 	}
 	if !l.wrap(budgetWrapUp) {
@@ -163,6 +168,18 @@ func (l *softLines) stepped(step int) *wrapUpPayload {
 		return nil
 	}
 	return &wrapUpPayload{Reason: "steps"}
+}
+
+// cacheShare is the part of a fresh token a cached one counts for: a tenth,
+// as providers bill it. run_spent in the store counts a run's budget the same
+// way; the two must agree.
+const cacheShare = 10
+
+// costOf is what a call's input cost the budget: a cached token a tenth.
+func costOf(u agent.Usage) int64 {
+	in := int64(u.InputTokens)
+	cached := min(max(int64(u.CachedInputTokens), 0), in)
+	return in - cached + cached/cacheShare
 }
 
 // reserve is what one more call is kept for its answer: twice the most the
