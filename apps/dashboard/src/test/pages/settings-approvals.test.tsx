@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { ApprovalRule, TeamSettings } from "@/api/types";
-import { brain, pageOf, showAt, team } from "@/test/brain";
+import { brain, choose, pageOf, showAt, team } from "@/test/brain";
 
 const { Route } = await import("@/routes/ui.settings");
 await pageOf(Route);
@@ -55,7 +55,7 @@ const ROUTES = {
 
 /** Chooses a server in the rule form's picker, and closes it. */
 async function chooseServer(section: HTMLElement, name: string) {
-  await userEvent.click(within(section).getByRole("button", { name: /server$/ }));
+  await userEvent.click(within(section).getByRole("button", { name: "Server" }));
   await userEvent.click(await screen.findByRole("option", { name }));
   await userEvent.keyboard("{Escape}");
 }
@@ -74,12 +74,20 @@ it("saves the mode and the wait through the approval route, apart from the setti
   });
   open();
   const section = await approvals();
-  expect(within(section).getByLabelText("Ask before")).toHaveValue("writes");
+  expect(
+    within(section).getByRole("radio", { name: "Writes and destructive calls" }),
+  ).toBeChecked();
   expect(within(section).queryByRole("button", { name: /^save$/i })).toBeNull();
 
-  await userEvent.selectOptions(within(section).getByLabelText("Ask before"), "destructive");
-  expect(within(section).getByText(/only before a call that destroys/i)).toBeInTheDocument();
+  await userEvent.click(within(section).getByRole("radio", { name: "Destructive calls only" }));
+  expect(within(section).getByRole("radio", { name: "Destructive calls only" })).toBeChecked();
   const ttl = within(section).getByLabelText("Minutes a request waits");
+  await userEvent.clear(ttl);
+  await userEvent.type(ttl, "30");
+  expect(within(section).getByText("minutes")).toBeInTheDocument();
+  await userEvent.clear(ttl);
+  await userEvent.type(ttl, "90");
+  expect(within(section).getByText("minutes · 1 hour 30 minutes")).toBeInTheDocument();
   await userEvent.clear(ttl);
   await userEvent.type(ttl, "30");
   await userEvent.click(within(section).getByRole("button", { name: /^save$/i }));
@@ -130,17 +138,20 @@ it("lists the rules, adds one and removes one", async () => {
   });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  const table = await within(section).findByRole("table", { name: "Tool approval rules" });
-  expect(within(table).getByText("github")).toBeInTheDocument();
-  expect(within(table).getByText("Always ask")).toBeInTheDocument();
+  const list = await within(section).findByRole("list", { name: "Tool approval rules" });
+  expect(within(list).getByText("github")).toBeInTheDocument();
+  expect(within(list).getByText("Every tool of this server")).toBeInTheDocument();
+  expect(within(list).getByText("Always ask")).toBeInTheDocument();
+  expect(within(list).getByText("Someone else answers")).toBeInTheDocument();
 
   await chooseServer(section, "shell");
   const tool = within(section).getByLabelText("Tool");
   await waitFor(() => expect(tool).toBeEnabled());
-  await userEvent.selectOptions(tool, "shell__run");
-  await userEvent.selectOptions(within(section).getByLabelText("Answer"), "deny");
+  await choose(tool, "run");
+  await userEvent.click(within(section).getByRole("radio", { name: "Never" }));
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
-  expect(await within(section).findByText("shell__run")).toBeInTheDocument();
+  expect(await within(section).findByText("on shell")).toBeInTheDocument();
+  expect(within(section).getByText("Never allow")).toBeInTheDocument();
   const post = seen.find((s) => s.method === "POST");
   expect(JSON.parse(String(post?.body))).toEqual({
     target_kind: "tool",
@@ -167,7 +178,9 @@ it("shows the brain's words when a target already has a rule", async () => {
   });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  await userEvent.selectOptions(await within(section).findByLabelText("Applies to"), "server");
+  await userEvent.click(
+    await within(section).findByRole("radio", { name: "Every tool of a server" }),
+  );
   await chooseServer(section, "github");
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
   expect(await within(section).findByRole("alert")).toHaveTextContent("already has a rule");
@@ -181,10 +194,10 @@ it("names a built-in tool by its own name", async () => {
   });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  await within(section).findByRole("table", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
 
   await chooseServer(section, "Built-in tools");
-  await userEvent.selectOptions(within(section).getByLabelText("Tool"), "web_fetch");
+  await choose(within(section).getByLabelText("Tool"), "web_fetch");
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
   await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
   expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
@@ -197,7 +210,7 @@ it("offers no tool from a server that has none, and adds nothing unchosen", asyn
   const seen = brain({ ...team(["team:settings"]), ...ROUTES });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  await within(section).findByRole("table", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
 
   expect(within(section).getByLabelText("Tool")).toBeDisabled();
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
@@ -221,12 +234,12 @@ it("starts again when what the rule applies to changes", async () => {
   });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  await within(section).findByRole("table", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
 
   await chooseServer(section, "shell");
   await waitFor(() => expect(within(section).getByLabelText("Tool")).toBeEnabled());
-  await userEvent.selectOptions(within(section).getByLabelText("Tool"), "shell__run");
-  await userEvent.selectOptions(within(section).getByLabelText("Applies to"), "server");
+  await choose(within(section).getByLabelText("Tool"), "run");
+  await userEvent.click(within(section).getByRole("radio", { name: "Every tool of a server" }));
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
   expect(await within(section).findByRole("alert")).toHaveTextContent(
     "Choose the server the rule is for.",
@@ -238,7 +251,7 @@ it("is read-only without team:settings: the rules are listed, nothing is offered
   brain({ ...team(["approval:read"]), ...ROUTES });
   open();
   const section = await approvals();
-  expect(within(section).getByLabelText("Ask before")).toBeDisabled();
+  expect(within(section).getByRole("radio", { name: "Every call" })).toBeDisabled();
   expect(within(section).queryByRole("button", { name: /^save$/i })).toBeNull();
   const rules = await screen.findByRole("region", { name: "Tool approval rules" });
   expect(await within(rules).findByText("github")).toBeInTheDocument();
@@ -259,9 +272,9 @@ it("finds the built-in tools by a tool's name", async () => {
   });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  await within(section).findByRole("table", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
 
-  await userEvent.click(within(section).getByRole("button", { name: /server$/ }));
+  await userEvent.click(within(section).getByRole("button", { name: "Server" }));
   await userEvent.type(await screen.findByRole("combobox", { name: "Search server" }), "fetch");
   await waitFor(() => expect(screen.queryByRole("option", { name: "github" })).toBeNull());
   expect(screen.getByRole("option", { name: "Built-in tools" })).toBeInTheDocument();
@@ -282,13 +295,14 @@ it("tries a server's tools again when they could not be read", async () => {
   });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  await within(section).findByRole("table", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
 
   await chooseServer(section, "shell");
   await userEvent.click(await within(section).findByRole("button", { name: "Try again" }));
   const tool = within(section).getByLabelText("Tool");
   await waitFor(() => expect(tool).toBeEnabled());
-  expect(within(tool).getByRole("option", { name: "run" })).toHaveValue("shell__run");
+  await choose(tool, "run");
+  expect(tool).toHaveTextContent("run");
 });
 
 it("names a server by its name in a server rule", async () => {
@@ -299,9 +313,9 @@ it("names a server by its name in a server rule", async () => {
   });
   open();
   const section = await screen.findByRole("region", { name: "Tool approval rules" });
-  await within(section).findByRole("table", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
 
-  await userEvent.selectOptions(within(section).getByLabelText("Applies to"), "server");
+  await userEvent.click(within(section).getByRole("radio", { name: "Every tool of a server" }));
   await chooseServer(section, "shell");
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
   await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
@@ -309,4 +323,71 @@ it("names a server by its name in a server rule", async () => {
     target_kind: "server",
     target: "shell",
   });
+});
+
+it("names a browser tool, and says what a rule on the open covers", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "POST /teams/{id}/approval-rules": { body: { ...RULE, id: "ru5" } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
+
+  await chooseServer(section, "Built-in tools");
+  await choose(within(section).getByLabelText("Tool"), "browser_open");
+  expect(within(section).getByText(/asked when a page opens/i)).toBeInTheDocument();
+  await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
+    target_kind: "tool",
+    target: "browser_open",
+    mode: "ask",
+  });
+});
+
+it("offers someone else's answer only for a rule that asks", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "POST /teams/{id}/approval-rules": { body: { ...RULE, id: "ru6" } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
+
+  await userEvent.click(within(section).getByRole("switch", { name: "Someone else must answer" }));
+  await userEvent.click(within(section).getByRole("radio", { name: "Allow" }));
+  expect(within(section).queryByRole("switch", { name: "Someone else must answer" })).toBeNull();
+  await userEvent.click(within(section).getByRole("radio", { name: "Every tool of a server" }));
+  await chooseServer(section, "shell");
+  await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
+    target: "shell",
+    mode: "allow",
+    require_other: false,
+  });
+});
+
+it("says the rules do nothing while approvals are off", async () => {
+  brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "GET /teams/{id}/approval-settings": { body: { mode: "off", ttl_minutes: 60 } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  expect(
+    await within(section).findByText(/approvals are off, so no rule applies/i),
+  ).toBeInTheDocument();
+});
+
+it("says nothing of the mode while approvals are on", async () => {
+  brain({ ...team(["team:settings"]), ...ROUTES });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
+  expect(within(section).queryByText(/approvals are off/i)).toBeNull();
 });

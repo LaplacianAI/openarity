@@ -9,7 +9,7 @@
  * it shows, so a person knows to keep typing rather than scroll.
  */
 import { useQuery } from "@tanstack/react-query";
-import { Check, Plus, X } from "lucide-react";
+import { Check, ChevronDown, Plus, X } from "lucide-react";
 import { Popover } from "radix-ui";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
@@ -41,6 +41,7 @@ export function Picker({
   exclude = [],
   extra,
   max,
+  field,
 }: {
   /** Names the chips' list and the search, as a person reads them. */
   label: string;
@@ -57,6 +58,12 @@ export function Picker({
   extra?: (p: Picked) => ReactNode;
   /** At most this many: a pick past it drops the oldest, so 1 replaces. */
   max?: number;
+  /**
+   * One pick shown in a field of its own, as a select is, rather than as a
+   * chip and an "Add" link: for a form where it sits in a row of fields.
+   * Only with max 1; the field names itself with this id for its label.
+   */
+  field?: { id: string; placeholder: string };
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -124,7 +131,7 @@ export function Picker({
 
   return (
     <div className="space-y-1.5">
-      {value.length > 0 ? (
+      {value.length > 0 && !field ? (
         <ul aria-label={label} className="flex flex-wrap gap-1">
           {value.map((p) => (
             <li
@@ -153,14 +160,30 @@ export function Picker({
         }}
       >
         <Popover.Trigger asChild>
-          <button
-            ref={trigger}
-            type="button"
-            className="inline-flex items-center gap-1 rounded border border-dashed border-border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-border-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-          >
-            <Plus aria-hidden className="size-3" />
-            {full ? "Change" : "Add"} {noun}
-          </button>
+          {field ? (
+            <button
+              ref={trigger}
+              id={field.id}
+              type="button"
+              aria-haspopup="listbox"
+              className={cn(
+                "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 text-left text-sm transition-[color,border-color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
+                value.length === 0 && "text-muted-foreground",
+              )}
+            >
+              <span className="truncate">{value[0]?.name ?? field.placeholder}</span>
+              <ChevronDown aria-hidden className="size-4 shrink-0 opacity-50" />
+            </button>
+          ) : (
+            <button
+              ref={trigger}
+              type="button"
+              className="inline-flex items-center gap-1 rounded border border-dashed border-border px-1.5 py-0.5 text-xs text-muted-foreground hover:border-border-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <Plus aria-hidden className="size-3" />
+              {full ? "Change" : "Add"} {noun}
+            </button>
+          )}
         </Popover.Trigger>
         <Popover.Portal>
           <Popover.Content
@@ -170,7 +193,7 @@ export function Picker({
               e.preventDefault();
               trigger.current?.focus();
             }}
-            className="z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-(--dur-pop) ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-96"
+            className="z-50 w-72 min-w-(--radix-popover-trigger-width) origin-(--radix-popover-content-transform-origin) rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-sheet-edge duration-(--dur-pop) ease-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-96"
           >
             <input
               role="combobox"

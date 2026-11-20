@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
-import { brain, showAt, team } from "@/test/brain";
+import { brain, choose, showAt, team } from "@/test/brain";
 
 const { Route, NO_MODEL, draftOf, groupRequest, isDirty, settingsRequest } = await import(
   "@/routes/ui.settings"
@@ -218,7 +218,7 @@ it("shows the defaults for a team that never saved", async () => {
   at();
 
   expect(await screen.findByText(/No model —/)).toBeInTheDocument();
-  expect(screen.getByLabelText(/^provider$/i)).toHaveValue("none");
+  expect(screen.getByLabelText(/^provider$/i)).toHaveTextContent("Off");
   expect(screen.getByLabelText(/learn from each run/i)).not.toBeChecked();
   expect(screen.getByLabelText(/messages before a transcript compacts/i)).toHaveValue("100");
 });
@@ -362,7 +362,7 @@ it("sends a typed key once and forgets it", async () => {
   });
   at();
 
-  await userEvent.selectOptions(await screen.findByLabelText(/^provider$/i), "brave");
+  await choose(await screen.findByLabelText(/^provider$/i), "Brave Search");
   const field = screen.getByLabelText(/api key/i);
   expect(field).toHaveAttribute("type", "password");
   expect(field).toHaveAttribute("autocomplete", "new-password");
@@ -382,7 +382,7 @@ it("asks for a key when switching to another provider that needs one", async () 
   });
   at();
 
-  await userEvent.selectOptions(await screen.findByLabelText(/^provider$/i), "tavily");
+  await choose(await screen.findByLabelText(/^provider$/i), "Tavily");
   await saveIn("Web search");
 
   expect(await within(group("Web search")).findByRole("alert")).toHaveTextContent(/API key/);
@@ -417,7 +417,7 @@ it("shows the brain's refusal in the group that was saved", async () => {
   });
   at();
 
-  await userEvent.selectOptions(await screen.findByLabelText(/^provider$/i), "searxng");
+  await choose(await screen.findByLabelText(/^provider$/i), "SearXNG (self-hosted)");
   await userEvent.type(screen.getByLabelText(/^address$/i), "http://127.0.0.1");
   await saveIn("Web search");
 
@@ -706,7 +706,7 @@ it("saves a self-hosted browser at its address, with no key", async () => {
   });
   at();
 
-  await userEvent.selectOptions(await screen.findByLabelText(/browser provider/i), "lightpanda");
+  await choose(await screen.findByLabelText(/browser provider/i), "Lightpanda");
   await userEvent.type(screen.getByLabelText(/^address$/i), "ws://lightpanda:9222");
   expect(screen.getByLabelText(/^token$/i)).toHaveValue("");
   await saveIn("Browser");
@@ -720,7 +720,7 @@ it("shows a hosted browser's key field, and no address", async () => {
   brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: KERNEL } });
   at();
 
-  expect(await screen.findByLabelText(/browser provider/i)).toHaveValue("kernel");
+  expect(await screen.findByLabelText(/browser provider/i)).toHaveTextContent("Kernel");
   expect(screen.getByLabelText(/^api key$/i)).toBeInTheDocument();
   expect(screen.queryByLabelText(/^address$/i)).not.toBeInTheDocument();
   expect(screen.getByText(/a key is set\. leave this empty to keep it/i)).toBeInTheDocument();
