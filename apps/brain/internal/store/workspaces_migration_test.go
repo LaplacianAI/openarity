@@ -12,11 +12,6 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-// workspaces is 20261201090000_workspaces.sql, which lets a session own a
-// room and an agent be granted one; the migration before it is
-// addImprovements.
-const workspaces = 20261201090000
-
 // sessionRoom is a session of f's team with a workspace room.
 func (f roomFixture) sessionRoom(t *testing.T, s *Store) (uuid.UUID, db.SandboxRoom) {
 	t.Helper()
@@ -98,6 +93,9 @@ func TestTouchingByOwnerKeepsOnlyThatRoomInUse(t *testing.T) {
 	}
 }
 
+// 20261201090000_workspaces.sql lets a session own a room and an agent be
+// granted one; the migration before it is addImprovements.
+//
 // Rolled back, sessions' rooms go as rooms go, tombstoned for the sweep; the
 // grant and the trigger go; migrated again, it all comes back.
 func TestWorkspacesRollBack(t *testing.T) {
