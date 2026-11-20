@@ -56,9 +56,45 @@ func TestCacheWritesCountAsInputOnce(t *testing.T) {
 			usage(50000, map[string]any{"cache_creation_tokens": 1000, "cache_creation_in_prompt": false}, nil),
 			agent.Usage{InputTokens: 51000, OutputTokens: 7, CacheWriteTokens: 1000},
 		},
+		// Inside, writes are part of prompt_tokens, so never more than its
+		// fresh part.
 		"inside by the flag, though prompt_tokens is smaller": {
 			usage(150, map[string]any{"cache_creation_tokens": 1000, "cache_creation_in_prompt": true}, nil),
-			agent.Usage{InputTokens: 150, OutputTokens: 7, CacheWriteTokens: 1000},
+			agent.Usage{InputTokens: 150, OutputTokens: 7, CacheWriteTokens: 150},
+		},
+		"inside by the flag, held to the fresh part after cached": {
+			usage(1000, map[string]any{"cached_tokens": 900, "cache_creation_tokens": 500, "cache_creation_in_prompt": true}, nil),
+			agent.Usage{InputTokens: 1000, OutputTokens: 7, CachedInputTokens: 900, CacheWriteTokens: 100},
+		},
+		"the flag in quotes": {
+			usage(50000, map[string]any{"cache_creation_tokens": 1000, "cache_creation_in_prompt": "false"}, nil),
+			agent.Usage{InputTokens: 51000, OutputTokens: 7, CacheWriteTokens: 1000},
+		},
+		"the flag beside the details": {
+			usage(50000, map[string]any{"cache_creation_tokens": 1000}, map[string]any{"cache_creation_in_prompt": false}),
+			agent.Usage{InputTokens: 51000, OutputTokens: 7, CacheWriteTokens: 1000},
+		},
+		"a null flag is no flag": {
+			usage(150, map[string]any{"cache_creation_tokens": 1000, "cache_creation_in_prompt": nil}, nil),
+			agent.Usage{InputTokens: 1150, OutputTokens: 7, CacheWriteTokens: 1000},
+		},
+		// Without a flag, writes outside with more fresh input than writes are
+		// read as inside: short, never twice.
+		"no flag, outside but read as inside": {
+			usage(50000, map[string]any{"cache_creation_tokens": 1000}, nil),
+			agent.Usage{InputTokens: 50000, OutputTokens: 7, CacheWriteTokens: 1000},
+		},
+		"no flag, prompt exactly cached plus writes": {
+			usage(40000, map[string]any{}, map[string]any{"cache_creation_input_tokens": 40000}),
+			agent.Usage{InputTokens: 40000, OutputTokens: 7, CacheWriteTokens: 40000},
+		},
+		"no flag, prompt one short of cached plus writes": {
+			usage(39999, map[string]any{}, map[string]any{"cache_creation_input_tokens": 40000}),
+			agent.Usage{InputTokens: 79999, OutputTokens: 7, CacheWriteTokens: 40000},
+		},
+		"no flag, all of prompt cached and a write beside it": {
+			usage(21246, map[string]any{"cached_tokens": 21246}, map[string]any{"cache_creation_input_tokens": 100}),
+			agent.Usage{InputTokens: 21346, OutputTokens: 7, CachedInputTokens: 21246, CacheWriteTokens: 100},
 		},
 		"no flag, writes inside by arithmetic": {
 			usage(40150, map[string]any{}, map[string]any{"cache_creation_input_tokens": 40000}),
@@ -101,6 +137,23 @@ func TestCacheWritesCountAsInputOnce(t *testing.T) {
 		"a fractional count": {
 			usage(150, map[string]any{"cache_creation_tokens": 10.5, "cache_creation_in_prompt": false}, nil),
 			agent.Usage{InputTokens: 150, OutputTokens: 7},
+		},
+		"a whole count written with a point": {
+			usage(150, map[string]any{"cache_creation_tokens": json.Number("40188.0"), "cache_creation_in_prompt": false}, nil),
+			agent.Usage{InputTokens: 40338, OutputTokens: 7, CacheWriteTokens: 40188},
+		},
+		"a whole count written with an exponent": {
+			usage(150, map[string]any{"cache_creation_tokens": json.Number("4.0188e4"), "cache_creation_in_prompt": false}, nil),
+			agent.Usage{InputTokens: 40338, OutputTokens: 7, CacheWriteTokens: 40188},
+		},
+		"a count too large to be one": {
+			usage(150, map[string]any{"cache_creation_tokens": json.Number("1e30"), "cache_creation_in_prompt": false}, nil),
+			agent.Usage{InputTokens: 150, OutputTokens: 7},
+		},
+		"a bad first name gives way to the next": {
+			usage(150, map[string]any{"cache_creation_tokens": -5, "cache_creation_in_prompt": false},
+				map[string]any{"cache_write_tokens": 40000}),
+			agent.Usage{InputTokens: 40150, OutputTokens: 7, CacheWriteTokens: 40000},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

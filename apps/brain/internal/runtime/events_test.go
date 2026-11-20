@@ -251,16 +251,31 @@ func TestEachSDKEventBecomesItsRow(t *testing.T) {
 func TestACacheWriteIsOnTheUsageRowAndSpentInFull(t *testing.T) {
 	t.Parallel()
 
-	h := newHeldRun(t)
+	for name, tc := range map[string]struct {
+		usage agent.Usage
+		spent float64
+	}{
+		// 40,337 read, none of it cached, and 7 written out.
+		"a miss": {agent.Usage{InputTokens: 40_337, OutputTokens: 7, CacheWriteTokens: 40_188}, 40_344},
+		// 8,354 fresh (the 8,299 written among them), 21,246 cached as
+		// 2,124, and 7 out: the write is not counted a second time.
+		"a hit that also wrote": {agent.Usage{
+			InputTokens: 29_600, OutputTokens: 7, CachedInputTokens: 21_246, CacheWriteTokens: 8_299,
+		}, 10_485},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	st := feed(t, h.store, h.id, agent.UsageEvent{Model: "claude-sonnet", Usage: agent.Usage{
-		InputTokens: 40_337, OutputTokens: 7, CacheWriteTokens: 40_188,
-	}})
-	wantNoStop(t, st)
+			h := newHeldRun(t)
+			st := feed(t, h.store, h.id, agent.UsageEvent{Model: "claude-sonnet", Usage: tc.usage})
+			wantNoStop(t, st)
 
-	usage := payload[map[string]any](t, h.events(t)[0])
-	if usage["cache_write_tokens"] != 40_188.0 || usage["input_tokens"] != 40_337.0 || usage["spent"] != 40_344.0 {
-		t.Errorf("usage payload = %v, want 40,188 written, 40,337 in, 40,344 spent", usage)
+			usage := payload[map[string]any](t, h.events(t)[0])
+			if usage["cache_write_tokens"] != float64(tc.usage.CacheWriteTokens) ||
+				usage["input_tokens"] != float64(tc.usage.InputTokens) || usage["spent"] != tc.spent {
+				t.Errorf("usage payload = %v, want %+v spent as %v", usage, tc.usage, tc.spent)
+			}
+		})
 	}
 }
 
