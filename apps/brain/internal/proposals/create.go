@@ -1,4 +1,4 @@
-package improvements
+package proposals
 
 import (
 	"context"
@@ -46,7 +46,7 @@ func Create(ctx context.Context, q *db.Queries, n Proposed) (db.ImprovementPropo
 			continue
 		}
 		for _, f := range s.Files {
-			if f.Text != nil && hashText(*f.Text) != f.SHA256 {
+			if f.Text != nil && HashText(*f.Text) != f.SHA256 {
 				return db.ImprovementProposal{}, refuse("%q's text does not match its hash", f.Path)
 			}
 		}

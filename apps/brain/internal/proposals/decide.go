@@ -1,4 +1,4 @@
-package improvements
+package proposals
 
 import (
 	"context"
@@ -12,20 +12,20 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // Store is the database a decision is made in.
 type Store interface {
-	skills.Reserver
+	harness.Reserver
 	InTx(ctx context.Context, fn func(*db.Queries) error) error
 }
 
 // Objects stores and reads a skill's file bytes.
 type Objects interface {
-	skills.Objects
+	harness.SkillObjects
 	Getter
 }
 
@@ -46,9 +46,9 @@ type errState struct{ status string }
 func (e errState) Error() string { return "the proposal is " + e.status }
 
 const (
-	actionApprove = "approve"
-	actionReject  = "reject"
-	actionRevert  = "revert"
+	ActionApprove = "approve"
+	ActionReject  = "reject"
+	ActionRevert  = "revert"
 )
 
 // Proposal is a stored proposal's snapshots, decoded.
@@ -58,7 +58,7 @@ type Proposal struct {
 	After  Snapshot
 }
 
-func decode(row db.ImprovementProposal) (Proposal, error) {
+func Decode(row db.ImprovementProposal) (Proposal, error) {
 	p := Proposal{Row: row}
 	if err := json.Unmarshal(row.Before, &p.Before); err != nil {
 		return Proposal{}, fmt.Errorf("reading the proposal's before: %w", err)
@@ -75,7 +75,7 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 	// does: what never commits is the reaper's to remove.
 	var keys []string
 	var dir *skill.Directory
-	if action != actionReject {
+	if action != ActionReject {
 		var err error
 		if dir, keys, err = d.prepareSkill(ctx, teamID, id, action); err != nil {
 			return db.ImprovementProposal{}, err
@@ -89,7 +89,7 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 		// own proposal and then waited on the target would hold what the other
 		// needs. In this order the second waits on the target holding nothing,
 		// and then finds its proposal withdrawn.
-		if action != actionReject {
+		if action != ActionReject {
 			if err := lockTarget(ctx, q, teamID, id); err != nil {
 				return err
 			}
@@ -98,20 +98,20 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 		if err != nil {
 			return err
 		}
-		p, err := decode(row)
+		p, err := Decode(row)
 		if err != nil {
 			return err
 		}
 
 		switch action {
-		case actionReject:
+		case ActionReject:
 			if row.Status != "waiting" {
 				return errState{row.Status}
 			}
 			out, err = q.DecideImprovementProposal(ctx, db.DecideImprovementProposalParams{ID: id, Status: "rejected", By: &by})
 			return err
 
-		case actionApprove:
+		case ActionApprove:
 			if row.Status != "waiting" {
 				return errState{row.Status}
 			}
@@ -128,7 +128,7 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 				AppliedID: &id, TeamID: teamID, AgentID: row.AgentID, SkillID: row.SkillID,
 			})
 
-		case actionRevert:
+		case ActionRevert:
 			if row.Status != "applied" {
 				return errState{row.Status}
 			}
@@ -145,7 +145,7 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 
 // statusFor is the status a proposal must be in for the action.
 func statusFor(action string) string {
-	if action == actionRevert {
+	if action == ActionRevert {
 		return "applied"
 	}
 	return "waiting"
@@ -177,7 +177,7 @@ func (d Decider) prepareSkill(ctx context.Context, teamID, id uuid.UUID, action 
 		if err != nil {
 			return err
 		}
-		if p, err = decode(row); err != nil {
+		if p, err = Decode(row); err != nil {
 			return err
 		}
 		// A decision the status refuses stores nothing for the reaper to clear;
@@ -198,11 +198,11 @@ func (d Decider) prepareSkill(ctx context.Context, teamID, id uuid.UUID, action 
 
 	var target *SkillState
 	switch {
-	case Kind(p.Row.Kind) == KindSkillEdit && action == actionApprove:
+	case Kind(p.Row.Kind) == KindSkillEdit && action == ActionApprove:
 		target = p.After.Skill
-	case Kind(p.Row.Kind) == KindSkillEdit && action == actionRevert:
+	case Kind(p.Row.Kind) == KindSkillEdit && action == ActionRevert:
 		target = p.Before.Skill
-	case Kind(p.Row.Kind) == KindSkillNew && action == actionApprove:
+	case Kind(p.Row.Kind) == KindSkillNew && action == ActionApprove:
 		target = p.After.Skill
 	default:
 		return nil, nil, nil
@@ -215,7 +215,7 @@ func (d Decider) prepareSkill(ctx context.Context, teamID, id uuid.UUID, action 
 	if err != nil {
 		return nil, nil, err
 	}
-	keys, err := skills.Reserve(ctx, d.store, d.objects, teamID, dir.Files)
+	keys, err := harness.Reserve(ctx, d.store, d.objects, teamID, dir.Files)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -233,7 +233,7 @@ func (d Decider) apply(ctx context.Context, q *db.Queries, p Proposal, dir *skil
 		if err != nil {
 			return err
 		}
-		created, err := skills.Create(ctx, q, row.TeamID, *dir, skills.Origin{Source: "upload"}, keys)
+		created, err := harness.Create(ctx, q, row.TeamID, *dir, harness.Origin{Source: "upload"}, keys)
 		if err != nil {
 			return mapWrite(err)
 		}
@@ -286,7 +286,7 @@ func (d Decider) revert(ctx context.Context, q *db.Queries, p Proposal, dir *ski
 			return err
 		}
 		if !sameSkill(now, *p.After.Skill) {
-			return errChanged
+			return ErrChanged
 		}
 		if err := writeAgent(ctx, q, agent, *p.Before.Agent, d.loops); err != nil {
 			return mapWrite(err)
@@ -322,7 +322,7 @@ func (d Decider) lockAgent(ctx context.Context, q *db.Queries, row db.Improvemen
 		return db.Agent{}, err
 	}
 	if !sameAgent(now, expect) {
-		return db.Agent{}, errChanged
+		return db.Agent{}, ErrChanged
 	}
 	return agent, nil
 }
@@ -341,15 +341,15 @@ func (d Decider) writeSkill(ctx context.Context, q *db.Queries, row db.Improveme
 		return err
 	}
 	if !sameSkill(now, expect) {
-		return errChanged
+		return ErrChanged
 	}
-	_, err = skills.Replace(ctx, q, target.ID, *dir, skills.Origin{Source: "upload"}, keys)
+	_, err = harness.Replace(ctx, q, target.ID, *dir, harness.Origin{Source: "upload"}, keys)
 	return mapWrite(err)
 }
 
 func mapChanged(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errChanged
+		return ErrChanged
 	}
 	return err
 }
@@ -371,8 +371,8 @@ func mapWrite(err error) error {
 	return err
 }
 
-// hashText is the sha256 a file's text is named by.
-func hashText(s string) string {
+// HashText is the sha256 a file's text is named by.
+func HashText(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }

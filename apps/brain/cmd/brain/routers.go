@@ -33,7 +33,9 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
@@ -81,7 +83,7 @@ func newRouters(
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		approvals.New(logger, dbStore, authorizer, decider{store: dbStore, resumer: starter}),
-		improvements.New(logger, dbStore, authorizer, improvements.NewDecider(dbStore, attachments, runtime.Loops())),
+		improvements.New(logger, dbStore, authorizer, proposals.NewDecider(dbStore, attachments, runtime.Loops())),
 		teamgraph.New(logger, graphs),
 		teamsummary.New(logger, dbStore, authorizer),
 		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks)),
@@ -132,7 +134,7 @@ func (i inbox) InTx(ctx context.Context, fn func(gateway.Queries) error) error {
 
 type skillStore struct{ *store.Store }
 
-func (s skillStore) InTx(ctx context.Context, fn func(skills.Queries) error) error {
+func (s skillStore) InTx(ctx context.Context, fn func(harness.SkillQueries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
 }
 
@@ -151,7 +153,7 @@ func (s mcpStore) InTx(ctx context.Context, fn func(mcpservers.Queries) error) e
 
 type agentStore struct{ *store.Store }
 
-func (s agentStore) InTx(ctx context.Context, fn func(agents.Queries) error) error {
+func (s agentStore) InTx(ctx context.Context, fn func(harness.AgentQueries) error) error {
 	return s.Store.InTx(ctx, func(q *db.Queries) error { return fn(q) })
 }
 

@@ -14,9 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -350,7 +349,7 @@ func skillDiff(cur db.Skill, files map[string][]byte, dir skill.Directory) []str
 	add(cur.Description != m.Description, "description")
 	add(!equalPtr(cur.License, m.License), "license")
 	add(!equalPtr(cur.Compatibility, m.Compatibility), "compatibility")
-	add(!jsonEqual(cur.Metadata, skills.Metadata(m)), "metadata")
+	add(!jsonEqual(cur.Metadata, harness.Metadata(m)), "metadata")
 	add(!equalPtr(cur.AllowedTools, m.AllowedTools), "allowed_tools")
 	add(cur.Body != m.Body, "body")
 	add(!sameFiles(files, dir.Files), "files")
@@ -380,7 +379,7 @@ func (p *planned) planAgents(t team, specs []agentSpec, loops []string, m may) {
 		seen[a.Name] = true
 
 		cur, exists := t.agents[a.Name]
-		if exists && cur.Kind != string(agents.KindCustom) {
+		if exists && cur.Kind != string(harness.KindCustom) {
 			p.refuse(KindAgent, a.Name, "is an agent the brain provides; a blueprint describes custom agents")
 			continue
 		}
@@ -406,7 +405,7 @@ func (p *planned) planAgents(t team, specs []agentSpec, loops []string, m may) {
 // agentColumns checks an agent the way the agents API does, with a stand-in
 // id for each name the blueprint is yet to create.
 func (t team) agentColumns(a agentSpec, loops []string) (db.CreateAgentParams, error) {
-	if a.Kind != "" && a.Kind != agents.KindCustom {
+	if a.Kind != "" && a.Kind != harness.KindCustom {
 		return db.CreateAgentParams{}, errors.New("kind must be custom: the other kinds are agents the brain provides")
 	}
 	if slices.Contains(a.Delegates, a.Name) {
@@ -420,15 +419,15 @@ func (t team) agentColumns(a agentSpec, loops []string) (db.CreateAgentParams, e
 	if err != nil {
 		return db.CreateAgentParams{}, err
 	}
-	if err := agents.Validate(req, loops); err != nil {
+	if err := harness.Validate(req, loops); err != nil {
 		return db.CreateAgentParams{}, err
 	}
 
-	params, err := agents.Columns(req)
+	params, err := harness.Columns(req)
 	if err != nil {
 		return db.CreateAgentParams{}, err
 	}
-	params.TeamID, params.Kind = t.id, string(agents.KindCustom)
+	params.TeamID, params.Kind = t.id, string(harness.KindCustom)
 	return params, nil
 }
 
@@ -487,29 +486,29 @@ func (t team) standIn(k Kind, name string) (uuid.UUID, bool) {
 }
 
 // resolve turns an agent's names into the request the agents API takes.
-func resolve(a agentSpec, idOf func(Kind, string) (uuid.UUID, bool)) (agents.Request, error) {
+func resolve(a agentSpec, idOf func(Kind, string) (uuid.UUID, bool)) (harness.Request, error) {
 	req := a.Request
-	req.Kind = agents.KindCustom
+	req.Kind = harness.KindCustom
 	req.MCPServers, req.Skills, req.Delegates = nil, nil, nil
 
 	for _, s := range a.MCPServers {
 		id, ok := idOf(KindMCPServer, s.Name)
 		if !ok {
-			return agents.Request{}, fmt.Errorf("mcp_servers: %q is not an MCP server in this team or this blueprint", s.Name)
+			return harness.Request{}, fmt.Errorf("mcp_servers: %q is not an MCP server in this team or this blueprint", s.Name)
 		}
-		req.MCPServers = append(req.MCPServers, agents.ServerGrant{ID: id, Allow: s.Allow})
+		req.MCPServers = append(req.MCPServers, harness.ServerGrant{ID: id, Allow: s.Allow})
 	}
 	for _, name := range a.Skills {
 		id, ok := idOf(KindSkill, name)
 		if !ok {
-			return agents.Request{}, fmt.Errorf("skills: %q is not a skill in this team or this blueprint", name)
+			return harness.Request{}, fmt.Errorf("skills: %q is not a skill in this team or this blueprint", name)
 		}
 		req.Skills = append(req.Skills, id)
 	}
 	for _, name := range a.Delegates {
 		id, ok := idOf(KindAgent, name)
 		if !ok {
-			return agents.Request{}, fmt.Errorf("delegates: %q is not an agent in this team or this blueprint", name)
+			return harness.Request{}, fmt.Errorf("delegates: %q is not an agent in this team or this blueprint", name)
 		}
 		req.Delegates = append(req.Delegates, id)
 	}

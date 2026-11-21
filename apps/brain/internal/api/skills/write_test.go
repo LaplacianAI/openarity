@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -69,7 +70,7 @@ func (s *txStore) ReserveObjects(ctx context.Context, arg db.ReserveObjectsParam
 }
 
 // InTx runs fn against copies and keeps them only if fn succeeds.
-func (s *txStore) InTx(ctx context.Context, fn func(Queries) error) error {
+func (s *txStore) InTx(ctx context.Context, fn func(harness.SkillQueries) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -325,8 +326,8 @@ func TestAReservationIsHeldForTheWholeHold(t *testing.T) {
 
 	// A duration, not a time: the database adds it to its own now(), so the
 	// brain's clock has no say in when the hold ends.
-	if got := s.reserved[0].HoldSeconds; got != reservationHold.Seconds() {
-		t.Errorf("held for %vs, want %vs", got, reservationHold.Seconds())
+	if got := s.reserved[0].HoldSeconds; got != harness.ReservationHold.Seconds() {
+		t.Errorf("held for %vs, want %vs", got, harness.ReservationHold.Seconds())
 	}
 }
 
@@ -336,8 +337,8 @@ func TestAReservationIsHeldForTheWholeHold(t *testing.T) {
 func TestTheHoldOutlastsAnyWrite(t *testing.T) {
 	t.Parallel()
 
-	if reservationHold < 10*time.Minute {
-		t.Errorf("reservationHold = %v; a write slower than that loses its objects to the reaper", reservationHold)
+	if harness.ReservationHold < 10*time.Minute {
+		t.Errorf("harness.ReservationHold = %v; a write slower than that loses its objects to the reaper", harness.ReservationHold)
 	}
 }
 
@@ -438,7 +439,7 @@ func TestTheManifestAndOriginReachTheRow(t *testing.T) {
 		t.Errorf("upload origin = %s %v %v", up.Source, up.SourceRef, up.SourceSha)
 	}
 
-	gh := Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
+	gh := harness.Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
 	imported, err := w.create(t.Context(), uuid.New(), pdfSkill(t), gh)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -539,7 +540,7 @@ func TestReplacingAnImportWithAnUploadClearsItsOrigin(t *testing.T) {
 	s := newTxStore()
 	b := newBucket(s)
 	w := writer{store: s, objects: b}
-	gh := Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
+	gh := harness.Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
 	imported, err := w.create(t.Context(), uuid.New(), pdfSkill(t), gh)
 	if err != nil {
 		t.Fatalf("create: %v", err)

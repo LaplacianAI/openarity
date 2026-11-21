@@ -3,6 +3,7 @@ package improvements
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,10 +20,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -140,7 +142,7 @@ func (w *world) serve(t *testing.T, method, path string, body any) *httptest.Res
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
 	az := &fakeAuthz{holds: w.holds}
-	New(logger, w.store, az, NewDecider(w.store, w.objects, loops)).Register(mux, api.NewGuard(rs, az, liveTeams{}, logger))
+	New(logger, w.store, az, proposals.NewDecider(w.store, w.objects, loops)).Register(mux, api.NewGuard(rs, az, liveTeams{}, logger))
 
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
 		ID: w.user, Issuer: "dev", Subject: "someone",
@@ -153,16 +155,16 @@ func (w *world) serve(t *testing.T, method, path string, body any) *httptest.Res
 
 func (w *world) agent(t *testing.T, name string) db.Agent {
 	t.Helper()
-	req := agents.Request{
-		Name: name, Description: "answers support tickets", Kind: agents.KindCustom,
+	req := harness.Request{
+		Name: name, Description: "answers support tickets", Kind: harness.KindCustom,
 		Instructions: "Answer the customer, then close the ticket.",
-		Model:        agents.ModelRef{Name: "m", MaxTokens: 4000}, Pattern: "react", MaxSteps: 10,
+		Model:        harness.ModelRef{Name: "m", MaxTokens: 4000}, Pattern: "react", MaxSteps: 10,
 	}
-	params, err := agents.Columns(req)
+	params, err := harness.Columns(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	params.TeamID, params.Kind = w.team, string(agents.KindCustom)
+	params.TeamID, params.Kind = w.team, string(harness.KindCustom)
 	row, err := w.store.CreateAgent(t.Context(), params)
 	if err != nil {
 		t.Fatalf("agent: %v", err)
@@ -170,15 +172,15 @@ func (w *world) agent(t *testing.T, name string) db.Agent {
 	return row
 }
 
-func (w *world) now(t *testing.T, a db.Agent) AgentState {
+func (w *world) now(t *testing.T, a db.Agent) proposals.AgentState {
 	t.Helper()
-	var st AgentState
+	var st proposals.AgentState
 	err := w.store.InTx(t.Context(), func(q *db.Queries) error {
 		row, err := q.GetAgent(t.Context(), a.ID)
 		if err != nil {
 			return err
 		}
-		st, err = AgentNow(t.Context(), q, row)
+		st, err = proposals.AgentNow(t.Context(), q, row)
 		return err
 	})
 	if err != nil {
@@ -187,7 +189,7 @@ func (w *world) now(t *testing.T, a db.Agent) AgentState {
 	return st
 }
 
-func (w *world) propose(t *testing.T, p Proposed) (db.ImprovementProposal, error) {
+func (w *world) propose(t *testing.T, p proposals.Proposed) (db.ImprovementProposal, error) {
 	t.Helper()
 	if p.TeamID == uuid.Nil {
 		p.TeamID = w.team
@@ -204,13 +206,13 @@ func (w *world) propose(t *testing.T, p Proposed) (db.ImprovementProposal, error
 	var row db.ImprovementProposal
 	err := w.store.InTx(t.Context(), func(q *db.Queries) error {
 		var err error
-		row, err = Create(t.Context(), q, p)
+		row, err = proposals.Create(t.Context(), q, p)
 		return err
 	})
 	return row, err
 }
 
-func (w *world) mustPropose(t *testing.T, p Proposed) db.ImprovementProposal {
+func (w *world) mustPropose(t *testing.T, p proposals.Proposed) db.ImprovementProposal {
 	t.Helper()
 	row, err := w.propose(t, p)
 	if err != nil {
@@ -221,12 +223,12 @@ func (w *world) mustPropose(t *testing.T, p Proposed) db.ImprovementProposal {
 
 // instructionsChange is the standard proposal: one line of an agent's
 // instructions changed.
-func (w *world) instructionsChange(t *testing.T, a db.Agent) Proposed {
+func (w *world) instructionsChange(t *testing.T, a db.Agent) proposals.Proposed {
 	t.Helper()
 	before := w.now(t, a)
 	after := w.now(t, a)
 	after.Agent.Instructions = "Confirm the order id with the customer before closing the ticket."
-	return Proposed{AgentID: a.ID, Kind: KindInstructions, Before: Snapshot{Agent: &before}, After: Snapshot{Agent: &after}}
+	return proposals.Proposed{AgentID: a.ID, Kind: proposals.KindInstructions, Before: proposals.Snapshot{Agent: &before}, After: proposals.Snapshot{Agent: &after}}
 }
 
 func (w *world) decide(t *testing.T, id uuid.UUID, action string) *httptest.ResponseRecorder {
@@ -389,7 +391,7 @@ func TestApproveWithdrawsTheOthers(t *testing.T) {
 	before := w.now(t, a)
 	after := w.now(t, a)
 	after.Agent.MaxSteps = 20
-	second := w.mustPropose(t, Proposed{AgentID: a.ID, Kind: KindLimits, Before: Snapshot{Agent: &before}, After: Snapshot{Agent: &after}})
+	second := w.mustPropose(t, proposals.Proposed{AgentID: a.ID, Kind: proposals.KindLimits, Before: proposals.Snapshot{Agent: &before}, After: proposals.Snapshot{Agent: &after}})
 
 	if rec := w.decide(t, first.ID, "approve"); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
@@ -443,18 +445,17 @@ func TestCreateHoldsAProposalToItsKind(t *testing.T) {
 	w := newWorld(t)
 	a := w.agent(t, "support-bot")
 
-	for name, change := range map[string]func(*AgentState){
-		"model":        func(s *AgentState) { s.Agent.Instructions = "x"; s.Agent.Model.Name = "other" },
-		"name":         func(s *AgentState) { s.Agent.Instructions = "x"; s.Agent.Name = "renamed" },
-		"other column": func(s *AgentState) { s.Agent.Instructions = "x"; s.Agent.MaxSteps = 99 },
-		"nothing":      func(*AgentState) {},
+	for name, change := range map[string]func(*proposals.AgentState){
+		"model":        func(s *proposals.AgentState) { s.Agent.Instructions = "x"; s.Agent.Model.Name = "other" },
+		"name":         func(s *proposals.AgentState) { s.Agent.Instructions = "x"; s.Agent.Name = "renamed" },
+		"other column": func(s *proposals.AgentState) { s.Agent.Instructions = "x"; s.Agent.MaxSteps = 99 },
+		"nothing":      func(*proposals.AgentState) {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			before, after := w.now(t, a), w.now(t, a)
 			change(&after)
-			_, err := w.propose(t, Proposed{AgentID: a.ID, Kind: KindInstructions, Before: Snapshot{Agent: &before}, After: Snapshot{Agent: &after}})
-			var rule ruleError
-			if !errorsAs(err, &rule) {
+			_, err := w.propose(t, proposals.Proposed{AgentID: a.ID, Kind: proposals.KindInstructions, Before: proposals.Snapshot{Agent: &before}, After: proposals.Snapshot{Agent: &after}})
+			if !proposals.Refused(err) {
 				t.Errorf("err = %v, want a refused rule", err)
 			}
 		})
@@ -464,7 +465,7 @@ func TestCreateHoldsAProposalToItsKind(t *testing.T) {
 		before, after := w.now(t, a), w.now(t, a)
 		before.Agent.Kind, after.Agent.Kind = "orchestrator", "orchestrator"
 		after.Agent.Instructions = "x"
-		if _, err := w.propose(t, Proposed{AgentID: a.ID, Kind: KindInstructions, Before: Snapshot{Agent: &before}, After: Snapshot{Agent: &after}}); err == nil {
+		if _, err := w.propose(t, proposals.Proposed{AgentID: a.ID, Kind: proposals.KindInstructions, Before: proposals.Snapshot{Agent: &before}, After: proposals.Snapshot{Agent: &after}}); err == nil {
 			t.Error("a built-in agent's proposal was stored")
 		}
 	})
@@ -485,8 +486,8 @@ func TestToolNoteAppliesAndIsHeldToTheGrant(t *testing.T) {
 	}
 
 	before, after := w.now(t, a), w.now(t, a)
-	after.Notes = []ToolNote{{Server: server, Tool: "get_issue", Note: "Project keys are upper case."}}
-	if _, err := w.propose(t, Proposed{AgentID: a.ID, Kind: KindToolNote, Before: Snapshot{Agent: &before}, After: Snapshot{Agent: &after}}); err == nil {
+	after.Notes = []harness.ToolNote{{Server: server, Tool: "get_issue", Note: "Project keys are upper case."}}
+	if _, err := w.propose(t, proposals.Proposed{AgentID: a.ID, Kind: proposals.KindToolNote, Before: proposals.Snapshot{Agent: &before}, After: proposals.Snapshot{Agent: &after}}); err == nil {
 		t.Fatal("a note on a server the agent does not hold was stored")
 	}
 
@@ -494,8 +495,8 @@ func TestToolNoteAppliesAndIsHeldToTheGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, after = w.now(t, a), w.now(t, a)
-	after.Notes = []ToolNote{{Server: server, Tool: "get_issue", Note: "Project keys are upper case."}}
-	p := w.mustPropose(t, Proposed{AgentID: a.ID, Kind: KindToolNote, Before: Snapshot{Agent: &before}, After: Snapshot{Agent: &after}})
+	after.Notes = []harness.ToolNote{{Server: server, Tool: "get_issue", Note: "Project keys are upper case."}}
+	p := w.mustPropose(t, proposals.Proposed{AgentID: a.ID, Kind: proposals.KindToolNote, Before: proposals.Snapshot{Agent: &before}, After: proposals.Snapshot{Agent: &after}})
 	if rec := w.decide(t, p.ID, "approve"); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
 	}
@@ -507,12 +508,12 @@ func TestToolNoteAppliesAndIsHeldToTheGrant(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		req, err := agents.RequestOf(row)
+		req, err := harness.RequestOf(row)
 		if err != nil {
 			return err
 		}
-		req.MCPServers = []agents.ServerGrant{{ID: server}}
-		return agents.Regrant(t.Context(), q, row, req)
+		req.MCPServers = []harness.ServerGrant{{ID: server}}
+		return harness.Regrant(t.Context(), q, row, req)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -532,11 +533,11 @@ func TestSkillEditAppliesAndReverts(t *testing.T) {
 	}
 	var made db.Skill
 	if err := w.store.InTx(t.Context(), func(q *db.Queries) error {
-		keys, err := skills.Reserve(t.Context(), w.store, w.objects, w.team, dir.Files)
+		keys, err := harness.Reserve(t.Context(), w.store, w.objects, w.team, dir.Files)
 		if err != nil {
 			return err
 		}
-		made, err = skills.Create(t.Context(), q, w.team, dir, skills.Origin{Source: "upload"}, keys)
+		made, err = harness.Create(t.Context(), q, w.team, dir, harness.Origin{Source: "upload"}, keys)
 		return err
 	}); err != nil {
 		t.Fatalf("skill: %v", err)
@@ -546,16 +547,16 @@ func TestSkillEditAppliesAndReverts(t *testing.T) {
 	policy := "Refunds within 30 days."
 	before.Files[0].Text = &policy
 	after := before
-	after.Files = append([]FileState{}, before.Files...)
+	after.Files = append([]proposals.FileState{}, before.Files...)
 	after.Body = "Step 1: check the order. Step 2: confirm the order id."
 	script := "print('check')\n"
-	after.Files = append(after.Files, FileState{Path: "scripts/check.py", SHA256: hashText(script), Text: &script})
+	after.Files = append(after.Files, proposals.FileState{Path: "scripts/check.py", SHA256: proposals.HashText(script), Text: &script})
 
-	p := w.mustPropose(t, Proposed{
-		AgentID: a.ID, SkillID: &made.ID, Kind: KindSkillEdit,
-		Before: Snapshot{Skill: &before}, After: Snapshot{Skill: &after},
+	p := w.mustPropose(t, proposals.Proposed{
+		AgentID: a.ID, SkillID: &made.ID, Kind: proposals.KindSkillEdit,
+		Before: proposals.Snapshot{Skill: &before}, After: proposals.Snapshot{Skill: &after},
 	})
-	if !slicesContain(p.Marks, MarkChangesCode) {
+	if !slices.Contains(p.Marks, proposals.MarkChangesCode) {
 		t.Errorf("marks = %v, want changes_code for a new script", p.Marks)
 	}
 
@@ -578,10 +579,10 @@ func TestSkillEditAppliesAndReverts(t *testing.T) {
 
 // An imported skill is never a target.
 func TestImportedSkillIsNeverEdited(t *testing.T) {
-	before := SkillState{Name: "x", Description: "d", Body: "b", Source: "github"}
+	before := proposals.SkillState{Name: "x", Description: "d", Body: "b", Source: "github"}
 	after := before
 	after.Body = "changed"
-	if err := Check(KindSkillEdit, Snapshot{Skill: &before}, Snapshot{Skill: &after}); err == nil ||
+	if err := proposals.Check(proposals.KindSkillEdit, proposals.Snapshot{Skill: &before}, proposals.Snapshot{Skill: &after}); err == nil ||
 		!strings.Contains(err.Error(), "imported") {
 		t.Errorf("Check = %v, want the import refused", err)
 	}
@@ -595,11 +596,11 @@ func TestSkillNewAppliesAndReverts(t *testing.T) {
 	other := w.agent(t, "billing-bot")
 	before, after := w.now(t, a), w.now(t, a)
 	guide := "Ask for the order id first."
-	made := SkillState{
+	made := proposals.SkillState{
 		Name: "order-ids", Description: "Confirming order ids", Body: "Always confirm.", Source: "upload",
-		Files: []FileState{{Path: "references/guide.md", SHA256: hashText(guide), Text: &guide}},
+		Files: []proposals.FileState{{Path: "references/guide.md", SHA256: proposals.HashText(guide), Text: &guide}},
 	}
-	p := w.mustPropose(t, Proposed{AgentID: a.ID, Kind: KindSkillNew, Before: Snapshot{Agent: &before}, After: Snapshot{Agent: &after, Skill: &made}})
+	p := w.mustPropose(t, proposals.Proposed{AgentID: a.ID, Kind: proposals.KindSkillNew, Before: proposals.Snapshot{Agent: &before}, After: proposals.Snapshot{Agent: &after, Skill: &made}})
 
 	if rec := w.decide(t, p.ID, "approve"); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
@@ -631,15 +632,15 @@ func TestSkillNewAppliesAndReverts(t *testing.T) {
 	}
 }
 
-func (w *world) skillNow(t *testing.T, s db.Skill) SkillState {
+func (w *world) skillNow(t *testing.T, s db.Skill) proposals.SkillState {
 	t.Helper()
-	var st SkillState
+	var st proposals.SkillState
 	if err := w.store.InTx(t.Context(), func(q *db.Queries) error {
 		row, err := q.GetSkill(t.Context(), s.ID)
 		if err != nil {
 			return err
 		}
-		st, err = SkillNow(t.Context(), q, row)
+		st, err = proposals.SkillNow(t.Context(), q, row)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -649,7 +650,7 @@ func (w *world) skillNow(t *testing.T, s db.Skill) SkillState {
 
 func file(path, text string) skill.File {
 	f := skill.File{Path: path, Data: []byte(text), MediaType: "text/markdown"}
-	copy(f.SHA256[:], mustHex(hashText(text)))
+	f.SHA256 = sha256.Sum256(f.Data)
 	return f
 }
 
@@ -663,7 +664,7 @@ func TestSkillEditOfAChangedSkillIsRefused(t *testing.T) {
 	dir := skill.Directory{Manifest: skill.Manifest{Name: "refunds", Description: "How refunds are made", Body: "Step 1.", Metadata: map[string]string{}}}
 	if err := w.store.InTx(t.Context(), func(q *db.Queries) error {
 		var err error
-		made, err = skills.Create(t.Context(), q, w.team, dir, skills.Origin{Source: "upload"}, nil)
+		made, err = harness.Create(t.Context(), q, w.team, dir, harness.Origin{Source: "upload"}, nil)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -674,17 +675,17 @@ func TestSkillEditOfAChangedSkillIsRefused(t *testing.T) {
 	after.Body = "Step 1. Step 2."
 	wrong := "not what the hash says"
 	bad := after
-	bad.Files = []FileState{{Path: "references/x.md", SHA256: hashText("something else"), Text: &wrong}}
-	if _, err := w.propose(t, Proposed{
-		AgentID: a.ID, SkillID: &made.ID, Kind: KindSkillEdit,
-		Before: Snapshot{Skill: &before}, After: Snapshot{Skill: &bad},
+	bad.Files = []proposals.FileState{{Path: "references/x.md", SHA256: proposals.HashText("something else"), Text: &wrong}}
+	if _, err := w.propose(t, proposals.Proposed{
+		AgentID: a.ID, SkillID: &made.ID, Kind: proposals.KindSkillEdit,
+		Before: proposals.Snapshot{Skill: &before}, After: proposals.Snapshot{Skill: &bad},
 	}); err == nil {
 		t.Error("a file whose text does not match its hash was stored")
 	}
 
-	p := w.mustPropose(t, Proposed{
-		AgentID: a.ID, SkillID: &made.ID, Kind: KindSkillEdit,
-		Before: Snapshot{Skill: &before}, After: Snapshot{Skill: &after},
+	p := w.mustPropose(t, proposals.Proposed{
+		AgentID: a.ID, SkillID: &made.ID, Kind: proposals.KindSkillEdit,
+		Before: proposals.Snapshot{Skill: &before}, After: proposals.Snapshot{Skill: &after},
 	})
 	if _, err := w.raw.Exec(t.Context(), `UPDATE skills SET body = 'by hand' WHERE id = $1`, made.ID); err != nil {
 		t.Fatal(err)

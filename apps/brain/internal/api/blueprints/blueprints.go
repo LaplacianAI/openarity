@@ -11,15 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // uploaded is where a blueprint's skills come from: their bytes are sent.
-var uploaded = skills.Origin{Source: "upload"}
+var uploaded = harness.Origin{Source: "upload"}
 
 const (
 	codeUniqueViolation = "23505"
@@ -32,14 +31,14 @@ const (
 type Store interface {
 	Reads
 	Proposals
-	skills.Reserver
+	harness.Reserver
 	InTx(ctx context.Context, fn func(Queries) error) error
 }
 
 // Queries is every write an apply makes, in one transaction.
 type Queries interface {
-	agents.Queries
-	skills.Queries
+	harness.AgentQueries
+	harness.SkillQueries
 	MarkProposalApplied(ctx context.Context, arg db.MarkProposalAppliedParams) (db.Proposal, error)
 	SupersedeProposals(ctx context.Context, sessionID uuid.UUID) error
 	CreateProposal(ctx context.Context, arg db.CreateProposalParams) (db.Proposal, error)
@@ -53,12 +52,12 @@ type handler struct {
 	logger  *slog.Logger
 	store   Store
 	authz   api.Authorizer
-	objects skills.Objects
+	objects harness.SkillObjects
 	loops   []string
 	refresh Refresher
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, o skills.Objects, rf Refresher, loops []string) *api.Router {
+func New(logger *slog.Logger, s Store, a api.Authorizer, o harness.SkillObjects, rf Refresher, loops []string) *api.Router {
 	h := &handler{logger: logger, store: s, authz: a, objects: o, refresh: rf, loops: loops}
 
 	r := api.NewRouter("/teams")
@@ -172,7 +171,7 @@ func (h *handler) planned(w http.ResponseWriter, r *http.Request, u *auth.User, 
 func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned, also func(Queries) error) error {
 	keys := make([][]string, len(p.skills))
 	for i, s := range p.skills {
-		k, err := skills.Reserve(ctx, h.store, h.objects, teamID, s.dir.Files)
+		k, err := harness.Reserve(ctx, h.store, h.objects, teamID, s.dir.Files)
 		if err != nil {
 			return err
 		}
@@ -243,9 +242,9 @@ func writeSkills(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, k
 		var row db.Skill
 		var err error
 		if s.id == uuid.Nil {
-			row, err = skills.Create(ctx, q, teamID, s.dir, uploaded, keys[i])
+			row, err = harness.Create(ctx, q, teamID, s.dir, uploaded, keys[i])
 		} else {
-			row, err = skills.Replace(ctx, q, s.id, s.dir, uploaded, keys[i])
+			row, err = harness.Replace(ctx, q, s.id, s.dir, uploaded, keys[i])
 		}
 		if err != nil {
 			return err
@@ -262,7 +261,7 @@ func writeAgents(ctx context.Context, q Queries, p *planned, ids map[Kind]map[st
 		if a.id == uuid.Nil {
 			rows[i], err = q.CreateAgent(ctx, a.params)
 		} else {
-			rows[i], err = q.UpdateAgent(ctx, agents.UpdateParams(a.id, a.params))
+			rows[i], err = q.UpdateAgent(ctx, harness.UpdateParams(a.id, a.params))
 		}
 		if err != nil {
 			return err
@@ -283,7 +282,7 @@ func writeAgents(ctx context.Context, q Queries, p *planned, ids map[Kind]map[st
 		if err != nil {
 			return err
 		}
-		if err := agents.Regrant(ctx, q, rows[i], req); err != nil {
+		if err := harness.Regrant(ctx, q, rows[i], req); err != nil {
 			return err
 		}
 	}

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -82,7 +82,7 @@ func exportOf(t team, agentNames, serverNames []string) (Blueprint, error) {
 	}
 	for _, name := range names {
 		row, ok := t.agents[name]
-		if !ok || row.Kind != string(agents.KindCustom) {
+		if !ok || row.Kind != string(harness.KindCustom) {
 			if all {
 				continue
 			}
@@ -160,7 +160,7 @@ func serverOf(t team, row db.McpServer) (serverSpec, error) {
 }
 
 func agentOf(t team, row db.Agent) (agentSpec, error) {
-	req, err := agents.RequestOf(row)
+	req, err := harness.RequestOf(row)
 	if err != nil {
 		return agentSpec{}, err
 	}

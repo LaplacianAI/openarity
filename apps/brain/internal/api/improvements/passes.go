@@ -109,7 +109,7 @@ func (h *handler) passes(w http.ResponseWriter, r *http.Request) {
 			report = ""
 		}
 		out.Items = append(out.Items, passView{
-			ID: p.ID, Agent: ref{ID: p.AgentID, Name: n.of(n.agents, p.AgentID)}, Trigger: p.Trigger,
+			ID: p.ID, Agent: ref{ID: p.AgentID, Name: n.Of(n.Agents, p.AgentID)}, Trigger: p.Trigger,
 			Signatures: p.Signatures, Pruned: p.Pruned, Status: p.Status, CutShort: p.CutShort, Report: report, ReportWithheld: withheld,
 			Proposed: p.Proposed, ScreenedOut: p.ScreenedOut, Model: p.Model,
 			InputTokens: p.InputTokens, OutputTokens: p.OutputTokens, Error: p.Error,

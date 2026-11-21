@@ -3,7 +3,7 @@ package blueprints
 import (
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 )
 
@@ -57,10 +57,10 @@ type skillFile struct {
 }
 
 // agentSpec is an agent as the API takes it, except that what it is granted
-// is named. These fields are shallower than the ones in agents.Request, so
+// is named. These fields are shallower than the ones in harness.Request, so
 // they are the ones JSON reads.
 type agentSpec struct {
-	agents.Request
+	harness.Request
 	MCPServers []serverRef `json:"mcp_servers"`
 	Skills     []string    `json:"skills"`
 	Delegates  []string    `json:"delegates"`

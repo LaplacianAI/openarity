@@ -1,4 +1,4 @@
-package improvements
+package proposals
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 )
 
 // Kind is what part of a harness a proposal changes. Each kind may change
@@ -51,7 +51,7 @@ type ruleError struct{ msg string }
 
 func (e ruleError) Error() string { return e.msg }
 
-var errChanged = errors.New("the target changed since this was proposed")
+var ErrChanged = errors.New("the target changed since this was proposed")
 
 func refuse(format string, a ...any) error { return ruleError{fmt.Sprintf(format, a...)} }
 
@@ -60,6 +60,13 @@ func refuse(format string, a ...any) error { return ruleError{fmt.Sprintf(format
 func Refused(err error) bool {
 	var r ruleError
 	return errors.As(err, &r)
+}
+
+// WrongState is whether err refused a decision because the proposal is no
+// longer in a state that allows it.
+func WrongState(err error) bool {
+	var s errState
+	return errors.As(err, &s)
 }
 
 // The fields an agent proposal can tell apart. Each kind names the ones it
@@ -149,7 +156,7 @@ func agentDiff(a, b AgentState) []string {
 }
 
 // unnamed is an agent request with every field agentDiff names cleared.
-func unnamed(r agents.Request) agents.Request {
+func unnamed(r harness.Request) harness.Request {
 	r.Name, r.Description, r.Kind, r.Instructions = "", "", "", ""
 	r.Model.Name, r.Model.Temperature, r.Model.MaxTokens = "", nil, 0
 	r.Pattern, r.MaxSteps, r.SteerContinuations = "", 0, 0
@@ -159,7 +166,7 @@ func unnamed(r agents.Request) agents.Request {
 	return r
 }
 
-func delegationOf(r agents.Request) string {
+func delegationOf(r harness.Request) string {
 	if r.Delegation == nil {
 		return "none"
 	}
@@ -182,7 +189,7 @@ func Check(kind Kind, before, after Snapshot) error {
 	if before.Agent == nil || after.Agent == nil || before.Skill != nil {
 		return refuse("a %s proposal is about an agent", kind)
 	}
-	if k := before.Agent.Agent.Kind; k != agents.KindCustom {
+	if k := before.Agent.Agent.Kind; k != harness.KindCustom {
 		return refuse("the agent is a built-in (%s) agent, which is code", k)
 	}
 
@@ -255,7 +262,7 @@ func checkAgentKind(kind Kind, b, a AgentState) error {
 			return refuse("delegation listed names at least one delegate")
 		}
 	case KindInstructions, KindDescription, KindLimits, KindPattern:
-		// Their one column is all they may change, and agents.Validate holds
+		// Their one column is all they may change, and harness.Validate holds
 		// it to the same bounds a person's edit meets.
 	case KindSkillNew, KindSkillEdit:
 		// Checked before this, on the skill they carry.
@@ -285,10 +292,10 @@ func serverIDs(s AgentState) []uuid.UUID {
 	return ids
 }
 
-func grantOf(s AgentState, id uuid.UUID) (agents.ServerGrant, bool) {
-	i := slices.IndexFunc(s.Agent.MCPServers, func(g agents.ServerGrant) bool { return g.ID == id })
+func grantOf(s AgentState, id uuid.UUID) (harness.ServerGrant, bool) {
+	i := slices.IndexFunc(s.Agent.MCPServers, func(g harness.ServerGrant) bool { return g.ID == id })
 	if i < 0 {
-		return agents.ServerGrant{}, false
+		return harness.ServerGrant{}, false
 	}
 	return s.Agent.MCPServers[i], true
 }
@@ -537,7 +544,7 @@ func needsAgent(kind Kind) bool {
 	return kind == KindBuiltinTool || kind == KindDelegation || kind == KindLimits
 }
 
-func widens(b, a agents.Request) bool {
+func widens(b, a harness.Request) bool {
 	rank := map[string]int{"none": 0, "listed": 1, "team": 2}
 	if rank[delegationOf(a)] > rank[delegationOf(b)] {
 		return true
@@ -546,7 +553,7 @@ func widens(b, a agents.Request) bool {
 	return delegationOf(a) == "listed" && len(added) > 0
 }
 
-func raises(b, a agents.Request) bool {
+func raises(b, a harness.Request) bool {
 	if a.Model.MaxTokens > b.Model.MaxTokens || a.MaxSteps > b.MaxSteps || a.SteerContinuations > b.SteerContinuations {
 		return true
 	}

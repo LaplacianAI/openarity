@@ -20,6 +20,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -92,7 +93,7 @@ func importPath(teamID uuid.UUID) string { return collection(teamID) + "/import"
 
 func syncPath(teamID, id uuid.UUID) string { return one(teamID, id) + "/sync" }
 
-var githubOrigin = Origin{Source: "github", Ref: text(pdfRef), SHA: text(oldSHA)}
+var githubOrigin = harness.Origin{Source: "github", Ref: text(pdfRef), SHA: text(oldSHA)}
 
 // --- import ---
 
