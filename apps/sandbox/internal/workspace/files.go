@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -230,9 +231,15 @@ func open(path string) (*os.File, error) {
 		// A FIFO or a device would hold the call until it gave something.
 		return nil, problem("%s is not a regular file (%s); use Bash", path, info.Mode().Type())
 	}
-	f, err := os.Open(path) //nolint:gosec // any path in the room is the agent's to read
+	// Opened without blocking, so a FIFO swapped in after the check above
+	// cannot hold the call; the open file is asked again below.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // any path in the room is the agent's to read
 	if err != nil {
 		return nil, asProblem(err)
+	}
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, problem("%s is not a regular file; use Bash", path)
 	}
 	if onProc(f) {
 		_ = f.Close()

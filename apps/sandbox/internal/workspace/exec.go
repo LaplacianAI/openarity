@@ -83,7 +83,10 @@ func killGroup(cmd *exec.Cmd) error {
 	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
 
-// ends keeps the first and last limit/2 bytes written to it.
+// ends keeps the first and last limit/2 bytes written to it. Past the
+// limit, each write copies the tail it keeps: a command that writes in small
+// pieces costs that copy for each, bounded by the tail's size and the call's
+// timeout, which is cheaper to accept than a ring buffer to get right.
 type ends struct {
 	limit int
 	head  []byte

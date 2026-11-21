@@ -22,6 +22,10 @@ const (
 	// maxGrepFile is the largest file a grep reads; past it, a file is a
 	// data dump, not source.
 	maxGrepFile = 10 << 20
+	// maxSearch is the most text a glob or a grep returns, as a read's
+	// is: the counts above bound how many, and this how much, so 2,000
+	// minified lines or 1,000 deep paths still fit an answer.
+	maxSearch = maxRead
 )
 
 // skipped are directories no search walks into: their contents are a
@@ -63,11 +67,13 @@ func glob(base, pattern string) (GlobResult, error) {
 		return cmp.Or(cmp.Compare(b.mod, a.mod), strings.Compare(a.path, b.path))
 	})
 	res := GlobResult{Paths: []string{}}
+	size := 0
 	for i, f := range all {
-		if i == maxMatches {
+		if i == maxMatches || size+len(f.path)+1 > maxSearch {
 			res.Truncated = true
 			break
 		}
+		size += len(f.path) + 1
 		res.Paths = append(res.Paths, f.path)
 	}
 	return res, nil
@@ -117,6 +123,15 @@ func grep(q GrepQuery) (GrepResult, error) {
 	var out strings.Builder
 	res := GrepResult{}
 	lines := 0
+	// emit adds a line of output, or says the output is full.
+	emit := func(line string) bool {
+		if out.Len()+len(line) > maxSearch {
+			res.Truncated = true
+			return false
+		}
+		out.WriteString(line)
+		return true
+	}
 	err = walk(q.Path, func(p, rel string, d fs.DirEntry) error {
 		if q.Glob != "" && !globMatches(q.Glob, rel) {
 			return nil
@@ -143,20 +158,26 @@ func grep(q GrepQuery) (GrepResult, error) {
 			res.Truncated = true
 			return fs.SkipAll
 		}
-		res.Files++
 		switch q.Output {
 		case "files":
-			fmt.Fprintln(&out, p)
+			if !emit(p + "\n") {
+				return fs.SkipAll
+			}
 		case "count":
-			fmt.Fprintf(&out, "%s:%d\n", p, len(hits))
+			if !emit(fmt.Sprintf("%s:%d\n", p, len(hits))) {
+				return fs.SkipAll
+			}
 		case "content":
+			shown := false
 			for _, r := range spans(hits, q.Context, len(text)) {
 				if lines >= maxGrepLines {
 					res.Truncated = true
 					return fs.SkipAll
 				}
 				if r.gap {
-					out.WriteString("--\n")
+					if !emit("--\n") {
+						return fs.SkipAll
+					}
 					continue
 				}
 				sep := "-"
@@ -167,10 +188,17 @@ func grep(q GrepQuery) (GrepResult, error) {
 				if len(l) > maxLine {
 					l = l[:maxLine] + "… (line cut)"
 				}
-				fmt.Fprintf(&out, "%s%s%d%s%s\n", p, sep, r.line+1, sep, l)
+				if !emit(fmt.Sprintf("%s%s%d%s%s\n", p, sep, r.line+1, sep, l)) {
+					if shown {
+						res.Files++
+					}
+					return fs.SkipAll
+				}
+				shown = true
 				lines++
 			}
 		}
+		res.Files++
 		return nil
 	})
 	if err != nil {
