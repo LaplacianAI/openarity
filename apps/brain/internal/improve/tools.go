@@ -32,9 +32,9 @@ type passTools struct {
 	refused     int32
 	screenedOut int32
 	// What the screen spent, and what the run has: the run's from its
-	// events, so a pass is stopped as it crosses passTokens.
-	screen agent.Usage
-	run    agent.Usage
+	// events, so a pass is stopped as it crosses its tokens.
+	screenSpent agent.Usage
+	runSpent    agent.Usage
 }
 
 // halt stops the run, when it is one: a tool called outside a run has
@@ -45,28 +45,46 @@ func (t *passTools) halt(cause error) {
 	}
 }
 
-// watch counts what the run spends as it spends it, and stops it past
-// its tokens.
-func (t *passTools) watch(events <-chan agent.Event) {
+// watch follows the run: it marks the pass alive at every step, stopping
+// the run if the pass was failed as lost meanwhile, and counts what the run
+// spends as it spends it, stopping it past its tokens.
+func (t *passTools) watch(ctx context.Context, events <-chan agent.Event) {
 	for e := range events {
-		u, ok := e.(agent.UsageEvent)
-		if !ok {
-			continue
-		}
-		t.mu.Lock()
-		t.run.InputTokens += u.Usage.InputTokens
-		t.run.OutputTokens += u.Usage.OutputTokens
-		over := t.overLocked()
-		t.mu.Unlock()
-		if over {
-			t.halt(errPassTokens)
+		switch e := e.(type) {
+		case agent.StepEvent:
+			if alive, err := t.im.touch(ctx, t.pass.ID, t.material.drewOn); err == nil && !alive {
+				t.halt(errPassLost)
+			}
+		case agent.UsageEvent:
+			t.mu.Lock()
+			t.runSpent.InputTokens += e.Usage.InputTokens
+			t.runSpent.OutputTokens += e.Usage.OutputTokens
+			t.mu.Unlock()
+			t.haltIfOver()
 		}
 	}
 }
 
+// haltIfOver stops the run once the pass has spent its tokens.
+func (t *passTools) haltIfOver() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.haltIfOverLocked()
+}
+
+// haltIfOverLocked is haltIfOver for a caller holding t.mu, and says
+// whether it stopped the run.
+func (t *passTools) haltIfOverLocked() bool {
+	if !t.overLocked() {
+		return false
+	}
+	t.halt(errPassTokens)
+	return true
+}
+
 func (t *passTools) overLocked() bool {
-	spent := t.before + t.run.InputTokens + t.run.OutputTokens + t.screen.InputTokens + t.screen.OutputTokens
-	return t.tokens > 0 && spent > t.tokens
+	spent := t.before + t.runSpent.InputTokens + t.runSpent.OutputTokens + t.screenSpent.InputTokens + t.screenSpent.OutputTokens
+	return spent > t.tokens
 }
 
 // spent is what the attempt cost: the run's own count, which sees every
@@ -74,7 +92,7 @@ func (t *passTools) overLocked() bool {
 func (t *passTools) spent(run agent.Usage) (in, out int64, screened int32) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return int64(run.InputTokens + t.screen.InputTokens), int64(run.OutputTokens + t.screen.OutputTokens), t.screenedOut
+	return int64(run.InputTokens + t.screenSpent.InputTokens), int64(run.OutputTokens + t.screenSpent.OutputTokens), t.screenedOut
 }
 
 func (t *passTools) tools() []agent.Tool {

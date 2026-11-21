@@ -1116,6 +1116,8 @@ export type ImproverPass = {
   /** What it proposed to drop: "skill:<name>" or "tool:<server>/<tool>". */
   pruned: string[];
   status: ImproverPassStatus;
+  /** Done before it finished: out of steps, tokens or time, improvement turned off, or its agent gone. */
+  cut_short: boolean;
   /** Plain text, possibly several paragraphs. */
   report: string;
   /** The report draws on a conversation the caller may not read, so it is not sent. */

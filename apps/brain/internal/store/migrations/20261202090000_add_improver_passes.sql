@@ -32,9 +32,10 @@ CREATE TABLE improver_passes (
     -- report is shown only to someone who may read them all.
     drew_on       uuid[] NOT NULL DEFAULT '{}',
     status        text NOT NULL DEFAULT 'running',
-    -- A pass that ran out of steps, tokens or time before it finished: with
-    -- nothing proposed, it has not looked at its patterns, which count on.
-    stopped       boolean NOT NULL DEFAULT false,
+    -- A pass cut short before it finished (out of steps, tokens or time,
+    -- improvement turned off, its agent gone): with nothing proposed it has
+    -- not looked at its patterns, which count on once a back-off has passed.
+    cut_short     boolean NOT NULL DEFAULT false,
     report        text NOT NULL DEFAULT '',
     proposed      int NOT NULL DEFAULT 0,
     screened_out  int NOT NULL DEFAULT 0,

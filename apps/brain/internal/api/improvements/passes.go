@@ -20,7 +20,10 @@ type passView struct {
 	Signatures []string  `json:"signatures"`
 	Pruned     []string  `json:"pruned"`
 	Status     string    `json:"status"`
-	Report     string    `json:"report"`
+	// CutShort is a pass done before it finished: out of steps, tokens or
+	// time, improvement turned off, or its agent gone.
+	CutShort bool   `json:"cut_short"`
+	Report   string `json:"report"`
 	// ReportWithheld is a report drawn on a conversation the caller may not
 	// read: it is not sent, and Report is empty.
 	ReportWithheld bool       `json:"report_withheld"`
@@ -107,7 +110,7 @@ func (h *handler) passes(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Items = append(out.Items, passView{
 			ID: p.ID, Agent: ref{ID: p.AgentID, Name: n.of(n.agents, p.AgentID)}, Trigger: p.Trigger,
-			Signatures: p.Signatures, Pruned: p.Pruned, Status: p.Status, Report: report, ReportWithheld: withheld,
+			Signatures: p.Signatures, Pruned: p.Pruned, Status: p.Status, CutShort: p.CutShort, Report: report, ReportWithheld: withheld,
 			Proposed: p.Proposed, ScreenedOut: p.ScreenedOut, Model: p.Model,
 			InputTokens: p.InputTokens, OutputTokens: p.OutputTokens, Error: p.Error,
 			StartedAt: p.StartedAt, FinishedAt: p.FinishedAt,

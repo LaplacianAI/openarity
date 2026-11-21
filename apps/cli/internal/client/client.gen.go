@@ -2460,6 +2460,9 @@ type ImprovementStatus string
 type ImproverPass struct {
 	Agent NamedRef `json:"agent" yaml:"agent"`
 
+	// CutShort Done before it finished: out of steps, tokens or time, improvement turned off, or its agent gone. With nothing proposed, its patterns are offered again after a few hours.
+	CutShort bool `json:"cut_short" yaml:"cut_short"`
+
 	// Error Why a failed pass failed, as a clause to follow "Failed:"; the cause is in the brain's log
 	Error        *string            `json:"error,omitempty" yaml:"error,omitempty"`
 	FinishedAt   *time.Time         `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`

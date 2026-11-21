@@ -31,7 +31,7 @@ func (im *Improver) pruneFor(ctx context.Context, agentID uuid.UUID) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("reading agent %s's use of its tools: %w", agentID, err)
 	}
-	m, err := im.agentState(ctx, agentID)
+	m, err := im.baseMaterial(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}

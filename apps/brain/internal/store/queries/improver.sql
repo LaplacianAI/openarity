@@ -14,9 +14,16 @@ WHERE d.went = 'wrong' AND d.part <> 'none' AND d.cause <> 'external'
       '-infinity'::timestamptz)
   AND d.created_at > COALESCE((
         SELECT max(x.started_at) FROM improver_passes x
-        WHERE x.agent_id = d.agent_id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)
+        WHERE x.agent_id = d.agent_id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)
           AND (d.part || ':' || d.target || ':' || d.cause) = ANY (x.signatures)),
       '-infinity'::timestamptz)
+  -- A pass on it cut short with nothing proposed holds it back a while, so
+  -- one that keeps running out is not queued every sweep.
+  AND NOT EXISTS (
+        SELECT 1 FROM improver_passes b
+        WHERE b.agent_id = d.agent_id AND b.status = 'done' AND b.cut_short AND b.proposed = 0
+          AND b.finished_at > now() - make_interval(hours => sqlc.arg(back_off_hours)::int)
+          AND (d.part || ':' || d.target || ':' || d.cause) = ANY (b.signatures))
 GROUP BY d.team_id, d.agent_id, d.part, d.target, d.cause
 HAVING count(DISTINCT d.run_id) >= sqlc.arg(min_runs)::int
 ORDER BY d.agent_id, runs DESC, d.part, d.target, d.cause;
@@ -28,7 +35,7 @@ SELECT a.id, a.team_id,
        EXISTS (SELECT 1 FROM run_digests d
                WHERE d.agent_id = a.id
                  AND d.created_at > COALESCE((SELECT max(x.started_at) FROM improver_passes x
-                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)),
+                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
                                              '-infinity'::timestamptz))::bool AS has_new
 FROM agents a
 JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
@@ -62,7 +69,7 @@ ORDER BY run_id, seq;
 -- offered again for a while.
 -- name: ListRecentPruneLooks :many
 SELECT unnest(x.pruned)::text AS candidate FROM improver_passes x
-WHERE x.agent_id = sqlc.arg(agent_id)::uuid AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0) AND x.started_at > sqlc.arg(since)::timestamptz
+WHERE x.agent_id = sqlc.arg(agent_id)::uuid AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0) AND x.started_at > sqlc.arg(since)::timestamptz
 UNION
 SELECT substr(p.signature, 7)::text FROM improvement_proposals p
 WHERE p.agent_id = sqlc.arg(agent_id)::uuid AND p.signature LIKE 'prune:%'
@@ -113,7 +120,7 @@ WHERE id = sqlc.arg(id);
 -- name: FinishImproverPass :exec
 UPDATE improver_passes
 SET status = sqlc.arg(status), report = sqlc.arg(report), error = sqlc.narg(error),
-    stopped = sqlc.arg(stopped),
+    cut_short = sqlc.arg(cut_short),
     proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = sqlc.arg(id)::uuid),
     finished_at = now()
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';

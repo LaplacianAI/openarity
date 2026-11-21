@@ -35,8 +35,9 @@ type material struct {
 	outsider bool
 }
 
-// agentState is an agent as it is now, with the names its setup is shown in.
-func (im *Improver) agentState(ctx context.Context, agentID uuid.UUID) (material, error) {
+// baseMaterial is an agent as it is now, with the names its setup is shown
+// in: what a pass and a prune both start from.
+func (im *Improver) baseMaterial(ctx context.Context, agentID uuid.UUID) (material, error) {
 	var m material
 	var err error
 	if m.agent, err = im.store.GetAgent(ctx, agentID); err != nil {
@@ -62,7 +63,7 @@ func (m *material) drew(id uuid.UUID) {
 }
 
 func (im *Improver) material(ctx context.Context, pass db.ImproverPass) (material, error) {
-	m, err := im.agentState(ctx, pass.AgentID)
+	m, err := im.baseMaterial(ctx, pass.AgentID)
 	if err != nil {
 		return m, err
 	}

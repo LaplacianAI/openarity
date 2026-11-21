@@ -85,8 +85,9 @@ alone; a report drawn on a conversation the approver cannot read is withheld.
 A pass runs on the judge model, else the team's. Team settings cap what it
 costs: the passes a day (20 until changed), the tokens a pass may spend across
 its tries (400,000), and the minutes for each try (20); past either it stops
-and reports what it found. A pass stopped this way with nothing proposed leaves
-its pattern open for the next sweep.
+and reports what it found. A pass cut short this way (or by improvement being
+turned off) with nothing proposed leaves its pattern open, offered again after
+six hours, and the Passes tab says it was cut short.
 
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to

@@ -60,7 +60,7 @@ func (w *world) digested(t *testing.T, k Key, went string, outsider bool) uuid.U
 
 func (w *world) patterns(t *testing.T) []db.ListPatternsRow {
 	t.Helper()
-	rows, err := w.store.ListPatterns(t.Context(), patternBar)
+	rows, err := w.store.ListPatterns(t.Context(), db.ListPatternsParams{MinRuns: patternBar, BackOffHours: cutShortBackOffHours})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func TestANewerProposalReplacesTheOlder(t *testing.T) {
 	if out, _ := w.proposeWith(t, im, first, desc, reply{text: screenOKText}); !strings.Contains(out, "already proposed a change to that target") {
 		t.Errorf("a second change to the agent in one pass: %q", out)
 	}
-	if err := im.finish(t.Context(), first.ID, passDone, "", nil); err != nil {
+	if err := im.done(t.Context(), first.ID, outcome{}); err != nil {
 		t.Fatal(err)
 	}
 	// A person's own proposal on the same pattern.
@@ -349,7 +349,7 @@ func TestANewerProposalReplacesTheOlder(t *testing.T) {
 	if got := len(w.proposals(t, "withdrawn")); got != 0 {
 		t.Errorf("a description withdrew %d proposals of other kinds", got)
 	}
-	if err := im.finish(t.Context(), second.ID, passDone, "", nil); err != nil {
+	if err := im.done(t.Context(), second.ID, outcome{}); err != nil {
 		t.Fatal(err)
 	}
 	third := w.begin(t, im, plannedPass{TeamID: w.team, AgentID: w.agent, Trigger: triggerPattern, Keys: []string{skipped.String()}})
@@ -377,7 +377,7 @@ func TestAPassBeginsOnlyWhenItMay(t *testing.T) {
 	if _, err := im.Begin(t.Context(), plan, uuid.NewString()); !errors.Is(err, errNoPass) {
 		t.Errorf("a second pass began beside one running: %v", err)
 	}
-	if err := im.finish(t.Context(), first.ID, passDone, "", nil); err != nil {
+	if err := im.done(t.Context(), first.ID, outcome{}); err != nil {
 		t.Fatal(err)
 	}
 	w.exec(t, `UPDATE team_settings SET improvement_daily_passes = 1 WHERE team_id = $1`, w.team)

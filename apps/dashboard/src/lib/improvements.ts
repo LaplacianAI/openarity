@@ -177,7 +177,7 @@ export function prunedWords(pruned: string): string {
 
 /** What came of a pass, as a sentence: a person is told what it did, not its status. */
 export function passOutcome(
-  pass: Pick<ImproverPass, "status" | "proposed" | "screened_out" | "error">,
+  pass: Pick<ImproverPass, "status" | "proposed" | "screened_out" | "error" | "cut_short">,
 ): string {
   if (pass.status === "running") return "Running…";
   if (pass.status === "failed") return pass.error ? `Failed: ${pass.error}` : "Failed";
@@ -185,7 +185,16 @@ export function passOutcome(
     pass.screened_out > 0
       ? `${pass.screened_out.toLocaleString("en-US")} held back by the screen`
       : null;
-  const made = pass.proposed > 0 ? count(pass.proposed, "proposal") : "Nothing to change";
+  // Cut short, "nothing to change" would claim a look it never finished.
+  let made: string;
+  if (pass.cut_short) {
+    made =
+      pass.proposed > 0
+        ? `${count(pass.proposed, "proposal")}, then cut short`
+        : "Cut short before it proposed anything";
+  } else {
+    made = pass.proposed > 0 ? count(pass.proposed, "proposal") : "Nothing to change";
+  }
   return held ? `${made}, ${held}` : made;
 }
 

@@ -164,7 +164,15 @@ describe("passes", () => {
       { status: "done", proposed: 0, screened_out: 3, error: null },
       "Nothing to change, 3 held back by the screen",
     ],
+    [
+      { status: "done", proposed: 0, screened_out: 0, error: null, cut_short: true },
+      "Cut short before it proposed anything",
+    ],
+    [
+      { status: "done", proposed: 2, screened_out: 1, error: null, cut_short: true },
+      "2 proposals, then cut short, 1 held back by the screen",
+    ],
   ] as const)("says what came of %o", (pass, said) => {
-    expect(passOutcome(pass)).toBe(said);
+    expect(passOutcome({ cut_short: false, ...pass })).toBe(said);
   });
 });

@@ -19,7 +19,7 @@ const (
 func pass(id, trigger, status, extra string) string {
 	return `{"id":"` + id + `","agent":{"id":"` + agentID + `","name":"support-bot"},
   "trigger":"` + trigger + `","signatures":["instructions::skipped_step","tool:crm::wrong_arg"],"pruned":[],
-  "status":"` + status + `","report":"found two","report_withheld":false,"proposed":2,"screened_out":1,"model":"gpt-5",
+  "status":"` + status + `","cut_short":false,"report":"found two","report_withheld":false,"proposed":2,"screened_out":1,"model":"gpt-5",
   "input_tokens":1200,"output_tokens":340,"error":null,
   "started_at":"2026-11-21T09:00:00Z","finished_at":null` + extra + `}`
 }
@@ -27,7 +27,7 @@ func pass(id, trigger, status, extra string) string {
 func TestPassesListsWhyItRanStatusCountsTokensAndStart(t *testing.T) {
 	script := clitest.Routes(t, routes(map[string]clitest.Reply{
 		passesRoute: {Status: http.StatusOK, Body: `{"items":[` +
-			pass(passA, "pattern", "done", "") + `,` +
+			pass(passA, "pattern", "done", `,"cut_short":true`) + `,` +
 			pass(passB, "daily", "failed", `,"error":"it stopped answering and was taken as lost"`) + `,` +
 			pass(passC, "daily", "running", `,"input_tokens":0,"output_tokens":0`) + `],"next_cursor":"abc"}`},
 	}))
@@ -37,7 +37,7 @@ func TestPassesListsWhyItRanStatusCountsTokensAndStart(t *testing.T) {
 		t.Fatalf("passes: %v", err)
 	}
 	contains(t, out, "support-bot", "pattern instructions::skipped_step, tool:crm::wrong_arg", "daily",
-		"done", "failed", "2 proposed / 1 screened out", "1200 in / 340 out", "2026-11-2", passA,
+		"done", "failed", "2 proposed / 1 screened out, cut short", "1200 in / 340 out", "2026-11-2", passA,
 		"taken as lost", "running", "--cursor abc", "--agent support-bot")
 	if strings.Contains(out, "0 in / 0 out") {
 		t.Errorf("a running pass printed its tokens as nothing spent:\n%s", out)

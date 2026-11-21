@@ -75,7 +75,7 @@ INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run
 VALUES ($1, $2, $3, $4,
         $5, $6, $7, $8)
 ON CONFLICT DO NOTHING
-RETURNING id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at
+RETURNING id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at
 `
 
 type BeginImproverPassParams struct {
@@ -113,7 +113,7 @@ func (q *Queries) BeginImproverPass(ctx context.Context, arg BeginImproverPassPa
 		&i.RunIds,
 		&i.DrewOn,
 		&i.Status,
-		&i.Stopped,
+		&i.CutShort,
 		&i.Report,
 		&i.Proposed,
 		&i.ScreenedOut,
@@ -203,18 +203,18 @@ func (q *Queries) FailLostImproverPasses(ctx context.Context, arg FailLostImprov
 const finishImproverPass = `-- name: FinishImproverPass :exec
 UPDATE improver_passes
 SET status = $1, report = $2, error = $3,
-    stopped = $4,
+    cut_short = $4,
     proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = $5::uuid),
     finished_at = now()
 WHERE id = $5::uuid AND status = 'running'
 `
 
 type FinishImproverPassParams struct {
-	Status  string
-	Report  string
-	Error   *string
-	Stopped bool
-	ID      uuid.UUID
+	Status   string
+	Report   string
+	Error    *string
+	CutShort bool
+	ID       uuid.UUID
 }
 
 func (q *Queries) FinishImproverPass(ctx context.Context, arg FinishImproverPassParams) error {
@@ -222,14 +222,14 @@ func (q *Queries) FinishImproverPass(ctx context.Context, arg FinishImproverPass
 		arg.Status,
 		arg.Report,
 		arg.Error,
-		arg.Stopped,
+		arg.CutShort,
 		arg.ID,
 	)
 	return err
 }
 
 const getImproverPass = `-- name: GetImproverPass :one
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE id = $1
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE id = $1
 `
 
 func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPass, error) {
@@ -245,7 +245,7 @@ func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPa
 		&i.RunIds,
 		&i.DrewOn,
 		&i.Status,
-		&i.Stopped,
+		&i.CutShort,
 		&i.Report,
 		&i.Proposed,
 		&i.ScreenedOut,
@@ -262,7 +262,7 @@ func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPa
 }
 
 const getImproverPassByWorkflow = `-- name: GetImproverPassByWorkflow :one
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE workflow_id = $1
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE workflow_id = $1
 `
 
 func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID string) (ImproverPass, error) {
@@ -278,7 +278,7 @@ func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID stri
 		&i.RunIds,
 		&i.DrewOn,
 		&i.Status,
-		&i.Stopped,
+		&i.CutShort,
 		&i.Report,
 		&i.Proposed,
 		&i.ScreenedOut,
@@ -384,7 +384,7 @@ func (q *Queries) ListAgentRecentRuns(ctx context.Context, arg ListAgentRecentRu
 }
 
 const listImproverPasses = `-- name: ListImproverPasses :many
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes
 WHERE team_id = $1
   AND ($2::uuid IS NULL OR agent_id = $2::uuid)
   AND (NOT $3::bool
@@ -429,7 +429,7 @@ func (q *Queries) ListImproverPasses(ctx context.Context, arg ListImproverPasses
 			&i.RunIds,
 			&i.DrewOn,
 			&i.Status,
-			&i.Stopped,
+			&i.CutShort,
 			&i.Report,
 			&i.Proposed,
 			&i.ScreenedOut,
@@ -457,7 +457,7 @@ SELECT a.id, a.team_id,
        EXISTS (SELECT 1 FROM run_digests d
                WHERE d.agent_id = a.id
                  AND d.created_at > COALESCE((SELECT max(x.started_at) FROM improver_passes x
-                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)),
+                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
                                              '-infinity'::timestamptz))::bool AS has_new
 FROM agents a
 JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
@@ -575,13 +575,25 @@ WHERE d.went = 'wrong' AND d.part <> 'none' AND d.cause <> 'external'
       '-infinity'::timestamptz)
   AND d.created_at > COALESCE((
         SELECT max(x.started_at) FROM improver_passes x
-        WHERE x.agent_id = d.agent_id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)
+        WHERE x.agent_id = d.agent_id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)
           AND (d.part || ':' || d.target || ':' || d.cause) = ANY (x.signatures)),
       '-infinity'::timestamptz)
+  -- A pass on it cut short with nothing proposed holds it back a while, so
+  -- one that keeps running out is not queued every sweep.
+  AND NOT EXISTS (
+        SELECT 1 FROM improver_passes b
+        WHERE b.agent_id = d.agent_id AND b.status = 'done' AND b.cut_short AND b.proposed = 0
+          AND b.finished_at > now() - make_interval(hours => $1::int)
+          AND (d.part || ':' || d.target || ':' || d.cause) = ANY (b.signatures))
 GROUP BY d.team_id, d.agent_id, d.part, d.target, d.cause
-HAVING count(DISTINCT d.run_id) >= $1::int
+HAVING count(DISTINCT d.run_id) >= $2::int
 ORDER BY d.agent_id, runs DESC, d.part, d.target, d.cause
 `
+
+type ListPatternsParams struct {
+	BackOffHours int32
+	MinRuns      int32
+}
 
 type ListPatternsRow struct {
 	TeamID  uuid.UUID
@@ -596,8 +608,8 @@ type ListPatternsRow struct {
 // key, counted by run, since the newest proposal on that key and since the
 // newest finished pass that was given it. Only custom agents in teams with
 // improvement on, and never what no setup change fixes.
-func (q *Queries) ListPatterns(ctx context.Context, minRuns int32) ([]ListPatternsRow, error) {
-	rows, err := q.db.Query(ctx, listPatterns, minRuns)
+func (q *Queries) ListPatterns(ctx context.Context, arg ListPatternsParams) ([]ListPatternsRow, error) {
+	rows, err := q.db.Query(ctx, listPatterns, arg.BackOffHours, arg.MinRuns)
 	if err != nil {
 		return nil, err
 	}
@@ -625,7 +637,7 @@ func (q *Queries) ListPatterns(ctx context.Context, minRuns int32) ([]ListPatter
 
 const listRecentPruneLooks = `-- name: ListRecentPruneLooks :many
 SELECT unnest(x.pruned)::text AS candidate FROM improver_passes x
-WHERE x.agent_id = $1::uuid AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0) AND x.started_at > $2::timestamptz
+WHERE x.agent_id = $1::uuid AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0) AND x.started_at > $2::timestamptz
 UNION
 SELECT substr(p.signature, 7)::text FROM improvement_proposals p
 WHERE p.agent_id = $1::uuid AND p.signature LIKE 'prune:%'

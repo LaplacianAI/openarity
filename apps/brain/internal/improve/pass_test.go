@@ -29,7 +29,7 @@ func TestABegunPassIsBegunOnce(t *testing.T) {
 	if err != nil || again != first {
 		t.Fatalf("the workflow began again: %s, %v; want %s", again, err, first)
 	}
-	if err := im.finish(t.Context(), first, passDone, "", nil); err != nil {
+	if err := im.done(t.Context(), first, outcome{}); err != nil {
 		t.Fatal(err)
 	}
 	if again, err := im.Begin(t.Context(), plan, "wf-1"); err != nil || again != first {
@@ -315,7 +315,7 @@ func TestThePassBudgetSpansItsTries(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := w.store.GetImproverPass(t.Context(), pass.ID)
-	if p.Status != passDone || !p.Stopped || !strings.Contains(p.Report, "spent its tokens") || len(w.model.asked) != 1 {
+	if p.Status != passDone || !p.CutShort || !strings.Contains(p.Report, "spent its tokens") || len(w.model.asked) != 1 {
 		t.Errorf("pass = %+v after %d calls, want stopped after the first", p, len(w.model.asked))
 	}
 }
@@ -378,26 +378,103 @@ func TestALostPassDoesNotRunOn(t *testing.T) {
 	}
 }
 
-// A pass a limit stopped with nothing proposed has not looked at its
-// pattern: the pattern counts on, and the next sweep tries again.
-func TestAStoppedPassLeavesItsPatternOpen(t *testing.T) {
+// A pass cut short with nothing proposed has not looked at its pattern:
+// the pattern is held back for the back-off, so one that keeps running out
+// is not queued every sweep, then counts on; a pass that finished closes it.
+func TestACutShortPassBacksOffThenLeavesItsPatternOpen(t *testing.T) {
 	w := newWorld(t)
 	im := w.improver(t)
 	for range 3 {
 		w.digested(t, skipped, "wrong", false)
 	}
 	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
-	if err := im.finishStopped(t.Context(), pass.ID, "The pass stopped.", true); err != nil {
+	if err := im.done(t.Context(), pass.ID, outcome{report: "The pass stopped.", cutShort: true}); err != nil {
 		t.Fatal(err)
 	}
+	if got := w.patterns(t); len(got) != 0 {
+		t.Errorf("within the back-off, patterns = %+v", got)
+	}
+	w.exec(t, `UPDATE improver_passes SET finished_at = now() - make_interval(hours => $2) - interval '1 minute' WHERE id = $1`,
+		pass.ID, cutShortBackOffHours)
 	if got := w.patterns(t); len(got) != 1 {
-		t.Errorf("after a stopped pass with nothing proposed, patterns = %+v", got)
+		t.Errorf("past the back-off, patterns = %+v", got)
 	}
 	second := w.begin(t, im, patternPasses(w.patterns(t))[0])
-	if err := im.finishStopped(t.Context(), second.ID, "Looked; nothing to change.", false); err != nil {
+	if err := im.done(t.Context(), second.ID, outcome{report: "Looked; nothing to change."}); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.patterns(t); len(got) != 0 {
 		t.Errorf("after a pass that finished, patterns = %+v", got)
+	}
+}
+
+// A pass ended because the team turned improvement off looked at nothing:
+// its pattern counts on once improvement is on again and the back-off has
+// passed.
+func TestAPassEndedByTheOffSwitchLooksAtNothing(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	for range 3 {
+		w.digested(t, skipped, "wrong", false)
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	w.exec(t, `UPDATE team_settings SET improvement = false WHERE team_id = $1`, w.team)
+	if err := im.Run(t.Context(), pass.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := w.store.GetImproverPass(t.Context(), pass.ID)
+	if p.Status != passDone || !p.CutShort || p.Proposed != 0 {
+		t.Fatalf("pass = %+v, want done and cut short", p)
+	}
+	w.exec(t, `UPDATE team_settings SET improvement = true WHERE team_id = $1`, w.team)
+	w.exec(t, `UPDATE improver_passes SET finished_at = now() - interval '7 hours' WHERE id = $1`, pass.ID)
+	if got := w.patterns(t); len(got) != 1 {
+		t.Errorf("with improvement on again, patterns = %+v", got)
+	}
+}
+
+// A try that begins with the pass's tokens already spent makes no call.
+func TestATryWithNothingLeftCallsNothing(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	for range 3 {
+		w.digested(t, skipped, "wrong", false)
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	w.exec(t, `UPDATE improver_passes SET input_tokens = 400000 WHERE id = $1`, pass.ID)
+	w.model.replies = []reply{{text: "never reached"}}
+	if err := im.Run(t.Context(), pass.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := w.store.GetImproverPass(t.Context(), pass.ID)
+	if len(w.model.asked) != 0 || !p.CutShort || p.Status != passDone {
+		t.Errorf("pass = %+v after %d calls, want cut short with none", p, len(w.model.asked))
+	}
+}
+
+// A pass failed as lost in the middle of a try stops at its next step, and
+// nothing more is written for it.
+func TestAPassLostMidTryStopsAtItsNextStep(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	var runs []uuid.UUID
+	for range 3 {
+		runs = append(runs, w.digested(t, skipped, "wrong", false))
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	read := reply{calls: []agent.ToolCall{call("read_run", map[string]string{"run": runs[0].String()})}}
+	w.model.replies = []reply{read, read, read, {text: "never reached"}}
+	w.model.onAsk = func() {
+		w.exec(t, `UPDATE improver_passes SET status = 'failed', finished_at = now(), error = 'lost' WHERE id = $1`, pass.ID)
+	}
+	if err := im.Run(t.Context(), pass.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(w.model.asked); n > 2 {
+		t.Errorf("a pass lost mid-try asked its model %d times", n)
+	}
+	p, _ := w.store.GetImproverPass(t.Context(), pass.ID)
+	if p.Status != passFailed || p.Error == nil || *p.Error != "lost" {
+		t.Errorf("pass = %+v, want left as the sweep failed it", p)
 	}
 }

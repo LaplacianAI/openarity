@@ -53,7 +53,11 @@ func outcomeCell(p *client.ImproverPass) string {
 	case p.Status == client.ImproverPassStatusFailed && p.Error != nil:
 		return cli.Safe(*p.Error)
 	}
-	return strconv.Itoa(int(p.Proposed)) + " proposed / " + strconv.Itoa(int(p.ScreenedOut)) + " screened out"
+	counts := strconv.Itoa(int(p.Proposed)) + " proposed / " + strconv.Itoa(int(p.ScreenedOut)) + " screened out"
+	if p.CutShort {
+		return counts + ", cut short"
+	}
+	return counts
 }
 
 func newPassesCmd(opts *cli.Options) *cobra.Command {

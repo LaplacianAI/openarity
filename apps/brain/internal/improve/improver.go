@@ -47,6 +47,10 @@ const (
 	wentWrongShown    = 10
 	recordShown       = 20
 	elsewhereShown    = 10
+	// A pattern whose pass was cut short with nothing proposed is not
+	// offered again for this many hours: one that keeps running out is not
+	// queued every sweep, spending the team's day.
+	cutShortBackOffHours = 6
 	// A prune candidate looked at is not offered again for this long.
 	pruneQuiet = 30 * 24 * time.Hour
 )
@@ -61,6 +65,7 @@ const (
 var (
 	errPassTime   = errors.New("the pass ran out of time")
 	errPassTokens = errors.New("the pass spent its tokens")
+	errPassLost   = errors.New("the pass was failed as lost")
 )
 
 // ImproverStore is what passes read and write.
@@ -268,6 +273,16 @@ func (im *Improver) runsFor(ctx context.Context, plan plannedPass) ([]toRead, er
 	return chooseRuns(failures, successes), nil
 }
 
+// outcome is what a try at a pass came to.
+type outcome struct {
+	report string
+	// cutShort: a limit, its steps or the team ended it before it finished.
+	cutShort bool
+	// lost: it was failed as lost while it ran, and its agent may already
+	// have another; nothing more is written for it.
+	lost bool
+}
+
 // Run runs a begun pass and records it done. A model or database that
 // cannot be reached is returned for the step to try again, the pass still
 // running; what the attempt spent and stored stays counted, so a pass tried
@@ -285,43 +300,65 @@ func (im *Improver) Run(ctx context.Context, passID uuid.UUID) error {
 		return err
 	}
 	if !on {
-		return im.finish(ctx, pass.ID, passDone, "Improvement was turned off before the pass ran.", nil)
+		// It looked at nothing: its patterns count on when the team turns
+		// improvement on again.
+		return im.done(ctx, pass.ID, outcome{report: "Improvement was turned off before the pass ran.", cutShort: true})
 	}
 	model, ok := judgeModelOf(settings)
 	if !ok {
-		return im.finish(ctx, pass.ID, passFailed, "", errNoModel)
+		return im.fail(ctx, pass.ID, errNoModel)
 	}
 
 	m, err := im.material(ctx, pass)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return im.finish(ctx, pass.ID, passDone, "The agent is gone.", nil)
+		return im.done(ctx, pass.ID, outcome{report: "The agent is gone.", cutShort: true})
 	}
 	if err != nil {
 		return err
 	}
-	alive, err := im.store.TouchImproverPass(ctx, db.TouchImproverPassParams{ID: pass.ID, DrewOn: m.drewOn})
-	if err != nil {
-		return fmt.Errorf("marking pass %s alive: %w", pass.ID, err)
-	}
-	if alive == 0 {
-		// Failed as lost meanwhile: its agent may already have another.
-		return nil
-	}
-	report, stopped, err := im.try(ctx, pass, settings, model, m)
-	if err != nil {
+	if alive, err := im.touch(ctx, pass.ID, m.drewOn); err != nil || !alive {
 		return err
 	}
-	return im.finishStopped(ctx, pass.ID, report, stopped)
+	out, err := im.try(ctx, pass, settings, model, m)
+	if err != nil || out.lost {
+		return err
+	}
+	return im.done(ctx, pass.ID, out)
+}
+
+// touch marks a running pass alive, and draws on these runs; false when it
+// is running no longer, failed as lost meanwhile.
+func (im *Improver) touch(ctx context.Context, id uuid.UUID, drewOn []uuid.UUID) (bool, error) {
+	n, err := im.store.TouchImproverPass(ctx, db.TouchImproverPassParams{ID: id, DrewOn: drewOn})
+	if err != nil {
+		return false, fmt.Errorf("marking pass %s alive: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// recordTimeout bounds a write made past a try's own context: what it
+// spent, or a proposal it screened.
+const recordTimeout = 30 * time.Second
+
+// lasting is ctx without its cancellation, so a write a try owes is made
+// even as the try ends, held to recordTimeout.
+func lasting(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
 }
 
 // try runs the pass once, within what the team lets it spend: tokens across
-// its tries, so earlier ones count, and minutes for this one. It returns
-// the report, and whether a limit or its steps stopped it; an error is for
-// the step to try again, what this try spent and stored kept either way.
-func (im *Improver) try(ctx context.Context, pass db.ImproverPass, settings db.GetImprovementSettingsRow, model agent.ModelRef, m material) (string, bool, error) {
+// its tries, so earlier ones count, and minutes for this one. An error is
+// for the step to try again, what this try spent and stored kept either
+// way.
+func (im *Improver) try(ctx context.Context, pass db.ImproverPass, settings db.GetImprovementSettingsRow, model agent.ModelRef, m material) (outcome, error) {
+	spent := int(pass.InputTokens + pass.OutputTokens)
+	if spent >= int(settings.ImprovementPassTokens) {
+		// Earlier tries spent it all: not one call more.
+		return outcome{report: "The pass stopped: " + errPassTokens.Error() + ".", cutShort: true}, nil
+	}
 	stored, err := im.store.CountPassProposals(ctx, &pass.ID)
 	if err != nil {
-		return "", false, fmt.Errorf("counting pass %s's proposals: %w", pass.ID, err)
+		return outcome{}, fmt.Errorf("counting pass %s's proposals: %w", pass.ID, err)
 	}
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
@@ -329,13 +366,13 @@ func (im *Improver) try(ctx context.Context, pass db.ImproverPass, settings db.G
 	defer cancel()
 	t := &passTools{
 		im: im, pass: pass, material: m, proposed: stored, stop: stop,
-		tokens: int(settings.ImprovementPassTokens), before: int(pass.InputTokens + pass.OutputTokens),
+		tokens: int(settings.ImprovementPassTokens), before: spent,
 	}
 	events := make(chan agent.Event, 16)
 	watched := make(chan struct{})
 	go func() {
 		defer close(watched)
-		t.watch(events)
+		t.watch(runCtx, events)
 	}()
 	res, err := im.runner.Run(runCtx, agent.Spec{
 		Model: model, Pattern: agent.PatternReAct, System: agent.System(improverPrompt),
@@ -344,34 +381,41 @@ func (im *Improver) try(ctx context.Context, pass db.ImproverPass, settings db.G
 	close(events)
 	<-watched
 
+	// Written even when the worker is shutting down: a try tried again
+	// starts from what this one spent.
 	in, out, screened := t.spent(res.Usage)
-	if uerr := im.store.AddImproverPassUsage(ctx, db.AddImproverPassUsageParams{
+	wctx, done := lasting(ctx)
+	uerr := im.store.AddImproverPassUsage(wctx, db.AddImproverPassUsageParams{
 		ID: pass.ID, InputTokens: in, OutputTokens: out, ScreenedOut: screened,
-	}); uerr != nil {
-		return "", false, errors.Join(err, fmt.Errorf("recording pass %s's usage: %w", pass.ID, uerr))
+	})
+	done()
+	if uerr != nil {
+		return outcome{}, errors.Join(err, fmt.Errorf("recording pass %s's usage: %w", pass.ID, uerr))
 	}
 
 	report := strings.TrimSpace(res.Output)
 	switch cause := context.Cause(runCtx); {
 	case ctx.Err() != nil:
-		return "", false, fmt.Errorf("running pass %s: %w", pass.ID, context.Cause(ctx))
+		return outcome{}, fmt.Errorf("running pass %s: %w", pass.ID, context.Cause(ctx))
+	case errors.Is(cause, errPassLost):
+		return outcome{lost: true}, nil
 	case errors.Is(cause, errPassTime), errors.Is(cause, errPassTokens):
 		// Trying again would spend as much again: it stops with what it has.
-		return strings.TrimSpace(report + "\n\nThe pass stopped: " + cause.Error() + "."), true, nil
+		return outcome{report: strings.TrimSpace(report + "\n\nThe pass stopped: " + cause.Error() + "."), cutShort: true}, nil
 	case cause != nil:
 		// A tool stopped it: the screen could not be reached.
-		return "", false, fmt.Errorf("running pass %s: %w", pass.ID, cause)
+		return outcome{}, fmt.Errorf("running pass %s: %w", pass.ID, cause)
 	case errors.Is(err, agent.ErrMaxSteps):
-		return strings.TrimSpace(report + "\n\nThe pass ran out of steps."), true, nil
+		return outcome{report: strings.TrimSpace(report + "\n\nThe pass ran out of steps."), cutShort: true}, nil
 	case err != nil:
-		return "", false, fmt.Errorf("running pass %s: %w", pass.ID, err)
+		return outcome{}, fmt.Errorf("running pass %s: %w", pass.ID, err)
 	}
-	return report, false, nil
+	return outcome{report: report}, nil
 }
 
 // Fail records a pass that failed every try.
 func (im *Improver) Fail(ctx context.Context, passID uuid.UUID, cause error) error {
-	return im.finish(ctx, passID, passFailed, "", cause)
+	return im.fail(ctx, passID, cause)
 }
 
 // FailLost fails the passes whose worker stopped answering, so their agents
@@ -395,17 +439,18 @@ const (
 	passFailed  = "failed"
 )
 
-// finishStopped records a pass done; stopped when a limit or its steps
-// ended it before it finished.
-func (im *Improver) finishStopped(ctx context.Context, id uuid.UUID, report string, stopped bool) error {
-	return im.record(ctx, id, passDone, report, nil, stopped)
+// done records a pass done, with what it came to.
+func (im *Improver) done(ctx context.Context, id uuid.UUID, o outcome) error {
+	return im.record(ctx, id, db.FinishImproverPassParams{Status: passDone, Report: o.report, CutShort: o.cutShort}, nil)
 }
 
-func (im *Improver) finish(ctx context.Context, id uuid.UUID, status, report string, failed error) error {
-	return im.record(ctx, id, status, report, failed, false)
+// fail records a pass failed, with failed's reason.
+func (im *Improver) fail(ctx context.Context, id uuid.UUID, failed error) error {
+	return im.record(ctx, id, db.FinishImproverPassParams{Status: passFailed}, failed)
 }
 
-func (im *Improver) record(ctx context.Context, id uuid.UUID, status, report string, failed error, stopped bool) error {
+// record finishes a pass as p says, with failed's reason when it failed.
+func (im *Improver) record(ctx context.Context, id uuid.UUID, p db.FinishImproverPassParams, failed error) error {
 	var msg *string
 	switch {
 	case errors.Is(failed, errNoModel):
@@ -416,10 +461,9 @@ func (im *Improver) record(ctx context.Context, id uuid.UUID, status, report str
 		msg = &m
 		im.logger.WarnContext(ctx, "An improver pass failed", "pass", id, "err", failed)
 	}
-	if err := im.store.FinishImproverPass(ctx, db.FinishImproverPassParams{
-		ID: id, Status: status, Report: clip(report, reportChars), Error: msg, Stopped: stopped,
-	}); err != nil {
-		return fmt.Errorf("recording pass %s %s: %w", id, status, err)
+	p.ID, p.Report, p.Error = id, clip(p.Report, reportChars), msg
+	if err := im.store.FinishImproverPass(ctx, p); err != nil {
+		return fmt.Errorf("recording pass %s %s: %w", id, p.Status, err)
 	}
 	return nil
 }

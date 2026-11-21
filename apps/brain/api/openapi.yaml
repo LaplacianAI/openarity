@@ -7475,7 +7475,7 @@ components:
 
     ImproverPass:
       type: object
-      required: [id, agent, trigger, signatures, pruned, status, report, report_withheld, proposed, screened_out, model, input_tokens, output_tokens, started_at]
+      required: [id, agent, trigger, signatures, pruned, status, cut_short, report, report_withheld, proposed, screened_out, model, input_tokens, output_tokens, started_at]
       properties:
         id:
           type: string
@@ -7499,6 +7499,12 @@ components:
         status:
           type: string
           enum: [running, done, failed]
+        cut_short:
+          type: boolean
+          description: >-
+            Done before it finished: out of steps, tokens or time, improvement
+            turned off, or its agent gone. With nothing proposed, its patterns
+            are offered again after a few hours.
         report:
           type: string
           description: What it found, proposed and left alone, and why; empty when withheld

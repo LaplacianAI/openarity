@@ -42,6 +42,7 @@ function pass(id: string, extra: Partial<ImproverPass> = {}): ImproverPass {
     signatures: ["instructions::skipped_step"],
     pruned: [],
     status: "done",
+    cut_short: false,
     report: "It closed tickets before confirming the order.\n\nSecond paragraph.",
     report_withheld: false,
     proposed: 1,

@@ -14,8 +14,8 @@ func TestPassesAreAnApproversToRead(t *testing.T) {
 	w := newWorld(t)
 	a := w.agent(t, "support-bot")
 	var older, newer uuid.UUID
-	if err := w.raw.QueryRow(t.Context(), `INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, status, report, proposed, finished_at, started_at, workflow_id)
-		VALUES ($1, $2, 'pattern', '{instructions::skipped_step}', 'done', 'Proposed one change.', 1, now(), now() - interval '1 hour', 'wf-older') RETURNING id`,
+	if err := w.raw.QueryRow(t.Context(), `INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, status, report, proposed, finished_at, started_at, workflow_id, cut_short)
+		VALUES ($1, $2, 'pattern', '{instructions::skipped_step}', 'done', 'Proposed one change.', 1, now(), now() - interval '1 hour', 'wf-older', true) RETURNING id`,
 		w.team, a.ID).Scan(&older); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestPassesAreAnApproversToRead(t *testing.T) {
 		t.Fatalf("second page = %d %s", rec.Code, rec.Body)
 	}
 	p := page.Items
-	if len(p) != 1 || p[0].ID != older || p[0].Agent.Name != "support-bot" || p[0].Report != "Proposed one change." ||
+	if len(p) != 1 || p[0].ID != older || p[0].Agent.Name != "support-bot" || p[0].Report != "Proposed one change." || !p[0].CutShort ||
 		p[0].Proposed != 1 || len(p[0].Signatures) != 1 || page.NextCursor != "" {
 		t.Errorf("second page = %+v", page)
 	}

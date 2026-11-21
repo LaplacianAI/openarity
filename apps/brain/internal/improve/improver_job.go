@@ -33,7 +33,7 @@ const (
 
 // Sweeps is what the improver's sweeps read.
 type Sweeps interface {
-	ListPatterns(ctx context.Context, minRuns int32) ([]db.ListPatternsRow, error)
+	ListPatterns(ctx context.Context, arg db.ListPatternsParams) ([]db.ListPatternsRow, error)
 	ListImprovingAgents(ctx context.Context) ([]db.ListImprovingAgentsRow, error)
 }
 
@@ -123,7 +123,7 @@ func (j *ImproverJob) dailySweep(ctx dbos.Context, in dbos.ScheduledWorkflowInpu
 // each agent with a pattern over the bar, at most one an hour each.
 func (j *ImproverJob) sweepPatterns(ctx context.Context, now time.Time) error {
 	lost := j.improver.FailLost(ctx)
-	rows, err := j.sweeps.ListPatterns(ctx, patternBar)
+	rows, err := j.sweeps.ListPatterns(ctx, db.ListPatternsParams{MinRuns: patternBar, BackOffHours: cutShortBackOffHours})
 	if err != nil {
 		return errors.Join(lost, fmt.Errorf("listing patterns: %w", err))
 	}
