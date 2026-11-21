@@ -158,9 +158,13 @@ func (c *Client) post(ctx context.Context, route string, body, out any) error {
 		return fmt.Errorf("%w: %s", ErrNoAnswer, transport(err))
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
 	if err != nil {
-		return fmt.Errorf("reading the workspace's answer: %w", err)
+		// The call was taken; how it ended is not known.
+		return fmt.Errorf("%w: the answer broke off: %s", ErrNoAnswer, transport(err))
+	}
+	if len(raw) > maxAnswer {
+		return fmt.Errorf("the workspace's answer is over %d MiB, more than it ever sends", maxAnswer>>20)
 	}
 	switch resp.StatusCode {
 	case http.StatusOK:

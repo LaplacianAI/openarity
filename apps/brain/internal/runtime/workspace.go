@@ -135,7 +135,7 @@ func (w *runWorkspace) call(ctx context.Context, fn func(*workroom.Client) (stri
 	}
 }
 
-// workspaceTools are the six tools over w.
+// tools are the six tools over w.
 func (w *runWorkspace) tools() []agent.Tool {
 	return []agent.Tool{
 		{

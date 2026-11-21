@@ -148,6 +148,21 @@ func TestACallThatWentUnansweredMayHaveRun(t *testing.T) {
 	if !errors.Is(err, workroom.ErrNoAnswer) || errors.Is(err, workroom.ErrGone) {
 		t.Errorf("a connection closed with the call in it: %v, want ErrNoAnswer", err)
 	}
+
+	// An answer that starts and breaks off is no answer either.
+	half := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"stdout":"part`))
+		if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(half.Close)
+	_, err = workroom.NewClient(sandbox.Endpoint{URL: half.URL}, half.Client()).Exec(t.Context(), "make", 30)
+	if !errors.Is(err, workroom.ErrNoAnswer) {
+		t.Errorf("an answer cut off: %v, want ErrNoAnswer", err)
+	}
 }
 
 // A provider's address can carry its token, so a failure never repeats it.

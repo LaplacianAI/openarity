@@ -397,7 +397,7 @@ func TestStartAsksForTheTokenThenSpeaksConnectToEnvd(t *testing.T) {
 	if err := json.Unmarshal(post.Body[5:], &msg); err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"-l", "-c", `'sandbox' 'shim' '--listen' ':8080' '--' 'npx' '-y' 'it'\''s@2.1.3'`}
+	wantArgs := []string{"-l", "-c", `exec 'sandbox' 'shim' '--listen' ':8080' '--' 'npx' '-y' 'it'\''s@2.1.3'`}
 	if msg.Process.Cmd != "/bin/bash" || strings.Join(msg.Process.Args, "\x00") != strings.Join(wantArgs, "\x00") {
 		t.Errorf("process = %+v", msg.Process)
 	}
