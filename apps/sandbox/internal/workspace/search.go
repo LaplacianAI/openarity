@@ -169,14 +169,22 @@ func grep(q GrepQuery) (GrepResult, error) {
 			}
 		case "content":
 			shown := false
+			// stop ends the search part-way through this file, which is
+			// counted if any of it was shown.
+			stop := func() error {
+				if shown {
+					res.Files++
+				}
+				return fs.SkipAll
+			}
 			for _, r := range spans(hits, q.Context, len(text)) {
 				if lines >= maxGrepLines {
 					res.Truncated = true
-					return fs.SkipAll
+					return stop()
 				}
 				if r.gap {
 					if !emit("--\n") {
-						return fs.SkipAll
+						return stop()
 					}
 					continue
 				}
@@ -189,10 +197,7 @@ func grep(q GrepQuery) (GrepResult, error) {
 					l = l[:maxLine] + "… (line cut)"
 				}
 				if !emit(fmt.Sprintf("%s%s%d%s%s\n", p, sep, r.line+1, sep, l)) {
-					if shown {
-						res.Files++
-					}
-					return fs.SkipAll
+					return stop()
 				}
 				shown = true
 				lines++
