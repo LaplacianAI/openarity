@@ -33,7 +33,7 @@ const (
 	defaultCompactionTokensMin = 50_000
 	// defaultKeepHours is how long a stopped workspace keeps its files, as
 	// the table's default has it.
-	defaultKeepHours = 24
+	defaultKeepHours           = 24
 	defaultCompactionTokensMax = 60_000
 )
 

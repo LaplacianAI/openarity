@@ -54,14 +54,14 @@ func TestLeftOutKeepsAndNullResets(t *testing.T) {
 
 func TestABadStopTimeOrSizeIsRefusedAndNothingIsSaved(t *testing.T) {
 	for name, c := range map[string]struct{ body, says string }{
-		"keep 0":          {`"keep_hours":0`, "keep_hours"},
-		"keep a month":    {`"keep_hours":721`, "keep_hours"},
-		"idle 0":          {`"idle_minutes":0`, "idle_minutes"},
-		"idle two days":   {`"idle_minutes":2881`, "idle_minutes"},
-		"memory too low":  {`"workspace_size":{"memory_mb":128,"cpus":1,"disk_mb":512}`, "memory_mb"},
-		"no cpu":          {`"workspace_size":{"memory_mb":1024,"cpus":0,"disk_mb":512}`, "cpus"},
-		"too much disk":   {`"workspace_size":{"memory_mb":1024,"cpus":1,"disk_mb":300000}`, "disk_mb"},
-		"half a size":     {`"workspace_size":{"memory_mb":1024}`, "cpus"},
+		"keep 0":         {`"keep_hours":0`, "keep_hours"},
+		"keep a month":   {`"keep_hours":721`, "keep_hours"},
+		"idle 0":         {`"idle_minutes":0`, "idle_minutes"},
+		"idle two days":  {`"idle_minutes":2881`, "idle_minutes"},
+		"memory too low": {`"workspace_size":{"memory_mb":128,"cpus":1,"disk_mb":512}`, "memory_mb"},
+		"no cpu":         {`"workspace_size":{"memory_mb":1024,"cpus":0,"disk_mb":512}`, "cpus"},
+		"too much disk":  {`"workspace_size":{"memory_mb":1024,"cpus":1,"disk_mb":300000}`, "disk_mb"},
+		"half a size":    {`"workspace_size":{"memory_mb":1024}`, "cpus"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv()

@@ -289,12 +289,12 @@ type wire struct {
 		KeySet   bool    `json:"key_set"`
 	} `json:"search"`
 	Sandbox struct {
-		Provider string  `json:"provider"`
-		URL      *string `json:"url"`
-		Template *string `json:"template"`
-		KeySet   bool    `json:"key_set"`
-		KeepHours     int32  `json:"keep_hours"`
-		IdleMinutes   *int32 `json:"idle_minutes"`
+		Provider      string  `json:"provider"`
+		URL           *string `json:"url"`
+		Template      *string `json:"template"`
+		KeySet        bool    `json:"key_set"`
+		KeepHours     int32   `json:"keep_hours"`
+		IdleMinutes   *int32  `json:"idle_minutes"`
 		WorkspaceSize *struct {
 			MemoryMB int32 `json:"memory_mb"`
 			CPUs     int32 `json:"cpus"`
