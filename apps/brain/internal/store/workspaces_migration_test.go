@@ -93,8 +93,8 @@ func TestTouchingByOwnerKeepsOnlyThatRoomInUse(t *testing.T) {
 	}
 }
 
-// 20261201090000_workspaces.sql lets a session own a room and an agent be
-// granted one; the migration before it is addImprovements.
+// 20261201100000_workspaces.sql lets a session own a room and an agent be
+// granted one; the migration before it is indexTopRunsFinished.
 //
 // Rolled back, sessions' rooms go as rooms go, tombstoned for the sweep; the
 // grant and the trigger go; migrated again, it all comes back.
@@ -106,7 +106,7 @@ func TestWorkspacesRollBack(t *testing.T) {
 	f := newRoomFixture(t, s, "workspaces-down")
 	_, room := f.sessionRoom(t, s)
 
-	downTo(t, s, addImprovements)
+	downTo(t, s, indexTopRunsFinished)
 
 	if n := count(t, s, `SELECT count(*) FROM sandbox_rooms WHERE id = $1`, room.ID); n != 0 {
 		t.Error("rolled back, a session's room row is still there")
