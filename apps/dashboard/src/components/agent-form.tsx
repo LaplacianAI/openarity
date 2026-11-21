@@ -394,7 +394,7 @@ export function AgentForm({
       >
         <SwitchField
           label="Can work in a workspace"
-          description="It can run commands and read, write and search files in the conversation's own sandbox, shared with the other agents working on it. The sandbox reaches the public internet and nothing private; its commands ask for approval wherever changes do. The hub never has one."
+          description="It can run commands and read, write and search files in the conversation's own sandbox, shared with the other agents working on it. The sandbox reaches the public internet and nothing private; its commands ask for approval wherever changes do. A hub granted it can work there as well as hand work on."
           checked={draft.workspace}
           onCheckedChange={(workspace) => set({ workspace })}
         />
