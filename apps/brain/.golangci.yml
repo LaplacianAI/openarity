@@ -7,6 +7,7 @@ linters:
   default: standard # errcheck, govet, ineffassign, staticcheck, unused
   enable:
     - bodyclose # unclosed HTTP response bodies — leaks connections
+    - depguard # the packages the routes stand on import no route
     - errorlint # %w vs %v, errors.Is/As misuse
     - exhaustive # a new enum value must break every switch that ignores it
     - gocritic
@@ -23,6 +24,21 @@ linters:
       # a default: clause does NOT excuse a missing case — the point is that
       # adding an enum value breaks every switch that ignores it
       default-signifies-exhaustive: false
+
+    depguard:
+      rules:
+        # The rules a harness is held to, and the improver that proposes
+        # changes to it, sit below the routes (#277): a handler change must
+        # not reach a background job. Each package is listed, so none can
+        # reach internal/api through another.
+        below-api:
+          files:
+            - "**/internal/harness/**"
+            - "**/internal/proposals/**"
+            - "**/internal/improve/**"
+          deny:
+            - pkg: github.com/LaplacianAI/openarity/apps/brain/internal/api
+              desc: harness, proposals and improve sit below the routes; move what is needed below internal/api
 
     errcheck:
       check-type-assertions: true

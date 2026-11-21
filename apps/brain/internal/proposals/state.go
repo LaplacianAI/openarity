@@ -1,4 +1,4 @@
-package improvements
+package proposals
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -32,12 +32,12 @@ type Snapshot struct {
 // AgentState is what a proposal may read and change of an agent: the
 // request a person's PUT would send, grants included, and the tool notes.
 type AgentState struct {
-	Agent agents.Request `json:"agent"`
-	Notes []ToolNote     `json:"notes"`
+	Agent harness.Request `json:"agent"`
+	Notes []ToolNote      `json:"notes"`
 }
 
-// ToolNote is the agents API's: the same note, said the same way.
-type ToolNote = agents.ToolNote
+// ToolNote is the harness's: the same note, said the same way.
+type ToolNote = harness.ToolNote
 
 // SkillState is a skill's manifest, body and files. A file is named by its
 // hash; Text holds the content of a text file a proposal adds or changes,
@@ -83,7 +83,7 @@ func (s AgentState) sortedNotes() []ToolNote {
 // canonical puts a state in one order, so equal states compare equal. It
 // sorts in place: callers holding someone else's state clone it first.
 func (s *AgentState) canonical() {
-	slices.SortFunc(s.Agent.MCPServers, func(a, b agents.ServerGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+	slices.SortFunc(s.Agent.MCPServers, func(a, b harness.ServerGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
 	for i := range s.Agent.MCPServers {
 		if a := s.Agent.MCPServers[i].Allow; a != nil {
 			slices.Sort(a)
@@ -98,7 +98,7 @@ func (s *AgentState) canonical() {
 		return strings.Compare(a.Tool, b.Tool)
 	})
 	if s.Agent.MCPServers == nil {
-		s.Agent.MCPServers = []agents.ServerGrant{}
+		s.Agent.MCPServers = []harness.ServerGrant{}
 	}
 	if s.Agent.Skills == nil {
 		s.Agent.Skills = []uuid.UUID{}
@@ -158,7 +158,7 @@ func jsonEqual(a, b any) bool {
 // agentState reads an agent's state, with the queries of a transaction that
 // has locked it or of a plain read.
 func agentState(ctx context.Context, q *db.Queries, row db.Agent) (AgentState, error) {
-	req, err := agents.RequestOf(row)
+	req, err := harness.RequestOf(row)
 	if err != nil {
 		return AgentState{}, err
 	}
@@ -168,7 +168,7 @@ func agentState(ctx context.Context, q *db.Queries, row db.Agent) (AgentState, e
 		return AgentState{}, err
 	}
 	for _, s := range servers {
-		req.MCPServers = append(req.MCPServers, agents.ServerGrant{ID: s.McpServerID, Allow: s.Allow})
+		req.MCPServers = append(req.MCPServers, harness.ServerGrant{ID: s.McpServerID, Allow: s.Allow})
 	}
 	if req.Skills, err = q.ListAgentSkills(ctx, row.ID); err != nil {
 		return AgentState{}, err
@@ -189,20 +189,20 @@ func agentState(ctx context.Context, q *db.Queries, row db.Agent) (AgentState, e
 	return st, nil
 }
 
-// writeAgent writes an agent state exactly as the agents API's replace does,
-// and then its notes. The caller has locked the row.
+// writeAgent writes an agent state through harness, exactly as the agents
+// API's replace does, and then its notes. The caller has locked the row.
 func writeAgent(ctx context.Context, q *db.Queries, row db.Agent, st AgentState, loops []string) error {
-	if err := agents.Validate(st.Agent, loops); err != nil {
+	if err := harness.Validate(st.Agent, loops); err != nil {
 		return ruleError{err.Error()}
 	}
-	params, err := agents.Columns(st.Agent)
+	params, err := harness.Columns(st.Agent)
 	if err != nil {
 		return err
 	}
-	if row, err = q.UpdateAgent(ctx, agents.UpdateParams(row.ID, params)); err != nil {
+	if row, err = q.UpdateAgent(ctx, harness.UpdateParams(row.ID, params)); err != nil {
 		return err
 	}
-	if err := agents.Regrant(ctx, q, row, st.Agent); err != nil {
+	if err := harness.Regrant(ctx, q, row, st.Agent); err != nil {
 		return err
 	}
 
@@ -276,7 +276,7 @@ func directory(ctx context.Context, o Getter, teamID uuid.UUID, st SkillState, s
 				return s.Path == f.Path && hex.EncodeToString(s.Sha256) == f.SHA256
 			})
 			if i < 0 {
-				return skill.Directory{}, errChanged
+				return skill.Directory{}, ErrChanged
 			}
 			b, err := o.Get(ctx, teamID, stored[i].ObjectKey)
 			if err != nil {
@@ -286,7 +286,7 @@ func directory(ctx context.Context, o Getter, teamID uuid.UUID, st SkillState, s
 		}
 		sum := sha256.Sum256(data)
 		if hex.EncodeToString(sum[:]) != f.SHA256 {
-			return skill.Directory{}, errChanged
+			return skill.Directory{}, ErrChanged
 		}
 		mediaType := f.MediaType
 		if mediaType == "" {

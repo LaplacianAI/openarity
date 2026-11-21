@@ -24,6 +24,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -293,7 +294,7 @@ func skillNamed(t *testing.T, name string) sent {
 
 // seeded is a store holding the pdf skill, written the way a create writes
 // it, with its step log cleared so a test sees only its own request.
-func seeded(t *testing.T, o Origin) (*routeStore, *bucket, db.Skill) {
+func seeded(t *testing.T, o harness.SkillOrigin) (*routeStore, *bucket, db.Skill) {
 	t.Helper()
 
 	s := newRouteStore()
@@ -525,7 +526,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 func TestAnImportedSkillShowsWhereItCameFrom(t *testing.T) {
 	t.Parallel()
 
-	gh := Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
+	gh := harness.SkillOrigin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
 	s, b, row := seeded(t, gh)
 
 	rec := call(t, s, b, &fakeAuthz{}, memberOf(row.TeamID), http.MethodGet, one(row.TeamID, row.ID), nothing)
@@ -778,7 +779,7 @@ func TestReplaceSwapsTheWholeDirectory(t *testing.T) {
 func TestReplacingAnImportThroughTheAPIMakesItAnUpload(t *testing.T) {
 	t.Parallel()
 
-	gh := Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
+	gh := harness.SkillOrigin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
 	s, b, row := seeded(t, gh)
 
 	rec := call(t, s, b, &fakeAuthz{allowed: true}, memberOf(row.TeamID), http.MethodPut, one(row.TeamID, row.ID), skillNamed(t, "pdf"))
@@ -1040,7 +1041,7 @@ func TestTheNextCursorWalksEverySkillOnce(t *testing.T) {
 func TestAListItemCarriesItsSource(t *testing.T) {
 	t.Parallel()
 
-	gh := Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
+	gh := harness.SkillOrigin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
 	s, b, row := seeded(t, gh)
 
 	rec := call(t, s, b, &fakeAuthz{}, memberOf(row.TeamID), http.MethodGet, collection(row.TeamID), nothing)

@@ -15,46 +15,46 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // agentEdit applies one kind's edit to a copy of the agent's state; a new
 // skill it creates is returned with it.
-type agentEdit func(ctx context.Context, t *passTools, raw json.RawMessage, after *improvements.AgentState) (*improvements.SkillState, error)
+type agentEdit func(ctx context.Context, t *passTools, raw json.RawMessage, after *proposals.AgentState) (*proposals.SkillState, error)
 
 // pure is an edit that needs nothing but the edit and the state.
-func pure(f func(raw json.RawMessage, st *improvements.AgentState) error) agentEdit {
-	return func(_ context.Context, _ *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func pure(f func(raw json.RawMessage, st *proposals.AgentState) error) agentEdit {
+	return func(_ context.Context, _ *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 		return nil, f(raw, st)
 	}
 }
 
 // agentEdits are the kinds that change the agent. skill_edit changes a
 // skill, and is built by buildSkillEdit.
-var agentEdits = map[improvements.Kind]agentEdit{
-	improvements.KindInstructions: pure(editInstructions),
-	improvements.KindDescription:  pure(editDescription),
-	improvements.KindSkillGrant:   editSkillGrant,
-	improvements.KindSkillDrop:    editSkillDrop,
-	improvements.KindSkillNew:     editSkillNew,
-	improvements.KindServerGrant:  editServerGrant,
-	improvements.KindServerDrop:   editServerDrop,
-	improvements.KindToolsNarrow:  editToolsNarrow,
-	improvements.KindBuiltinTool:  pure(editBuiltinTool),
-	improvements.KindToolNote:     editNote,
-	improvements.KindLimits:       pure(editLimits),
-	improvements.KindDelegation:   editDelegation,
-	improvements.KindPattern:      pure(editPattern),
+var agentEdits = map[proposals.Kind]agentEdit{
+	proposals.KindInstructions: pure(editInstructions),
+	proposals.KindDescription:  pure(editDescription),
+	proposals.KindSkillGrant:   editSkillGrant,
+	proposals.KindSkillDrop:    editSkillDrop,
+	proposals.KindSkillNew:     editSkillNew,
+	proposals.KindServerGrant:  editServerGrant,
+	proposals.KindServerDrop:   editServerDrop,
+	proposals.KindToolsNarrow:  editToolsNarrow,
+	proposals.KindBuiltinTool:  pure(editBuiltinTool),
+	proposals.KindToolNote:     editNote,
+	proposals.KindLimits:       pure(editLimits),
+	proposals.KindDelegation:   editDelegation,
+	proposals.KindPattern:      pure(editPattern),
 }
 
 // build turns an edit into the proposal's before and after, the agent's
 // held to the rules every agent is.
-func (t *passTools) build(ctx context.Context, in proposeArgs) (improvements.Proposed, error) {
-	kind := improvements.Kind(in.Kind)
-	n := improvements.Proposed{Kind: kind}
-	if kind == improvements.KindSkillEdit {
+func (t *passTools) build(ctx context.Context, in proposeArgs) (proposals.Proposed, error) {
+	kind := proposals.Kind(in.Kind)
+	n := proposals.Proposed{Kind: kind}
+	if kind == proposals.KindSkillEdit {
 		return t.buildSkillEdit(ctx, in, n)
 	}
 	edit, ok := agentEdits[kind]
@@ -70,10 +70,10 @@ func (t *passTools) build(ctx context.Context, in proposeArgs) (improvements.Pro
 	if err != nil {
 		return n, err
 	}
-	if err := agents.Validate(after.Agent, t.im.loops); err != nil {
+	if err := harness.Validate(after.Agent, t.im.loops); err != nil {
 		return n, refusal{err.Error()}
 	}
-	n.Before, n.After = improvements.Snapshot{Agent: &before}, improvements.Snapshot{Agent: &after, Skill: skill}
+	n.Before, n.After = proposals.Snapshot{Agent: &before}, proposals.Snapshot{Agent: &after, Skill: skill}
 	return n, nil
 }
 
@@ -85,8 +85,8 @@ func decodeEdit(raw json.RawMessage, into any) error {
 }
 
 // cloneState is a deep copy of an agent's state: its JSON round trip.
-func cloneState(s improvements.AgentState) (improvements.AgentState, error) {
-	var out improvements.AgentState
+func cloneState(s proposals.AgentState) (proposals.AgentState, error) {
+	var out proposals.AgentState
 	b, err := json.Marshal(s)
 	if err != nil {
 		return out, err
@@ -94,7 +94,7 @@ func cloneState(s improvements.AgentState) (improvements.AgentState, error) {
 	return out, json.Unmarshal(b, &out)
 }
 
-func editInstructions(raw json.RawMessage, st *improvements.AgentState) error {
+func editInstructions(raw json.RawMessage, st *proposals.AgentState) error {
 	var e replaceEdit
 	if err := decodeEdit(raw, &e); err != nil {
 		return err
@@ -104,7 +104,7 @@ func editInstructions(raw json.RawMessage, st *improvements.AgentState) error {
 	return err
 }
 
-func editDescription(raw json.RawMessage, st *improvements.AgentState) error {
+func editDescription(raw json.RawMessage, st *proposals.AgentState) error {
 	var e struct {
 		Text string `json:"text"`
 	}
@@ -131,7 +131,7 @@ func (t *passTools) skillNamed(raw json.RawMessage) (db.Skill, bool, error) {
 	return s, slices.Contains(t.material.state.Agent.Skills, s.ID), nil
 }
 
-func editSkillGrant(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editSkillGrant(_ context.Context, t *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 	s, held, err := t.skillNamed(raw)
 	switch {
 	case err != nil:
@@ -143,7 +143,7 @@ func editSkillGrant(_ context.Context, t *passTools, raw json.RawMessage, st *im
 	return nil, nil
 }
 
-func editSkillDrop(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editSkillDrop(_ context.Context, t *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 	s, held, err := t.skillNamed(raw)
 	switch {
 	case err != nil:
@@ -155,7 +155,7 @@ func editSkillDrop(_ context.Context, t *passTools, raw json.RawMessage, st *imp
 	return nil, nil
 }
 
-func editSkillNew(_ context.Context, t *passTools, raw json.RawMessage, _ *improvements.AgentState) (*improvements.SkillState, error) {
+func editSkillNew(_ context.Context, t *passTools, raw json.RawMessage, _ *proposals.AgentState) (*proposals.SkillState, error) {
 	sk, err := newSkill(raw, t.material.skills)
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func editSkillNew(_ context.Context, t *passTools, raw json.RawMessage, _ *impro
 	return &sk, nil
 }
 
-func editBuiltinTool(raw json.RawMessage, st *improvements.AgentState) error {
+func editBuiltinTool(raw json.RawMessage, st *proposals.AgentState) error {
 	var e struct {
 		Tool string `json:"tool"`
 		On   bool   `json:"on"`
@@ -183,7 +183,7 @@ func editBuiltinTool(raw json.RawMessage, st *improvements.AgentState) error {
 	return nil
 }
 
-func editLimits(raw json.RawMessage, st *improvements.AgentState) error {
+func editLimits(raw json.RawMessage, st *proposals.AgentState) error {
 	var e struct {
 		MaxTokens          *int32 `json:"max_tokens"`
 		MaxSteps           *int32 `json:"max_steps"`
@@ -209,7 +209,7 @@ func editLimits(raw json.RawMessage, st *improvements.AgentState) error {
 	return nil
 }
 
-func editPattern(raw json.RawMessage, st *improvements.AgentState) error {
+func editPattern(raw json.RawMessage, st *proposals.AgentState) error {
 	var e struct {
 		Pattern string `json:"pattern"`
 	}
@@ -256,16 +256,16 @@ type fileEdit struct {
 	Text *string `json:"text"`
 }
 
-func fileState(p, text string) improvements.FileState {
+func fileState(p, text string) proposals.FileState {
 	sum := sha256.Sum256([]byte(text))
 	media := "text/plain; charset=utf-8"
 	if path.Ext(p) == ".md" {
 		media = "text/markdown; charset=utf-8"
 	}
-	return improvements.FileState{Path: p, MediaType: media, SHA256: hex.EncodeToString(sum[:]), Text: &text}
+	return proposals.FileState{Path: p, MediaType: media, SHA256: hex.EncodeToString(sum[:]), Text: &text}
 }
 
-func newSkill(raw json.RawMessage, team map[string]db.Skill) (improvements.SkillState, error) {
+func newSkill(raw json.RawMessage, team map[string]db.Skill) (proposals.SkillState, error) {
 	var e struct {
 		Name        string     `json:"name"`
 		Description string     `json:"description"`
@@ -273,23 +273,23 @@ func newSkill(raw json.RawMessage, team map[string]db.Skill) (improvements.Skill
 		Files       []fileEdit `json:"files"`
 	}
 	if err := decodeEdit(raw, &e); err != nil {
-		return improvements.SkillState{}, err
+		return proposals.SkillState{}, err
 	}
 	name := strings.TrimSpace(e.Name)
 	if _, taken := team[name]; taken {
-		return improvements.SkillState{}, refused("the team already has a skill %q: grant or edit it instead", name)
+		return proposals.SkillState{}, refused("the team already has a skill %q: grant or edit it instead", name)
 	}
-	s := improvements.SkillState{Name: name, Description: strings.TrimSpace(e.Description), Body: e.Body, Source: "upload"}
+	s := proposals.SkillState{Name: name, Description: strings.TrimSpace(e.Description), Body: e.Body, Source: "upload"}
 	for _, f := range e.Files {
 		if f.Text == nil {
-			return improvements.SkillState{}, refused("a new skill's file %q carries its text", f.Path)
+			return proposals.SkillState{}, refused("a new skill's file %q carries its text", f.Path)
 		}
 		s.Files = append(s.Files, fileState(f.Path, *f.Text))
 	}
 	return s, nil
 }
 
-func (t *passTools) buildSkillEdit(ctx context.Context, in proposeArgs, n improvements.Proposed) (improvements.Proposed, error) {
+func (t *passTools) buildSkillEdit(ctx context.Context, in proposeArgs, n proposals.Proposed) (proposals.Proposed, error) {
 	var e struct {
 		Skill       string       `json:"skill"`
 		Description *string      `json:"description"`
@@ -303,10 +303,10 @@ func (t *passTools) buildSkillEdit(ctx context.Context, in proposeArgs, n improv
 	if !ok || !slices.Contains(t.material.state.Agent.Skills, row.ID) {
 		return n, refused("the agent holds no skill %q", e.Skill)
 	}
-	var before improvements.SkillState
+	var before proposals.SkillState
 	if err := t.im.store.InTx(ctx, func(q *db.Queries) error {
 		var err error
-		before, err = improvements.SkillNow(ctx, q, row)
+		before, err = proposals.SkillNow(ctx, q, row)
 		return err
 	}); err != nil {
 		return n, fmt.Errorf("reading skill %s: %w", row.Name, err)
@@ -324,7 +324,7 @@ func (t *passTools) buildSkillEdit(ctx context.Context, in proposeArgs, n improv
 		after.Body = body
 	}
 	for _, f := range e.Files {
-		i := slices.IndexFunc(after.Files, func(x improvements.FileState) bool { return x.Path == f.Path })
+		i := slices.IndexFunc(after.Files, func(x proposals.FileState) bool { return x.Path == f.Path })
 		switch {
 		case f.Text == nil && i < 0:
 			return n, refused("the skill has no file %q to remove", f.Path)
@@ -338,7 +338,7 @@ func (t *passTools) buildSkillEdit(ctx context.Context, in proposeArgs, n improv
 	}
 	id := row.ID
 	n.SkillID = &id
-	n.Before, n.After = improvements.Snapshot{Skill: &before}, improvements.Snapshot{Skill: &after}
+	n.Before, n.After = proposals.Snapshot{Skill: &before}, proposals.Snapshot{Skill: &after}
 	return n, nil
 }
 
@@ -350,7 +350,7 @@ type serverEdit struct {
 
 // serverNamed is the team's server an edit names, every tool it names
 // checked, and where the agent's grant of it is (-1 for none).
-func (t *passTools) serverNamed(raw json.RawMessage, st *improvements.AgentState) (serverEdit, db.ListTeamServersWithToolsRow, int, error) {
+func (t *passTools) serverNamed(raw json.RawMessage, st *proposals.AgentState) (serverEdit, db.ListTeamServersWithToolsRow, int, error) {
 	var e serverEdit
 	if err := decodeEdit(raw, &e); err != nil {
 		return e, db.ListTeamServersWithToolsRow{}, -1, err
@@ -364,11 +364,11 @@ func (t *passTools) serverNamed(raw json.RawMessage, st *improvements.AgentState
 			return e, s, -1, refused("server %s has no tool %q", s.Name, tool)
 		}
 	}
-	i := slices.IndexFunc(st.Agent.MCPServers, func(g agents.ServerGrant) bool { return g.ID == s.ID })
+	i := slices.IndexFunc(st.Agent.MCPServers, func(g harness.ServerGrant) bool { return g.ID == s.ID })
 	return e, s, i, nil
 }
 
-func editServerGrant(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editServerGrant(_ context.Context, t *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 	e, s, i, err := t.serverNamed(raw, st)
 	switch {
 	case err != nil:
@@ -376,7 +376,7 @@ func editServerGrant(_ context.Context, t *passTools, raw json.RawMessage, st *i
 	case i >= 0:
 		return nil, refused("the agent already holds %s", s.Name)
 	}
-	g := agents.ServerGrant{ID: s.ID}
+	g := harness.ServerGrant{ID: s.ID}
 	if len(e.Tools) > 0 {
 		g.Allow = unique(e.Tools)
 	}
@@ -384,7 +384,7 @@ func editServerGrant(_ context.Context, t *passTools, raw json.RawMessage, st *i
 	return nil, nil
 }
 
-func editServerDrop(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editServerDrop(_ context.Context, t *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 	_, s, i, err := t.serverNamed(raw, st)
 	switch {
 	case err != nil:
@@ -393,11 +393,11 @@ func editServerDrop(_ context.Context, t *passTools, raw json.RawMessage, st *im
 		return nil, refused("the agent does not hold %s", s.Name)
 	}
 	st.Agent.MCPServers = slices.Delete(st.Agent.MCPServers, i, i+1)
-	st.Notes = slices.DeleteFunc(st.Notes, func(n improvements.ToolNote) bool { return n.Server == s.ID })
+	st.Notes = slices.DeleteFunc(st.Notes, func(n proposals.ToolNote) bool { return n.Server == s.ID })
 	return nil, nil
 }
 
-func editToolsNarrow(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editToolsNarrow(_ context.Context, t *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 	e, s, i, err := t.serverNamed(raw, st)
 	switch {
 	case err != nil:
@@ -414,7 +414,7 @@ func editToolsNarrow(_ context.Context, t *passTools, raw json.RawMessage, st *i
 	return nil, nil
 }
 
-func editNote(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editNote(_ context.Context, t *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 	var e struct {
 		Server string `json:"server"`
 		Tool   string `json:"tool"`
@@ -427,14 +427,14 @@ func editNote(_ context.Context, t *passTools, raw json.RawMessage, st *improvem
 	if !ok {
 		return nil, refused("the team has no MCP server %q", e.Server)
 	}
-	st.Notes = slices.DeleteFunc(st.Notes, func(n improvements.ToolNote) bool { return n.Server == s.ID && n.Tool == e.Tool })
+	st.Notes = slices.DeleteFunc(st.Notes, func(n proposals.ToolNote) bool { return n.Server == s.ID && n.Tool == e.Tool })
 	if note := strings.TrimSpace(e.Note); note != "" {
-		st.Notes = append(st.Notes, improvements.ToolNote{Server: s.ID, Tool: e.Tool, Note: note})
+		st.Notes = append(st.Notes, proposals.ToolNote{Server: s.ID, Tool: e.Tool, Note: note})
 	}
 	return nil, nil
 }
 
-func editDelegation(ctx context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editDelegation(ctx context.Context, t *passTools, raw json.RawMessage, st *proposals.AgentState) (*proposals.SkillState, error) {
 	var e struct {
 		Mode   *string  `json:"mode"`
 		Add    []string `json:"add"`

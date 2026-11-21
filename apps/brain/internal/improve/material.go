@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -18,7 +18,7 @@ import (
 type material struct {
 	text   string
 	agent  db.Agent
-	state  improvements.AgentState
+	state  proposals.AgentState
 	skills map[string]db.Skill // the team's, by name
 	// The team's servers by name, and every name by id.
 	servers    map[string]db.ListTeamServersWithToolsRow
@@ -44,7 +44,7 @@ func (im *Improver) baseMaterial(ctx context.Context, agentID uuid.UUID) (materi
 		return m, fmt.Errorf("reading agent %s: %w", agentID, err)
 	}
 	if err := im.store.InTx(ctx, func(q *db.Queries) error {
-		m.state, err = improvements.AgentNow(ctx, q, m.agent)
+		m.state, err = proposals.AgentNow(ctx, q, m.agent)
 		return err
 	}); err != nil {
 		return m, fmt.Errorf("reading agent %s's setup: %w", agentID, err)

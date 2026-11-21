@@ -1,4 +1,4 @@
-package agents
+package harness
 
 import (
 	"encoding/json"
