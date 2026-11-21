@@ -143,9 +143,30 @@ export type SignatureWords = { part: string; target: string; cause: string };
 
 /** "tool:crm__close_ticket:misused_tool", or "instructions::skipped_step", in words. */
 export function signatureWords(signature: string): SignatureWords {
-  const [part = "", target = "", ...rest] = signature.split(":");
+  // The part and cause come from closed sets with no colon, so a target
+  // holding one ("tool:crm:lookup") still reads back whole between them.
+  const first = signature.indexOf(":");
+  const last = signature.lastIndexOf(":");
   const words = (t: string) => t.replace(/_/g, " ").trim();
-  return { part: words(part), target, cause: words(rest.join(":")) };
+  if (first < 0) return { part: words(signature), target: "", cause: "" };
+  if (first === last)
+    return {
+      part: words(signature.slice(0, first)),
+      target: "",
+      cause: words(signature.slice(first + 1)),
+    };
+  return {
+    part: words(signature.slice(0, first)),
+    target: signature.slice(first + 1, last),
+    cause: words(signature.slice(last + 1)),
+  };
+}
+
+/** Whether any pass on the pages read is still running: the list is read again until none is. */
+export function anyPassRunning(
+  pages: { items: Pick<ImproverPass, "status">[] }[] | undefined,
+): boolean {
+  return pages?.some((p) => p.items.some((x) => x.status === "running")) ?? false;
 }
 
 /** "skill:triage" as "skill triage"; a tool is "server/tool", which stays as it is. */

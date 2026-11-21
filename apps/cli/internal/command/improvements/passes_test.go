@@ -13,12 +13,13 @@ const passesRoute = "GET /teams/{id}/improvements/passes"
 const (
 	passA = "7e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b"
 	passB = "8f2a3b4c-5d6e-4f7a-9b0c-1d2e3f4a5b6c"
+	passC = "9a3b4c5d-6e7f-4a8b-8c1d-2e3f4a5b6c7d"
 )
 
 func pass(id, trigger, status, extra string) string {
 	return `{"id":"` + id + `","agent":{"id":"` + agentID + `","name":"support-bot"},
   "trigger":"` + trigger + `","signatures":["instructions::skipped_step","tool:crm::wrong_arg"],"pruned":[],
-  "status":"` + status + `","report":"found two","proposed":2,"screened_out":1,"model":"gpt-5",
+  "status":"` + status + `","report":"found two","report_withheld":false,"proposed":2,"screened_out":1,"model":"gpt-5",
   "input_tokens":1200,"output_tokens":340,"error":null,
   "started_at":"2026-11-21T09:00:00Z","finished_at":null` + extra + `}`
 }
@@ -26,7 +27,9 @@ func pass(id, trigger, status, extra string) string {
 func TestPassesListsWhyItRanStatusCountsTokensAndStart(t *testing.T) {
 	script := clitest.Routes(t, routes(map[string]clitest.Reply{
 		passesRoute: {Status: http.StatusOK, Body: `{"items":[` +
-			pass(passA, "pattern", "done", "") + `,` + pass(passB, "daily", "failed", "") + `],"next_cursor":"abc"}`},
+			pass(passA, "pattern", "done", "") + `,` +
+			pass(passB, "daily", "failed", `,"error":"it stopped answering and was taken as lost"`) + `,` +
+			pass(passC, "daily", "running", `,"input_tokens":0,"output_tokens":0`) + `],"next_cursor":"abc"}`},
 	}))
 
 	out, err := clitest.Execute(t, commands, "improvements", "passes", "platform", "--agent", "support-bot", "--limit", "5")
@@ -35,7 +38,10 @@ func TestPassesListsWhyItRanStatusCountsTokensAndStart(t *testing.T) {
 	}
 	contains(t, out, "support-bot", "pattern instructions::skipped_step, tool:crm::wrong_arg", "daily",
 		"done", "failed", "2 proposed / 1 screened out", "1200 in / 340 out", "2026-11-2", passA,
-		"--cursor abc", "--agent support-bot")
+		"taken as lost", "running", "--cursor abc", "--agent support-bot")
+	if strings.Contains(out, "0 in / 0 out") {
+		t.Errorf("a running pass printed its tokens as nothing spent:\n%s", out)
+	}
 
 	var query string
 	for _, e := range script.All() {

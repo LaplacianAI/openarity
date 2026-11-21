@@ -75,12 +75,17 @@ proposals, and proposes zero or more changes; proposing nothing is the usual
 answer. It also offers to drop a skill the agent held in each of its last 50
 runs and never opened, or a tool it never called. Each proposal is held to its
 kind's rules and screened by the judge model for one conversation's details (a
-name, an id, a quoted message) before it is stored, and a newer one replaces an
-older one still waiting on the same agent or skill. An approver's **Passes** tab
-lists every pass: why it ran, what came of it, its tokens, and its report,
-including why it left a pattern alone. A pass runs on the judge model, else the
-team's, and a team runs at most the passes a day set in Team settings (20 until
-changed).
+name, an id, a quoted message) before it is stored. A newer pass's proposal replaces one an earlier pass left
+waiting on the same pattern, with the same kind of change to the same target; a
+person's own proposal, and one of another kind, wait on. Anything a pass read
+that someone outside the team spoke in bars it from proposing a change that
+widens the agent. An approver's **Passes** tab lists every pass: why it ran,
+what came of it, its tokens, and its report, including why it left a pattern
+alone; a report drawn on a conversation the approver cannot read is withheld.
+A pass runs on the judge model, else the team's. Team settings cap what it
+costs: the passes a day (20 until changed), and the tokens and minutes one try
+at a pass may spend (400,000 and 20 until changed), past which it stops and
+reports what it found.
 
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to

@@ -94,20 +94,30 @@ type toRead struct {
 	at      int64
 }
 
+// How clear a failure is, clearest first: a member's 👎, then the judge's
+// verdicts from worst, then a failure nothing weighed.
+const (
+	rankThumbsDown = iota
+	rankWrong
+	rankNotDone
+	rankPartly
+	rankUnweighed
+)
+
 // failureRank orders failures: a member's 👎 first, then the judge's worst
 // verdicts.
 func failureRank(verdict string, down int32) int {
 	switch {
 	case down > 0:
-		return 0
+		return rankThumbsDown
 	case verdict == verdictWrong:
-		return 1
+		return rankWrong
 	case verdict == verdictNotDone:
-		return 2
+		return rankNotDone
 	case verdict == verdictPartly:
-		return 3
+		return rankPartly
 	}
-	return 4
+	return rankUnweighed
 }
 
 // chooseRuns picks at most failuresToRead failures, clearest and newest
@@ -138,67 +148,6 @@ func chooseRuns(failures, successes []toRead) []toRead {
 	}
 	take(failures, failuresToRead)
 	take(successes, successesToRead)
-	return out
-}
-
-// grantedTool is one tool an agent may call, by the name its runs know it
-// by and the name a proposal gives it.
-type grantedTool struct{ runName, server, tool string }
-
-// pruneCandidates are the skills and tools an agent held in every one of
-// its last pruneWindow runs and never used: a skill no run opened, a tool
-// no run called, directly or through call_tool. Fewer runs than the window
-// say nothing.
-func pruneCandidates(runs []uuid.UUID, use []db.ListRunsUseRow, skills []string, tools []grantedTool) []string {
-	if len(runs) < pruneWindow {
-		return nil
-	}
-	heldSkills, heldTools := map[string]int{}, map[string]int{}
-	opened, called := map[string]bool{}, map[string]bool{}
-	for _, u := range use {
-		switch u.Kind {
-		case "started":
-			var p startedPayload
-			if json.Unmarshal(u.Payload, &p) != nil {
-				continue
-			}
-			for _, s := range unique(p.Skills) {
-				heldSkills[s]++
-			}
-			for _, t := range unique(p.Tools) {
-				heldTools[t]++
-			}
-		case "tool_call":
-			var p toolCallPayload
-			if json.Unmarshal(u.Payload, &p) != nil {
-				continue
-			}
-			called[p.Name] = true
-			var args struct {
-				Name string `json:"name"`
-			}
-			_ = json.Unmarshal([]byte(p.Arguments), &args) // arguments that are not JSON name nothing
-			switch p.Name {
-			case skillTool:
-				opened[args.Name] = true
-			case callTool:
-				called[args.Name] = true
-			}
-		}
-	}
-
-	var out []string
-	for _, s := range skills {
-		if heldSkills[s] == len(runs) && !opened[s] {
-			out = append(out, "skill:"+s)
-		}
-	}
-	for _, t := range tools {
-		if heldTools[t.runName] == len(runs) && !called[t.runName] {
-			out = append(out, "tool:"+t.server+"/"+t.tool)
-		}
-	}
-	slices.Sort(out)
 	return out
 }
 

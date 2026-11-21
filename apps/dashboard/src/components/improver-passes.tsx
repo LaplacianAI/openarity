@@ -15,7 +15,7 @@ import { Time } from "@/components/facts";
 import { ErrorState } from "@/components/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, LoadMore, Mono } from "@/components/ui-bits";
-import { passOutcome, prunedWords, signatureWords } from "@/lib/improvements";
+import { anyPassRunning, passOutcome, prunedWords, signatureWords } from "@/lib/improvements";
 import { count } from "@/lib/runs";
 import { cn } from "@/lib/utils";
 
@@ -88,7 +88,7 @@ export function ImproverPassRow({ pass }: { pass: ImproverPass }) {
       <button
         type="button"
         aria-expanded={open}
-        aria-controls={reportId}
+        aria-controls={open ? reportId : undefined}
         onClick={() => setOpen(!open)}
         className="-mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-start gap-1.5 rounded px-1 text-left hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
       >
@@ -111,7 +111,7 @@ export function ImproverPassRow({ pass }: { pass: ImproverPass }) {
         <Outcome pass={pass} />
         <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
           <Time iso={pass.started_at} />
-          {/* A pass counts its tokens when it ends: none yet is not a count. */}
+          {/* A pass counts its tokens as each try ends: none yet is not a count. */}
           {tokens > 0 ? (
             <>
               <span aria-hidden>·</span>
@@ -127,7 +127,11 @@ export function ImproverPassRow({ pass }: { pass: ImproverPass }) {
               To prune: {pass.pruned.map(prunedWords).join(", ")}
             </p>
           ) : null}
-          {pass.report.trim() === "" ? (
+          {pass.report_withheld ? (
+            <p className="text-sm text-muted-foreground">
+              The report draws on a conversation you can't read, so it isn't shown.
+            </p>
+          ) : pass.report.trim() === "" ? (
             <p className="text-sm text-muted-foreground">
               {pass.status === "running" ? "No report yet." : "It left no report."}
             </p>
@@ -160,6 +164,9 @@ function Loading() {
   );
 }
 
+/** How often passes are read again while one is running. */
+const PASS_REFRESH_MS = 15_000;
+
 export function ImproverPasses({ teamId, agent }: { teamId: string; agent: string | undefined }) {
   const list = useInfiniteQuery({
     queryKey: ["improver-passes", teamId, agent ?? null],
@@ -167,6 +174,8 @@ export function ImproverPasses({ teamId, agent }: { teamId: string; agent: strin
       listImproverPasses(teamId, agent ? { agent } : {}, pageParam, signal),
     initialPageParam: null as string | null,
     getNextPageParam: nextCursorOf,
+    // A pass under way ends within minutes: its row is read again until it has.
+    refetchInterval: (query) => (anyPassRunning(query.state.data?.pages) ? PASS_REFRESH_MS : false),
   });
   const rows = list.data?.pages.flatMap((p) => p.items) ?? [];
 

@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -48,6 +48,8 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.ImprovementSampleShare,
 		&i.ImprovementSince,
 		&i.ImprovementDailyPasses,
+		&i.ImprovementPassTokens,
+		&i.ImprovementPassMinutes,
 	)
 	return i, err
 }
@@ -77,7 +79,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes
 `
 
 type SetTeamApprovalParams struct {
@@ -121,6 +123,8 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.ImprovementSampleShare,
 		&i.ImprovementSince,
 		&i.ImprovementDailyPasses,
+		&i.ImprovementPassTokens,
+		&i.ImprovementPassMinutes,
 	)
 	return i, err
 }
@@ -145,7 +149,8 @@ INSERT INTO team_settings (
     sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
     browser_provider, browser_url, browser_secret_id,
     judge_model_name, judge_model_max_tokens, judge_model_temperature,
-    improvement_sample_share, improvement_daily_passes, improvement_since
+    improvement_sample_share, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes,
+    improvement_since
 ) VALUES (
     $1,
     $2, $3, $4,
@@ -157,6 +162,8 @@ INSERT INTO team_settings (
     $20, $21, $22,
     -- Null keeps what is stored, or the default on a first save.
     $23, COALESCE($24::smallint, 20),
+    COALESCE($25::integer, 400000),
+    COALESCE($26::smallint, 20),
     CASE WHEN $8::bool THEN now() END
 )
 ON CONFLICT (team_id) DO UPDATE SET
@@ -183,13 +190,15 @@ ON CONFLICT (team_id) DO UPDATE SET
     judge_model_temperature = EXCLUDED.judge_model_temperature,
     improvement_sample_share = EXCLUDED.improvement_sample_share,
     improvement_daily_passes = COALESCE($24::smallint, team_settings.improvement_daily_passes),
+    improvement_pass_tokens  = COALESCE($25::integer, team_settings.improvement_pass_tokens),
+    improvement_pass_minutes = COALESCE($26::smallint, team_settings.improvement_pass_minutes),
     -- Set each time the switch goes on, kept while it stays on: runs from
     -- before it went on are never judged.
     improvement_since   = CASE
         WHEN EXCLUDED.improvement AND NOT team_settings.improvement THEN now()
         ELSE team_settings.improvement_since END,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes
 `
 
 type UpsertTeamSettingsParams struct {
@@ -217,6 +226,8 @@ type UpsertTeamSettingsParams struct {
 	JudgeModelTemperature  *float64
 	ImprovementSampleShare int16
 	ImprovementDailyPasses *int16
+	ImprovementPassTokens  *int32
+	ImprovementPassMinutes *int16
 }
 
 // The whole row every time. A save that keeps the search key passes the same
@@ -248,6 +259,8 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.JudgeModelTemperature,
 		arg.ImprovementSampleShare,
 		arg.ImprovementDailyPasses,
+		arg.ImprovementPassTokens,
+		arg.ImprovementPassMinutes,
 	)
 	var i TeamSetting
 	err := row.Scan(
@@ -279,6 +292,8 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.ImprovementSampleShare,
 		&i.ImprovementSince,
 		&i.ImprovementDailyPasses,
+		&i.ImprovementPassTokens,
+		&i.ImprovementPassMinutes,
 	)
 	return i, err
 }

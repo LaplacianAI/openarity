@@ -35,9 +35,30 @@ func TestImproverPassesMigrateAndRollBack(t *testing.T) {
 	if _, err := s.pool.Exec(t.Context(), `UPDATE team_settings SET improvement_daily_passes = 0 WHERE team_id = $1`, team); err == nil {
 		t.Error("a cap of 0 was stored")
 	}
+	if scalar[int32](t, s, `SELECT improvement_pass_tokens FROM team_settings WHERE team_id = $1`, team) != 400_000 ||
+		scalar[int16](t, s, `SELECT improvement_pass_minutes FROM team_settings WHERE team_id = $1`, team) != 20 {
+		t.Error("a saved team's pass budget does not default to 400,000 tokens and 20 minutes")
+	}
+	for _, bad := range []string{`improvement_pass_tokens = 19999`, `improvement_pass_minutes = 26`} {
+		if _, err := s.pool.Exec(t.Context(), `UPDATE team_settings SET `+bad+` WHERE team_id = $1`, team); err == nil {
+			t.Errorf("%s was stored", bad)
+		}
+	}
+	// Two passes running at once for one agent, or one workflow's twice.
+	agent0 := scalar[uuid.UUID](t, s, `INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'bot0', 'm', 100, 'react', 3) RETURNING id`, team)
+	if _, err := s.pool.Exec(t.Context(), `INSERT INTO improver_passes (team_id, agent_id, trigger, workflow_id) VALUES ($1, $2, 'daily', 'wf-a')`, team, agent0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `INSERT INTO improver_passes (team_id, agent_id, trigger, workflow_id) VALUES ($1, $2, 'daily', 'wf-b')`, team, agent0); err == nil {
+		t.Error("a second running pass was stored for one agent")
+	}
+	if _, err := s.pool.Exec(t.Context(), `DELETE FROM improver_passes WHERE agent_id = $1`, agent0); err != nil {
+		t.Fatal(err)
+	}
 	agent := scalar[uuid.UUID](t, s, `INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
 		VALUES ($1, 'bot', 'm', 100, 'react', 3) RETURNING id`, team)
-	pass := scalar[uuid.UUID](t, s, `INSERT INTO improver_passes (team_id, agent_id, trigger) VALUES ($1, $2, 'pattern') RETURNING id`, team, agent)
+	pass := scalar[uuid.UUID](t, s, `INSERT INTO improver_passes (team_id, agent_id, trigger, workflow_id) VALUES ($1, $2, 'pattern', 'wf-1') RETURNING id`, team, agent)
 	if _, err := s.pool.Exec(t.Context(), `UPDATE improver_passes SET status = 'done' WHERE id = $1`, pass); err == nil {
 		t.Error("a pass was done with no finished_at")
 	}
@@ -55,7 +76,7 @@ func TestImproverPassesMigrateAndRollBack(t *testing.T) {
 		t.Error("rolled back, improver_passes survived")
 	}
 	if scalar[bool](t, s, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
-		WHERE (table_name = 'team_settings' AND column_name = 'improvement_daily_passes')
+		WHERE (table_name = 'team_settings' AND column_name IN ('improvement_daily_passes', 'improvement_pass_tokens', 'improvement_pass_minutes'))
 		   OR (table_name = 'improvement_proposals' AND column_name = 'pass_id'))`) {
 		t.Error("rolled back, the new columns survived")
 	}

@@ -30,6 +30,8 @@ type fakeModel struct {
 	asked   []agent.Request
 	// onAsk runs inside a call, for a test that changes the world meanwhile.
 	onAsk func()
+	// usage is what each call spends; zero is 120 in and 30 out.
+	usage agent.Usage
 }
 
 type reply struct {
@@ -55,8 +57,15 @@ func (f *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Respon
 	}
 	return agent.Response{
 		Message: agent.Message{Role: agent.RoleAssistant, Content: []agent.Content{{Type: agent.ContentText, Text: r.text}}, ToolCalls: r.calls},
-		Usage:   agent.Usage{InputTokens: 120, OutputTokens: 30},
+		Usage:   f.spends(),
 	}, nil
+}
+
+func (f *fakeModel) spends() agent.Usage {
+	if f.usage == (agent.Usage{}) {
+		return agent.Usage{InputTokens: 120, OutputTokens: 30}
+	}
+	return f.usage
 }
 
 func (*fakeModel) Stream(context.Context, agent.Request) (agent.Stream, error) {

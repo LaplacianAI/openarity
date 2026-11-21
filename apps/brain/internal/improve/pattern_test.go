@@ -1,7 +1,6 @@
 package improve
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -77,8 +76,14 @@ func TestTheClearestFailuresAndClosestSuccessesAreRead(t *testing.T) {
 }
 
 func use(run uuid.UUID, kind string, payload any) db.ListRunsUseRow {
-	b, _ := json.Marshal(payload)
-	return db.ListRunsUseRow{RunID: run, Kind: kind, Payload: b}
+	row := db.ListRunsUseRow{RunID: run, Kind: kind}
+	switch p := payload.(type) {
+	case startedPayload:
+		row.Skills, row.Tools = p.Skills, p.Tools
+	case toolCallPayload:
+		row.Name, row.Arguments = p.Name, p.Arguments
+	}
+	return row
 }
 
 func TestPruneCandidatesAreHeldAlwaysAndNeverUsed(t *testing.T) {

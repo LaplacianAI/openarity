@@ -217,6 +217,7 @@ type ImproverPass struct {
 	Signatures   []string
 	Pruned       []string
 	RunIds       []uuid.UUID
+	DrewOn       []uuid.UUID
 	Status       string
 	Report       string
 	Proposed     int32
@@ -225,7 +226,9 @@ type ImproverPass struct {
 	InputTokens  int64
 	OutputTokens int64
 	Error        *string
+	WorkflowID   string
 	StartedAt    time.Time
+	AliveAt      time.Time
 	FinishedAt   *time.Time
 }
 
@@ -602,6 +605,8 @@ type TeamSetting struct {
 	ImprovementSampleShare int16
 	ImprovementSince       *time.Time
 	ImprovementDailyPasses int16
+	ImprovementPassTokens  int32
+	ImprovementPassMinutes int16
 }
 
 type User struct {

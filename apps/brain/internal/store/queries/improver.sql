@@ -42,9 +42,19 @@ WHERE agent_id = sqlc.arg(agent_id) AND status IN ('succeeded', 'failed', 'cance
 ORDER BY finished_at DESC, id DESC
 LIMIT sqlc.arg(page_size);
 
--- What those runs held and used: their started and tool_call events.
+-- What those runs held and used: the skills and tools each started with,
+-- and the name of each tool called, with the arguments only of the tools
+-- that name another (a skill opened, a tool called through call_tool).
 -- name: ListRunsUse :many
-SELECT run_id, kind, payload FROM run_events
+SELECT run_id, kind,
+       ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(payload->'skills') = 'array'
+                                                   THEN payload->'skills' ELSE '[]'::jsonb END))::text[] AS skills,
+       ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(payload->'tools') = 'array'
+                                                   THEN payload->'tools' ELSE '[]'::jsonb END))::text[] AS tools,
+       COALESCE(payload->>'name', '')::text AS name,
+       (CASE WHEN payload->>'name' = ANY (sqlc.arg(naming_tools)::text[])
+             THEN COALESCE(payload->>'arguments', '') ELSE '' END)::text AS arguments
+FROM run_events
 WHERE run_id = ANY (sqlc.arg(run_ids)::uuid[]) AND kind IN ('started', 'tool_call')
 ORDER BY run_id, seq;
 
@@ -58,30 +68,67 @@ SELECT substr(p.signature, 7)::text FROM improvement_proposals p
 WHERE p.agent_id = sqlc.arg(agent_id)::uuid AND p.signature LIKE 'prune:%'
   AND (p.status IN ('rejected', 'reverted', 'waiting') OR p.created_at > sqlc.arg(since)::timestamptz);
 
--- Whether an agent has a pass under way, started recently enough to be
--- alive.
+-- Whether an agent has a pass under way.
 -- name: AgentPassRunning :one
 SELECT EXISTS (SELECT 1 FROM improver_passes
-               WHERE agent_id = sqlc.arg(agent_id) AND status = 'running'
-                 AND started_at > sqlc.arg(since)::timestamptz)::bool;
+               WHERE agent_id = sqlc.arg(agent_id) AND status = 'running')::bool;
 
 -- name: CountTeamPassesSince :one
 SELECT count(*)::int FROM improver_passes
 WHERE team_id = sqlc.arg(team_id) AND started_at >= sqlc.arg(since)::timestamptz;
 
+-- No row when the agent already has a pass running, or the workflow has
+-- begun its pass: the caller reads which.
 -- name: BeginImproverPass :one
-INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run_ids, model)
+INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run_ids, model, workflow_id)
 VALUES (sqlc.arg(team_id), sqlc.arg(agent_id), sqlc.arg(trigger), sqlc.arg(signatures),
-        sqlc.arg(pruned), sqlc.arg(run_ids), sqlc.arg(model))
+        sqlc.arg(pruned), sqlc.arg(run_ids), sqlc.arg(model), sqlc.arg(workflow_id))
+ON CONFLICT DO NOTHING
 RETURNING *;
+
+-- name: GetImproverPassByWorkflow :one
+SELECT * FROM improver_passes WHERE workflow_id = $1;
+
+-- An attempt beginning: the pass is alive, and draws on these runs.
+-- name: TouchImproverPass :exec
+UPDATE improver_passes SET alive_at = now(), drew_on = sqlc.arg(drew_on)
+WHERE id = sqlc.arg(id) AND status = 'running';
+
+-- Passes whose worker stopped answering, failed so the agent may have
+-- another.
+-- name: FailLostImproverPasses :execrows
+UPDATE improver_passes
+SET status = 'failed', error = sqlc.arg(error), finished_at = now()
+WHERE status = 'running' AND alive_at < sqlc.arg(before)::timestamptz;
+
+-- What an attempt spent, added whether or not it finished.
+-- name: AddImproverPassUsage :exec
+UPDATE improver_passes
+SET input_tokens = input_tokens + sqlc.arg(input_tokens),
+    output_tokens = output_tokens + sqlc.arg(output_tokens),
+    screened_out = screened_out + sqlc.arg(screened_out)
+WHERE id = sqlc.arg(id);
 
 -- name: FinishImproverPass :exec
 UPDATE improver_passes
 SET status = sqlc.arg(status), report = sqlc.arg(report), error = sqlc.narg(error),
-    proposed = sqlc.arg(proposed), screened_out = sqlc.arg(screened_out),
-    input_tokens = sqlc.arg(input_tokens), output_tokens = sqlc.arg(output_tokens),
+    proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = sqlc.arg(id)::uuid),
     finished_at = now()
-WHERE id = sqlc.arg(id) AND status = 'running';
+WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: CountPassProposals :one
+SELECT count(*)::int FROM improvement_proposals WHERE pass_id = $1;
+
+-- What an earlier pass left waiting on the same pattern, the same kind and
+-- the same target, which a newer proposal replaces. A person's own, and a
+-- pass's on another pattern, wait on.
+-- name: WithdrawSupersededProposals :exec
+UPDATE improvement_proposals
+SET status = 'withdrawn', withdrawn_by = sqlc.arg(newer_id)
+WHERE team_id = sqlc.arg(team_id) AND agent_id = sqlc.arg(agent_id) AND status = 'waiting'
+  AND id <> sqlc.arg(newer_id) AND pass_id IS NOT NULL
+  AND kind = sqlc.arg(kind) AND signature = sqlc.arg(signature)
+  AND skill_id IS NOT DISTINCT FROM sqlc.narg(skill_id)::uuid;
 
 -- name: GetImproverPass :one
 SELECT * FROM improver_passes WHERE id = $1;

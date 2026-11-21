@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ImprovementChange } from "@/api/types";
 import {
+  anyPassRunning,
   fieldWords,
   isScript,
   kindWords,
@@ -122,6 +123,21 @@ describe("passes", () => {
       target: "crm__close_ticket",
       cause: "misused tool",
     });
+    expect(signatureWords("tool:crm:lookup:wrong_arg")).toEqual({
+      part: "tool",
+      target: "crm:lookup",
+      cause: "wrong arg",
+    });
+  });
+
+  it("knows when a pass is still running", () => {
+    expect(anyPassRunning(undefined)).toBe(false);
+    expect(
+      anyPassRunning([{ items: [{ status: "done" }] }, { items: [{ status: "failed" }] }]),
+    ).toBe(false);
+    expect(
+      anyPassRunning([{ items: [{ status: "done" }] }, { items: [{ status: "running" }] }]),
+    ).toBe(true);
   });
 
   it("says what was pruned", () => {

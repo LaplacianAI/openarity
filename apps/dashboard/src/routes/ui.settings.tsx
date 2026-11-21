@@ -267,6 +267,9 @@ export type SettingsDraft = {
   sampleShare: string;
   /** The most improver passes in a day, as typed. */
   dailyPasses: string;
+  /** What one try at a pass may spend, as typed. */
+  passTokens: string;
+  passMinutes: string;
   /** Messages, and the token lines, as typed: compared by value. */
   compaction: string;
   tokensMin: string;
@@ -303,6 +306,8 @@ export function draftOf(s: TeamSettings): SettingsDraft {
       s.judge_model?.temperature === undefined ? "" : String(s.judge_model?.temperature ?? ""),
     sampleShare: String(s.improvement_sample_share ?? 10),
     dailyPasses: String(s.improvement_daily_passes ?? 20),
+    passTokens: grouped(s.improvement_pass_tokens ?? 400_000),
+    passMinutes: String(s.improvement_pass_minutes ?? 20),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -336,6 +341,8 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
     "judgeTemperature",
     "sampleShare",
     "dailyPasses",
+    "passTokens",
+    "passMinutes",
   ],
 };
 
@@ -354,6 +361,8 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
   "tokensMax",
   "sampleShare",
   "dailyPasses",
+  "passTokens",
+  "passMinutes",
 ]);
 
 /** Whether a group's fields differ from what the brain holds. */
@@ -509,13 +518,21 @@ function improvementRequest(
 ):
   | Pick<
       TeamSettingsRequest,
-      "judge_model" | "improvement_sample_share" | "improvement_daily_passes"
+      | "judge_model"
+      | "improvement_sample_share"
+      | "improvement_daily_passes"
+      | "improvement_pass_tokens"
+      | "improvement_pass_minutes"
     >
   | string {
   const base = draftOf(stored);
   const out: Pick<
     TeamSettingsRequest,
-    "judge_model" | "improvement_sample_share" | "improvement_daily_passes"
+    | "judge_model"
+    | "improvement_sample_share"
+    | "improvement_daily_passes"
+    | "improvement_pass_tokens"
+    | "improvement_pass_minutes"
   > = {};
   const judgeChanged = (
     ["judgeOn", "judgeName", "judgeMaxTokens", "judgeTemperature"] as const
@@ -545,6 +562,20 @@ function improvementRequest(
       return "Passes a day must be a whole number from 1 to 200.";
     }
     out.improvement_daily_passes = passes;
+  }
+  if (parseWhole(d.passTokens) !== parseWhole(base.passTokens)) {
+    const tokens = parseWhole(d.passTokens);
+    if (tokens === null || tokens < 20_000 || tokens > 2_000_000) {
+      return "Tokens a pass must be a whole number from 20,000 to 2,000,000.";
+    }
+    out.improvement_pass_tokens = tokens;
+  }
+  if (parseWhole(d.passMinutes) !== parseWhole(base.passMinutes)) {
+    const minutes = wholeNumber(d.passMinutes);
+    if (minutes === null || minutes < 1 || minutes > 25) {
+      return "Minutes a pass must be a whole number from 1 to 25.";
+    }
+    out.improvement_pass_minutes = minutes;
   }
   return out;
 }
@@ -1335,6 +1366,35 @@ function SettingsForm({
                   className="max-w-40 tabular-nums"
                   value={draft.dailyPasses}
                   onChange={(e) => set("improvement", { dailyPasses: e.target.value })}
+                />
+              </Field>
+              <Field
+                label="Tokens a pass, at most"
+                htmlFor="settings-pass-tokens"
+                hint="What one try at a pass may spend, screening included, before it stops and reports what it found. From 20,000 to 2,000,000."
+              >
+                <Input
+                  id="settings-pass-tokens"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="max-w-40 tabular-nums"
+                  value={draft.passTokens}
+                  onChange={(e) => set("improvement", { passTokens: e.target.value })}
+                  onBlur={(e) => set("improvement", { passTokens: tidied(e.target.value) })}
+                />
+              </Field>
+              <Field
+                label="Minutes a pass, at most"
+                htmlFor="settings-pass-minutes"
+                hint="How long one try at a pass may run before it stops and reports what it found. From 1 to 25."
+              >
+                <Input
+                  id="settings-pass-minutes"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="max-w-40 tabular-nums"
+                  value={draft.passMinutes}
+                  onChange={(e) => set("improvement", { passMinutes: e.target.value })}
                 />
               </Field>
             </div>

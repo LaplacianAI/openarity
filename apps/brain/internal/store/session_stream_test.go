@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"sync"
@@ -738,11 +739,15 @@ func TestTheSessionStreamMigrationRollsBackWithDataInIt(t *testing.T) {
 
 	// Back to before the stream's migration, through any applied after it.
 	streamColumns := `SELECT count(*) FROM information_schema.columns WHERE table_name = 'messages' AND column_name IN ('session_seq', 'asks', 'consumed_by')`
+	migrations, err := fs.Glob(migrationFS, "migrations/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for rolled := 0; count(t, s, streamColumns) > 0; rolled++ {
-		// A bound on the loop, not a count to keep exact: each migration
-		// added since the stream's adds one more step back.
-		if rolled == 100 {
-			t.Fatal("rolled back a hundred migrations and the stream's is still applied")
+		// A bound on the loop: there are only so many migrations to roll
+		// back, however many are added after the stream's.
+		if rolled == len(migrations) {
+			t.Fatalf("rolled back all %d migrations and the stream's is still applied", rolled)
 		}
 		if err := s.Rollback(t.Context()); err != nil {
 			t.Fatalf("Rollback: %v", err)

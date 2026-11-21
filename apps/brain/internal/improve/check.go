@@ -24,6 +24,7 @@ type Store interface {
 	Reads
 	GetImprovementSettings(ctx context.Context, teamID uuid.UUID) (db.GetImprovementSettingsRow, error)
 	GetRunOutcome(ctx context.Context, runID uuid.UUID) (db.RunOutcome, error)
+	RunHasRepeatedToolFailures(ctx context.Context, arg db.RunHasRepeatedToolFailuresParams) (bool, error)
 	InTx(ctx context.Context, fn func(*db.Queries) error) error
 }
 
@@ -190,15 +191,17 @@ func (c *Checker) record(ctx context.Context, row db.RecordRunOutcomeParams, fai
 		row.Error = &msg
 		c.logger.WarnContext(ctx, "A run could not be judged", "run", row.RunID, "err", failed)
 	}
-	err := c.store.InTx(ctx, func(q *db.Queries) error {
+	// A settled run's tree no longer changes, so it is read before the
+	// votes are held, not while.
+	trouble, err := c.store.RunHasRepeatedToolFailures(ctx, db.RunHasRepeatedToolFailuresParams{RootRunID: row.RunID, AtLeast: repeatedToolFailures})
+	if err != nil {
+		return fmt.Errorf("reading run %s's tool failures: %w", row.RunID, err)
+	}
+	err = c.store.InTx(ctx, func(q *db.Queries) error {
 		if err := q.LockRunVotes(ctx, row.RunID); err != nil {
 			return err
 		}
 		counts, err := q.CountRunFeedback(ctx, row.RunID)
-		if err != nil {
-			return err
-		}
-		trouble, err := q.RunHasRepeatedToolFailures(ctx, db.RunHasRepeatedToolFailuresParams{RootRunID: row.RunID, AtLeast: repeatedToolFailures})
 		if err != nil {
 			return err
 		}

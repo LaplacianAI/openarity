@@ -33,13 +33,15 @@ type screenAnswer struct {
 }
 
 // screen asks the judge model whether a proposal's new text carries one
-// run's specifics, reading only that text and the cited runs' summaries.
-// It is asked twice before giving up: no proposal reaches a person
-// unscreened.
-func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettingsRow, n improvements.Proposed, in proposeArgs) (screenAnswer, error) {
+// run's specifics, reading only that text and the cited runs' summaries,
+// and returns what that spent. It is asked twice before giving up: no
+// proposal reaches a person unscreened. An answer it could make nothing of
+// is final; a model it could not reach is not.
+func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettingsRow, n improvements.Proposed, in proposeArgs) (screenAnswer, agent.Usage, error) {
+	var spent agent.Usage
 	model, ok := judgeModelOf(settings)
 	if !ok {
-		return screenAnswer{}, errNoModel
+		return screenAnswer{}, spent, errNoModel
 	}
 	var b strings.Builder
 	writeSection(&b, section{"The change's new text", addedText(n, in)})
@@ -47,7 +49,7 @@ func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettin
 	for _, id := range n.RunIDs {
 		rows, err := im.store.ListRunDigests(ctx, id)
 		if err != nil {
-			return screenAnswer{}, err
+			return screenAnswer{}, spent, fmt.Errorf("reading run %s's digests: %w", id, err)
 		}
 		for _, r := range rows {
 			if r.AgentID == n.AgentID {
@@ -60,18 +62,21 @@ func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettin
 	var answer screenAnswer
 	var err error
 	for range 2 {
-		_, err = im.judge.do(ctx, ask{model: model, system: screenPrompt, user: b.String(), schema: screenSchema}, &answer)
+		var usage agent.Usage
+		usage, err = im.judge.do(ctx, ask{model: model, system: screenPrompt, user: b.String(), schema: screenSchema}, &answer)
+		spent.InputTokens += usage.InputTokens
+		spent.OutputTokens += usage.OutputTokens
 		if err == nil && oneOf(answer.Verdict, []string{screenOK, screenRefuse}) {
-			return answer, nil
+			return answer, spent, nil
 		}
 		if err == nil {
-			err = fmt.Errorf("verdict %q", answer.Verdict)
+			err = unusable("verdict %q", answer.Verdict)
 		}
 		if ctx.Err() != nil {
 			break
 		}
 	}
-	return screenAnswer{}, err
+	return screenAnswer{}, spent, err
 }
 
 // addedText is what a proposal adds that every later run and member would

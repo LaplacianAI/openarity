@@ -37,8 +37,23 @@ func passStatusCell(opts *cli.Options, s client.ImproverPassStatus) string {
 	}
 }
 
+// tokensCell is what a pass cost; a running one has not said yet.
 func tokensCell(p *client.ImproverPass) string {
+	if p.Status == client.ImproverPassStatusRunning {
+		return "—"
+	}
 	return strconv.FormatInt(p.InputTokens, 10) + " in / " + strconv.FormatInt(p.OutputTokens, 10) + " out"
+}
+
+// outcomeCell is what came of a pass: why it failed, or what it proposed.
+func outcomeCell(p *client.ImproverPass) string {
+	switch {
+	case p.Status == client.ImproverPassStatusRunning:
+		return "—"
+	case p.Status == client.ImproverPassStatusFailed && p.Error != nil:
+		return cli.Safe(*p.Error)
+	}
+	return strconv.Itoa(int(p.Proposed)) + " proposed / " + strconv.Itoa(int(p.ScreenedOut)) + " screened out"
 }
 
 func newPassesCmd(opts *cli.Options) *cobra.Command {
@@ -54,8 +69,9 @@ func newPassesCmd(opts *cli.Options) *cobra.Command {
 			"either because a pattern recurred in enough runs (the pattern shown is\n" +
 			"part:target:cause) or by the daily pass. Each shows how many proposals it\n" +
 			"made, how many the screen refused for carrying one run's specifics, and\n" +
-			"the tokens it cost. --agent keeps one agent's, by name or id; -o json\n" +
-			"carries the full record, including its report and any error.\n\n" +
+			"the tokens it cost, or why it failed. --agent keeps one agent's, by name\n" +
+			"or id; -o json carries the full record, including its report. A report\n" +
+			"drawn on a conversation you cannot read is withheld (report_withheld).\n\n" +
 			"Needs " + passesPermission + ".\n\n" +
 			"    oa improvements passes platform\n" +
 			"    oa improvements passes platform --agent support-bot -o json",
@@ -98,7 +114,7 @@ func newPassesCmd(opts *cli.Options) *cobra.Command {
 						opts.Styles.Value.Render(cli.Safe(p.Agent.Name)),
 						triggerCell(&p),
 						passStatusCell(opts, p.Status),
-						strconv.Itoa(int(p.Proposed))+" proposed / "+strconv.Itoa(int(p.ScreenedOut))+" screened out",
+						outcomeCell(&p),
 						tokensCell(&p),
 						opts.Styles.Muted.Render(p.StartedAt.Local().Format(stampLayout)),
 						opts.Styles.Muted.Render(p.ID.String()),

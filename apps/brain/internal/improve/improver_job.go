@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -77,8 +75,12 @@ func (j *ImproverJob) pass(ctx dbos.Context, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	workflowID, err := dbos.GetWorkflowID(ctx)
+	if err != nil {
+		return "", fmt.Errorf("reading the pass's workflow: %w", err)
+	}
 	id, err := dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
-		id, err := j.improver.Begin(sctx, plan)
+		id, err := j.improver.Begin(sctx, plan, workflowID)
 		if errors.Is(err, errNoPass) {
 			return "", nil
 		}
@@ -117,14 +119,15 @@ func (j *ImproverJob) dailySweep(ctx dbos.Context, in dbos.ScheduledWorkflowInpu
 	})
 }
 
-// sweepPatterns queues a pass for each agent with a pattern over the bar,
-// at most one an hour each.
+// sweepPatterns fails the passes that were lost, then queues a pass for
+// each agent with a pattern over the bar, at most one an hour each.
 func (j *ImproverJob) sweepPatterns(ctx context.Context, now time.Time) error {
+	lost := j.improver.FailLost(ctx)
 	rows, err := j.sweeps.ListPatterns(ctx, patternBar)
 	if err != nil {
-		return fmt.Errorf("listing patterns: %w", err)
+		return errors.Join(lost, fmt.Errorf("listing patterns: %w", err))
 	}
-	var failed []error
+	failed := []error{lost}
 	for _, p := range patternPasses(rows) {
 		id := "improver:" + p.AgentID.String() + ":" + now.UTC().Format(idHour)
 		if err := j.enqueue(p, id); err != nil {
@@ -165,64 +168,4 @@ func (j *ImproverJob) enqueue(p plannedPass, id string) error {
 		return fmt.Errorf("queuing agent %s's pass: %w", p.AgentID, err)
 	}
 	return nil
-}
-
-// pruneFor is an agent's prune candidates not looked at lately: what it
-// held in each of its last runs and never used.
-func (im *Improver) pruneFor(ctx context.Context, agentID uuid.UUID) ([]string, error) {
-	runs, err := im.store.ListAgentRecentRuns(ctx, db.ListAgentRecentRunsParams{AgentID: &agentID, PageSize: pruneWindow})
-	if err != nil {
-		return nil, fmt.Errorf("reading agent %s's runs: %w", agentID, err)
-	}
-	if len(runs) < pruneWindow {
-		return nil, nil
-	}
-	use, err := im.store.ListRunsUse(ctx, runs)
-	if err != nil {
-		return nil, err
-	}
-	a, err := im.store.GetAgent(ctx, agentID)
-	if err != nil {
-		return nil, err
-	}
-	var st improvements.AgentState
-	if err := im.store.InTx(ctx, func(q *db.Queries) error {
-		st, err = improvements.AgentNow(ctx, q, a)
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	m := material{agent: a, state: st}
-	if err := im.lookups(ctx, &m); err != nil {
-		return nil, err
-	}
-	var skills []string
-	for _, id := range st.Agent.Skills {
-		skills = append(skills, m.skillName(id))
-	}
-	var tools []grantedTool
-	for _, g := range st.Agent.MCPServers {
-		s, ok := m.servers[m.serverName(g.ID)]
-		if !ok {
-			continue
-		}
-		allowed := g.Allow
-		if allowed == nil {
-			allowed = s.Tools
-		}
-		for _, t := range allowed {
-			run := s.Name + "__" + t
-			if s.Bare {
-				run = t
-			}
-			tools = append(tools, grantedTool{runName: run, server: s.Name, tool: t})
-		}
-	}
-	looked, err := im.store.ListRecentPruneLooks(ctx, db.ListRecentPruneLooksParams{AgentID: agentID, Since: im.now().Add(-pruneQuiet)})
-	if err != nil {
-		return nil, err
-	}
-	return slices.DeleteFunc(pruneCandidates(runs, use, skills, tools), func(c string) bool {
-		return slices.Contains(looked, c)
-	}), nil
 }

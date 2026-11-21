@@ -98,8 +98,8 @@ func TestAPatternCountsFromItsLastLook(t *testing.T) {
 	for name, look := range map[string]string{
 		"a proposal": `INSERT INTO improvement_proposals (team_id, agent_id, kind, why, hypothesis, scope, signature, before, after)
 			VALUES ($1, $2, 'instructions', 'w', 'h', 'invariant', 'instructions::skipped_step', '{}', '{}')`,
-		"a pass": `INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, status, finished_at)
-			VALUES ($1, $2, 'pattern', '{instructions::skipped_step}', 'done', now())`,
+		"a pass": `INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, status, finished_at, workflow_id)
+			VALUES ($1, $2, 'pattern', '{instructions::skipped_step}', 'done', now(), gen_random_uuid()::text)`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t)
@@ -123,7 +123,7 @@ func TestAPatternCountsFromItsLastLook(t *testing.T) {
 
 func (w *world) begin(t *testing.T, im *Improver, plan plannedPass) db.ImproverPass {
 	t.Helper()
-	id, err := im.Begin(t.Context(), plan)
+	id, err := im.Begin(t.Context(), plan, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,8 +265,11 @@ func TestAProposalIsRefused(t *testing.T) {
 		"an unknown skill": {with(func(a map[string]any) {
 			a["kind"], a["edit"] = "skill_grant", map[string]string{"skill": "nope"}
 		}), nil, "no skill"},
-		"screened out":     {instructionsEdit(runs[0]), []reply{{text: `{"verdict":"refuse","reason":"it names a customer"}`}}, "names a customer"},
-		"screen unreached": {instructionsEdit(runs[0]), []reply{{err: errors.New("503")}, {err: errors.New("503")}}, "could not be screened"},
+		"an unknown skill held": {with(func(a map[string]any) {
+			a["kind"], a["edit"] = "skill_drop", map[string]string{"skill": "nope"}
+		}), nil, "no skill"},
+		"screened out":    {instructionsEdit(runs[0]), []reply{{text: `{"verdict":"refuse","reason":"it names a customer"}`}}, "names a customer"},
+		"screen unusable": {instructionsEdit(runs[0]), []reply{{text: `{"verdict":"maybe"}`}, {text: `not json`}}, "could not be screened"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, tools := w.proposeWith(t, im, pass, tc.args, tc.screen...)
@@ -276,8 +279,11 @@ func TestAProposalIsRefused(t *testing.T) {
 			if n := len(w.proposals(t, "waiting")); n != 0 {
 				t.Errorf("a refused proposal was stored (%d)", n)
 			}
-			if name == "screened out" && tools.result().screenedOut != 1 {
-				t.Errorf("screened out = %d", tools.result().screenedOut)
+			if name == "screened out" && tools.screenedOut != 1 {
+				t.Errorf("screened out = %d", tools.screenedOut)
+			}
+			if tools.refused != 1 {
+				t.Errorf("refusals counted = %d, want 1", tools.refused)
 			}
 		})
 	}
@@ -310,8 +316,9 @@ func TestAnOutsiderRunNeverWidensAccess(t *testing.T) {
 	}
 }
 
-// One proposal a target in a pass; a new pass's replaces an earlier one
-// still waiting.
+// One proposal a target in a pass. A later pass's change of the same kind
+// on the same pattern replaces one still waiting; a change of another kind,
+// and a person's own, wait on.
 func TestANewerProposalReplacesTheOlder(t *testing.T) {
 	w := newWorld(t)
 	im := w.improver(t)
@@ -328,17 +335,35 @@ func TestANewerProposalReplacesTheOlder(t *testing.T) {
 	if out, _ := w.proposeWith(t, im, first, desc, reply{text: screenOKText}); !strings.Contains(out, "already proposed a change to that target") {
 		t.Errorf("a second change to the agent in one pass: %q", out)
 	}
-
-	if err := im.finish(t.Context(), first.ID, passDone, passResult{}, nil); err != nil {
+	if err := im.finish(t.Context(), first.ID, passDone, "", nil); err != nil {
 		t.Fatal(err)
 	}
+	// A person's own proposal on the same pattern.
+	w.exec(t, `INSERT INTO improvement_proposals (team_id, agent_id, kind, why, hypothesis, scope, signature, before, after)
+		VALUES ($1, $2, 'instructions', 'w', 'h', 'invariant', $3, '{}', '{}')`, w.team, w.agent, skipped.String())
+
 	second := w.begin(t, im, plannedPass{TeamID: w.team, AgentID: w.agent, Trigger: triggerPattern, Keys: []string{skipped.String()}})
 	if out, _ := w.proposeWith(t, im, second, desc, reply{text: screenOKText}); !strings.HasPrefix(out, "Stored") {
 		t.Fatal(out)
 	}
+	if got := len(w.proposals(t, "withdrawn")); got != 0 {
+		t.Errorf("a description withdrew %d proposals of other kinds", got)
+	}
+	if err := im.finish(t.Context(), second.ID, passDone, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	third := w.begin(t, im, plannedPass{TeamID: w.team, AgentID: w.agent, Trigger: triggerPattern, Keys: []string{skipped.String()}})
+	again := instructionsEdit(runs[1])
+	again["edit"] = map[string]string{"replace": "Keep answers short and kind.", "with": "Keep answers short, kind, and confirm the order."}
+	if out, _ := w.proposeWith(t, im, third, again, reply{text: screenOKText}); !strings.HasPrefix(out, "Stored") {
+		t.Fatal(out)
+	}
 	waiting, withdrawn := w.proposals(t, "waiting"), w.proposals(t, "withdrawn")
-	if len(waiting) != 1 || waiting[0].Kind != "description" || len(withdrawn) != 1 || withdrawn[0].Kind != "instructions" {
-		t.Errorf("waiting %+v, withdrawn %+v", waiting, withdrawn)
+	if len(withdrawn) != 1 || withdrawn[0].Kind != "instructions" || withdrawn[0].PassID == nil || *withdrawn[0].PassID != first.ID {
+		t.Errorf("withdrawn %+v, want only the first pass's instruction edit", withdrawn)
+	}
+	if len(waiting) != 3 {
+		t.Errorf("waiting %d, want the person's, the description and the newest edit", len(waiting))
 	}
 }
 
@@ -349,18 +374,18 @@ func TestAPassBeginsOnlyWhenItMay(t *testing.T) {
 	im := w.improver(t)
 	plan := plannedPass{TeamID: w.team, AgentID: w.agent, Trigger: triggerDaily}
 	first := w.begin(t, im, plan)
-	if _, err := im.Begin(t.Context(), plan); !errors.Is(err, errNoPass) {
+	if _, err := im.Begin(t.Context(), plan, uuid.NewString()); !errors.Is(err, errNoPass) {
 		t.Errorf("a second pass began beside one running: %v", err)
 	}
-	if err := im.finish(t.Context(), first.ID, passDone, passResult{}, nil); err != nil {
+	if err := im.finish(t.Context(), first.ID, passDone, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	w.exec(t, `UPDATE team_settings SET improvement_daily_passes = 1 WHERE team_id = $1`, w.team)
-	if _, err := im.Begin(t.Context(), plan); !errors.Is(err, errNoPass) {
+	if _, err := im.Begin(t.Context(), plan, uuid.NewString()); !errors.Is(err, errNoPass) {
 		t.Errorf("a pass began past the day's cap: %v", err)
 	}
 	w.exec(t, `UPDATE team_settings SET improvement_daily_passes = 20, improvement = false WHERE team_id = $1`, w.team)
-	if _, err := im.Begin(t.Context(), plan); !errors.Is(err, errNoPass) {
+	if _, err := im.Begin(t.Context(), plan, uuid.NewString()); !errors.Is(err, errNoPass) {
 		t.Errorf("a pass began with improvement off: %v", err)
 	}
 }
@@ -417,8 +442,8 @@ func TestPruneCandidatesComeFromRuns(t *testing.T) {
 	if err != nil || !slices.Equal(got, []string{"skill:refunds", "tool:orders/cancel"}) {
 		t.Fatalf("candidates = %v, %v; want the unopened skill and the uncalled tool", got, err)
 	}
-	w.exec(t, `INSERT INTO improver_passes (team_id, agent_id, trigger, pruned, status, finished_at)
-		VALUES ($1, $2, 'daily', '{skill:refunds}', 'done', now())`, w.team, w.agent)
+	w.exec(t, `INSERT INTO improver_passes (team_id, agent_id, trigger, pruned, status, finished_at, workflow_id)
+		VALUES ($1, $2, 'daily', '{skill:refunds}', 'done', now(), gen_random_uuid()::text)`, w.team, w.agent)
 	if got, _ := im.pruneFor(t.Context(), w.agent); !slices.Equal(got, []string{"tool:orders/cancel"}) {
 		t.Errorf("a candidate looked at was offered again: %v", got)
 	}
@@ -440,7 +465,7 @@ func TestAPruneIsProposedOnItsCandidate(t *testing.T) {
 		"edit": map[string]string{"skill": "refunds"},
 	}
 	wrong := maps(drop, "kind", "instructions")
-	if out, _ := w.proposeWith(t, im, pass, wrong); !strings.Contains(out, "skill_drop or tools_narrow") {
+	if out, _ := w.proposeWith(t, im, pass, wrong); !strings.Contains(out, "answered by dropping that skill") {
 		t.Errorf("an instruction edit on a prune candidate: %q", out)
 	}
 	if out, _ := w.proposeWith(t, im, pass, maps(drop, "signature", "prune:skill:other")); !strings.Contains(out, "not one of this pass's prune candidates") {

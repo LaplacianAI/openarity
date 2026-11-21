@@ -847,6 +847,10 @@ export type TeamSettings = {
   improvement_sample_share: number;
   /** The most passes the improver makes for the team in a day; 1 to 200. */
   improvement_daily_passes: number;
+  /** The tokens one try at a pass may spend, its screen's included; 20,000 to 2,000,000. */
+  improvement_pass_tokens: number;
+  /** The minutes one try at a pass may run; 1 to 25. */
+  improvement_pass_minutes: number;
   /** When improvement was last turned on; runs that finished before it are never judged. Read only. */
   improvement_since: string | null;
   compaction_messages: number;
@@ -883,6 +887,10 @@ export type TeamSettingsRequest = {
   improvement_sample_share?: number;
   /** 1 to 200. Left out, the stored limit stays. */
   improvement_daily_passes?: number;
+  /** 20,000 to 2,000,000. Left out, the stored value stays. */
+  improvement_pass_tokens?: number;
+  /** 1 to 25. Left out, the stored value stays. */
+  improvement_pass_minutes?: number;
   compaction_messages: number;
   /** Left out, the stored value stays. */
   compaction_tokens_min?: number;
@@ -1110,6 +1118,8 @@ export type ImproverPass = {
   status: ImproverPassStatus;
   /** Plain text, possibly several paragraphs. */
   report: string;
+  /** The report draws on a conversation the caller may not read, so it is not sent. */
+  report_withheld: boolean;
   proposed: number;
   screened_out: number;
   model: string;

@@ -2458,7 +2458,9 @@ type ImprovementStatus string
 
 // ImproverPass defines model for ImproverPass.
 type ImproverPass struct {
-	Agent        NamedRef           `json:"agent" yaml:"agent"`
+	Agent NamedRef `json:"agent" yaml:"agent"`
+
+	// Error Why a failed pass failed, as a clause to follow "Failed:"; the cause is in the brain's log
 	Error        *string            `json:"error,omitempty" yaml:"error,omitempty"`
 	FinishedAt   *time.Time         `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
 	ID           openapi_types.UUID `json:"id" yaml:"id"`
@@ -2470,8 +2472,11 @@ type ImproverPass struct {
 	// Pruned The prune candidates it was given, skill:<name> or tool:<server>/<tool>
 	Pruned []string `json:"pruned" yaml:"pruned"`
 
-	// Report What it found, proposed and left alone, and why
+	// Report What it found, proposed and left alone, and why; empty when withheld
 	Report string `json:"report" yaml:"report"`
+
+	// ReportWithheld The report draws on a conversation the caller may not read, so it is not sent. Every conversation is readable with session:read_all.
+	ReportWithheld bool `json:"report_withheld" yaml:"report_withheld"`
 
 	// ScreenedOut Proposals the screen refused for carrying one run's specifics
 	ScreenedOut int32 `json:"screened_out" yaml:"screened_out"`
@@ -3836,6 +3841,12 @@ type TeamSettings struct {
 	// ImprovementDailyPasses The improver passes the team may run in a day (UTC), at most. 20 until set.
 	ImprovementDailyPasses *int32 `json:"improvement_daily_passes,omitempty" yaml:"improvement_daily_passes,omitempty"`
 
+	// ImprovementPassMinutes The minutes one try at an improver pass may run; past them it stops and reports what it has. 20 until set.
+	ImprovementPassMinutes *int32 `json:"improvement_pass_minutes,omitempty" yaml:"improvement_pass_minutes,omitempty"`
+
+	// ImprovementPassTokens The tokens one try at an improver pass may spend, its screen's included; past them it stops and reports what it has. 400,000 until set.
+	ImprovementPassTokens *int32 `json:"improvement_pass_tokens,omitempty" yaml:"improvement_pass_tokens,omitempty"`
+
 	// ImprovementSampleShare The percentage of runs judged done that are digested anyway, for contrast. 10 until set.
 	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`
 
@@ -3881,6 +3892,12 @@ type TeamSettingsRequest struct {
 
 	// ImprovementDailyPasses Left out, the stored cap stays.
 	ImprovementDailyPasses *int32 `json:"improvement_daily_passes,omitempty" yaml:"improvement_daily_passes,omitempty"`
+
+	// ImprovementPassMinutes Left out, the stored value stays.
+	ImprovementPassMinutes *int32 `json:"improvement_pass_minutes,omitempty" yaml:"improvement_pass_minutes,omitempty"`
+
+	// ImprovementPassTokens Left out, the stored value stays.
+	ImprovementPassTokens *int32 `json:"improvement_pass_tokens,omitempty" yaml:"improvement_pass_tokens,omitempty"`
 
 	// ImprovementSampleShare Left out, the stored share stays.
 	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`

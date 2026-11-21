@@ -25,6 +25,8 @@ const OFF: TeamSettings = {
   judge_model: null,
   improvement_sample_share: 10,
   improvement_daily_passes: 20,
+  improvement_pass_tokens: 400_000,
+  improvement_pass_minutes: 20,
   improvement_since: null,
   compaction_messages: 100,
   compaction_tokens_min: 50_000,
@@ -38,6 +40,8 @@ const JUDGED: TeamSettings = {
   judge_model: { name: "judge-1", max_tokens: 8000, temperature: 0.1 },
   improvement_sample_share: 25,
   improvement_daily_passes: 20,
+  improvement_pass_tokens: 400_000,
+  improvement_pass_minutes: 20,
 };
 
 const SETTINGS = "/teams/{id}/settings";
@@ -131,6 +135,30 @@ describe("the request", () => {
     expect(settingsRequest({ ...draftOf(ON), ...patch }, ON)).toMatch(said);
   });
 
+  it("leaves out the pass budget while it did not change, and sends what changed", () => {
+    const body = settingsRequest(draftOf(ON), ON);
+    expect(body).not.toHaveProperty("improvement_pass_tokens");
+    expect(body).not.toHaveProperty("improvement_pass_minutes");
+    // Grouped as shown, the same number is no change.
+    expect(settingsRequest({ ...draftOf(ON), passTokens: "400000" }, ON)).not.toHaveProperty(
+      "improvement_pass_tokens",
+    );
+    expect(
+      settingsRequest({ ...draftOf(ON), passTokens: "250,000", passMinutes: " 25 " }, ON),
+    ).toMatchObject({ improvement_pass_tokens: 250_000, improvement_pass_minutes: 25 });
+  });
+
+  it.each([
+    [{ passTokens: "19,999" }, /20,000 to 2,000,000/],
+    [{ passTokens: "2,000,001" }, /20,000 to 2,000,000/],
+    [{ passTokens: "" }, /20,000 to 2,000,000/],
+    [{ passMinutes: "0" }, /1 to 25/],
+    [{ passMinutes: "26" }, /1 to 25/],
+    [{ passMinutes: "1.5" }, /1 to 25/],
+  ])("refuses a pass budget of %o before asking the brain", (patch, said) => {
+    expect(settingsRequest({ ...draftOf(ON), ...patch }, ON)).toMatch(said);
+  });
+
   it("is the Improvement group's alone: another group's save sends neither", () => {
     const d = { ...draftOf(JUDGED), sampleShare: "5", judgeOn: false, modelName: "gpt-6" };
     const body = groupRequest("model", d, JUDGED) as Record<string, unknown>;
@@ -145,7 +173,11 @@ describe("the request", () => {
     delete old.judge_model;
     delete old.improvement_sample_share;
     delete old.improvement_daily_passes;
+    delete old.improvement_pass_tokens;
+    delete old.improvement_pass_minutes;
     const d = draftOf(old as TeamSettings);
+    expect(d.passTokens).toBe("400,000");
+    expect(d.passMinutes).toBe("20");
     expect(d.judgeOn).toBe(false);
     expect(d.sampleShare).toBe("10");
     expect(d.dailyPasses).toBe("20");

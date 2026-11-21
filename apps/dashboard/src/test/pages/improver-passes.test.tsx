@@ -43,6 +43,7 @@ function pass(id: string, extra: Partial<ImproverPass> = {}): ImproverPass {
     pruned: [],
     status: "done",
     report: "It closed tickets before confirming the order.\n\nSecond paragraph.",
+    report_withheld: false,
     proposed: 1,
     screened_out: 0,
     model: "gpt-5",
@@ -176,6 +177,7 @@ describe("a pass", () => {
     at();
     const button = await screen.findByRole("button", { name: /support-bot/ });
     expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).not.toHaveAttribute("aria-controls");
     expect(screen.queryByText(/closed tickets before/)).toBeNull();
 
     button.focus();
@@ -190,6 +192,16 @@ describe("a pass", () => {
 
     await userEvent.keyboard(" ");
     expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("says a report is withheld when it draws on a conversation the reader can't read", async () => {
+    brain(serve([pass("p1", { report: "", report_withheld: true })]));
+    at();
+    await userEvent.click(await screen.findByRole("button", { name: /support-bot/ }));
+    expect(
+      screen.getByText("The report draws on a conversation you can't read, so it isn't shown."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("It left no report.")).toBeNull();
   });
 
   it("says when a pass left no report", async () => {

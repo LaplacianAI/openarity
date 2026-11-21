@@ -28,6 +28,7 @@ LIMIT sqlc.arg('page_size');
 -- judges (the judge's, else the team's), and the share digested.
 -- name: GetImprovementSettings :one
 SELECT improvement, improvement_sample_share, improvement_daily_passes,
+       improvement_pass_tokens, improvement_pass_minutes,
        model_name, model_max_tokens, model_temperature,
        judge_model_name, judge_model_max_tokens, judge_model_temperature
 FROM team_settings WHERE team_id = $1;
