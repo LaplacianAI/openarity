@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -82,6 +84,9 @@ type HostConfig struct {
 	NetworkMode    string
 	ExtraHosts     []string
 	RestartPolicy  RestartPolicy
+	// Mounts are named volumes, by the path they are mounted at: a
+	// workspace's files, which outlive the container being stopped.
+	Mounts map[string]string
 }
 
 type RestartPolicy struct{ Name string }
@@ -346,7 +351,76 @@ func (ct Container) json() map[string]any {
 			"NetworkMode":    h.NetworkMode,
 			"ExtraHosts":     h.ExtraHosts,
 			"RestartPolicy":  map[string]string{"Name": h.RestartPolicy.Name},
+			"Mounts":         mounts(h.Mounts),
 		},
 		"NetworkingConfig": map[string]any{},
 	}
+}
+
+// mounts is the daemon's form of named volumes, sorted so a body is the same
+// every time.
+func mounts(m map[string]string) []map[string]any {
+	paths := make([]string, 0, len(m))
+	for p := range m {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	out := make([]map[string]any, 0, len(m))
+	for _, p := range paths {
+		out = append(out, map[string]any{"Type": "volume", "Source": m[p], "Target": p})
+	}
+	return out
+}
+
+// CreateVolume makes a named volume on the local driver.
+func (c *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {
+	return c.do(ctx, http.MethodPost, "/volumes/create", nil, map[string]any{"Name": name, "Driver": "local", "Labels": labels}, nil)
+}
+
+// RemoveVolume removes it; one already gone is an IsNotFound error.
+func (c *Client) RemoveVolume(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/volumes/"+url.PathEscape(name), url.Values{"force": {"1"}}, nil, nil)
+}
+
+// StopContainer stops it, killing it after grace; one already stopped is not
+// an error.
+func (c *Client) StopContainer(ctx context.Context, name string, grace time.Duration) error {
+	err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(name)+"/stop",
+		url.Values{"t": {strconv.Itoa(int(grace / time.Second))}}, nil, nil)
+	var e *Error
+	if errors.As(err, &e) && e.Status == http.StatusNotModified {
+		return nil
+	}
+	return err
+}
+
+// ContainerRunning reports whether the container is running; one that does
+// not exist is an IsNotFound error.
+func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error) {
+	var out struct{ State struct{ Running bool } }
+	err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(name)+"/json", nil, nil, &out)
+	return out.State.Running, err
+}
+
+// VolumeSizes is the bytes each volume carrying the label holds, by name, as
+// the daemon measures them. The daemon walks every volume to answer, so it
+// is asked rarely.
+func (c *Client) VolumeSizes(ctx context.Context, label string) (map[string]int64, error) {
+	var out struct {
+		Volumes []struct {
+			Name      string
+			Labels    map[string]string
+			UsageData struct{ Size int64 }
+		}
+	}
+	if err := c.do(ctx, http.MethodGet, "/system/df", url.Values{"type": {"volume"}}, nil, &out); err != nil {
+		return nil, err
+	}
+	sizes := map[string]int64{}
+	for _, v := range out.Volumes {
+		if _, ok := v.Labels[label]; ok {
+			sizes[v.Name] = v.UsageData.Size
+		}
+	}
+	return sizes, nil
 }

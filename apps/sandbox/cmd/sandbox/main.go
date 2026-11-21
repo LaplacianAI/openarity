@@ -182,6 +182,7 @@ func runServe(ctx context.Context, cmd command, logger *slog.Logger) error {
 	logger.Info("sandboxd serving", "addr", l.Addr().String())
 	// Warming never delays serving, and a failure of it is only logged.
 	go svc.Warm(ctx, s.pull)
+	go svc.Watch(ctx)
 
 	var end error
 	select {

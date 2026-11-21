@@ -38,6 +38,9 @@ var (
 	ErrUnavailable = errors.New("the sandbox cannot do that now")
 	// ErrStarted is a start of a room that has already started.
 	ErrStarted = errors.New("the room has already started")
+	// ErrOverDisk is a workspace that holds more than its share of disk: it
+	// was stopped, and is not resumed. Deleting it is what frees the disk.
+	ErrOverDisk = errors.New("the workspace holds more than it may")
 )
 
 const (
@@ -49,9 +52,11 @@ const (
 	userLabelPrefix = "user."
 	// HomeDir is where HOME points: a tmpfs, because the root is read-only.
 	HomeDir = "/home/sandbox"
-	// WorkspaceDir is a workspace room's working directory, a tmpfs of its
-	// own.
+	// WorkspaceDir is a workspace room's working directory, a volume of its
+	// own, so its files outlive the room being stopped.
 	WorkspaceDir = "/workspace"
+	// stopGrace is how long a stopped room's process has before it is killed.
+	stopGrace = 5 * time.Second
 	// NetworkPublic is a room that reaches the internet, and nothing
 	// private, through the guard's proxy, rather than a list of hosts.
 	NetworkPublic = "public"
@@ -73,22 +78,31 @@ type Limits struct {
 
 	// A workspace room is an agent's, which builds and runs things, so it
 	// gets more than a server's: WorkspaceMemory and WorkspaceCPUs in place
-	// of Memory and NanoCPUs, and a /workspace of WorkspaceBytes, which is
-	// memory too and so within WorkspaceMemory.
+	// of Memory and NanoCPUs, and a /workspace on a volume of its own, on
+	// disk, so it is kept while the room is stopped. WorkspaceBytes is what
+	// one may hold and DiskBudget what all of them together may; both are
+	// soft, measured every WatchEvery, since a volume on the local driver
+	// has no size limit of its own without root.
 	WorkspaceMemory int64
 	WorkspaceCPUs   int64 // nano CPUs
 	WorkspaceBytes  int64
+	DiskBudget      int64
 }
+
+// WatchEvery is how often the workspaces' disk is measured.
+const WatchEvery = 30 * time.Second
 
 // DefaultLimits are 768 MiB, 256 pids, half a CPU, a 512 MiB home and a
 // 64 MiB /tmp, 3 GiB in all; a workspace room has 1.5 GiB and a CPU, with a
-// 512 MiB /workspace. An npx server's package and its cache can pass
-// 64 MiB on their own, which a smaller home refused with nothing logged.
+// 512 MiB /workspace, and 8 GiB of disk across workspaces. An npx server's
+// package and its cache can pass 64 MiB on their own, which a smaller home
+// refused with nothing logged.
 func DefaultLimits() Limits {
 	return Limits{
 		Memory: 768 << 20, PidsLimit: 256, NanoCPUs: 500_000_000, MemoryBudget: 3 << 30,
 		TmpBytes: 64 << 20, HomeBytes: 512 << 20,
 		WorkspaceMemory: 1536 << 20, WorkspaceCPUs: 1_000_000_000, WorkspaceBytes: 512 << 20,
+		DiskBudget: 8 << 30,
 	}
 }
 
@@ -126,6 +140,11 @@ type Engine interface {
 	RemoveNetwork(ctx context.Context, name string) error
 	CreateContainer(ctx context.Context, name string, c docker.Container) (string, error)
 	StartContainer(ctx context.Context, name string) error
+	StopContainer(ctx context.Context, name string, grace time.Duration) error
+	ContainerRunning(ctx context.Context, name string) (bool, error)
+	CreateVolume(ctx context.Context, name string, labels map[string]string) error
+	RemoveVolume(ctx context.Context, name string) error
+	VolumeSizes(ctx context.Context, label string) (map[string]int64, error)
 	RemoveContainer(ctx context.Context, name string) error
 	ContainerID(ctx context.Context, nameOrID string) (string, error)
 	HasImage(ctx context.Context, ref string) (bool, error)
@@ -285,6 +304,7 @@ func (s *Service) Token(id string) string {
 
 func networkName(id string) string   { return networkPrefix + id }
 func containerName(id string) string { return networkPrefix + id }
+func volumeName(id string) string    { return networkPrefix + id }
 
 // ValidID reports whether id has the shape of one made here.
 func ValidID(id string) bool {
@@ -344,19 +364,8 @@ func (s *Service) Create(ctx context.Context, sp Spec) (string, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	nets, err := s.engine.ListNetworks(ctx, roomLabel)
-	if err != nil {
+	if err := s.fits(ctx, "", sp); err != nil {
 		return "", err
-	}
-	used := s.limits.memory(sp)
-	for _, n := range nets {
-		// Every spec is written here as JSON; one unreadable would count as a
-		// server's, which every room was before workspaces.
-		other, _ := specOf(n)
-		used += s.limits.memory(other)
-	}
-	if used > s.limits.MemoryBudget {
-		return "", ErrBusy
 	}
 	if err := s.engine.CreateNetwork(ctx, networkName(id), map[string]string{roomLabel: id, specLabel: string(spec)}); err != nil {
 		return "", err
@@ -366,6 +375,53 @@ func (s *Service) Create(ctx context.Context, sp Spec) (string, error) {
 		return "", err
 	}
 	return id, nil
+}
+
+// fits is ErrBusy when a room of sp, added to every room holding memory now,
+// would pass the budget; self is a room already counted as sp, or "". A
+// stopped room holds none: only one that runs, or is made and not yet
+// started, does. The caller holds s.mu.
+func (s *Service) fits(ctx context.Context, self string, sp Spec) error {
+	nets, err := s.engine.ListNetworks(ctx, roomLabel)
+	if err != nil {
+		return err
+	}
+	used := s.limits.memory(sp)
+	for _, n := range nets {
+		id := n.Labels[roomLabel]
+		if id == self {
+			continue
+		}
+		holds, err := s.holdsMemory(ctx, n, id)
+		if err != nil {
+			return err
+		}
+		if holds {
+			// Every spec is written here as JSON; one unreadable would count
+			// as a server's, which every room was before workspaces.
+			other, _ := specOf(n)
+			used += s.limits.memory(other)
+		}
+	}
+	if used > s.limits.MemoryBudget {
+		return ErrBusy
+	}
+	return nil
+}
+
+// holdsMemory is whether a room takes its share of the budget: its container
+// runs, or there is none yet and the room is about to start one.
+func (s *Service) holdsMemory(ctx context.Context, n docker.Network, id string) (bool, error) {
+	for _, c := range n.Containers {
+		if c.Name == containerName(id) {
+			return true, nil
+		}
+	}
+	running, err := s.engine.ContainerRunning(ctx, containerName(id))
+	if docker.IsNotFound(err) {
+		return true, nil
+	}
+	return running, err
 }
 
 // open joins sandboxd to the room's network and listens on its address there.
@@ -477,10 +533,12 @@ func (s *Service) Start(ctx context.Context, id string, argv []string) error {
 	if !ok {
 		return errors.New("sandboxd is not on the room's network")
 	}
-	for _, c := range n.Containers {
-		if c.Name == containerName(id) {
-			return ErrStarted
-		}
+	// A container of the room's, running or stopped, is a start already made.
+	switch _, err := s.engine.ContainerRunning(ctx, containerName(id)); {
+	case err == nil:
+		return ErrStarted
+	case !docker.IsNotFound(err):
+		return err
 	}
 	// The room's spec is on the daemon, so it outlives a change to the allowed
 	// images: check again here.
@@ -490,15 +548,133 @@ func (s *Service) Start(ctx context.Context, id string, argv []string) error {
 	if err := s.ensureImage(ctx, sp.Image); err != nil {
 		return err
 	}
+	if sp.Workspace {
+		if err := s.workspaceVolume(ctx, id); err != nil {
+			return err
+		}
+	}
 	ct := Harden(id, sp, argv, m.IPv4, s.limits)
 	if _, err := s.engine.CreateContainer(ctx, containerName(id), ct); err != nil {
+		s.dropVolume(ctx, id, sp)
 		return err
 	}
 	if err := s.engine.StartContainer(ctx, containerName(id)); err != nil {
 		_ = s.engine.RemoveContainer(ctx, containerName(id))
+		s.dropVolume(ctx, id, sp)
 		return err
 	}
 	return nil
+}
+
+// workspaceVolume makes the room's /workspace, unless the workspaces' disk
+// is spent: a new one may hold up to WorkspaceBytes.
+func (s *Service) workspaceVolume(ctx context.Context, id string) error {
+	sizes, err := s.engine.VolumeSizes(ctx, roomLabel)
+	if err != nil {
+		return err
+	}
+	used := s.limits.WorkspaceBytes
+	for _, n := range sizes {
+		used += n
+	}
+	if used > s.limits.DiskBudget {
+		return ErrBusy
+	}
+	return s.engine.CreateVolume(ctx, volumeName(id), map[string]string{roomLabel: id})
+}
+
+func (s *Service) dropVolume(ctx context.Context, id string, sp Spec) {
+	if !sp.Workspace {
+		return
+	}
+	if err := s.engine.RemoveVolume(ctx, volumeName(id)); err != nil && !docker.IsNotFound(err) {
+		s.logger.Error("removing a room's workspace", "room", id, "err", err.Error())
+	}
+}
+
+// Stop stops the room's container, which gives its memory back to the
+// budget; a workspace's files stay on its volume. The guard stays open, and
+// the room keeps its network, so Resume is only a start.
+func (s *Service) Stop(ctx context.Context, id string) error {
+	if _, _, err := s.room(ctx, id); err != nil {
+		return err
+	}
+	err := s.engine.StopContainer(ctx, containerName(id), stopGrace)
+	if docker.IsNotFound(err) {
+		return ErrNotStarted
+	}
+	return err
+}
+
+// Resume starts a stopped room's container again, if the budget has room
+// for it and its workspace holds no more than it may. A room already
+// running is not an error.
+func (s *Service) Resume(ctx context.Context, id string) error {
+	_, sp, err := s.room(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	running, err := s.engine.ContainerRunning(ctx, containerName(id))
+	switch {
+	case docker.IsNotFound(err):
+		return ErrNotStarted
+	case err != nil:
+		return err
+	case running:
+		return nil
+	}
+	if sp.Workspace {
+		sizes, err := s.engine.VolumeSizes(ctx, roomLabel)
+		if err != nil {
+			return err
+		}
+		if sizes[volumeName(id)] > s.limits.WorkspaceBytes {
+			return fmt.Errorf("%w: %d MiB of %d", ErrOverDisk, sizes[volumeName(id)]>>20, s.limits.WorkspaceBytes>>20)
+		}
+	}
+	if err := s.fits(ctx, id, sp); err != nil {
+		return err
+	}
+	return s.engine.StartContainer(ctx, containerName(id))
+}
+
+// Watch measures the workspaces every WatchEvery until ctx ends, and stops
+// each room whose workspace holds more than WorkspaceBytes. It is the soft
+// half of the disk cap: a room can pass it for up to one interval, and
+// Resume refuses it after.
+func (s *Service) Watch(ctx context.Context) {
+	t := time.NewTicker(WatchEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.measure(ctx)
+		}
+	}
+}
+
+func (s *Service) measure(ctx context.Context) {
+	sizes, err := s.engine.VolumeSizes(ctx, roomLabel)
+	if err != nil {
+		s.logger.Error("measuring the workspaces", "err", err.Error())
+		return
+	}
+	for name, n := range sizes {
+		if n <= s.limits.WorkspaceBytes {
+			continue
+		}
+		id := strings.TrimPrefix(name, networkPrefix)
+		err := s.engine.StopContainer(ctx, containerName(id), stopGrace)
+		if err != nil && !docker.IsNotFound(err) {
+			s.logger.Error("stopping a workspace over its disk", "room", id, "err", err.Error())
+			continue
+		}
+		s.logger.Warn("stopped a workspace over its disk", "room", id, "bytes", n, "limit", s.limits.WorkspaceBytes)
+	}
 }
 
 // Target is where a port of the room is reached from sandboxd.
@@ -548,6 +724,10 @@ func (s *Service) teardown(ctx context.Context, id string) {
 	if err := s.engine.RemoveNetwork(ctx, networkName(id)); err != nil && !docker.IsNotFound(err) {
 		s.logger.Error("removing a room's network", "room", id, "err", err.Error())
 	}
+	// Every room is tried: a server's has no volume, which is not found.
+	if err := s.engine.RemoveVolume(ctx, volumeName(id)); err != nil && !docker.IsNotFound(err) {
+		s.logger.Error("removing a room's workspace", "room", id, "err", err.Error())
+	}
 }
 
 // Harden builds a room's container. Everything in it is fixed here except the
@@ -591,9 +771,11 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 		HomeDir: "rw,exec,nosuid,nodev" + home + ",uid=65534,gid=65534,mode=0700",
 	}
 	memory, cpus := l.Memory, l.NanoCPUs
+	var volumes map[string]string
 	if sp.Workspace {
-		// An agent builds and runs what it writes, so its workspace executes.
-		tmpfs[WorkspaceDir] = "rw,exec,nosuid,nodev,size=" + strconv.FormatInt(l.WorkspaceBytes, 10) + ",uid=65534,gid=65534,mode=0700"
+		// An agent builds and runs what it writes, so its workspace executes:
+		// a volume is mounted exec. It is on disk, so a stopped room keeps it.
+		volumes = map[string]string{WorkspaceDir: volumeName(id)}
 		memory, cpus = l.WorkspaceMemory, l.WorkspaceCPUs
 	}
 	if sp.Network == NetworkPublic {
@@ -624,6 +806,7 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 			NetworkMode:    networkName(id),
 			ExtraHosts:     hosts,
 			RestartPolicy:  docker.RestartPolicy{Name: "no"},
+			Mounts:         volumes,
 		},
 	}
 }
