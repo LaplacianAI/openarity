@@ -349,7 +349,7 @@ func skillDiff(cur db.Skill, files map[string][]byte, dir skill.Directory) []str
 	add(cur.Description != m.Description, "description")
 	add(!equalPtr(cur.License, m.License), "license")
 	add(!equalPtr(cur.Compatibility, m.Compatibility), "compatibility")
-	add(!jsonEqual(cur.Metadata, harness.Metadata(m)), "metadata")
+	add(!jsonEqual(cur.Metadata, harness.SkillMetadata(m)), "metadata")
 	add(!equalPtr(cur.AllowedTools, m.AllowedTools), "allowed_tools")
 	add(cur.Body != m.Body, "body")
 	add(!sameFiles(files, dir.Files), "files")

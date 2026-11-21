@@ -51,6 +51,8 @@ type ruleError struct{ msg string }
 
 func (e ruleError) Error() string { return e.msg }
 
+// ErrChanged is a decision refused because its target changed since the
+// proposal was written against it.
 var ErrChanged = errors.New("the target changed since this was proposed")
 
 func refuse(format string, a ...any) error { return ruleError{fmt.Sprintf(format, a...)} }

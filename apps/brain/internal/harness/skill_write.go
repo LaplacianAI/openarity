@@ -16,12 +16,15 @@ import (
 // ReservationHold is how long a skill write holds its object keys before the reaper may take them.
 const ReservationHold = time.Hour
 
-type Origin struct {
+// SkillOrigin is where a skill came from: an upload, or a source it can be
+// synced from, at a ref and commit.
+type SkillOrigin struct {
 	Source string
 	Ref    *string
 	SHA    *string
 }
 
+// SkillQueries is every write a skill and its files take, in one transaction.
 type SkillQueries interface {
 	CreateSkill(ctx context.Context, arg db.CreateSkillParams) (db.Skill, error)
 	UpdateSkill(ctx context.Context, arg db.UpdateSkillParams) (db.Skill, error)
@@ -29,16 +32,17 @@ type SkillQueries interface {
 	InsertSkillFiles(ctx context.Context, arg []db.InsertSkillFilesParams) (int64, error)
 }
 
+// SkillObjects stores a skill file's bytes.
 type SkillObjects interface {
 	Put(ctx context.Context, teamID uuid.UUID, key string, body []byte) error
 }
 
-// Create writes a skill whose files Reserve has already stored under keys.
-func Create(ctx context.Context, q SkillQueries, teamID uuid.UUID, dir skill.Directory, o Origin, keys []string) (db.Skill, error) {
+// CreateSkill writes a skill whose files ReserveSkillFiles has already stored under keys.
+func CreateSkill(ctx context.Context, q SkillQueries, teamID uuid.UUID, dir skill.Directory, o SkillOrigin, keys []string) (db.Skill, error) {
 	m := dir.Manifest
 	row, err := q.CreateSkill(ctx, db.CreateSkillParams{
 		TeamID: teamID, Name: m.Name, Description: m.Description,
-		License: m.License, Compatibility: m.Compatibility, Metadata: Metadata(m),
+		License: m.License, Compatibility: m.Compatibility, Metadata: SkillMetadata(m),
 		AllowedTools: m.AllowedTools, Body: m.Body,
 		Source: o.Source, SourceRef: o.Ref, SourceSha: o.SHA,
 	})
@@ -48,12 +52,12 @@ func Create(ctx context.Context, q SkillQueries, teamID uuid.UUID, dir skill.Dir
 	return row, insertFiles(ctx, q, row, dir.Files, keys)
 }
 
-// Replace rewrites a skill and its files, whose bytes Reserve has stored.
-func Replace(ctx context.Context, q SkillQueries, skillID uuid.UUID, dir skill.Directory, o Origin, keys []string) (db.Skill, error) {
+// ReplaceSkill rewrites a skill and its files, whose bytes ReserveSkillFiles has stored.
+func ReplaceSkill(ctx context.Context, q SkillQueries, skillID uuid.UUID, dir skill.Directory, o SkillOrigin, keys []string) (db.Skill, error) {
 	m := dir.Manifest
 	row, err := q.UpdateSkill(ctx, db.UpdateSkillParams{
 		ID: skillID, Name: m.Name, Description: m.Description,
-		License: m.License, Compatibility: m.Compatibility, Metadata: Metadata(m),
+		License: m.License, Compatibility: m.Compatibility, Metadata: SkillMetadata(m),
 		AllowedTools: m.AllowedTools, Body: m.Body,
 		Source: o.Source, SourceRef: o.Ref, SourceSha: o.SHA,
 	})
@@ -66,13 +70,14 @@ func Replace(ctx context.Context, q SkillQueries, skillID uuid.UUID, dir skill.D
 	return row, insertFiles(ctx, q, row, dir.Files, keys)
 }
 
+// Reserver holds object keys, so the reaper leaves them until the hold ends.
 type Reserver interface {
 	ReserveObjects(ctx context.Context, arg db.ReserveObjectsParams) error
 }
 
-// Reserve stores files under new keys held for an hour first, so bytes whose
-// rows never commit are the reaper's to remove.
-func Reserve(ctx context.Context, s Reserver, o SkillObjects, teamID uuid.UUID, files []skill.File) ([]string, error) {
+// ReserveSkillFiles stores files under new keys, held for ReservationHold
+// first, so bytes whose rows never commit are the reaper's to remove.
+func ReserveSkillFiles(ctx context.Context, s Reserver, o SkillObjects, teamID uuid.UUID, files []skill.File) ([]string, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
@@ -114,7 +119,9 @@ func insertFiles(ctx context.Context, q SkillQueries, row db.Skill, files []skil
 	return err
 }
 
-func Metadata(m skill.Manifest) []byte {
+// SkillMetadata is a manifest's metadata as stored. It is a map of strings, so
+// marshalling it cannot fail.
+func SkillMetadata(m skill.Manifest) []byte {
 	b, _ := json.Marshal(m.Metadata)
 	return b
 }

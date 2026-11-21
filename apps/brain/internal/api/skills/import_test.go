@@ -93,7 +93,7 @@ func importPath(teamID uuid.UUID) string { return collection(teamID) + "/import"
 
 func syncPath(teamID, id uuid.UUID) string { return one(teamID, id) + "/sync" }
 
-var githubOrigin = harness.Origin{Source: "github", Ref: text(pdfRef), SHA: text(oldSHA)}
+var githubOrigin = harness.SkillOrigin{Source: "github", Ref: text(pdfRef), SHA: text(oldSHA)}
 
 // --- import ---
 

@@ -439,7 +439,7 @@ func TestTheManifestAndOriginReachTheRow(t *testing.T) {
 		t.Errorf("upload origin = %s %v %v", up.Source, up.SourceRef, up.SourceSha)
 	}
 
-	gh := harness.Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
+	gh := harness.SkillOrigin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
 	imported, err := w.create(t.Context(), uuid.New(), pdfSkill(t), gh)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -540,7 +540,7 @@ func TestReplacingAnImportWithAnUploadClearsItsOrigin(t *testing.T) {
 	s := newTxStore()
 	b := newBucket(s)
 	w := writer{store: s, objects: b}
-	gh := harness.Origin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
+	gh := harness.SkillOrigin{Source: "github", Ref: text("github:anthropics/skills/pdf@main"), SHA: text("0123abc")}
 	imported, err := w.create(t.Context(), uuid.New(), pdfSkill(t), gh)
 	if err != nil {
 		t.Fatalf("create: %v", err)

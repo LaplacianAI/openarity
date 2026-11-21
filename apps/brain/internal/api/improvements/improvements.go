@@ -331,7 +331,7 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 
 	v := view{
 		ID: row.ID, Kind: row.Kind, Status: row.Status,
-		Agent: ref{ID: row.AgentID, Name: n.Of(n.Agents, row.AgentID)},
+		Agent: ref{ID: row.AgentID, Name: n.Agent(row.AgentID)},
 		Why:   row.Why, Hypothesis: row.Hypothesis, Scope: row.Scope, Signature: row.Signature,
 		Marks: proposals.Marks(proposals.Kind(row.Kind), p.Before, p.After), Reaches: []ref{}, Changes: proposals.Changes(p, n),
 		Runs: []runRef{}, Outsider: row.Outsider, PassID: row.PassID, CreatedAt: row.CreatedAt,
@@ -341,7 +341,7 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 		v.Marks = []string{}
 	}
 	if row.SkillID != nil {
-		v.Skill = &ref{ID: *row.SkillID, Name: n.Of(n.Skills, *row.SkillID)}
+		v.Skill = &ref{ID: *row.SkillID, Name: n.Skill(*row.SkillID)}
 		holders, err := h.reads.ListAgentsHoldingSkill(ctx, *row.SkillID)
 		if err != nil {
 			return view{}, err

@@ -533,11 +533,11 @@ func TestSkillEditAppliesAndReverts(t *testing.T) {
 	}
 	var made db.Skill
 	if err := w.store.InTx(t.Context(), func(q *db.Queries) error {
-		keys, err := harness.Reserve(t.Context(), w.store, w.objects, w.team, dir.Files)
+		keys, err := harness.ReserveSkillFiles(t.Context(), w.store, w.objects, w.team, dir.Files)
 		if err != nil {
 			return err
 		}
-		made, err = harness.Create(t.Context(), q, w.team, dir, harness.Origin{Source: "upload"}, keys)
+		made, err = harness.CreateSkill(t.Context(), q, w.team, dir, harness.SkillOrigin{Source: "upload"}, keys)
 		return err
 	}); err != nil {
 		t.Fatalf("skill: %v", err)
@@ -664,7 +664,7 @@ func TestSkillEditOfAChangedSkillIsRefused(t *testing.T) {
 	dir := skill.Directory{Manifest: skill.Manifest{Name: "refunds", Description: "How refunds are made", Body: "Step 1.", Metadata: map[string]string{}}}
 	if err := w.store.InTx(t.Context(), func(q *db.Queries) error {
 		var err error
-		made, err = harness.Create(t.Context(), q, w.team, dir, harness.Origin{Source: "upload"}, nil)
+		made, err = harness.CreateSkill(t.Context(), q, w.team, dir, harness.SkillOrigin{Source: "upload"}, nil)
 		return err
 	}); err != nil {
 		t.Fatal(err)

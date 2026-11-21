@@ -157,6 +157,6 @@ func assemble(w http.ResponseWriter, imp hub.Import) (skill.Directory, bool) {
 	return dir, true
 }
 
-func origin(imp hub.Import) harness.Origin {
-	return harness.Origin{Source: imp.Kind, Ref: &imp.Ref, SHA: &imp.SHA}
+func origin(imp hub.Import) harness.SkillOrigin {
+	return harness.SkillOrigin{Source: imp.Kind, Ref: &imp.Ref, SHA: &imp.SHA}
 }

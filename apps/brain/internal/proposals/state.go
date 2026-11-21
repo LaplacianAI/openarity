@@ -36,7 +36,7 @@ type AgentState struct {
 	Notes []ToolNote      `json:"notes"`
 }
 
-// ToolNote is the agents API's: the same note, said the same way.
+// ToolNote is the harness's: the same note, said the same way.
 type ToolNote = harness.ToolNote
 
 // SkillState is a skill's manifest, body and files. A file is named by its
@@ -189,8 +189,8 @@ func agentState(ctx context.Context, q *db.Queries, row db.Agent) (AgentState, e
 	return st, nil
 }
 
-// writeAgent writes an agent state exactly as the agents API's replace does,
-// and then its notes. The caller has locked the row.
+// writeAgent writes an agent state through harness, exactly as the agents
+// API's replace does, and then its notes. The caller has locked the row.
 func writeAgent(ctx context.Context, q *db.Queries, row db.Agent, st AgentState, loops []string) error {
 	if err := harness.Validate(st.Agent, loops); err != nil {
 		return ruleError{err.Error()}

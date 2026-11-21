@@ -9,6 +9,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
+// AgentQueries is every write an agent and its grants take, in one transaction.
 type AgentQueries interface {
 	CreateAgent(ctx context.Context, arg db.CreateAgentParams) (db.Agent, error)
 	UpdateAgent(ctx context.Context, arg db.UpdateAgentParams) (db.Agent, error)
@@ -20,6 +21,8 @@ type AgentQueries interface {
 	ClearAgentDelegates(ctx context.Context, agentID uuid.UUID) error
 }
 
+// Columns is the agent row req asks for, grants aside: the db.CreateAgentParams
+// an insert takes, with a nil delegation stored as none and a nil switch as off.
 func Columns(req Request) (db.CreateAgentParams, error) {
 	p := db.CreateAgentParams{
 		Name: req.Name, Description: req.Description, Instructions: req.Instructions,
@@ -72,6 +75,7 @@ func RequestOf(row db.Agent) (Request, error) {
 	return req, nil
 }
 
+// UpdateParams is the update that writes the row Columns made over agent id.
 func UpdateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 	return db.UpdateAgentParams{
 		ID: id, Name: c.Name, Description: c.Description, Instructions: c.Instructions,
@@ -98,6 +102,8 @@ func Regrant(ctx context.Context, q AgentQueries, row db.Agent, req Request) err
 	return Grant(ctx, q, row, req)
 }
 
+// Grant adds what req grants an agent: its servers, skills and delegates. It
+// assumes the agent holds none of them yet; Regrant clears them first.
 func Grant(ctx context.Context, q AgentQueries, row db.Agent, req Request) error {
 	for _, g := range req.MCPServers {
 		err := q.AddAgentMCPServer(ctx, db.AddAgentMCPServerParams{

@@ -36,6 +36,8 @@ type Decider struct {
 	loops   []string
 }
 
+// NewDecider decides proposals in s, with o for skill files and the loops an
+// agent may use.
 func NewDecider(s Store, o Objects, loops []string) Decider {
 	return Decider{store: s, objects: o, loops: loops}
 }
@@ -45,6 +47,7 @@ type errState struct{ status string }
 
 func (e errState) Error() string { return "the proposal is " + e.status }
 
+// The decisions a person makes on a proposal.
 const (
 	ActionApprove = "approve"
 	ActionReject  = "reject"
@@ -58,6 +61,7 @@ type Proposal struct {
 	After  Snapshot
 }
 
+// Decode is a stored proposal with its before and after snapshots read.
 func Decode(row db.ImprovementProposal) (Proposal, error) {
 	p := Proposal{Row: row}
 	if err := json.Unmarshal(row.Before, &p.Before); err != nil {
@@ -215,7 +219,7 @@ func (d Decider) prepareSkill(ctx context.Context, teamID, id uuid.UUID, action 
 	if err != nil {
 		return nil, nil, err
 	}
-	keys, err := harness.Reserve(ctx, d.store, d.objects, teamID, dir.Files)
+	keys, err := harness.ReserveSkillFiles(ctx, d.store, d.objects, teamID, dir.Files)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -233,7 +237,7 @@ func (d Decider) apply(ctx context.Context, q *db.Queries, p Proposal, dir *skil
 		if err != nil {
 			return err
 		}
-		created, err := harness.Create(ctx, q, row.TeamID, *dir, harness.Origin{Source: "upload"}, keys)
+		created, err := harness.CreateSkill(ctx, q, row.TeamID, *dir, harness.SkillOrigin{Source: "upload"}, keys)
 		if err != nil {
 			return mapWrite(err)
 		}
@@ -343,7 +347,7 @@ func (d Decider) writeSkill(ctx context.Context, q *db.Queries, row db.Improveme
 	if !sameSkill(now, expect) {
 		return ErrChanged
 	}
-	_, err = harness.Replace(ctx, q, target.ID, *dir, harness.Origin{Source: "upload"}, keys)
+	_, err = harness.ReplaceSkill(ctx, q, target.ID, *dir, harness.SkillOrigin{Source: "upload"}, keys)
 	return mapWrite(err)
 }
 

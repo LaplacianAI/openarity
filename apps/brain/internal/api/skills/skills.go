@@ -21,7 +21,6 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -42,7 +41,7 @@ type Store interface {
 }
 
 type ObjectStore interface {
-	proposals.Objects
+	harness.SkillObjects
 	Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error)
 }
 

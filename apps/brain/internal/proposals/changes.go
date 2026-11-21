@@ -25,7 +25,12 @@ type Names struct {
 	Agents, Skills, Servers map[uuid.UUID]string
 }
 
-func (n Names) Of(m map[uuid.UUID]string, id uuid.UUID) string {
+// Agent, Skill and Server name an id, or show it as itself.
+func (n Names) Agent(id uuid.UUID) string  { return n.of(n.Agents, id) }
+func (n Names) Skill(id uuid.UUID) string  { return n.of(n.Skills, id) }
+func (n Names) Server(id uuid.UUID) string { return n.of(n.Servers, id) }
+
+func (n Names) of(m map[uuid.UUID]string, id uuid.UUID) string {
 	if s, ok := m[id]; ok {
 		return s
 	}
@@ -160,7 +165,7 @@ func textOf(f FileState) any {
 func named(ids []uuid.UUID, m map[uuid.UUID]string, n Names) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
-		out[i] = n.Of(m, id)
+		out[i] = n.of(m, id)
 	}
 	slices.Sort(out)
 	return out
@@ -169,7 +174,7 @@ func named(ids []uuid.UUID, m map[uuid.UUID]string, n Names) []string {
 func grants(gs []harness.ServerGrant, n Names) []string {
 	out := make([]string, len(gs))
 	for i, g := range gs {
-		s := n.Of(n.Servers, g.ID)
+		s := n.Server(g.ID)
 		if g.Allow != nil {
 			allow := slices.Clone(g.Allow)
 			slices.Sort(allow)
@@ -184,7 +189,7 @@ func grants(gs []harness.ServerGrant, n Names) []string {
 func notes(ns []ToolNote, n Names) []string {
 	out := make([]string, len(ns))
 	for i, note := range ns {
-		out[i] = n.Of(n.Servers, note.Server) + " / " + note.Tool + ": " + note.Note
+		out[i] = n.Server(note.Server) + " / " + note.Tool + ": " + note.Note
 	}
 	slices.Sort(out)
 	return out

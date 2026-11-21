@@ -86,7 +86,7 @@ apps/brain/
     authorize.go       the Guard: one check per route, chosen by its scope
     <domain>/          one package per domain, each its own Router
       <domain>.go      handler, New, the handlers
-      schema.go        request and response structs — the wire contract
+      schema.go        request and response structs — the wire contract (an agent's request shape is harness.Request)
     runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream; feedback.go a member's 👍/👎 and a run's judged outcome
     sessions/          read a conversation; start one and write in it on the dashboard; follow its stream
     loops/             the loops an agent may choose, which are the runner's

@@ -18,7 +18,7 @@ import (
 )
 
 // uploaded is where a blueprint's skills come from: their bytes are sent.
-var uploaded = harness.Origin{Source: "upload"}
+var uploaded = harness.SkillOrigin{Source: "upload"}
 
 const (
 	codeUniqueViolation = "23505"
@@ -171,7 +171,7 @@ func (h *handler) planned(w http.ResponseWriter, r *http.Request, u *auth.User, 
 func (h *handler) write(ctx context.Context, teamID uuid.UUID, p *planned, also func(Queries) error) error {
 	keys := make([][]string, len(p.skills))
 	for i, s := range p.skills {
-		k, err := harness.Reserve(ctx, h.store, h.objects, teamID, s.dir.Files)
+		k, err := harness.ReserveSkillFiles(ctx, h.store, h.objects, teamID, s.dir.Files)
 		if err != nil {
 			return err
 		}
@@ -242,9 +242,9 @@ func writeSkills(ctx context.Context, q Queries, teamID uuid.UUID, p *planned, k
 		var row db.Skill
 		var err error
 		if s.id == uuid.Nil {
-			row, err = harness.Create(ctx, q, teamID, s.dir, uploaded, keys[i])
+			row, err = harness.CreateSkill(ctx, q, teamID, s.dir, uploaded, keys[i])
 		} else {
-			row, err = harness.Replace(ctx, q, s.id, s.dir, uploaded, keys[i])
+			row, err = harness.ReplaceSkill(ctx, q, s.id, s.dir, uploaded, keys[i])
 		}
 		if err != nil {
 			return err
