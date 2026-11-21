@@ -41,6 +41,7 @@ const (
 type Ensurer interface {
 	Ensure(ctx context.Context, o keeper.Owner, team uuid.UUID, w keeper.Want) (sandbox.Endpoint, error)
 	Touch(ctx context.Context, o keeper.Owner) error
+	Stop(ctx context.Context, o keeper.Owner, team uuid.UUID, idle func(context.Context) (bool, error)) error
 }
 
 // Rooms are sessions' workspaces in their team's sandbox.
@@ -58,6 +59,12 @@ func (r *Rooms) Ensure(ctx context.Context, team, session uuid.UUID) (sandbox.En
 // and so need not ensure it again for every call.
 func (r *Rooms) Touch(ctx context.Context, session uuid.UUID) error {
 	return r.keeper.Touch(ctx, keeper.Owner{Kind: OwnerKind, ID: session})
+}
+
+// Stop stops the session's room, keeping its files, if idle still says so
+// under the room's lock.
+func (r *Rooms) Stop(ctx context.Context, team, session uuid.UUID, idle func(context.Context) (bool, error)) error {
+	return r.keeper.Stop(ctx, keeper.Owner{Kind: OwnerKind, ID: session}, team, idle)
 }
 
 // Want is what every workspace is made from. Nothing in it is a session's

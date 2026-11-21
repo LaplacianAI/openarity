@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/LaplacianAI/openarity/apps/sandbox/internal/docker"
 	"github.com/LaplacianAI/openarity/apps/sandbox/internal/guard"
@@ -30,6 +31,10 @@ type fakeEngine struct {
 	pullWait chan struct{} // when set, a pull blocks until it is closed
 	pullErr  error
 	calls    int // every call of the engine, for the tests that expect none
+
+	stopped map[string]bool  // containers stopped, which have left their network
+	volumes map[string]int64 // bytes each volume holds
+	starts  int
 }
 
 func (f *fakeEngine) HasImage(_ context.Context, ref string) (bool, error) {
@@ -144,11 +149,79 @@ func (f *fakeEngine) CreateContainer(_ context.Context, name string, c docker.Co
 	return name + "-id", nil
 }
 
-func (f *fakeEngine) StartContainer(context.Context, string) error {
+func (f *fakeEngine) StartContainer(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	f.starts++
+	if c, ok := f.containers[name]; ok && f.stopped[name] {
+		delete(f.stopped, name)
+		if n := f.networks[c.HostConfig.NetworkMode]; n != nil {
+			n.Containers[name+"-id"] = docker.Member{Name: name, IPv4: "10.9.0.4"}
+		}
+	}
 	return nil
+}
+
+func (f *fakeEngine) StopContainer(_ context.Context, name string, _ time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	c, ok := f.containers[name]
+	if !ok {
+		return &docker.Error{Status: 404}
+	}
+	if f.stopped == nil {
+		f.stopped = map[string]bool{}
+	}
+	f.stopped[name] = true
+	if n := f.networks[c.HostConfig.NetworkMode]; n != nil {
+		delete(n.Containers, name+"-id")
+	}
+	return nil
+}
+
+func (f *fakeEngine) ContainerRunning(_ context.Context, name string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if _, ok := f.containers[name]; !ok {
+		return false, &docker.Error{Status: 404}
+	}
+	return !f.stopped[name], nil
+}
+
+func (f *fakeEngine) CreateVolume(_ context.Context, name string, _ map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.volumes == nil {
+		f.volumes = map[string]int64{}
+	}
+	f.volumes[name] = 0
+	return nil
+}
+
+func (f *fakeEngine) RemoveVolume(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if _, ok := f.volumes[name]; !ok {
+		return &docker.Error{Status: 404}
+	}
+	delete(f.volumes, name)
+	return nil
+}
+
+func (f *fakeEngine) VolumeSizes(context.Context, string) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	out := make(map[string]int64, len(f.volumes))
+	for k, v := range f.volumes {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func (f *fakeEngine) RemoveContainer(_ context.Context, name string) error {
@@ -531,9 +604,12 @@ func TestHardenGivesAWorkspaceItsSizeAndAPublicRoomTheProxy(t *testing.T) {
 	if h.Memory != l.WorkspaceMemory || h.MemorySwap != l.WorkspaceMemory || h.NanoCPUs != l.WorkspaceCPUs {
 		t.Errorf("limits = %d %d %d", h.Memory, h.MemorySwap, h.NanoCPUs)
 	}
-	ws := h.Tmpfs[WorkspaceDir]
-	if !strings.Contains(ws, ",exec,") || !strings.Contains(ws, "size=536870912") || !strings.Contains(ws, "uid=65534") {
-		t.Errorf("/workspace = %q", ws)
+	// /workspace is a volume of the room's own, on disk, and never a tmpfs.
+	if got := h.Mounts[WorkspaceDir]; got != volumeName("abc") {
+		t.Errorf("/workspace is mounted from %q, want the room's volume", got)
+	}
+	if _, ok := h.Tmpfs[WorkspaceDir]; ok {
+		t.Error("/workspace is a tmpfs: a stopped room would lose it")
 	}
 	env := strings.Join(c.Env, ",")
 	for _, want := range []string{"HTTPS_PROXY=http://10.0.0.2:3128", "http_proxy=http://10.0.0.2:3128", "NO_PROXY=localhost"} {

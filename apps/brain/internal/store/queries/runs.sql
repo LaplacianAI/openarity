@@ -399,3 +399,19 @@ UPDATE runs SET
 WHERE runs.id = $1 AND runs.status = 'waiting'
   AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.root_run_id = runs.id AND a.status = 'pending')
 RETURNING runs.id, runs.attempt;
+
+-- The run's session, when nothing else in it is queued or running: the
+-- session's workspace may stop. Null for a run with no session, or one whose
+-- session is still in use.
+--
+-- name: IdleSessionOf :one
+SELECT r.session_id::uuid AS session_id, r.team_id FROM runs r
+WHERE r.id = $1
+  AND r.session_id IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM runs o
+      WHERE o.session_id = r.session_id AND o.id <> r.id AND o.status IN ('queued', 'running'));
+
+-- name: SessionIsIdle :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM runs WHERE session_id = sqlc.arg('session_id')::uuid AND status IN ('queued', 'running')) AS idle;

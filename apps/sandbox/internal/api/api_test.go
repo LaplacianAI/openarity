@@ -24,6 +24,8 @@ type fakeRooms struct {
 	started map[string][]string
 	target  string
 	err     error
+	stopped []string
+	resumed []string
 }
 
 func (f *fakeRooms) Create(_ context.Context, sp rooms.Spec) (string, error) {
@@ -50,6 +52,19 @@ func (f *fakeRooms) Start(_ context.Context, id string, argv []string) error {
 }
 
 func (f *fakeRooms) Delete(context.Context, string) error { return f.err }
+func (f *fakeRooms) Stop(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopped = append(f.stopped, id)
+	return f.err
+}
+
+func (f *fakeRooms) Resume(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumed = append(f.resumed, id)
+	return f.err
+}
 func (f *fakeRooms) Exists(context.Context, string) error { return f.err }
 func (f *fakeRooms) Target(context.Context, string, int) (string, error) {
 	return f.target, f.err
@@ -97,6 +112,8 @@ func TestEveryRoomsRouteNeedsTheBearerToken(t *testing.T) {
 	routes := []struct{ method, path string }{
 		{"POST", "/v1/rooms"},
 		{"POST", "/v1/rooms/r1/start"},
+		{"POST", "/v1/rooms/r1/stop"},
+		{"POST", "/v1/rooms/r1/resume"},
 		{"GET", "/v1/rooms/r1/ports/8080"},
 		{"DELETE", "/v1/rooms/r1"},
 	}
@@ -108,7 +125,7 @@ func TestEveryRoomsRouteNeedsTheBearerToken(t *testing.T) {
 			}
 		}
 	}
-	if len(f.created) != 0 || len(f.started) != 0 {
+	if len(f.created) != 0 || len(f.started) != 0 || len(f.stopped) != 0 || len(f.resumed) != 0 {
 		t.Fatal("an unauthenticated request reached the service")
 	}
 }
@@ -171,6 +188,8 @@ func TestServiceErrorsMapToStatuses(t *testing.T) {
 		{fmt.Errorf("%w: pulling the image \"ghcr.io/o/r:1\" failed: docker answered 404: not found", rooms.ErrUnavailable), 503, "ghcr.io/o/r:1"},
 		{rooms.ErrNotFound, 404, "no such room"},
 		{rooms.ErrStarted, 409, ""},
+		{rooms.ErrNotStarted, 409, "has not started"},
+		{fmt.Errorf("%w: 600 MiB of 512", rooms.ErrOverDisk), 422, "600 MiB of 512"},
 		{errors.New("docker: secret detail"), 500, "the sandbox failed"},
 	}
 	for _, c := range cases {
@@ -328,4 +347,28 @@ func TestNewPanicsOnANilLogger(t *testing.T) {
 		}
 	}()
 	api.New(&fakeRooms{}, "t", "http://x", nil)
+}
+
+func TestStopAndResumeReturn204(t *testing.T) {
+	t.Parallel()
+	f := &fakeRooms{}
+	s := setup(t, f)
+	for _, p := range []string{"/v1/rooms/r1/stop", "/v1/rooms/r1/resume"} {
+		if resp, body := call(t, "POST", s.URL+p, "Bearer "+token, ""); resp.StatusCode != 204 {
+			t.Fatalf("%s: %d %s", p, resp.StatusCode, body)
+		}
+	}
+	if len(f.stopped) != 1 || f.stopped[0] != "r1" || len(f.resumed) != 1 || f.resumed[0] != "r1" {
+		t.Fatalf("stopped %v, resumed %v", f.stopped, f.resumed)
+	}
+}
+
+func TestStopAndResumeOfAnUnknownRoomAre404(t *testing.T) {
+	t.Parallel()
+	s := setup(t, &fakeRooms{err: rooms.ErrNotFound})
+	for _, p := range []string{"/v1/rooms/zz/stop", "/v1/rooms/zz/resume"} {
+		if resp, _ := call(t, "POST", s.URL+p, "Bearer "+token, ""); resp.StatusCode != 404 {
+			t.Errorf("%s = %d", p, resp.StatusCode)
+		}
+	}
 }

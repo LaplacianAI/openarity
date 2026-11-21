@@ -277,6 +277,9 @@ func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Add
 	if err := checkTemplate(s); err != nil {
 		return err
 	}
+	if err := checkLifecycle(s); err != nil {
+		return err
+	}
 	switch {
 	case s.URL != nil && s.Provider == string(sandboxpkg.E2B):
 		return errors.New("sandbox.url is for daytona or sandboxd: e2b is hosted only")
@@ -294,6 +297,32 @@ func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Add
 		return fmt.Errorf("sandbox.api_key is required: no %s key is saved for this provider and url", s.Provider)
 	}
 	return checkKey("sandbox", *s.APIKey)
+}
+
+// checkLifecycle holds the stop and keep times and the size to what the
+// table allows; a provider refuses a size past what it gives.
+func checkLifecycle(s sandboxRequest) error {
+	if s.KeepHours != nil && (*s.KeepHours < 1 || *s.KeepHours > 720) {
+		return errors.New("sandbox.keep_hours must be between 1 and 720")
+	}
+	if v := s.IdleMinutes.Value; v != nil && (*v < 1 || *v > 1440) {
+		return errors.New("sandbox.idle_minutes must be between 1 and 1440, or null for the deployment's")
+	}
+	z := s.WorkspaceSize.Value
+	if z == nil {
+		return nil
+	}
+	switch {
+	case s.Provider == string(sandboxpkg.E2B):
+		return errors.New("sandbox.workspace_size is not yet for e2b: its size is the template's, built at 2 vCPUs and 2 GiB")
+	case z.MemoryMB < 256 || z.MemoryMB > 65536:
+		return errors.New("sandbox.workspace_size.memory_mb must be between 256 and 65536")
+	case z.CPUs < 1 || z.CPUs > 16:
+		return errors.New("sandbox.workspace_size.cpus must be between 1 and 16")
+	case z.DiskMB < 256 || z.DiskMB > 262144:
+		return errors.New("sandbox.workspace_size.disk_mb must be between 256 and 262144")
+	}
+	return nil
 }
 
 func keepsSandboxKey(stored *db.TeamSetting, s sandboxRequest) bool {

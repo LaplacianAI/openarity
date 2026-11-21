@@ -644,6 +644,178 @@ describe("an E2B team's template", () => {
   });
 });
 
+const SANDBOXD: TeamSettings = {
+  ...NEVER,
+  sandbox: {
+    provider: "sandboxd",
+    url: "http://sandboxd:8080",
+    key_set: true,
+    keep_hours: 24,
+    idle_minutes: null,
+    workspace_size: null,
+  },
+  updated_at: "2026-11-21T09:00:00Z",
+};
+
+const SIZED: TeamSettings = {
+  ...SANDBOXD,
+  sandbox: {
+    ...SANDBOXD.sandbox,
+    idle_minutes: 45,
+    workspace_size: { memory_mb: 8192, cpus: 4, disk_mb: 20480 },
+  },
+};
+
+describe("a team's workspaces", () => {
+  const ask = (patch: Partial<ReturnType<typeof draftOf>>, stored: TeamSettings = SANDBOXD) =>
+    settingsRequest({ ...draftOf(stored), ...patch }, stored);
+  const sandboxOf = (body: unknown) => (body as { sandbox: Record<string, unknown> }).sandbox;
+
+  // Left out, the brain keeps them: a tab opened before another's change never undoes it.
+  it("sends no time or size that was not changed", () => {
+    for (const stored of [SANDBOXD, SIZED]) {
+      const sent = sandboxOf(ask({ improvement: true }, stored));
+      expect(sent).not.toHaveProperty("keep_hours");
+      expect(sent).not.toHaveProperty("idle_minutes");
+      expect(sent).not.toHaveProperty("workspace_size");
+    }
+  });
+
+  it("reads a brain that predates stopping as the provider's size and a day's keep", () => {
+    const d = draftOf(DAYTONA);
+    expect(d).toMatchObject({ sizeCustom: false, idleOwn: false, keepHours: "24" });
+    expect(isDirty("sandbox", d, DAYTONA)).toBe(false);
+  });
+
+  it("shows a stored size in GB, and sends a custom size in MB", () => {
+    expect(draftOf(SIZED)).toMatchObject({ sizeMemory: "8", sizeCPUs: "4", sizeDisk: "20" });
+    expect(sandboxOf(ask({ sizeCustom: true, sizeMemory: "1.5", sizeDisk: "0.25" }))).toEqual({
+      provider: "sandboxd",
+      url: "http://sandboxd:8080",
+      workspace_size: { memory_mb: 1536, cpus: 2, disk_mb: 256 },
+    });
+  });
+
+  it("sends null to go back to the provider's size and the deployment's idle time", () => {
+    expect(sandboxOf(ask({ sizeCustom: false, idleOwn: false }, SIZED))).toMatchObject({
+      workspace_size: null,
+      idle_minutes: null,
+    });
+  });
+
+  it("sends the team's idle minutes and keep hours", () => {
+    expect(sandboxOf(ask({ idleOwn: true, idleMinutes: "15", keepHours: "72" }))).toMatchObject({
+      idle_minutes: 15,
+      keep_hours: 72,
+    });
+  });
+
+  it("is no change when a size is typed and then put back", () => {
+    const d = { ...draftOf(SIZED), sizeMemory: "8.0", sizeCustom: true };
+    expect(isDirty("sandbox", d, SIZED)).toBe(false);
+    // Off, the numbers typed into the hidden fields do not count.
+    expect(isDirty("sandbox", { ...draftOf(SANDBOXD), sizeMemory: "99" }, SANDBOXD)).toBe(false);
+    expect(isDirty("sandbox", { ...draftOf(SANDBOXD), idleMinutes: "5" }, SANDBOXD)).toBe(false);
+    expect(isDirty("sandbox", { ...draftOf(SANDBOXD), keepHours: "48" }, SANDBOXD)).toBe(true);
+  });
+
+  it.each([
+    [{ sizeCustom: true, sizeMemory: "0.2" }, /Memory is between 0.25 and 64 GB/],
+    [{ sizeCustom: true, sizeMemory: "65" }, /Memory is between 0.25 and 64 GB/],
+    [{ sizeCustom: true, sizeMemory: "lots" }, /Memory/],
+    [{ sizeCustom: true, sizeCPUs: "0" }, /CPUs is a whole number from 1 to 16/],
+    [{ sizeCustom: true, sizeCPUs: "17" }, /CPUs/],
+    [{ sizeCustom: true, sizeCPUs: "1.5" }, /CPUs/],
+    [{ sizeCustom: true, sizeDisk: "0.1" }, /Disk is between 0.25 and 256 GB/],
+    [{ sizeCustom: true, sizeDisk: "257" }, /Disk/],
+    [{ idleOwn: true, idleMinutes: "0" }, /from 1 to 1,440/],
+    [{ idleOwn: true, idleMinutes: "1441" }, /from 1 to 1,440/],
+    [{ keepHours: "0" }, /from 1 to 720/],
+    [{ keepHours: "721" }, /from 1 to 720/],
+    [{ keepHours: "" }, /from 1 to 720/],
+  ])("refuses %o", (patch, message) => {
+    expect(ask(patch)).toMatch(message);
+  });
+
+  it("takes the edges of every range", () => {
+    expect(
+      sandboxOf(
+        ask({
+          sizeCustom: true,
+          sizeMemory: "64",
+          sizeCPUs: "16",
+          sizeDisk: "256",
+          idleOwn: true,
+          idleMinutes: "1440",
+          keepHours: "720",
+        }),
+      ),
+    ).toMatchObject({
+      workspace_size: { memory_mb: 65536, cpus: 16, disk_mb: 262144 },
+      idle_minutes: 1440,
+      keep_hours: 720,
+    });
+    expect(sandboxOf(ask({ idleOwn: true, idleMinutes: "1", keepHours: "1" }))).toMatchObject({
+      idle_minutes: 1,
+      keep_hours: 1,
+    });
+  });
+
+  it("refuses a size of E2B's own, which is its template's", () => {
+    expect(ask({ sandbox: "e2b", sandboxKey: "k", sizeCustom: true })).toMatch(/E2B workspace/);
+  });
+
+  it("sends nothing about workspaces when the sandbox is off", () => {
+    expect(sandboxOf(ask({ sandbox: "none", keepHours: "0" }, SIZED))).toEqual({
+      provider: "none",
+    });
+  });
+
+  it("puts a team moving to E2B back on the provider's size", async () => {
+    const seen = brain({
+      ...team(["team:settings"]),
+      "GET /teams/{id}/settings": { body: SIZED },
+      "PUT /teams/{id}/settings": { body: saved(SIZED) },
+    });
+    at();
+
+    const sandbox = await screen.findByRole("region", { name: "Sandbox" });
+    expect(within(sandbox).getByLabelText("Memory")).toHaveValue("8");
+    await choose(within(sandbox).getByLabelText("Sandbox provider"), /^E2B/);
+    expect(within(sandbox).queryByLabelText("Memory")).toBeNull();
+    expect(within(sandbox).getByRole("radio", { name: "Custom" })).toBeDisabled();
+    expect(within(sandbox).getByText(/2 CPUs and 2 GB/)).toBeInTheDocument();
+
+    await userEvent.type(within(sandbox).getByLabelText("API key"), "k");
+    await saveIn("Sandbox");
+    await waitFor(() => expect(put(seen)).toBeDefined());
+    expect(put(seen).sandbox).toMatchObject({ provider: "e2b", workspace_size: null });
+  });
+
+  it("saves a custom size typed into the page", async () => {
+    const seen = brain({
+      ...team(["team:settings"]),
+      "GET /teams/{id}/settings": { body: SANDBOXD },
+      "PUT /teams/{id}/settings": { body: saved(SIZED) },
+    });
+    at();
+
+    const sandbox = await screen.findByRole("region", { name: "Sandbox" });
+    expect(within(sandbox).queryByLabelText("Memory")).toBeNull();
+    await userEvent.click(within(sandbox).getByRole("radio", { name: "Custom" }));
+    const memory = within(sandbox).getByLabelText("Memory");
+    await userEvent.clear(memory);
+    await userEvent.type(memory, "8");
+    await saveIn("Sandbox");
+
+    await waitFor(() => expect(put(seen)).toBeDefined());
+    expect(put(seen).sandbox).toMatchObject({
+      provider: "sandboxd",
+      workspace_size: { memory_mb: 8192, cpus: 2, disk_mb: 10240 },
+    });
+  });
+});
+
 const LIGHTPANDA: TeamSettings = {
   ...NEVER,
   browser: { provider: "lightpanda", url: "ws://lightpanda:9222", key_set: true },

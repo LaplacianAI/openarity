@@ -15,7 +15,9 @@ INSERT INTO team_settings (
     browser_provider, browser_url, browser_secret_id,
     judge_model_name, judge_model_max_tokens, judge_model_temperature,
     improvement_sample_share, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes,
-    improvement_since
+    improvement_since,
+    sandbox_keep_hours, sandbox_idle_minutes,
+    sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 ) VALUES (
     sqlc.arg(team_id),
     sqlc.narg(model_name), sqlc.narg(model_max_tokens), sqlc.narg(model_temperature),
@@ -29,7 +31,11 @@ INSERT INTO team_settings (
     sqlc.arg(improvement_sample_share), COALESCE(sqlc.narg(improvement_daily_passes)::smallint, 20),
     COALESCE(sqlc.narg(improvement_pass_tokens)::integer, 400000),
     COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, 20),
-    CASE WHEN sqlc.arg(improvement)::bool THEN now() END
+    CASE WHEN sqlc.arg(improvement)::bool THEN now() END,
+    -- The caller sends what is stored for these when a save leaves them out:
+    -- a null idle or size is the provider's, not "keep".
+    COALESCE(sqlc.narg(sandbox_keep_hours)::integer, 24), sqlc.narg(sandbox_idle_minutes),
+    sqlc.narg(sandbox_workspace_memory_mb), sqlc.narg(sandbox_workspace_cpus), sqlc.narg(sandbox_workspace_disk_mb)
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -54,6 +60,11 @@ ON CONFLICT (team_id) DO UPDATE SET
     judge_model_max_tokens  = EXCLUDED.judge_model_max_tokens,
     judge_model_temperature = EXCLUDED.judge_model_temperature,
     improvement_sample_share = EXCLUDED.improvement_sample_share,
+    sandbox_keep_hours          = EXCLUDED.sandbox_keep_hours,
+    sandbox_idle_minutes        = EXCLUDED.sandbox_idle_minutes,
+    sandbox_workspace_memory_mb = EXCLUDED.sandbox_workspace_memory_mb,
+    sandbox_workspace_cpus      = EXCLUDED.sandbox_workspace_cpus,
+    sandbox_workspace_disk_mb   = EXCLUDED.sandbox_workspace_disk_mb,
     improvement_daily_passes = COALESCE(sqlc.narg(improvement_daily_passes)::smallint, team_settings.improvement_daily_passes),
     improvement_pass_tokens  = COALESCE(sqlc.narg(improvement_pass_tokens)::integer, team_settings.improvement_pass_tokens),
     improvement_pass_minutes = COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, team_settings.improvement_pass_minutes),

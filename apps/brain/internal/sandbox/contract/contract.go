@@ -1,8 +1,8 @@
 // Package contract is what every sandbox provider must do for a workspace,
 // as a test it runs against a real one. A provider is done when its
 // integration test calls Workspace and it passes: the workspace role starts
-// in a public room, works in /workspace, reaches a public host, and reaches
-// no private one. Only through the Rooms port, so a provider added later is
+// in a public room, works in /workspace, reaches a public host, reaches no
+// private one, and keeps its files through a stop and a resume. Only through the Rooms port, so a provider added later is
 // held to exactly what the others are.
 package contract
 
@@ -62,17 +62,23 @@ func Workspace(t *testing.T, rooms sandbox.Rooms, image string, hc *http.Client)
 	if err := rooms.Start(ctx, room, want.Argv); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	base, err := rooms.URL(ctx, room, want.Port)
-	if err != nil {
-		t.Fatalf("URL: %v", err)
+	// The room's address and its provider's credential, asked for again
+	// after a resume, as the keeper does: a provider may hand out new ones.
+	connect := func(t *testing.T) (*workroom.Client, sandbox.Endpoint) {
+		t.Helper()
+		base, err := rooms.URL(ctx, room, want.Port)
+		if err != nil {
+			t.Fatalf("URL: %v", err)
+		}
+		ep := sandbox.Endpoint{URL: base.URL, Header: base.Header.Clone()}
+		if ep.Header == nil {
+			ep.Header = http.Header{}
+		}
+		ep.Header.Set("Authorization", "Bearer "+token)
+		awaitHealthy(t, hc, ep)
+		return workroom.NewClient(ep, hc), ep
 	}
-	ep := sandbox.Endpoint{URL: base.URL, Header: base.Header.Clone()}
-	if ep.Header == nil {
-		ep.Header = http.Header{}
-	}
-	ep.Header.Set("Authorization", "Bearer "+token)
-	awaitHealthy(t, hc, ep)
-	ws := workroom.NewClient(ep, hc)
+	ws, ep := connect(t)
 
 	t.Run("works in /workspace", func(t *testing.T) {
 		if _, err := ws.Write(ctx, "probe.txt", "probe-value\n"); err != nil {
@@ -119,6 +125,33 @@ func Workspace(t *testing.T, rooms sandbox.Rooms, image string, hc *http.Client)
 			}
 		}
 	})
+
+	// Last, since it stops the room: a session's workspace is stopped when
+	// its last run ends, and its next call must find the files it left.
+	t.Run("keeps its files through a stop and a resume", func(t *testing.T) {
+		if _, err := ws.Write(ctx, "kept.txt", "kept-value\n"); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := rooms.Stop(ctx, room); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		// Twice, as a reaper sweep and a run's end may both ask.
+		if err := rooms.Stop(ctx, room); err != nil {
+			t.Fatalf("Stop of a stopped room: %v", err)
+		}
+		// Stopped is not running: what it held is given back.
+		if healthy(ctx, ep) {
+			t.Fatal("the workspace still answers after Stop")
+		}
+		if err := rooms.Resume(ctx, room, want.Argv); err != nil {
+			t.Fatalf("Resume: %v", err)
+		}
+		resumed, _ := connect(t)
+		out, err := resumed.Exec(ctx, "cat kept.txt", 30)
+		if err != nil || out.Stdout != "kept-value\n" {
+			t.Fatalf("after a resume, Exec = %+v, %v; want the file written before the stop", out, err)
+		}
+	})
 }
 
 // status is what curl in the room got from u, with the flags given: its HTTP
@@ -130,6 +163,21 @@ func status(t *testing.T, ws *workroom.Client, flags, u string) string {
 		t.Fatalf("Exec: %v", err)
 	}
 	return strings.TrimSpace(out.Stdout)
+}
+
+// healthy is whether the workspace answers /healthz within a few seconds.
+func healthy(ctx context.Context, ep sandbox.Endpoint) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(ep.URL, "/")+"/healthz", nil)
+	if err != nil {
+		return false
+	}
+	req.Header = ep.Header.Clone()
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func awaitHealthy(t *testing.T, hc *http.Client, ep sandbox.Endpoint) {

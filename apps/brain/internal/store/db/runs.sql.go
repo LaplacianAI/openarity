@@ -732,6 +732,30 @@ func (q *Queries) HubCanRun(ctx context.Context, teamID uuid.UUID) (bool, error)
 	return can_run, err
 }
 
+const idleSessionOf = `-- name: IdleSessionOf :one
+SELECT r.session_id::uuid AS session_id, r.team_id FROM runs r
+WHERE r.id = $1
+  AND r.session_id IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM runs o
+      WHERE o.session_id = r.session_id AND o.id <> r.id AND o.status IN ('queued', 'running'))
+`
+
+type IdleSessionOfRow struct {
+	SessionID uuid.UUID
+	TeamID    uuid.UUID
+}
+
+// The run's session, when nothing else in it is queued or running: the
+// session's workspace may stop. Null for a run with no session, or one whose
+// session is still in use.
+func (q *Queries) IdleSessionOf(ctx context.Context, id uuid.UUID) (IdleSessionOfRow, error) {
+	row := q.db.QueryRow(ctx, idleSessionOf, id)
+	var i IdleSessionOfRow
+	err := row.Scan(&i.SessionID, &i.TeamID)
+	return i, err
+}
+
 const listMessagesSinceLastRun = `-- name: ListMessagesSinceLastRun :many
 SELECT m.text, m.received_at AS at,
        coalesce(nullif(m.sender_name, ''), u.email, '')::text AS author
@@ -1383,6 +1407,18 @@ func (q *Queries) RunAwaits(ctx context.Context, id uuid.UUID) (bool, error) {
 	var awaits bool
 	err := row.Scan(&awaits)
 	return awaits, err
+}
+
+const sessionIsIdle = `-- name: SessionIsIdle :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM runs WHERE session_id = $1::uuid AND status IN ('queued', 'running')) AS idle
+`
+
+func (q *Queries) SessionIsIdle(ctx context.Context, sessionID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, sessionIsIdle, sessionID)
+	var idle bool
+	err := row.Scan(&idle)
+	return idle, err
 }
 
 const setTranscriptFrom = `-- name: SetTranscriptFrom :exec

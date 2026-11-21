@@ -88,7 +88,14 @@ type createRequest struct {
 	NetworkAllowList string            `json:"networkAllowList,omitempty"`
 	DomainAllowList  string            `json:"domainAllowList,omitempty"`
 	AutoStopInterval *int              `json:"autoStopInterval,omitempty"`
+	// Daytona sizes in whole cores and GB; a team's size is rounded up.
+	CPU    int `json:"cpu,omitempty"`
+	Memory int `json:"memory,omitempty"`
+	Disk   int `json:"disk,omitempty"`
 }
+
+// gb is mb rounded up to whole GB, as Daytona takes sizes.
+func gb(mb int) int { return (mb + 1023) / 1024 }
 
 type buildInfo struct {
 	DockerfileContent string `json:"dockerfileContent"`
@@ -102,7 +109,8 @@ type sandboxView struct {
 }
 
 // Create makes a room, from the spec's image, and waits until it is started.
-// The room never auto-stops: a stopped room has lost the shim in it.
+// The room never stops by itself: the brain stops it, and Resume runs its
+// command again.
 func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 	n, err := c.network(ctx, s)
 	if err != nil {
@@ -118,6 +126,9 @@ func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 	}
 	if n.blockAll {
 		req.NetworkBlockAll = &n.blockAll
+	}
+	if z := s.Size; z != nil {
+		req.CPU, req.Memory, req.Disk = z.CPUs, gb(z.MemoryMB), gb(z.DiskMB)
 	}
 	switch {
 	case strings.HasPrefix(s.Image, ImagePrefix):
@@ -222,6 +233,39 @@ func (c *Client) Delete(ctx context.Context, room string) error {
 		return nil
 	}
 	return err
+}
+
+// Stop stops the sandbox; Daytona keeps its files. One already stopped is
+// not an error.
+func (c *Client) Stop(ctx context.Context, room string) error {
+	err := c.do(ctx, http.MethodPost, c.apiURL+"/sandbox/"+url.PathEscape(room)+"/stop", nil, nil, nil)
+	if isStatus(err, http.StatusConflict) {
+		return nil
+	}
+	return err
+}
+
+// Resume starts the sandbox again and, once it has started, argv in it: a
+// stopped Daytona sandbox has lost its process. One that is running is left
+// as it is, so its command is never run twice.
+func (c *Client) Resume(ctx context.Context, room string, argv []string) error {
+	var v sandboxView
+	if err := c.do(ctx, http.MethodGet, c.apiURL+"/sandbox/"+url.PathEscape(room), nil, &v, nil); err != nil {
+		return err
+	}
+	if v.State == "started" {
+		return nil
+	}
+	if err := c.do(ctx, http.MethodPost, c.apiURL+"/sandbox/"+url.PathEscape(room)+"/start", nil, &v, nil); err != nil {
+		return err
+	}
+	if v.ID == "" {
+		v.ID = room
+	}
+	if err := c.waitStarted(ctx, v); err != nil {
+		return err
+	}
+	return c.Start(ctx, room, argv)
 }
 
 // A statusError is Daytona's own answer to a call.

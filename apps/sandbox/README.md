@@ -27,7 +27,8 @@ SANDBOXD_TOKEN=… SANDBOXD_PUBLIC_URL=http://sandboxd:9090 \
 SANDBOXD_DOCKER_SOCKET=/run/user/1000/docker.sock sandbox serve --listen :9090
 ```
 
-`POST /v1/rooms`, `POST /v1/rooms/{id}/start`, `GET /v1/rooms/{id}/ports/{port}`,
+`POST /v1/rooms`, `POST /v1/rooms/{id}/start`, `POST /v1/rooms/{id}/stop`,
+`POST /v1/rooms/{id}/resume`, `GET /v1/rooms/{id}/ports/{port}`,
 `ANY /v1/rooms/{id}/ports/{port}/proxy/...`, `DELETE /v1/rooms/{id}` and
 `GET /healthz`. A room's image must be under a repository prefix in
 `SANDBOXD_IMAGES` (default `ghcr.io/laplacianai/openarity-sandbox`), or the
@@ -37,6 +38,16 @@ naming the image if it cannot. `SANDBOXD_PULL` lists images to pull in the
 background at start. Deploy it with `deployment/docker-compose.sandboxd.yml`, or
 `deployment/k8s/sandboxd/`. Settings are `SANDBOXD_*`; `sandbox serve` with
 none set prints which are required.
+
+A workspace room's `/workspace` is a Docker volume, `oa-sb-<room id>`, so a
+stopped room keeps its files and is resumed with them; the volume is removed
+with the room. A stopped room holds no memory: `SANDBOXD_MEMORY_BUDGET` counts
+only running rooms, and a resume that does not fit answers `503`. A create may
+ask for a size up to `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS`
+and `SANDBOXD_WORKSPACE_BYTES` (the disk), and is refused with `422` past
+them. Disk is a soft cap: every 30 seconds sandboxd measures the volumes and
+stops a room past its disk, and every volume together is held to
+`SANDBOXD_DISK_BUDGET` (default 8 GiB).
 
 ## Build and test
 

@@ -113,6 +113,10 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/toolbox/sb-1/process/session/openarity/exec":
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"cmdId":"c1"}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/stop":
+		_, _ = w.Write([]byte(`{"id":"sb-1","state":"stopping"}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/start":
+		_, _ = w.Write([]byte(`{"id":"sb-1","state":"starting"}`))
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/sandbox/sb-1":
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"destroying"}`))
 	default:
@@ -590,6 +594,81 @@ func TestAPublicRoomOnASelfHostedDaytonaIsRefused(t *testing.T) {
 	} {
 		if _, err := f.client().Create(t.Context(), s); !errors.Is(err, sandbox.ErrRefused) {
 			t.Errorf("%+v: %v, want ErrRefused", s, err)
+		}
+	}
+}
+
+func TestStopStopsTheSandbox(t *testing.T) {
+	f := newFake(t)
+	if err := f.client().Stop(t.Context(), "sb-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.paths(), ","); got != "POST /api/sandbox/sb-1/stop" {
+		t.Fatalf("calls = %s", got)
+	}
+}
+
+// A stopped sandbox has lost its process: a resume starts it, waits for it,
+// and runs the command again.
+func TestResumeStartsAStoppedSandboxAndRunsItsCommandAgain(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "started"}
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(f.paths(), ",")
+	if !strings.Contains(got, "POST /api/sandbox/sb-1/start") || !strings.HasSuffix(got, "POST /toolbox/sb-1/process/session/openarity/exec") {
+		t.Fatalf("calls = %s", got)
+	}
+	if cmd := f.last(http.MethodPost).Body["command"]; cmd != "'sandbox' 'workspace'" {
+		t.Fatalf("command = %v", cmd)
+	}
+}
+
+// One that runs is left alone, so its command is never run twice.
+func TestResumeOfARunningSandboxRunsNothing(t *testing.T) {
+	f := newFake(t)
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.paths(), ","); got != "GET /api/sandbox/sb-1" {
+		t.Fatalf("calls = %s", got)
+	}
+}
+
+func TestStopAndResumeOfAGoneSandboxAreErrNotFound(t *testing.T) {
+	f := newFake(t)
+	if err := f.client().Stop(t.Context(), "gone"); !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("stop: %v", err)
+	}
+	if err := f.client().Resume(t.Context(), "gone", []string{"x"}); !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("resume: %v", err)
+	}
+}
+
+func TestCreateSendsTheTeamsSizeInWholeGB(t *testing.T) {
+	f := newFake(t)
+	_, err := f.client().Create(t.Context(), sandbox.Spec{
+		Image: "image:room:1", Workspace: true, Size: &sandbox.Size{MemoryMB: 1536, CPUs: 2, DiskMB: 8192},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := f.last(http.MethodPost).Body
+	if b["cpu"] != float64(2) || b["memory"] != float64(2) || b["disk"] != float64(8) {
+		t.Fatalf("size sent = cpu %v memory %v disk %v", b["cpu"], b["memory"], b["disk"])
+	}
+}
+
+func TestCreateWithNoSizeLeavesItToDaytona(t *testing.T) {
+	f := newFake(t)
+	if _, err := f.client().Create(t.Context(), sandbox.Spec{Image: "image:room:1"}); err != nil {
+		t.Fatal(err)
+	}
+	b := f.last(http.MethodPost).Body
+	for _, k := range []string{"cpu", "memory", "disk"} {
+		if _, ok := b[k]; ok {
+			t.Errorf("%s sent with no size", k)
 		}
 	}
 }

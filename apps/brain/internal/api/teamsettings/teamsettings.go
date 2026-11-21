@@ -32,6 +32,9 @@ const (
 	// The brain's line before teams could set it, kept for a team that
 	// never saved its settings.
 	defaultCompactionTokensMin = 50_000
+	// defaultKeepHours is how long a stopped workspace keeps its files, as
+	// the table's default has it.
+	defaultKeepHours           = 24
 	defaultCompactionTokensMax = 60_000
 )
 
@@ -164,6 +167,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	p.ImprovementDailyPasses = req.ImprovementDailyPasses
 	p.ImprovementPassTokens, p.ImprovementPassMinutes = req.ImprovementPassTokens, req.ImprovementPassMinutes
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
+	lifecycle(&p, req.Sandbox, stored)
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
 	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
 	if err != nil {
@@ -376,6 +380,10 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 			URL:      row.SandboxUrl,
 			Template: row.SandboxTemplate,
 			KeySet:   row.SandboxSecretID != nil,
+
+			KeepHours:     row.SandboxKeepHours,
+			IdleMinutes:   row.SandboxIdleMinutes,
+			WorkspaceSize: sizeOf(row),
 		},
 		Browser:                browserView(row),
 		Improvement:            row.Improvement,
@@ -402,7 +410,7 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 func defaults() settings {
 	return settings{
 		Search:                 search{Provider: providerNone},
-		Sandbox:                sandbox{Provider: string(sandboxpkg.None)},
+		Sandbox:                sandbox{Provider: string(sandboxpkg.None), KeepHours: defaultKeepHours},
 		Browser:                browser{Provider: string(browserpkg.None)},
 		ImprovementSampleShare: defaultSampleShare,
 		ImprovementDailyPasses: defaultDailyPasses,
@@ -412,4 +420,38 @@ func defaults() settings {
 		CompactionTokensMin:    defaultCompactionTokensMin,
 		CompactionTokensMax:    defaultCompactionTokensMax,
 	}
+}
+
+// lifecycle is the stop and keep times and the size to save: what the
+// request sends, and what is stored for what it leaves out. A save of the
+// model or anything else that sends no sandbox keeps all of them.
+func lifecycle(p *db.UpsertTeamSettingsParams, s *sandboxRequest, stored *db.TeamSetting) {
+	if stored != nil {
+		p.SandboxKeepHours = &stored.SandboxKeepHours
+		p.SandboxIdleMinutes = stored.SandboxIdleMinutes
+		p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb =
+			stored.SandboxWorkspaceMemoryMb, stored.SandboxWorkspaceCpus, stored.SandboxWorkspaceDiskMb
+	}
+	if s == nil {
+		return
+	}
+	if s.KeepHours != nil {
+		p.SandboxKeepHours = s.KeepHours
+	}
+	if s.IdleMinutes.Set {
+		p.SandboxIdleMinutes = s.IdleMinutes.Value
+	}
+	if s.WorkspaceSize.Set {
+		p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = nil, nil, nil
+		if z := s.WorkspaceSize.Value; z != nil {
+			p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = &z.MemoryMB, &z.CPUs, &z.DiskMB
+		}
+	}
+}
+
+func sizeOf(row db.TeamSetting) *size {
+	if row.SandboxWorkspaceMemoryMb == nil || row.SandboxWorkspaceCpus == nil || row.SandboxWorkspaceDiskMb == nil {
+		return nil
+	}
+	return &size{MemoryMB: *row.SandboxWorkspaceMemoryMb, CPUs: *row.SandboxWorkspaceCpus, DiskMB: *row.SandboxWorkspaceDiskMb}
 }

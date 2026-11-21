@@ -34,9 +34,22 @@ existed, applied again, ends the grant. Add `workspace: true` to the file.
 
 The room is made by the first call that needs it and is shared by every agent
 working on the conversation, delegates included, so a file one writes is there
-for the next. It stays while it is used, and an idle room is deleted after
-`OPENARITY_SANDBOX_IDLE` (thirty minutes by default) with what was in it. A
-conversation deleted takes its room with it. A [hub](hub.md) the team chose
+for the next. A conversation deleted takes its room with it.
+
+The room stops when the conversation's last run ends, and holds no memory
+while stopped. Its files stay: the next run that calls it starts it again
+with `/workspace` as it was left. A room left running, such as one whose run
+is waiting for a person's approval, stops after the team's idle minutes, or
+`OPENARITY_SANDBOX_IDLE` (thirty minutes by default) when the team has set
+none. A stopped room is deleted with its files after the team's keep hours,
+24 unless the team sets otherwise, from 1 to 720:
+
+```sh
+oa teams settings set platform --keep-stopped-hours 72 --stop-idle-minutes 15
+```
+
+The same settings are under Workspaces in the Sandbox section of the
+dashboard's Settings. A [hub](hub.md) the team chose
 from its agents has one when it is granted one, like any agent, and can work
 in it as well as hand work on; the built-in hub has none.
 
@@ -79,11 +92,27 @@ token read inside a room is not enough to call the workspace from outside.
 A provider whose commands run as root, or can `sudo`, keeps nothing in the
 room from them; the workspace warns when it starts as root.
 
-On sandboxd a workspace room has 1.5 GiB of memory, one CPU and a 512 MiB
-`/workspace`, set with `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS`
-and `SANDBOXD_WORKSPACE_BYTES`. On E2B the room template the brain builds in
-the team's account has 2 vCPUs and 2 GiB; on Daytona the snapshot sets the
-size.
+## Size
+
+A team may give its workspaces a size of its own, memory, CPUs and disk
+together, so a team that trains models can have 8 GB while another has 1:
+
+```sh
+oa teams settings set ml --workspace-memory-mb 8192 --workspace-cpus 4 --workspace-disk-mb 20480
+oa teams settings set ml --no-workspace-size     # back to the provider's
+```
+
+A change gives each conversation a new room on its next call, without the
+files of the old one. With none set, the provider's size is used:
+
+| Provider | Without a size | With one |
+| --- | --- | --- |
+| sandboxd | 1.5 GiB of memory, one CPU and 512 MiB of disk | Up to what its operator gives a workspace, `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS` and `SANDBOXD_WORKSPACE_BYTES`; past that the room is refused |
+| Daytona | Its snapshot's | Memory and disk rounded up to whole GB |
+| E2B | Its template's, 2 CPUs and 2 GB | Not yet: refused until a template is built per size |
+
+sandboxd's disk is a soft cap: it measures every 30 seconds and stops a room
+past its size.
 
 On E2B the first room waits for that template to be built, a few minutes after
 the sandbox is saved, and again after an upgrade. Until it is, a call says the
@@ -104,8 +133,8 @@ grants it.
 
 ## Not built
 
-- **Files outlive the room** only while it is in use. Saving `/workspace` when
-  an idle room is deleted, and bringing it back, comes next.
+- **Files outlive the room** only until its keep hours end. Saving
+  `/workspace` somewhere longer-lived comes later.
 - **A granted skill's scripts** are not yet copied into the room.
 - **A file in the room cannot yet be sent** to the person or read as an
   attachment.

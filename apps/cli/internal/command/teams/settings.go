@@ -29,12 +29,19 @@ var settingFlags = []string{
 	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share", "daily-passes", "pass-tokens", "pass-minutes",
 	"compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
+	"keep-stopped-hours", "stop-idle-minutes", "no-stop-idle-minutes", "workspace-memory-mb", "workspace-cpus", "workspace-disk-mb", "no-workspace-size",
 	"browser", "browser-url", "browser-key-stdin", "no-browser-key",
 }
 
 // sandboxFlags are the ones that send a sandbox at all. Without any, the
 // request leaves it out and the brain keeps the stored one, key and all.
-var sandboxFlags = []string{"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template"}
+var sandboxFlags = []string{
+	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
+	"keep-stopped-hours", "stop-idle-minutes", "no-stop-idle-minutes", "workspace-memory-mb", "workspace-cpus", "workspace-disk-mb", "no-workspace-size",
+}
+
+// sizeFlags set a workspace's size, which is sent whole.
+var sizeFlags = []string{"workspace-memory-mb", "workspace-cpus", "workspace-disk-mb"}
 
 // browserFlags are the ones that send a browser, as sandboxFlags a sandbox.
 var browserFlags = []string{"browser", "browser-url", "browser-key-stdin", "no-browser-key"}
@@ -105,6 +112,14 @@ type settingsFlags struct {
 	sandboxKeyStdin bool
 	e2bTemplate     string
 	noE2BTemplate   bool
+
+	keepHours     int32
+	idleMinutes   int32
+	noIdleMinutes bool
+	memoryMB      int32
+	cpus          int32
+	diskMB        int32
+	noSize        bool
 
 	browser         string
 	browserURL      string
@@ -219,6 +234,15 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&f.noE2BTemplate, "no-e2b-template", false, "e2b only: return to the default template")
 	cmd.Flags().BoolVar(&f.sandboxKeyStdin, "sandbox-key-stdin", false,
 		"read the sandbox provider's key, or sandboxd's token, from stdin")
+	cmd.Flags().Int32Var(&f.keepHours, "keep-stopped-hours", 0,
+		"how long a stopped workspace keeps its files, 1 to 720 hours; 24 unless set")
+	cmd.Flags().Int32Var(&f.idleMinutes, "stop-idle-minutes", 0,
+		"stop a running workspace unused this long, 1 to 1440 minutes")
+	cmd.Flags().BoolVar(&f.noIdleMinutes, "no-stop-idle-minutes", false, "return to the deployment's idle time")
+	cmd.Flags().Int32Var(&f.memoryMB, "workspace-memory-mb", 0, "a workspace room's memory; set with --workspace-cpus and --workspace-disk-mb")
+	cmd.Flags().Int32Var(&f.cpus, "workspace-cpus", 0, "a workspace room's CPUs")
+	cmd.Flags().Int32Var(&f.diskMB, "workspace-disk-mb", 0, "a workspace room's disk")
+	cmd.Flags().BoolVar(&f.noSize, "no-workspace-size", false, "return to the provider's own size")
 	cmd.Flags().StringVar(&f.browser, "browser", "",
 		"what runs drive pages in: none, browserless, steel, lightpanda, cdp, browserbase, hyperbrowser, anchor, kernel or brightdata")
 	cmd.Flags().StringVar(&f.browserURL, "browser-url", "",
@@ -285,6 +309,12 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return fmt.Errorf("--pass-tokens is a count of tokens, 100000 to 2000000, not %d", f.passTokens)
 	case changed("pass-minutes") && (f.passMinutes < 1 || f.passMinutes > 25):
 		return fmt.Errorf("--pass-minutes is a count of minutes, 1 to 25, not %d", f.passMinutes)
+	case changed("stop-idle-minutes") && f.noIdleMinutes:
+		return errors.New("--stop-idle-minutes and --no-stop-idle-minutes contradict each other")
+	case slices.ContainsFunc(sizeFlags, changed) && f.noSize:
+		return errors.New("--no-workspace-size cannot be combined with a workspace size")
+	case slices.ContainsFunc(sizeFlags, changed) && (!changed("workspace-memory-mb") || !changed("workspace-cpus") || !changed("workspace-disk-mb")):
+		return errors.New("a workspace size is --workspace-memory-mb, --workspace-cpus and --workspace-disk-mb together")
 	case changed("hub") && f.noHub:
 		return errors.New("--hub and --no-hub contradict each other")
 	case changed("hub") && strings.TrimSpace(f.hub) == "":
@@ -406,10 +436,39 @@ func (f *settingsFlags) body(changed func(string) bool, cur *client.TeamSettings
 	if err != nil {
 		return nil, err
 	}
+	sandbox, err := f.sandboxBody(req.Sandbox)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(struct {
 		client.TeamSettingsRequest
 		JudgeModel json.RawMessage `json:"judge_model,omitempty"`
-	}{req, judge})
+		Sandbox    json.RawMessage `json:"sandbox,omitempty"`
+	}{req, judge, sandbox})
+}
+
+// sandboxBody is the sandbox as JSON with its nulls written in, or nil to
+// leave it out.
+func (f *settingsFlags) sandboxBody(s *client.SandboxSettingsRequest) (json.RawMessage, error) {
+	if s == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(s) //nolint:gosec // the key is sent to the brain, which is what this request is for
+	if err != nil {
+		return nil, err
+	}
+	nulls := f.sandboxNulls()
+	if len(nulls) == 0 {
+		return raw, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	for _, k := range nulls {
+		m[k] = nil
+	}
+	return json.Marshal(m)
 }
 
 // judge is the judge_model to send, or nil to leave it out.
@@ -482,7 +541,30 @@ func (f *settingsFlags) applySandbox(
 		t := strings.TrimSpace(f.e2bTemplate)
 		s.Template = &t
 	}
+	if changed("keep-stopped-hours") {
+		s.KeepHours = &f.keepHours
+	}
+	if changed("stop-idle-minutes") {
+		s.IdleMinutes = &f.idleMinutes
+	}
+	if changed("workspace-memory-mb") {
+		s.WorkspaceSize = &client.WorkspaceSize{MemoryMb: f.memoryMB, Cpus: f.cpus, DiskMb: f.diskMB}
+	}
 	return &s
+}
+
+// sandboxNulls are the sandbox fields a request sends as null, which the
+// generated type would leave out: null is the provider's, or the
+// deployment's, and left out keeps what is stored.
+func (f *settingsFlags) sandboxNulls() []string {
+	var out []string
+	if f.noIdleMinutes {
+		out = append(out, "idle_minutes")
+	}
+	if f.noSize {
+		out = append(out, "workspace_size")
+	}
+	return out
 }
 
 func readKey(in io.Reader, what, hint string) (string, error) {
@@ -600,6 +682,25 @@ func printSandbox(table *printer.Table, opts *cli.Options, s client.SandboxSetti
 			key = "set"
 		}
 		table.Row(label("sandbox key"), value(key))
+		printWorkspaceLife(table, opts, s)
+	}
+}
+
+// printWorkspaceLife is a workspace's size and when it stops and is cleared.
+func printWorkspaceLife(table *printer.Table, opts *cli.Options, s client.SandboxSettings) {
+	label, value, muted := opts.Styles.Label.Render, opts.Styles.Value.Render, opts.Styles.Muted.Render
+	if z := s.WorkspaceSize; z != nil {
+		table.Row(label("workspace size"), value(fmt.Sprintf("%d MB · %d CPU · %d MB disk", z.MemoryMb, z.Cpus, z.DiskMb)))
+	} else {
+		table.Row(label("workspace size"), muted("the provider's"))
+	}
+	if s.IdleMinutes != nil {
+		table.Row(label("stop when idle"), value(fmt.Sprintf("after %d min", *s.IdleMinutes)))
+	} else {
+		table.Row(label("stop when idle"), muted("the deployment's"))
+	}
+	if s.KeepHours != nil {
+		table.Row(label("keep stopped"), value(fmt.Sprintf("%d h", *s.KeepHours)))
 	}
 }
 

@@ -34,7 +34,7 @@ func newEffects(
 	// its rooms, so deleting them first lets one sweep finish both.
 	effects := []reaper.Effect{}
 	if k := newKeeper(cfg, logger, dbStore, secretStore); k != nil {
-		effects = append(effects, reaper.Rooms(dbStore, k, cfg.SandboxIdle))
+		effects = append(effects, reaper.Rooms(dbStore, k, cfg.SandboxIdle, logger))
 	}
 
 	return append(effects,
