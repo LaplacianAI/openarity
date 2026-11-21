@@ -626,6 +626,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams/{id}/approvals/{approvalID}/decision": "team approval:self",
 		// Waiting proposals are narrowed to approvers in the handler.
 		"GET /teams/{id}/improvements":                        "member",
+		"GET /teams/{id}/improvements/passes":                 "team improvement:approve",
 		"GET /teams/{id}/improvements/{proposalID}":           "member",
 		"POST /teams/{id}/improvements/{proposalID}/decision": "team improvement:approve",
 		"GET /teams/{id}/approval-settings":                   "member",

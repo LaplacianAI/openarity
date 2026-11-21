@@ -13,9 +13,9 @@ The sidebar is grouped by the job a screen is for:
 | Group | Screens | What they are for |
 | ----- | ------- | ----------------- |
 | Work | Home, Runs, Sessions, Approvals | Is the team working, what did it do, who is waiting |
-| Build | Agents, Skills, MCP servers, Channels, Builder, Blueprint | Defining what the team can do and where it hears from |
+| Build | Agents, Skills, MCP servers, Channels, Builder, Blueprint, Improvements | Defining what the team can do and where it hears from, and the changes its agents propose to themselves |
 | Understand | Graph | The team's agents, servers, tools and skills as the graph holds them |
-| Team | Team settings, Improvements, Teams, Deleted teams | The team's model, hub, web search and self-improvement; the changes its agents propose to themselves; its members; and, for super admins only, deleted teams and restoring one |
+| Team | Team settings, Teams, Deleted teams | The team's model, hub, web search and self-improvement; its members; and, for super admins only, deleted teams and restoring one |
 
 The team in the top bar is the one everything is scoped to, shown with your
 role in it; with more than one team it is a switcher. Approvals shows how many
@@ -67,6 +67,28 @@ Everyone else sees what was applied. A change is refused if its agent or skill
 has changed since it was proposed, and approving one withdraws the others
 waiting on the same target.
 
+The changes come from the **improver**. When one signature (the part of an
+agent's setup involved and the cause) recurs in three of its runs, or once a
+day when there is something new, a pass reads the agent's setup, the digests
+behind the pattern, up to ten of its runs in full and its record of earlier
+proposals, and proposes zero or more changes; proposing nothing is the usual
+answer. It also offers to drop a skill the agent held in each of its last 50
+runs and never opened, or a tool it never called. Each proposal is held to its
+kind's rules and screened by the judge model for one conversation's details (a
+name, an id, a quoted message) before it is stored. A newer pass's proposal replaces one an earlier pass left
+waiting on the same pattern, with the same kind of change to the same target; a
+person's own proposal, and one of another kind, wait on. Anything a pass read
+that someone outside the team spoke in bars it from proposing a change that
+widens the agent. An approver's **Passes** tab lists every pass: why it ran,
+what came of it, its tokens, and its report, including why it left a pattern
+alone; a report drawn on a conversation the approver cannot read is withheld.
+A pass runs on the judge model, else the team's. Team settings cap what it
+costs: the passes a day (20 until changed), the tokens a pass may spend across
+its tries (400,000), and the minutes for each try (20); past either it stops
+and reports what it found. A pass cut short this way (or by improvement being
+turned off) with nothing proposed leaves its pattern open, offered again after
+six hours, and the Passes tab says it was cut short.
+
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to
 a member (it suggests the member whose name fits, when exactly one does). A
@@ -111,7 +133,8 @@ the hub, compaction, web search, the sandbox, the browser, and whether the
 team's agents improve themselves from their runs. While that is on, every
 finished run is judged in the background on whether the task was done, by the
 team's model or a judge model chosen here, and a share of the good runs (10%
-until changed) is studied beside every bad one. Under each answer in a
+until changed) is studied beside every bad one, as is a run that ended well
+after one of its tools failed twice or more on the way. Under each answer in a
 conversation, a member who may run agents can press 👍 or 👎, with a line on
 what was wrong; that outranks the judge for that run. A run's trace shows how
 it was judged, and how many members gave 👍 and 👎, never who. Judging

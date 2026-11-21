@@ -27,7 +27,8 @@ LIMIT sqlc.arg('page_size');
 -- What a check needs of the team: whether it is still on, which model
 -- judges (the judge's, else the team's), and the share digested.
 -- name: GetImprovementSettings :one
-SELECT improvement, improvement_sample_share,
+SELECT improvement, improvement_sample_share, improvement_daily_passes,
+       improvement_pass_tokens, improvement_pass_minutes,
        model_name, model_max_tokens, model_temperature,
        judge_model_name, judge_model_max_tokens, judge_model_temperature
 FROM team_settings WHERE team_id = $1;
@@ -143,3 +144,13 @@ SELECT f.run_id, f.value, f.note, f.updated_at FROM run_feedback f
 JOIN runs r ON r.id = f.run_id
 WHERE r.session_id = sqlc.arg(session_id) AND f.user_id = sqlc.arg(user_id)
 ORDER BY f.run_id;
+
+-- Whether one tool failed more than once anywhere in a run's tree: a run
+-- that ended well may still have fought a tool, and that is worth a digest.
+-- name: RunHasRepeatedToolFailures :one
+SELECT EXISTS (
+    SELECT 1 FROM run_events e JOIN runs r ON r.id = e.run_id
+    WHERE r.root_run_id = sqlc.arg(root_run_id) AND e.kind = 'tool_result'
+      AND COALESCE(e.payload->>'error', '') <> ''
+    GROUP BY e.payload->>'name'
+    HAVING count(*) >= sqlc.arg(at_least)::int)::bool;

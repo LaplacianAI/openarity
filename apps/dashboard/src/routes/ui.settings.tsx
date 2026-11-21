@@ -265,6 +265,11 @@ export type SettingsDraft = {
   judgeTemperature: string;
   /** The share of good runs studied, as typed. */
   sampleShare: string;
+  /** The most improver passes in a day, as typed. */
+  dailyPasses: string;
+  /** What one try at a pass may spend, as typed. */
+  passTokens: string;
+  passMinutes: string;
   /** Messages, and the token lines, as typed: compared by value. */
   compaction: string;
   tokensMin: string;
@@ -300,6 +305,9 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     judgeTemperature:
       s.judge_model?.temperature === undefined ? "" : String(s.judge_model?.temperature ?? ""),
     sampleShare: String(s.improvement_sample_share ?? 10),
+    dailyPasses: String(s.improvement_daily_passes ?? 20),
+    passTokens: grouped(s.improvement_pass_tokens ?? 400_000),
+    passMinutes: String(s.improvement_pass_minutes ?? 20),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -332,6 +340,9 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
     "judgeMaxTokens",
     "judgeTemperature",
     "sampleShare",
+    "dailyPasses",
+    "passTokens",
+    "passMinutes",
   ],
 };
 
@@ -349,6 +360,9 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
   "tokensMin",
   "tokensMax",
   "sampleShare",
+  "dailyPasses",
+  "passTokens",
+  "passMinutes",
 ]);
 
 /** Whether a group's fields differ from what the brain holds. */
@@ -494,16 +508,32 @@ function modelRef(
 }
 
 /**
- * The judge model and the sample share, each only when it differs from what
- * the brain holds. A judge model of null sends the team back to judging on its
- * own model.
+ * The judge model, the sample share, the daily passes and a pass's tokens and
+ * minutes, each only when it differs from what the brain holds. A judge model
+ * of null sends the team back to judging on its own model.
  */
 function improvementRequest(
   d: SettingsDraft,
   stored: TeamSettings,
-): Pick<TeamSettingsRequest, "judge_model" | "improvement_sample_share"> | string {
+):
+  | Pick<
+      TeamSettingsRequest,
+      | "judge_model"
+      | "improvement_sample_share"
+      | "improvement_daily_passes"
+      | "improvement_pass_tokens"
+      | "improvement_pass_minutes"
+    >
+  | string {
   const base = draftOf(stored);
-  const out: Pick<TeamSettingsRequest, "judge_model" | "improvement_sample_share"> = {};
+  const out: Pick<
+    TeamSettingsRequest,
+    | "judge_model"
+    | "improvement_sample_share"
+    | "improvement_daily_passes"
+    | "improvement_pass_tokens"
+    | "improvement_pass_minutes"
+  > = {};
   const judgeChanged = (
     ["judgeOn", "judgeName", "judgeMaxTokens", "judgeTemperature"] as const
   ).some((f) => d[f] !== base[f]);
@@ -525,6 +555,27 @@ function improvementRequest(
     const share = wholeNumber(d.sampleShare);
     if (share === null || share > 100) return "The share must be a whole number from 0 to 100.";
     out.improvement_sample_share = share;
+  }
+  if (parseWhole(d.dailyPasses) !== parseWhole(base.dailyPasses)) {
+    const passes = wholeNumber(d.dailyPasses);
+    if (passes === null || passes < 1 || passes > 200) {
+      return "Passes a day must be a whole number from 1 to 200.";
+    }
+    out.improvement_daily_passes = passes;
+  }
+  if (parseWhole(d.passTokens) !== parseWhole(base.passTokens)) {
+    const tokens = parseWhole(d.passTokens);
+    if (tokens === null || tokens < 100_000 || tokens > 2_000_000) {
+      return "Tokens a pass must be a whole number from 100,000 to 2,000,000.";
+    }
+    out.improvement_pass_tokens = tokens;
+  }
+  if (parseWhole(d.passMinutes) !== parseWhole(base.passMinutes)) {
+    const minutes = wholeNumber(d.passMinutes);
+    if (minutes === null || minutes < 1 || minutes > 25) {
+      return "Minutes a try must be a whole number from 1 to 25.";
+    }
+    out.improvement_pass_minutes = minutes;
   }
   return out;
 }
@@ -1227,7 +1278,7 @@ function SettingsForm({
       >
         <SwitchField
           label="Improve agents from their runs"
-          description="While this is on, each finished run is judged in the background on whether the task was done, and members can mark an answer right or wrong. Agents proposing changes to themselves from this arrives in a later release."
+          description="While this is on, each finished run is judged in the background on whether the task was done, and members can mark an answer right or wrong. When one weakness recurs for an agent in three runs, or once a day, the improver proposes changes for an approver to decide."
           checked={draft.improvement}
           onCheckedChange={(improvement) => set("improvement", { improvement })}
         />
@@ -1280,28 +1331,73 @@ function SettingsForm({
                 </Field>
               </div>
             ) : null}
-            <Field
-              label="Share of good runs to study"
-              htmlFor="settings-sample-share"
-              hint="Runs judged bad are always studied. A share of the good ones is too, so agents keep what works. Each one studied costs another model call."
-            >
-              <div className="relative max-w-40">
+            <div className="grid items-start gap-3 sm:grid-cols-2">
+              <Field
+                label="Share of good runs to study"
+                htmlFor="settings-sample-share"
+                hint="Runs judged bad are always studied. A share of the good ones is too, so agents keep what works. Each one studied costs another model call."
+              >
+                <div className="relative max-w-40">
+                  <Input
+                    id="settings-sample-share"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    className="pr-9 tabular-nums"
+                    value={draft.sampleShare}
+                    onChange={(e) => set("improvement", { sampleShare: e.target.value })}
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
+                  >
+                    %
+                  </span>
+                </div>
+              </Field>
+              <Field
+                label="Passes a day, at most"
+                htmlFor="settings-daily-passes"
+                hint="Each pass the improver makes costs model calls. This caps how many it makes for the team in a day, from 1 to 200."
+              >
                 <Input
-                  id="settings-sample-share"
+                  id="settings-daily-passes"
                   inputMode="numeric"
                   autoComplete="off"
-                  className="pr-9 tabular-nums"
-                  value={draft.sampleShare}
-                  onChange={(e) => set("improvement", { sampleShare: e.target.value })}
+                  className="max-w-40 tabular-nums"
+                  value={draft.dailyPasses}
+                  onChange={(e) => set("improvement", { dailyPasses: e.target.value })}
                 />
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
-                >
-                  %
-                </span>
-              </div>
-            </Field>
+              </Field>
+              <Field
+                label="Tokens a pass, at most"
+                htmlFor="settings-pass-tokens"
+                hint="What a pass may spend across its tries, screening included, before it stops and reports what it found. From 100,000 to 2,000,000."
+              >
+                <Input
+                  id="settings-pass-tokens"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="max-w-40 tabular-nums"
+                  value={draft.passTokens}
+                  onChange={(e) => set("improvement", { passTokens: e.target.value })}
+                  onBlur={(e) => set("improvement", { passTokens: tidied(e.target.value) })}
+                />
+              </Field>
+              <Field
+                label="Minutes a try, at most"
+                htmlFor="settings-pass-minutes"
+                hint="How long one try at a pass may run before it stops and reports what it found. A pass that cannot reach its model is tried up to three times. From 1 to 25."
+              >
+                <Input
+                  id="settings-pass-minutes"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="max-w-40 tabular-nums"
+                  value={draft.passMinutes}
+                  onChange={(e) => set("improvement", { passMinutes: e.target.value })}
+                />
+              </Field>
+            </div>
           </>
         ) : null}
       </Section>

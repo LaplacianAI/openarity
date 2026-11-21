@@ -73,10 +73,12 @@ func Sampled(runID uuid.UUID, share int16) bool {
 	return int16(binary.BigEndian.Uint64(sum[:8])%100) < share
 }
 
-// digestFor is whether a judged run is digested: every bad one, and a good
-// one in the sample, so the improver has successes to contrast with.
-func digestFor(e Effect, sampled bool) string {
-	if e == Bad || (e == Good && sampled) {
+// digestFor is whether a judged run is digested: every bad one, every one
+// whose tree fought a tool (the same tool failing again and again, though
+// the run may have ended well), and a good one in the sample, so the
+// improver has successes to contrast with.
+func digestFor(e Effect, sampled, toolTrouble bool) string {
+	if e == Bad || toolTrouble || (e == Good && sampled) {
 		return digestPending
 	}
 	return digestSkipped

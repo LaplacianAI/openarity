@@ -55,6 +55,13 @@ var errChanged = errors.New("the target changed since this was proposed")
 
 func refuse(format string, a ...any) error { return ruleError{fmt.Sprintf(format, a...)} }
 
+// Refused is whether err is a change the rules refuse, said as it is, as
+// opposed to a failure to read or write.
+func Refused(err error) bool {
+	var r ruleError
+	return errors.As(err, &r)
+}
+
 // The fields an agent proposal can tell apart. Each kind names the ones it
 // may change; the rest must be equal.
 const (

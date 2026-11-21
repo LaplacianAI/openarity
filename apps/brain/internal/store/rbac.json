@@ -331,6 +331,12 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/improvements/passes",
+      "scope": "team",
+      "permission": "improvement:approve"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/improvements/{proposalID}",
       "scope": "member"
     },

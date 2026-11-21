@@ -63,17 +63,19 @@ func TestSampled(t *testing.T) {
 
 func TestDigestFor(t *testing.T) {
 	for _, tc := range []struct {
-		e       Effect
-		sampled bool
-		want    string
+		e                Effect
+		sampled, trouble bool
+		want             string
 	}{
-		{Bad, false, digestPending},
-		{Good, true, digestPending},
-		{Good, false, digestSkipped},
-		{Neither, true, digestSkipped},
+		{Bad, false, false, digestPending},
+		{Good, true, false, digestPending},
+		{Good, false, false, digestSkipped},
+		{Neither, true, false, digestSkipped},
+		{Good, false, true, digestPending},
+		{Neither, false, true, digestPending},
 	} {
-		if got := digestFor(tc.e, tc.sampled); got != tc.want {
-			t.Errorf("digestFor(%s, %v) = %s, want %s", tc.e, tc.sampled, got, tc.want)
+		if got := digestFor(tc.e, tc.sampled, tc.trouble); got != tc.want {
+			t.Errorf("digestFor(%s, sampled %v, trouble %v) = %s, want %s", tc.e, tc.sampled, tc.trouble, got, tc.want)
 		}
 	}
 }

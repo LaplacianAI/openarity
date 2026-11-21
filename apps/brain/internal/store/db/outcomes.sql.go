@@ -91,7 +91,8 @@ func (q *Queries) DeleteRunFeedback(ctx context.Context, arg DeleteRunFeedbackPa
 }
 
 const getImprovementSettings = `-- name: GetImprovementSettings :one
-SELECT improvement, improvement_sample_share,
+SELECT improvement, improvement_sample_share, improvement_daily_passes,
+       improvement_pass_tokens, improvement_pass_minutes,
        model_name, model_max_tokens, model_temperature,
        judge_model_name, judge_model_max_tokens, judge_model_temperature
 FROM team_settings WHERE team_id = $1
@@ -100,6 +101,9 @@ FROM team_settings WHERE team_id = $1
 type GetImprovementSettingsRow struct {
 	Improvement            bool
 	ImprovementSampleShare int16
+	ImprovementDailyPasses int16
+	ImprovementPassTokens  int32
+	ImprovementPassMinutes int16
 	ModelName              *string
 	ModelMaxTokens         *int32
 	ModelTemperature       *float64
@@ -116,6 +120,9 @@ func (q *Queries) GetImprovementSettings(ctx context.Context, teamID uuid.UUID) 
 	err := row.Scan(
 		&i.Improvement,
 		&i.ImprovementSampleShare,
+		&i.ImprovementDailyPasses,
+		&i.ImprovementPassTokens,
+		&i.ImprovementPassMinutes,
 		&i.ModelName,
 		&i.ModelMaxTokens,
 		&i.ModelTemperature,
@@ -663,6 +670,29 @@ WHERE run_id = $1 AND digest = 'skipped'
 func (q *Queries) ReopenRunDigest(ctx context.Context, runID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, reopenRunDigest, runID)
 	return err
+}
+
+const runHasRepeatedToolFailures = `-- name: RunHasRepeatedToolFailures :one
+SELECT EXISTS (
+    SELECT 1 FROM run_events e JOIN runs r ON r.id = e.run_id
+    WHERE r.root_run_id = $1 AND e.kind = 'tool_result'
+      AND COALESCE(e.payload->>'error', '') <> ''
+    GROUP BY e.payload->>'name'
+    HAVING count(*) >= $2::int)::bool
+`
+
+type RunHasRepeatedToolFailuresParams struct {
+	RootRunID uuid.UUID
+	AtLeast   int32
+}
+
+// Whether one tool failed more than once anywhere in a run's tree: a run
+// that ended well may still have fought a tool, and that is worth a digest.
+func (q *Queries) RunHasRepeatedToolFailures(ctx context.Context, arg RunHasRepeatedToolFailuresParams) (bool, error) {
+	row := q.db.QueryRow(ctx, runHasRepeatedToolFailures, arg.RootRunID, arg.AtLeast)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const sessionHasOutsider = `-- name: SessionHasOutsider :one

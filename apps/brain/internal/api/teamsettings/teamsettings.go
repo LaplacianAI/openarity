@@ -25,6 +25,9 @@ const (
 	// A tenth of the runs judged done are digested, beside every bad one, so
 	// the improver has successes to contrast with.
 	defaultSampleShare = 10
+	defaultDailyPasses = 20
+	defaultPassTokens  = 400_000
+	defaultPassMinutes = 20
 	// The brain's line before teams could set it, kept for a team that
 	// never saved its settings.
 	defaultCompactionTokensMin = 50_000
@@ -146,6 +149,8 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		p.JudgeModelName, p.JudgeModelMaxTokens, p.JudgeModelTemperature = &m.Name, &m.MaxTokens, m.Temperature
 	}
 	p.ImprovementSampleShare = sampleShare(req, stored)
+	p.ImprovementDailyPasses = req.ImprovementDailyPasses
+	p.ImprovementPassTokens, p.ImprovementPassMinutes = req.ImprovementPassTokens, req.ImprovementPassMinutes
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
 	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
@@ -320,6 +325,9 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 		Browser:                browserView(row),
 		Improvement:            row.Improvement,
 		ImprovementSampleShare: row.ImprovementSampleShare,
+		ImprovementDailyPasses: row.ImprovementDailyPasses,
+		ImprovementPassTokens:  row.ImprovementPassTokens,
+		ImprovementPassMinutes: row.ImprovementPassMinutes,
 		ImprovementSince:       row.ImprovementSince,
 		CompactionMessages:     row.CompactionMessages,
 		CompactionTokensMin:    row.CompactionTokensMin,
@@ -342,6 +350,9 @@ func defaults() settings {
 		Sandbox:                sandbox{Provider: string(sandboxpkg.None)},
 		Browser:                browser{Provider: string(browserpkg.None)},
 		ImprovementSampleShare: defaultSampleShare,
+		ImprovementDailyPasses: defaultDailyPasses,
+		ImprovementPassTokens:  defaultPassTokens,
+		ImprovementPassMinutes: defaultPassMinutes,
 		CompactionMessages:     defaultCompaction,
 		CompactionTokensMin:    defaultCompactionTokensMin,
 		CompactionTokensMax:    defaultCompactionTokensMax,
