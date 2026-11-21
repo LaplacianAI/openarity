@@ -679,3 +679,76 @@ func TestAHubRunSaysItWasTheHubs(t *testing.T) {
 		})
 	}
 }
+
+// --- the outcome ---
+
+const judgedExtra = `,"output":"Labelled 4 issues.","outcome":{"verdict":"not_done","missed":"the two unlabelled ones",
+  "why":"it stopped early","implicit":"none","effective":"bad","judged_at":"2026-10-21T09:30:00Z",
+  "feedback":{"up":1,"down":2}},"my_feedback":{"value":"down","note":"too slow","updated_at":"2026-10-21T10:00:00Z"}`
+
+func TestGetShowsTheOutcomeAndYourFeedbackApart(t *testing.T) {
+	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}",
+		clitest.Reply{Status: http.StatusOK, Body: runJSON(runID, "succeeded", judgedExtra)}))
+
+	out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+	if err != nil {
+		t.Fatalf("runs get: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"judged", "the two unlabelled ones", "it stopped early",
+		"comes to", "bad", "not done", "👍 1", "👎 2", "your feedback", "down", "too slow",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "judged") > strings.Index(out, "your feedback") {
+		t.Errorf("the judge's verdict and the person's feedback are not apart:\n%s", out)
+	}
+}
+
+func TestGetWithoutAnOutcomeShowsNothingExtra(t *testing.T) {
+	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: finishedRun}))
+
+	out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+	if err != nil {
+		t.Fatalf("runs get: %v\n%s", err, out)
+	}
+	for _, not := range []string{"judged", "comes to", "members", "your feedback"} {
+		if strings.Contains(out, not) {
+			t.Errorf("shows %q for a run with no outcome:\n%s", not, out)
+		}
+	}
+}
+
+func TestGetShowsOnlyYourFeedbackWhenNotJudged(t *testing.T) {
+	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{
+		Status: http.StatusOK,
+		Body:   runJSON(runID, "succeeded", `,"my_feedback":{"value":"up","note":"","updated_at":"2026-10-21T10:00:00Z"}`),
+	}))
+
+	out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+	if err != nil {
+		t.Fatalf("runs get: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "your feedback") || strings.Contains(out, "judged") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestGetJSONCarriesTheOutcome(t *testing.T) {
+	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}",
+		clitest.Reply{Status: http.StatusOK, Body: runJSON(runID, "succeeded", judgedExtra)}))
+
+	out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID, "-o", "json")
+	if err != nil {
+		t.Fatalf("runs get: %v\n%s", err, out)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not json: %v\n%s", err, out)
+	}
+	if got["outcome"] == nil || got["my_feedback"] == nil {
+		t.Errorf("outcome or my_feedback dropped: %v", got)
+	}
+}

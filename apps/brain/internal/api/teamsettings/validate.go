@@ -21,6 +21,8 @@ const (
 	providerFirecrawlCloud = "firecrawl-cloud"
 	providerFirecrawlOSS   = "firecrawl-oss"
 
+	maxSampleShare = 100
+
 	minCompaction = 10
 	maxCompaction = 10000
 	// Below this a run would compact almost every step: a compaction keeps
@@ -32,9 +34,17 @@ const (
 
 func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr) bool) error {
 	if req.Model != nil {
-		if err := checkModel(*req.Model); err != nil {
+		if err := checkModel("model", *req.Model); err != nil {
 			return err
 		}
+	}
+	if req.JudgeModel.Model != nil {
+		if err := checkModel("judge_model", *req.JudgeModel.Model); err != nil {
+			return err
+		}
+	}
+	if s := req.ImprovementSampleShare; s != nil && (*s < 0 || *s > maxSampleShare) {
+		return fmt.Errorf("improvement_sample_share must be between 0 and %d", maxSampleShare)
 	}
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
 		return fmt.Errorf("compaction_messages must be between %d and %d", minCompaction, maxCompaction)
@@ -89,16 +99,40 @@ func checkCompactionTokens(least, most int32) error {
 	return nil
 }
 
-func checkModel(m modelRef) error {
+func checkModel(field string, m modelRef) error {
 	switch {
 	case m.Name == "" || strings.TrimSpace(m.Name) != m.Name || strings.ContainsRune(m.Name, 0):
-		return errors.New("model.name must name a model")
+		return errors.New(field + ".name must name a model")
 	case m.MaxTokens <= 0:
-		return errors.New("model.max_tokens must be greater than 0")
+		return errors.New(field + ".max_tokens must be greater than 0")
 	case m.Temperature != nil && (*m.Temperature < 0 || *m.Temperature > 2):
-		return errors.New("model.temperature must be between 0 and 2")
+		return errors.New(field + ".temperature must be between 0 and 2")
 	}
 	return nil
+}
+
+// judgeModel is the judge model a save leaves: the request's when it names
+// one (null clears it), else the stored one.
+func judgeModel(req settingsRequest, stored *db.TeamSetting) *modelRef {
+	if req.JudgeModel.Set {
+		return req.JudgeModel.Model
+	}
+	if stored != nil && stored.JudgeModelName != nil && stored.JudgeModelMaxTokens != nil {
+		return &modelRef{Name: *stored.JudgeModelName, MaxTokens: *stored.JudgeModelMaxTokens, Temperature: stored.JudgeModelTemperature}
+	}
+	return nil
+}
+
+// sampleShare is the share a save leaves: the request's, else the stored
+// one, else the default.
+func sampleShare(req settingsRequest, stored *db.TeamSetting) int16 {
+	switch {
+	case req.ImprovementSampleShare != nil:
+		return *req.ImprovementSampleShare
+	case stored != nil:
+		return stored.ImprovementSampleShare
+	}
+	return defaultSampleShare
 }
 
 func checkSearch(s searchRequest, stored *db.TeamSetting, allow func(netip.Addr) bool) error {

@@ -279,6 +279,18 @@
       "permission": "run:write"
     },
     {
+      "method": "PUT",
+      "path": "/teams/{id}/runs/{runID}/feedback",
+      "scope": "team",
+      "permission": "run:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/runs/{runID}/feedback",
+      "scope": "team",
+      "permission": "run:write"
+    },
+    {
       "method": "GET",
       "path": "/teams/{id}/summary",
       "scope": "member"
@@ -461,6 +473,11 @@
     {
       "method": "GET",
       "path": "/teams/{id}/sessions/{sessionID}/runs",
+      "scope": "member"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/sessions/{sessionID}/feedback",
       "scope": "member"
     },
     {

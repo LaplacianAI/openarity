@@ -31,7 +31,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa teams members add <team> <user>` | Add someone to a team, with `--role` (`member`, `approver` or `admin`) |
 | `oa teams members remove <team> <user>` | Take someone out of a team                      |
 | `oa teams settings show <team>` | Show a team's model, web search, self-improvement, compaction and hub |
-| `oa teams settings set <team>` | Change only the settings named by flags, such as `--compaction-messages`, `--compaction-tokens-min` and `--compaction-tokens-max` (30,000 to 1,000,000, the least never above the most) |
+| `oa teams settings set <team>` | Change only the settings named by flags, such as `--compaction-messages`, `--compaction-tokens-min` and `--compaction-tokens-max` (30,000 to 1,000,000, the least never above the most), `--judge-model` (with `--judge-max-tokens`, `--judge-temperature`) or `--no-judge-model`, and `--sample-share` (0 to 100) |
 | `oa improvements list <team>` | List the changes agents propose to themselves: waiting for an approver, applied for everyone else; `--status`, `--agent` and `--query` narrow it |
 | `oa improvements show <team> <proposal>` | Show one proposal: why, what it expects, what it reaches and the change |
 | `oa improvements approve <team> <proposal>` | Apply a waiting change (needs `improvement:approve` and the write it makes) |
@@ -48,6 +48,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa sessions list <team>`      | List a team's conversations, or one channel's with `--channel` |
 | `oa sessions get <team> <session>` | Show a conversation: its kind, where it came from and when |
 | `oa sessions read <team> <session>` | Read a conversation                                 |
+| `oa sessions feedback <team> <run> up\|down [--note TEXT]` | Give or change your 👍/👎 on a run's answer, which outranks the judge's verdict; `--clear` removes it |
 | `oa runs start <team> [agent] <input>` | Ask the team's hub, or start an agent on a task; `--session` continues a conversation (a run already working there takes the input as a message, and the row says `steered`), `--follow` prints its events |
 | `oa runs events <team> <run>`  | Follow what a run does, as it does it: each call and result, `↧ compacted` when it set part of its context aside (`--verbose` adds the summary), and `⚠ wrapping up` when it was asked to finish before a limit |
 | `oa runs get <team> <run>`     | Show a run: its status, input, answer and what it spent  |

@@ -1,6 +1,8 @@
 package teams
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,10 +23,15 @@ const maxKeyBytes = 4096
 // the team names none, and what deployment/sandbox/e2b builds by default.
 const defaultE2BTemplate = "openarity-sandbox"
 
+// defaultJudgeMaxTokens is the output limit of a judge model named without
+// one: a verdict is a few sentences, so this is generous.
+const defaultJudgeMaxTokens = 4096
+
 var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
-	"improvement", "compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
+	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share",
+	"compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 	"browser", "browser-url", "browser-key-stdin", "no-browser-key",
 }
@@ -81,11 +88,18 @@ type settingsFlags struct {
 	keyStdin    bool
 	noKey       bool
 	improvement string
-	compaction  int32
-	tokensMin   int32
-	tokensMax   int32
-	hub         string
-	noHub       bool
+
+	judgeModel       string
+	judgeMaxTokens   int32
+	judgeTemperature float64
+	noJudgeModel     bool
+	sampleShare      int32
+
+	compaction int32
+	tokensMin  int32
+	tokensMax  int32
+	hub        string
+	noHub      bool
 
 	sandbox         string
 	sandboxURL      string
@@ -174,8 +188,13 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 				return err
 			}
 
-			saved, err := cli.Result(api.SaveTeamSettingsWithResponse(cmd.Context(), team,
-				f.apply(changed, current, keys{key, sandboxKey, browserKey})))
+			req := f.apply(changed, current, keys{key, sandboxKey, browserKey})
+			body, err := f.body(changed, current, req)
+			if err != nil {
+				return err
+			}
+			saved, err := cli.Result(api.SaveTeamSettingsWithBodyWithResponse(cmd.Context(), team,
+				"application/json", bytes.NewReader(body)))
 			if err != nil {
 				return cli.Needs(err, "team:settings")
 			}
@@ -209,6 +228,14 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		"read the browser provider's key from stdin; brightdata's is the zone's USER:PASS")
 	cmd.Flags().BoolVar(&f.noBrowserKey, "no-browser-key", false, "a self-hosted browser only: reach it with no key")
 	cmd.Flags().StringVar(&f.improvement, "improvement", "", "on or off")
+	cmd.Flags().StringVar(&f.judgeModel, "judge-model", "",
+		"the model that judges and digests runs, as the gateway names it; default is the team's model")
+	cmd.Flags().Int32Var(&f.judgeMaxTokens, "judge-max-tokens", 0,
+		"the judge model's output limit per call; 4096 when --judge-model is given without it")
+	cmd.Flags().Float64Var(&f.judgeTemperature, "judge-temperature", 0, "the judge model's, between 0 and 2")
+	cmd.Flags().BoolVar(&f.noJudgeModel, "no-judge-model", false, "judge runs on the team's model again")
+	cmd.Flags().Int32Var(&f.sampleShare, "sample-share", 0,
+		"the percentage of runs judged done that are learned from anyway, 0 to 100")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().Int32Var(&f.tokensMin, "compaction-tokens-min", 0,
 		"the least a run's next request may read before it compacts, 30000 to 1000000")
@@ -241,6 +268,12 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("stdin holds one key: set the search, sandbox and browser keys in separate commands")
 	case changed("improvement") && f.improvement != "on" && f.improvement != "off":
 		return fmt.Errorf("--improvement takes on or off, not %q", f.improvement)
+	case f.noJudgeModel && (changed("judge-model") || changed("judge-max-tokens") || changed("judge-temperature")):
+		return errors.New("--no-judge-model cannot be combined with --judge-model, --judge-max-tokens or --judge-temperature")
+	case changed("judge-model") && strings.TrimSpace(f.judgeModel) == "":
+		return errors.New("--judge-model takes a model's name; --no-judge-model returns to the team's model")
+	case changed("sample-share") && (f.sampleShare < 0 || f.sampleShare > 100):
+		return fmt.Errorf("--sample-share is a percentage, 0 to 100, not %d", f.sampleShare)
 	case changed("hub") && f.noHub:
 		return errors.New("--hub and --no-hub contradict each other")
 	case changed("hub") && strings.TrimSpace(f.hub) == "":
@@ -336,9 +369,57 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 		name := strings.TrimSpace(f.hub)
 		req.Hub = &name
 	}
+	// Sent only when given: left out, the brain keeps what is stored.
+	if changed("sample-share") {
+		req.ImprovementSampleShare = &f.sampleShare
+	}
 	req.Sandbox = f.applySandbox(changed, cur.Sandbox, k.sandbox)
 	req.Browser = f.applyBrowser(changed, cur.Browser, k.browser)
 	return req
+}
+
+// body is the request as JSON. The judge model is the one field with three
+// states: left out keeps the stored one, null clears it, an object sets it,
+// and a nil pointer cannot tell the first two apart, so it is written here.
+func (f *settingsFlags) body(changed func(string) bool, cur *client.TeamSettings, req client.TeamSettingsRequest) ([]byte, error) {
+	judge, err := f.judge(changed, cur)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		client.TeamSettingsRequest
+		JudgeModel json.RawMessage `json:"judge_model,omitempty"`
+	}{req, judge})
+}
+
+// judge is the judge_model to send, or nil to leave it out.
+func (f *settingsFlags) judge(changed func(string) bool, cur *client.TeamSettings) (json.RawMessage, error) {
+	switch {
+	case f.noJudgeModel:
+		return json.RawMessage("null"), nil
+	case !changed("judge-model") && !changed("judge-max-tokens") && !changed("judge-temperature"):
+		return nil, nil
+	}
+
+	m := client.ModelRef{MaxTokens: defaultJudgeMaxTokens}
+	switch {
+	case cur.JudgeModel != nil:
+		m = *cur.JudgeModel
+	case !changed("judge-model"):
+		return nil, errors.New("no judge model is set — name one with --judge-model, " +
+			"which the other judge flags then adjust")
+	}
+	if changed("judge-model") {
+		m.Name = strings.TrimSpace(f.judgeModel)
+	}
+	if changed("judge-max-tokens") {
+		m.MaxTokens = f.judgeMaxTokens
+	}
+	if changed("judge-temperature") {
+		t := f.judgeTemperature
+		m.Temperature = &t
+	}
+	return json.Marshal(m)
 }
 
 func (f *settingsFlags) applyBrowser(
@@ -433,6 +514,10 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 				improvement = "on"
 			}
 			table.Row(label("self-improvement"), value(improvement))
+			if s.ImprovementSince != nil {
+				table.Row(label("improving since"), value(s.ImprovementSince.Format("2006-01-02 15:04")))
+			}
+			printJudge(table, opts, s)
 			table.Row(label("compaction"), value(compactionLine(s)))
 			if s.Hub == nil {
 				table.Row(label("hub"), muted("orchestrator (built in)"))
@@ -441,6 +526,26 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 			}
 		},
 	})
+}
+
+// printJudge prints nothing for a brain that predates the judge, which sends
+// no share.
+func printJudge(table *printer.Table, opts *cli.Options, s *client.TeamSettings) {
+	label, value := opts.Styles.Label.Render, opts.Styles.Value.Render
+
+	if s.ImprovementSampleShare == nil {
+		return
+	}
+	if s.JudgeModel == nil {
+		table.Row(label("judge model"), opts.Styles.Muted.Render("same as the team's model"))
+	} else {
+		m := cli.Safe(s.JudgeModel.Name) + " · " + strconv.Itoa(int(s.JudgeModel.MaxTokens)) + " tokens"
+		if s.JudgeModel.Temperature != nil {
+			m += " · temperature " + strconv.FormatFloat(*s.JudgeModel.Temperature, 'g', -1, 64)
+		}
+		table.Row(label("judge model"), value(m))
+	}
+	table.Row(label("sample share"), value(strconv.Itoa(int(*s.ImprovementSampleShare))+"%"))
 }
 
 // printSandbox prints nothing for a brain that predates sandboxes, which

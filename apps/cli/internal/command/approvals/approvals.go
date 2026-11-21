@@ -411,7 +411,7 @@ func decide(cmd *cobra.Command, opts *cli.Options, args []string, approve, forRu
 		return fmt.Errorf("--reason is at most %d characters", maxReason)
 	}
 
-	via := client.Cli
+	via := client.ApprovalDecisionViaCli
 	body := client.DecideApprovalJSONRequestBody{Approve: approve, Via: &via}
 	if forRun {
 		scope := client.ApprovalDecisionScopeRun

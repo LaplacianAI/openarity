@@ -42,6 +42,10 @@ type run struct {
 	// Reply is what became of the run's answer to its channel; null for a run
 	// that answers none.
 	Reply *reply `json:"reply"`
+	// Outcome is how the run was judged, and MyFeedback the caller's word on
+	// it; given on a single run's read only, and absent until there is one.
+	Outcome    *outcomeView  `json:"outcome,omitempty"`
+	MyFeedback *feedbackView `json:"my_feedback,omitempty"`
 }
 
 type reply struct {

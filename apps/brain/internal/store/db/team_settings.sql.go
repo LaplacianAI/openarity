@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -42,6 +42,11 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.BrowserSecretID,
 		&i.CompactionTokensMin,
 		&i.CompactionTokensMax,
+		&i.JudgeModelName,
+		&i.JudgeModelMaxTokens,
+		&i.JudgeModelTemperature,
+		&i.ImprovementSampleShare,
+		&i.ImprovementSince,
 	)
 	return i, err
 }
@@ -71,7 +76,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since
 `
 
 type SetTeamApprovalParams struct {
@@ -109,6 +114,11 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.BrowserSecretID,
 		&i.CompactionTokensMin,
 		&i.CompactionTokensMax,
+		&i.JudgeModelName,
+		&i.JudgeModelMaxTokens,
+		&i.JudgeModelTemperature,
+		&i.ImprovementSampleShare,
+		&i.ImprovementSince,
 	)
 	return i, err
 }
@@ -131,7 +141,9 @@ INSERT INTO team_settings (
     search_provider, search_url, search_secret_id,
     improvement, compaction_messages, compaction_tokens_min, compaction_tokens_max, hub_agent_id,
     sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
-    browser_provider, browser_url, browser_secret_id
+    browser_provider, browser_url, browser_secret_id,
+    judge_model_name, judge_model_max_tokens, judge_model_temperature,
+    improvement_sample_share, improvement_since
 ) VALUES (
     $1,
     $2, $3, $4,
@@ -139,7 +151,10 @@ INSERT INTO team_settings (
     $8, $9,
     $10, $11, $12,
     $13, $14, $15, $16,
-    $17, $18, $19
+    $17, $18, $19,
+    $20, $21, $22,
+    $23,
+    CASE WHEN $8::bool THEN now() END
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -160,30 +175,43 @@ ON CONFLICT (team_id) DO UPDATE SET
     browser_provider    = EXCLUDED.browser_provider,
     browser_url         = EXCLUDED.browser_url,
     browser_secret_id   = EXCLUDED.browser_secret_id,
+    judge_model_name        = EXCLUDED.judge_model_name,
+    judge_model_max_tokens  = EXCLUDED.judge_model_max_tokens,
+    judge_model_temperature = EXCLUDED.judge_model_temperature,
+    improvement_sample_share = EXCLUDED.improvement_sample_share,
+    -- Set each time the switch goes on, kept while it stays on: runs from
+    -- before it went on are never judged.
+    improvement_since   = CASE
+        WHEN EXCLUDED.improvement AND NOT team_settings.improvement THEN now()
+        ELSE team_settings.improvement_since END,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since
 `
 
 type UpsertTeamSettingsParams struct {
-	TeamID              uuid.UUID
-	ModelName           *string
-	ModelMaxTokens      *int32
-	ModelTemperature    *float64
-	SearchProvider      string
-	SearchUrl           *string
-	SearchSecretID      *uuid.UUID
-	Improvement         bool
-	CompactionMessages  int32
-	CompactionTokensMin int32
-	CompactionTokensMax int32
-	HubAgentID          *uuid.UUID
-	SandboxProvider     string
-	SandboxUrl          *string
-	SandboxSecretID     *uuid.UUID
-	SandboxTemplate     *string
-	BrowserProvider     string
-	BrowserUrl          *string
-	BrowserSecretID     *uuid.UUID
+	TeamID                 uuid.UUID
+	ModelName              *string
+	ModelMaxTokens         *int32
+	ModelTemperature       *float64
+	SearchProvider         string
+	SearchUrl              *string
+	SearchSecretID         *uuid.UUID
+	Improvement            bool
+	CompactionMessages     int32
+	CompactionTokensMin    int32
+	CompactionTokensMax    int32
+	HubAgentID             *uuid.UUID
+	SandboxProvider        string
+	SandboxUrl             *string
+	SandboxSecretID        *uuid.UUID
+	SandboxTemplate        *string
+	BrowserProvider        string
+	BrowserUrl             *string
+	BrowserSecretID        *uuid.UUID
+	JudgeModelName         *string
+	JudgeModelMaxTokens    *int32
+	JudgeModelTemperature  *float64
+	ImprovementSampleShare int16
 }
 
 // The whole row every time. A save that keeps the search key passes the same
@@ -210,6 +238,10 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.BrowserProvider,
 		arg.BrowserUrl,
 		arg.BrowserSecretID,
+		arg.JudgeModelName,
+		arg.JudgeModelMaxTokens,
+		arg.JudgeModelTemperature,
+		arg.ImprovementSampleShare,
 	)
 	var i TeamSetting
 	err := row.Scan(
@@ -235,6 +267,11 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.BrowserSecretID,
 		&i.CompactionTokensMin,
 		&i.CompactionTokensMax,
+		&i.JudgeModelName,
+		&i.JudgeModelMaxTokens,
+		&i.JudgeModelTemperature,
+		&i.ImprovementSampleShare,
+		&i.ImprovementSince,
 	)
 	return i, err
 }
