@@ -122,5 +122,15 @@ func newKeeper(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, se
 		return nil
 	}
 	client := discovery.PlainClient(discovery.Policy{Allow: reachable(cfg.MCPPrivateNetworks)})
-	return keeper.New(dbStore, roomSecrets{secretStore, w}, newSandboxConnect(client), client, roomImages(cfg), logger)
+	return keeper.New(dbStore, roomSecrets{secretStore, w}, newSandboxConnect(client), client, roomImages(cfg), logger).
+		Building(newTemplates(cfg, logger, dbStore, secretStore))
+}
+
+// newTemplates builds the room image into each E2B team's account. E2B is
+// public, so its client may reach public addresses only.
+func newTemplates(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) *keeper.Templates {
+	client := discovery.PlainClient(discovery.Policy{})
+	return keeper.NewTemplates(dbStore, secretStore, func(key string) keeper.TemplateClient {
+		return e2b.New(key, client)
+	}, roomImages(cfg), logger)
 }

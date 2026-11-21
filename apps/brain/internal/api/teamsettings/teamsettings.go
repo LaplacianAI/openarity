@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -43,15 +44,24 @@ type Secrets interface {
 	Put(ctx context.Context, path, key, value string) error
 }
 
+// Templates builds the room template in an E2B team's account.
+type Templates interface {
+	Want(ctx context.Context, team, key uuid.UUID, retry time.Duration) (db.E2BTemplate, error)
+	Current(ctx context.Context, team, key uuid.UUID) (db.E2BTemplate, bool, error)
+}
+
 type handler struct {
 	logger  *slog.Logger
 	store   Store
 	secrets Secrets
 	allow   func(netip.Addr) bool
+	// templates is nil in a brain that cannot keep rooms; an E2B team's
+	// settings then show no build.
+	templates Templates
 }
 
-func New(logger *slog.Logger, s Store, sec Secrets, allow func(netip.Addr) bool) *api.Router {
-	h := &handler{logger: logger, store: s, secrets: sec, allow: allow}
+func New(logger *slog.Logger, s Store, sec Secrets, allow func(netip.Addr) bool, tpl Templates) *api.Router {
+	h := &handler{logger: logger, store: s, secrets: sec, allow: allow, templates: tpl}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/settings", h.get)
@@ -83,7 +93,9 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.WriteJSON(w, h.logger, http.StatusOK, view(row, hub))
+	out := view(row, hub)
+	out.Sandbox.TemplateBuild = h.build(r.Context(), row, false)
+	api.WriteJSON(w, h.logger, http.StatusOK, out)
 }
 
 func (h *handler) put(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +174,37 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to save team settings", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, view(saved, hub))
+	out := view(saved, hub)
+	out.Sandbox.TemplateBuild = h.build(r.Context(), saved, true)
+	api.WriteJSON(w, h.logger, http.StatusOK, out)
+}
+
+// build is the room template's build for an E2B team that names no template
+// of its own. A save asks for one when there is none or the last failed, so
+// the team's first room does not wait for it; a read only reads. Trouble is
+// logged and shown as no build: the settings were saved, and the next room
+// asks again.
+func (h *handler) build(ctx context.Context, row db.TeamSetting, save bool) *templateBuild {
+	if h.templates == nil || row.SandboxProvider != string(sandboxpkg.E2B) ||
+		row.SandboxTemplate != nil || row.SandboxSecretID == nil {
+		return nil
+	}
+	var b db.E2BTemplate
+	var err error
+	found := true
+	if save {
+		b, err = h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, 0)
+	} else {
+		b, found, err = h.templates.Current(ctx, row.TeamID, *row.SandboxSecretID)
+	}
+	if err != nil {
+		h.logger.WarnContext(ctx, "the team's room template was not read or asked for", "team_id", row.TeamID, "error", err)
+		return nil
+	}
+	if !found {
+		return nil
+	}
+	return &templateBuild{Name: b.Name, Status: b.Status, Error: b.Error, UpdatedAt: b.UpdatedAt}
 }
 
 // raced is a save whose token lines were checked against settings another

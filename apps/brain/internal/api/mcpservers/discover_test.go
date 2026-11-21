@@ -185,6 +185,10 @@ func TestEachDiscoveryFailureHasItsStatus(t *testing.T) {
 			fmt.Errorf("%w: %w: the room answered 503 from vault.corp", discovery.ErrRoom, sandbox.ErrNotReady),
 			http.StatusGatewayTimeout, "sandbox room did not start in time",
 		},
+		"a sandbox still being prepared": {
+			fmt.Errorf("%w: %w", discovery.ErrRoom, sandbox.ErrPreparing),
+			http.StatusServiceUnavailable, "still being prepared",
+		},
 		"a room the provider refused": {
 			fmt.Errorf("%w: making the room: %w", discovery.ErrRoom, sandbox.ErrRefused),
 			http.StatusBadGateway, "check the sandbox in Settings",

@@ -80,8 +80,14 @@ room from them; the workspace warns when it starts as root.
 
 On sandboxd a workspace room has 1.5 GiB of memory, one CPU and a 512 MiB
 `/workspace`, set with `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS`
-and `SANDBOXD_WORKSPACE_BYTES`. On E2B and Daytona the template or snapshot
-sets the size.
+and `SANDBOXD_WORKSPACE_BYTES`. On E2B the room template the brain builds in
+the team's account has 2 vCPUs and 2 GiB; on Daytona the snapshot sets the
+size.
+
+On E2B the first room waits for that template to be built, a few minutes after
+the sandbox is saved, and again after an upgrade. Until it is, a call says the
+sandbox is still being prepared and nothing ran; Settings shows the build, and
+why it failed if it did.
 
 ## Approvals
 

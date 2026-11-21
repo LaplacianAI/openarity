@@ -836,6 +836,15 @@ export type BrowserProvider =
  * `updated_at` null. The search key is never returned; `key_set` says
  * whether there is one.
  */
+/** The room template the brain builds in an E2B team's account. */
+export type SandboxTemplateBuild = {
+  name: string;
+  status: "building" | "ready" | "failed";
+  /** E2B's reason; null unless failed. */
+  error: string | null;
+  updated_at: string;
+};
+
 export type TeamSettings = {
   model: { name: string; max_tokens: number; temperature?: number } | null;
   search: { provider: SearchProvider; url: string | null; key_set: boolean };
@@ -843,9 +852,15 @@ export type TeamSettings = {
   sandbox: {
     provider: SandboxProvider;
     url: string | null;
-    /** E2B only: the template its rooms start from; null for openarity-sandbox. */
+    /** E2B only: a template of the team's own; null for the one the brain builds. */
     template?: string | null;
     key_set: boolean;
+    /**
+     * E2B with no template of the team's own: the brain's build of its room
+     * image in the team's account. Null before one is asked for, and absent
+     * from a brain that predates it.
+     */
+    template_build?: SandboxTemplateBuild | null;
   };
   /** The key is never returned. Absent from a brain that predates browsers. */
   browser?: { provider: BrowserProvider; url: string | null; key_set: boolean };

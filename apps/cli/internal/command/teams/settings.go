@@ -19,10 +19,6 @@ import (
 
 const maxKeyBytes = 4096
 
-// defaultE2BTemplate is what the brain starts an E2B team's rooms from when
-// the team names none, and what deployment/sandbox/e2b builds by default.
-const defaultE2BTemplate = "openarity-sandbox"
-
 // defaultJudgeMaxTokens is the output limit of a judge model named without
 // one: a verdict is a few sentences, so this is generous.
 const defaultJudgeMaxTokens = 4096
@@ -216,7 +212,7 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().StringVar(&f.sandboxURL, "sandbox-url", "",
 		"a self-hosted provider's API address: sandboxd, or a self-hosted daytona")
 	cmd.Flags().StringVar(&f.e2bTemplate, "e2b-template", "",
-		"e2b only: the template rooms start from, built in your E2B account; default openarity-sandbox")
+		"e2b only: a template of your own that rooms start from; by default the brain builds its room image in your E2B account")
 	cmd.Flags().BoolVar(&f.noE2BTemplate, "no-e2b-template", false, "e2b only: return to the default template")
 	cmd.Flags().BoolVar(&f.sandboxKeyStdin, "sandbox-key-stdin", false,
 		"read the sandbox provider's key, or sandboxd's token, from stdin")
@@ -564,7 +560,7 @@ func printSandbox(table *printer.Table, opts *cli.Options, s client.SandboxSetti
 		if s.Template != nil {
 			table.Row(label("e2b template"), value(cli.Safe(*s.Template)))
 		} else {
-			table.Row(label("e2b template"), opts.Styles.Muted.Render(defaultE2BTemplate+" (default)"))
+			table.Row(label("e2b template"), templateBuild(opts, s.TemplateBuild))
 		}
 	}
 	if s.Provider != client.SandboxProviderNone {
@@ -573,6 +569,23 @@ func printSandbox(table *printer.Table, opts *cli.Options, s client.SandboxSetti
 			key = "set"
 		}
 		table.Row(label("sandbox key"), value(key))
+	}
+}
+
+// templateBuild is the template the brain builds in an E2B team's account,
+// and how far its build is.
+func templateBuild(opts *cli.Options, b *client.SandboxTemplateBuild) string {
+	if b == nil {
+		return opts.Styles.Muted.Render("built by the brain when the first room starts")
+	}
+	name := opts.Styles.Value.Render(cli.Safe(b.Name))
+	switch b.Status {
+	case client.SandboxTemplateBuildStatusReady:
+		return name + opts.Styles.Muted.Render(" (built)")
+	case client.SandboxTemplateBuildStatusFailed:
+		return name + opts.Styles.Muted.Render(" (failed: "+cli.Safe(b.Error)+"; retried in ten minutes, or on a save)")
+	default:
+		return name + opts.Styles.Muted.Render(" (building, a few minutes)")
 	}
 }
 

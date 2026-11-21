@@ -698,9 +698,11 @@ func TestTheBrainChoosesTheRoomImage(t *testing.T) {
 		"daytona says it is an image":   {commit, sandbox.Daytona, "", "image:ghcr.io/laplacianai/openarity-sandbox:sha-abc1234"},
 		"the operator's override":       {override, sandbox.Sandboxd, "", "registry.example/room:7"},
 		"the override on daytona":       {override, sandbox.Daytona, "", "image:registry.example/room:7"},
-		"e2b's default template":        {commit, sandbox.E2B, "", "openarity-sandbox"},
+		"e2b's built template":          {commit, sandbox.E2B, "", "openarity-sandbox-abc1234"},
+		"e2b's template cut to 12":      {keeper.Images{Commit: "0123456789abcdef"}, sandbox.E2B, "", "openarity-sandbox-0123456789ab"},
+		"e2b, no commit":                {latest, sandbox.E2B, "", "openarity-sandbox-latest"},
 		"e2b's own template":            {commit, sandbox.E2B, "ours", "ours"},
-		"e2b ignores the override":      {override, sandbox.E2B, "", "openarity-sandbox"},
+		"e2b built from the override":   {override, sandbox.E2B, "", "openarity-sandbox-dcca0994017d"},
 	} {
 		if got := tc.images.For(tc.provider, tc.template); got != tc.want {
 			t.Errorf("%s: image = %q, want %q", name, got, tc.want)

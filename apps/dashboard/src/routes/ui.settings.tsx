@@ -25,6 +25,7 @@ import type {
   BrowserProvider,
   ModelRef,
   SandboxProvider,
+  SandboxTemplateBuild,
   SearchProvider,
   TeamSettings,
   TeamSettingsRequest,
@@ -155,8 +156,6 @@ const BROWSERS: { value: BrowserProvider; label: string; about: string }[] = [
 /** Providers that run at an address of the team's own. */
 const BROWSER_URL: BrowserProvider[] = ["browserless", "steel", "lightpanda", "cdp"];
 
-/** What an E2B team's rooms start from when it names no template; the build script's default. */
-const E2B_DEFAULT_TEMPLATE = "openarity-sandbox";
 /** The brain's own rule: a name, or owner/name for another team's public template. */
 const E2B_TEMPLATE = /^[a-z0-9][a-z0-9_.-]*(\/[a-z0-9][a-z0-9_.-]*)?$/;
 
@@ -173,6 +172,9 @@ function Settings() {
     queryKey: ["settings", teamId],
     queryFn: () => getTeamSettings(teamId as string),
     enabled: Boolean(teamId),
+    // A room template takes minutes to build; read it again until it is done.
+    refetchInterval: (q) =>
+      q.state.data?.sandbox?.template_build?.status === "building" ? 15_000 : false,
   });
 
   return (
@@ -862,6 +864,34 @@ const GROUPS: Group[] = [
   "improvement",
 ];
 
+/** How far the brain's build of the room template in the team's E2B account is. */
+function TemplateBuildStatus({ build }: { build: SandboxTemplateBuild | null }) {
+  if (build === null) {
+    return (
+      <p className="text-sm text-muted-foreground" role="status">
+        The room template is built in your E2B account when the sandbox is saved, or when the first
+        room starts.
+      </p>
+    );
+  }
+  const text =
+    build.status === "ready"
+      ? "Room template built: rooms start from it."
+      : build.status === "failed"
+        ? `The room template failed to build: ${build.error ?? "E2B gave no reason"}. It is tried again in ten minutes, or when you save.`
+        : "Building the room template in your E2B account. This takes a few minutes; until it is done, agents are told to try again.";
+  return (
+    <p
+      className={
+        build.status === "failed" ? "text-sm text-destructive" : "text-sm text-muted-foreground"
+      }
+      role="status"
+    >
+      {text} <span className="font-mono text-xs">{build.name}</span>
+    </p>
+  );
+}
+
 function SettingsForm({
   teamId,
   stored,
@@ -1119,16 +1149,22 @@ function SettingsForm({
           <Field
             label="Template"
             htmlFor="settings-sandbox-template"
-            hint={`Built in your E2B account from deployment/sandbox/e2b. Empty for ${E2B_DEFAULT_TEMPLATE}.`}
+            hint="Empty to start rooms from the image the brain builds in your E2B account. Name a template of your own only to replace it."
           >
             <Input
               id="settings-sandbox-template"
               spellCheck={false}
-              placeholder={E2B_DEFAULT_TEMPLATE}
+              placeholder="Built by the brain"
               value={draft.sandboxTemplate}
               onChange={(e) => set("sandbox", { sandboxTemplate: e.target.value })}
             />
           </Field>
+        ) : null}
+        {draft.sandbox === "e2b" &&
+        stored.sandbox?.provider === "e2b" &&
+        !stored.sandbox.template &&
+        draft.sandboxTemplate.trim() === "" ? (
+          <TemplateBuildStatus build={stored.sandbox.template_build ?? null} />
         ) : null}
         {draft.sandbox !== "none" ? (
           <Field

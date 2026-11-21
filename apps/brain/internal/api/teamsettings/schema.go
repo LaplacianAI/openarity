@@ -26,6 +26,19 @@ type sandbox struct {
 	URL      *string `json:"url"`
 	Template *string `json:"template"`
 	KeySet   bool    `json:"key_set"`
+	// TemplateBuild is the room template the brain builds in an E2B team's
+	// account, when the team names none of its own; null otherwise, or when
+	// none has been asked for yet.
+	TemplateBuild *templateBuild `json:"template_build"`
+}
+
+// templateBuild is one build of the room template: building, ready or
+// failed, with E2B's reason for a failure.
+type templateBuild struct {
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	Error     *string   `json:"error"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // browser is what the team's runs drive pages in. The key is never shown.

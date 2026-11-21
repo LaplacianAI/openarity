@@ -149,15 +149,21 @@ func TestAnE2BTemplateGoesWithItsProviderOrWhenCleared(t *testing.T) {
 func TestSettingsShowNamesTheE2BTemplateOrItsDefault(t *testing.T) {
 	for stored, want := range map[string]string{
 		e2bSaved: "acme/openarity-sandbox",
-		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`, ``, 1): "openarity-sandbox (default)",
+		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`, ``, 1): "built by the brain when the first room starts",
+		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`,
+			`"template":null,"template_build":{"name":"openarity-sandbox-abc","status":"building","error":null,"updated_at":"2026-11-21T09:00:00Z"},`, 1): "openarity-sandbox-abc (building",
+		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`,
+			`"template":null,"template_build":{"name":"openarity-sandbox-abc","status":"ready","error":null,"updated_at":"2026-11-21T09:00:00Z"},`, 1): "openarity-sandbox-abc (built)",
+		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`,
+			`"template":null,"template_build":{"name":"openarity-sandbox-abc","status":"failed","error":"pull \u001b[31mfailed","updated_at":"2026-11-21T09:00:00Z"},`, 1): `(failed: "pull \x1b[31mfailed"`,
 	} {
 		settingsRoutes(t, stored, http.StatusOK)
 		out, err := clitest.Execute(t, commands, "teams", "settings", "show", teamID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q:\n%s", want, out)
+		if !strings.Contains(out, want) || strings.Contains(out, "\x1b[31m") {
+			t.Errorf("missing %q, or E2B's escape reached the terminal:\n%s", want, out)
 		}
 	}
 }
