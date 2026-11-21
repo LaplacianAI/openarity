@@ -93,10 +93,6 @@ function useNamed(
 }
 
 /**
- * One part of the agent: its name and what it covers on the left from 1024px,
- * the fields on the right. Parts are divided by a rule, not boxed.
- */
-/**
  * The grant waits for a sandbox: it can be set now, and the agent has a
  * workspace once the team chooses where sandboxes run.
  */
@@ -118,6 +114,10 @@ function NoSandbox() {
   );
 }
 
+/**
+ * One part of the agent: its name and what it covers on the left from 1024px,
+ * the fields on the right. Parts are divided by a rule, not boxed.
+ */
 function Section({
   title,
   about,
@@ -394,7 +394,7 @@ export function AgentForm({
       >
         <SwitchField
           label="Can work in a workspace"
-          description="It can run commands and read, write and search files in the conversation's own sandbox, shared with the other agents working on it. The sandbox reaches the public internet and nothing private; its commands are approved as changes are. The hub never has one."
+          description="It can run commands and read, write and search files in the conversation's own sandbox, shared with the other agents working on it. The sandbox reaches the public internet and nothing private; its commands ask for approval wherever changes do. The hub never has one."
           checked={draft.workspace}
           onCheckedChange={(workspace) => set({ workspace })}
         />

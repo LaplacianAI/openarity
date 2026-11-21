@@ -26,6 +26,10 @@ A team with no sandbox can still grant it. Until one is chosen, each run's
 trace shows the six tools as unavailable and says why, and the dashboard says
 so beside the switch.
 
+The grant is a field of the agent, so an update that leaves it out takes it
+away, as it does `web` and `browser`: an agent file written before workspaces
+existed, applied again, ends the grant. Add `workspace: true` to the file.
+
 ## One room per conversation
 
 The room is made by the first call that needs it and is shared by every agent
@@ -53,10 +57,19 @@ interface alone, so one added later is held to the same:
 
 | Provider | How |
 | --- | --- |
-| sandboxd | The room has no route and no DNS of its own. Its HTTP and HTTPS go through sandboxd's proxy, which resolves every name and refuses a private, loopback or link-local address. A program that ignores `HTTP_PROXY` reaches nothing. Raw TCP and UDP do not leave |
+| sandboxd | The room has no route and no DNS of its own. Its HTTP and HTTPS go through sandboxd's proxy, which resolves every name and refuses a private, loopback, link-local or reserved address, and the IPv6 forms that carry one (NAT64, 6to4, Teredo). It refuses the mail ports (25, 465, 587), holds 64 connections a room, and cuts one idle for five minutes. A program that ignores `HTTP_PROXY` reaches nothing. Raw TCP and UDP do not leave |
 | E2B | The private ranges are denied, and everything else is allowed |
 | Daytona cloud | Its runners are not on any network of yours |
 | Self-hosted Daytona | **Refused.** It can only allow up to ten address ranges, never deny, so it cannot keep a room off the network it runs on |
+
+The public internet includes the host's own public address: a port the host
+publishes to the internet is one a room reaches, as anyone can. Keep what is
+published there behind its own authentication or firewall, as sandboxd's API
+is behind its token.
+
+The room's token, which the brain sends with every call, is kept from what
+runs in the room: the workspace process is made undumpable, so no command
+reads its environment, and the file tools do not read `/proc`.
 
 On sandboxd a workspace room has 1.5 GiB of memory, one CPU and a 512 MiB
 `/workspace`, set with `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS`
