@@ -241,8 +241,11 @@ follows no redirect. So an adapter still holds no HTTP client, and:
   minutes and counts the attempt; a mark matches on that count, so a sender
   whose lease ran out cannot overwrite a newer attempt.
 - **Delivery is at least once.** A POST that succeeded before the worker died
-  is sent again; every reply carries the run's id for the receiver to drop a
-  repeat.
+  is sent again; every reply carries an id for the receiver to drop a repeat
+  (`replyID`). The run's answer, or its apology, carries the run's id, an
+  event `<run id>:<seq>`, and anything else, such as the notice that an
+  answer in the chat was taken, `<run id>:<kind>:<reply id>`: under the run's
+  id it would be taken for the answer, and the answer dropped as its repeat.
 - **A finished channel run kicks the queue**, so a reply goes out at once; the
   sweep every minute is for retries and lost kicks.
 
