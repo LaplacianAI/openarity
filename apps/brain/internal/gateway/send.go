@@ -176,11 +176,18 @@ type outgoing struct {
 
 func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 	at := db.ReplySentParams{ID: row.ID, Attempts: row.Attempts}
-	// A run has one answer, which carries the run's id; each event carries the
-	// run event it came from, so a receiver drops a repeat of either.
+	// A run ends in one answer or one apology, which carries the run's id;
+	// each event carries the run event it came from, so a receiver drops a
+	// repeat of either. Anything else the run is sent, as the notice that an
+	// answer in the chat was taken, is its own reply and carries its own row:
+	// under the run's id it would be the answer, and the answer, arriving
+	// after it, would be dropped as its repeat.
 	id, tries := row.RunID.String(), int32(replyAttempts)
-	if row.EventSeq != nil {
+	switch {
+	case row.EventSeq != nil:
 		id, tries = id+":"+strconv.Itoa(int(*row.EventSeq)), eventAttempts
+	case row.Kind != "answer" && row.Kind != "apology":
+		id += ":" + row.Kind + ":" + strconv.FormatInt(row.ID, 10)
 	}
 	return outgoing{
 		what: "reply", id: row.ID, attempts: row.Attempts, tries: tries, partsSent: row.PartsSent,

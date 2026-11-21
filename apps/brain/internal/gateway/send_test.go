@@ -691,6 +691,53 @@ func TestAStepIsSentWithAnIDOfItsOwn(t *testing.T) {
 	}
 }
 
+// The notice that an answer in the chat was taken is a reply of the run's,
+// sent before its answer. Under the run's id it would be the answer, and the
+// answer after it would be dropped as its repeat by any receiver that drops
+// repeats, WhatsApp's holder among them: on staging an approved run's answer
+// was marked sent and never reached the chat. Only the answer, or the
+// apology in its place, carries the run's id; anything else carries its own
+// row, the same on every attempt.
+func TestANoticeOfARunIsNotTakenForItsAnswer(t *testing.T) {
+	t.Parallel()
+
+	rcv := newReceiver(t, http.StatusOK)
+	notice := due(rcv.URL, 1)
+	notice.ID, notice.Kind, notice.Text = 112, "notice", "Approved: get_file_contents on github."
+	answer := due(rcv.URL, 1)
+	answer.ID, answer.RunID = 113, notice.RunID
+	apology := due(rcv.URL, 1)
+	apology.ID, apology.Kind = 114, "apology"
+
+	s := newSending(t)
+	s.store.due = []db.ClaimDueRepliesRow{notice, answer, apology}
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 3 {
+		t.Fatalf("Drain = %d, %v", n, err)
+	}
+	ids := map[string]string{}
+	for _, out := range s.relay.outs {
+		ids[out.Kind] = out.ID
+	}
+	run := notice.RunID.String()
+	if ids["answer"] != run || ids["apology"] != apology.RunID.String() {
+		t.Errorf("answer %q, apology %q: each must carry its run's id", ids["answer"], ids["apology"])
+	}
+	if ids["notice"] != run+":notice:112" {
+		t.Errorf("notice %q, want an id of its own row, never the run's", ids["notice"])
+	}
+
+	// A retry of the notice is the same notice.
+	again := newSending(t)
+	notice.Attempts = 2
+	again.store.due = []db.ClaimDueRepliesRow{notice}
+	if _, err := again.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := again.relay.outs[0].ID; got != ids["notice"] {
+		t.Errorf("a retry of the notice is %q, want %q", got, ids["notice"])
+	}
+}
+
 // A broken step is tried twice, not six times: its answer waits behind it.
 // The answer keeps its own schedule.
 func TestAStepThatFailsTwiceIsGivenUp(t *testing.T) {
