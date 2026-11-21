@@ -518,6 +518,7 @@ type SandboxRoom struct {
 	SandboxSecretID uuid.UUID
 	LastUsedAt      time.Time
 	CreatedAt       time.Time
+	StoppedAt       *time.Time
 }
 
 type Session struct {
@@ -579,36 +580,41 @@ type TeamMember struct {
 }
 
 type TeamSetting struct {
-	TeamID                 uuid.UUID
-	ModelName              *string
-	ModelMaxTokens         *int32
-	ModelTemperature       *float64
-	SearchProvider         string
-	SearchUrl              *string
-	SearchSecretID         *uuid.UUID
-	Improvement            bool
-	CompactionMessages     int32
-	UpdatedAt              time.Time
-	HubAgentID             *uuid.UUID
-	SandboxProvider        string
-	SandboxUrl             *string
-	SandboxSecretID        *uuid.UUID
-	SandboxTemplate        *string
-	ApprovalMode           string
-	ApprovalTtlMinutes     int32
-	BrowserProvider        string
-	BrowserUrl             *string
-	BrowserSecretID        *uuid.UUID
-	CompactionTokensMin    int32
-	CompactionTokensMax    int32
-	JudgeModelName         *string
-	JudgeModelMaxTokens    *int32
-	JudgeModelTemperature  *float64
-	ImprovementSampleShare int16
-	ImprovementSince       *time.Time
-	ImprovementDailyPasses int16
-	ImprovementPassTokens  int32
-	ImprovementPassMinutes int16
+	TeamID                   uuid.UUID
+	ModelName                *string
+	ModelMaxTokens           *int32
+	ModelTemperature         *float64
+	SearchProvider           string
+	SearchUrl                *string
+	SearchSecretID           *uuid.UUID
+	Improvement              bool
+	CompactionMessages       int32
+	UpdatedAt                time.Time
+	HubAgentID               *uuid.UUID
+	SandboxProvider          string
+	SandboxUrl               *string
+	SandboxSecretID          *uuid.UUID
+	SandboxTemplate          *string
+	ApprovalMode             string
+	ApprovalTtlMinutes       int32
+	BrowserProvider          string
+	BrowserUrl               *string
+	BrowserSecretID          *uuid.UUID
+	CompactionTokensMin      int32
+	CompactionTokensMax      int32
+	JudgeModelName           *string
+	JudgeModelMaxTokens      *int32
+	JudgeModelTemperature    *float64
+	ImprovementSampleShare   int16
+	ImprovementSince         *time.Time
+	ImprovementDailyPasses   int16
+	ImprovementPassTokens    int32
+	ImprovementPassMinutes   int16
+	SandboxKeepHours         int32
+	SandboxIdleMinutes       *int32
+	SandboxWorkspaceMemoryMb *int32
+	SandboxWorkspaceCpus     *int32
+	SandboxWorkspaceDiskMb   *int32
 }
 
 type User struct {

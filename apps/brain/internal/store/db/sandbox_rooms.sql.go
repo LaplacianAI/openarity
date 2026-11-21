@@ -68,7 +68,7 @@ INSERT INTO sandbox_rooms (
     $5, $6, $7, $8,
     $9
 )
-RETURNING id, team_id, owner_kind, owner_id, provider, provider_url, room_id, spec_hash, sandbox_secret_id, last_used_at, created_at
+RETURNING id, team_id, owner_kind, owner_id, provider, provider_url, room_id, spec_hash, sandbox_secret_id, last_used_at, created_at, stopped_at
 `
 
 type CreateSandboxRoomParams struct {
@@ -108,6 +108,7 @@ func (q *Queries) CreateSandboxRoom(ctx context.Context, arg CreateSandboxRoomPa
 		&i.SandboxSecretID,
 		&i.LastUsedAt,
 		&i.CreatedAt,
+		&i.StoppedAt,
 	)
 	return i, err
 }
@@ -159,14 +160,39 @@ func (q *Queries) DeletedRoomBacklog(ctx context.Context) ([]DeletedRoomBacklogR
 const expireIdleSandboxRooms = `-- name: ExpireIdleSandboxRooms :execrows
 DELETE FROM sandbox_rooms
 WHERE last_used_at < $1::timestamptz
+  AND owner_kind <> 'session'
   AND pg_try_advisory_xact_lock(hashtextextended('sandbox-room:' || owner_kind || ':' || owner_id::text, 0))
 `
 
 // Rooms unused since the cutoff. A room whose owner is being ensured right
 // now is skipped rather than waited for: it is in use. Deleting the rows
 // tombstones them; the same sweep deletes the rooms.
+//
+// A session's room is stopped when idle, not deleted (ListIdleWorkspaceRooms),
+// so only the other owners' rooms are expired here.
 func (q *Queries) ExpireIdleSandboxRooms(ctx context.Context, cutoff time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, expireIdleSandboxRooms, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expireStoppedSandboxRooms = `-- name: ExpireStoppedSandboxRooms :execrows
+DELETE FROM sandbox_rooms r
+USING sandbox_rooms s
+LEFT JOIN team_settings ts ON ts.team_id = s.team_id
+WHERE r.id = s.id
+  AND s.stopped_at IS NOT NULL
+  AND s.stopped_at < now() - make_interval(hours => coalesce(ts.sandbox_keep_hours, 24))
+  AND pg_try_advisory_xact_lock(hashtextextended('sandbox-room:' || s.owner_kind || ':' || s.owner_id::text, 0))
+`
+
+// Stopped rooms past their team's keep hours: their rows go, which
+// tombstones each room and its token for the sweep. A room being resumed
+// right now is skipped.
+func (q *Queries) ExpireStoppedSandboxRooms(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, expireStoppedSandboxRooms)
 	if err != nil {
 		return 0, err
 	}
@@ -204,7 +230,7 @@ func (q *Queries) GetDeletedRoom(ctx context.Context, id uuid.UUID) (DeletedRoom
 }
 
 const getSandboxRoom = `-- name: GetSandboxRoom :one
-SELECT id, team_id, owner_kind, owner_id, provider, provider_url, room_id, spec_hash, sandbox_secret_id, last_used_at, created_at FROM sandbox_rooms
+SELECT id, team_id, owner_kind, owner_id, provider, provider_url, room_id, spec_hash, sandbox_secret_id, last_used_at, created_at, stopped_at FROM sandbox_rooms
 WHERE owner_kind = $1 AND owner_id = $2
 `
 
@@ -228,8 +254,60 @@ func (q *Queries) GetSandboxRoom(ctx context.Context, arg GetSandboxRoomParams) 
 		&i.SandboxSecretID,
 		&i.LastUsedAt,
 		&i.CreatedAt,
+		&i.StoppedAt,
 	)
 	return i, err
+}
+
+const listIdleWorkspaceRooms = `-- name: ListIdleWorkspaceRooms :many
+SELECT r.id, r.team_id, r.owner_kind, r.owner_id, r.provider, r.provider_url, r.room_id, r.spec_hash, r.sandbox_secret_id, r.last_used_at, r.created_at, r.stopped_at FROM sandbox_rooms r
+LEFT JOIN team_settings ts ON ts.team_id = r.team_id
+WHERE r.owner_kind = 'session'
+  AND r.stopped_at IS NULL
+  AND r.last_used_at < now() - make_interval(mins => coalesce(ts.sandbox_idle_minutes, $1::int))
+ORDER BY r.last_used_at
+LIMIT $2
+`
+
+type ListIdleWorkspaceRoomsParams struct {
+	DefaultMinutes int32
+	Max            int32
+}
+
+// Sessions' rooms that run and have been unused for longer than their
+// team's idle minutes, or the deployment's when the team set none, for the
+// reaper to stop.
+func (q *Queries) ListIdleWorkspaceRooms(ctx context.Context, arg ListIdleWorkspaceRoomsParams) ([]SandboxRoom, error) {
+	rows, err := q.db.Query(ctx, listIdleWorkspaceRooms, arg.DefaultMinutes, arg.Max)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SandboxRoom
+	for rows.Next() {
+		var i SandboxRoom
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.OwnerKind,
+			&i.OwnerID,
+			&i.Provider,
+			&i.ProviderUrl,
+			&i.RoomID,
+			&i.SpecHash,
+			&i.SandboxSecretID,
+			&i.LastUsedAt,
+			&i.CreatedAt,
+			&i.StoppedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockSandboxRoom = `-- name: LockSandboxRoom :exec
@@ -252,6 +330,24 @@ type LockSandboxRoomParams struct {
 // lock with the same key and leave a room being made or reused alone.
 func (q *Queries) LockSandboxRoom(ctx context.Context, arg LockSandboxRoomParams) error {
 	_, err := q.db.Exec(ctx, lockSandboxRoom, arg.OwnerKind, arg.OwnerID)
+	return err
+}
+
+const markSandboxRoomResumed = `-- name: MarkSandboxRoomResumed :exec
+UPDATE sandbox_rooms SET stopped_at = NULL, last_used_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkSandboxRoomResumed(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markSandboxRoomResumed, id)
+	return err
+}
+
+const markSandboxRoomStopped = `-- name: MarkSandboxRoomStopped :exec
+UPDATE sandbox_rooms SET stopped_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkSandboxRoomStopped(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markSandboxRoomStopped, id)
 	return err
 }
 

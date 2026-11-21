@@ -86,6 +86,9 @@ type Want struct {
 	// existed is still the one wanted.
 	Network   sandbox.Network `json:",omitempty"`
 	Workspace bool            `json:",omitempty"`
+	// Size is a workspace's, which the keeper fills from the team's
+	// settings; a team that changes it is given new rooms.
+	Size *sandbox.Size `json:",omitempty"`
 	// Port is the room's port that is served, Path the part of its address
 	// that callers use, and HealthPath what answers 200 when it is ready.
 	Port       int
@@ -102,6 +105,8 @@ type Store interface {
 	GetSandboxRoom(ctx context.Context, arg db.GetSandboxRoomParams) (db.SandboxRoom, error)
 	TouchSandboxRoom(ctx context.Context, id uuid.UUID) error
 	TouchSandboxRoomByOwner(ctx context.Context, arg db.TouchSandboxRoomByOwnerParams) error
+	MarkSandboxRoomStopped(ctx context.Context, id uuid.UUID) error
+	MarkSandboxRoomResumed(ctx context.Context, id uuid.UUID) error
 	ReplaceSandboxRoom(ctx context.Context, old *db.SandboxRoom, arg db.CreateSandboxRoomParams) (db.SandboxRoom, error)
 	RecordDeletedSecret(ctx context.Context, arg db.RecordDeletedSecretParams) error
 	WithRoomLock(ctx context.Context, kind string, owner uuid.UUID, fn func(context.Context) error) error
@@ -223,6 +228,9 @@ func (k *Keeper) ensure(ctx context.Context, o Owner, team uuid.UUID, w Want) (s
 	}
 
 	w.Image = k.image(w, cfg)
+	if w.Workspace {
+		w.Size = cfg.size
+	}
 
 	old, err := k.store.GetSandboxRoom(ctx, db.GetSandboxRoomParams{OwnerKind: o.Kind, OwnerID: o.ID})
 	var row *db.SandboxRoom
@@ -264,6 +272,9 @@ func (k *Keeper) reuse(
 	if hash, err := specHash(w, token); err != nil || row.SpecHash != hash {
 		return sandbox.Endpoint{}, false, err
 	}
+	if row.StoppedAt != nil {
+		return k.resume(ctx, rooms, row, w, token)
+	}
 
 	base, err := rooms.URL(ctx, row.RoomID, w.Port)
 	switch {
@@ -284,6 +295,86 @@ func (k *Keeper) reuse(
 			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "error", err)
 	}
 	return endpointOf(base, w, token), true, nil
+}
+
+// resume starts a stopped room again and waits for it to answer. A room the
+// provider lost, or that does not come back, is replaced, as a lost room is;
+// one the provider has no room for now is ErrFull, and stays stopped, its
+// files kept, for a later call.
+func (k *Keeper) resume(
+	ctx context.Context, rooms sandbox.Rooms, row *db.SandboxRoom, w Want, token string,
+) (sandbox.Endpoint, bool, error) {
+	err := rooms.Resume(ctx, row.RoomID, w.Argv)
+	switch {
+	case errors.Is(err, sandbox.ErrFull):
+		return sandbox.Endpoint{}, false, err
+	case errors.Is(err, sandbox.ErrNotFound), errors.Is(err, sandbox.ErrRefused):
+		k.logger.InfoContext(ctx, "keeper: a stopped room could not be resumed, replacing it",
+			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "room", row.RoomID, "error", err)
+		return sandbox.Endpoint{}, false, nil
+	case err != nil:
+		return sandbox.Endpoint{}, false, fmt.Errorf("resuming the room: %w", err)
+	}
+	ep, err := k.await(ctx, rooms, row.RoomID, w, token)
+	if err != nil {
+		if ctx.Err() != nil {
+			return sandbox.Endpoint{}, false, err
+		}
+		k.logger.InfoContext(ctx, "keeper: a resumed room does not answer, replacing it",
+			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "room", row.RoomID, "error", err)
+		return sandbox.Endpoint{}, false, nil
+	}
+	if err := k.store.MarkSandboxRoomResumed(ctx, row.ID); err != nil {
+		return sandbox.Endpoint{}, false, fmt.Errorf("recording the room resumed: %w", err)
+	}
+	return ep, true, nil
+}
+
+// Stop stops the owner's room, keeping its files, when idle still says so
+// once the owner's lock is held: a caller that found the owner idle may have
+// been overtaken by one that is about to use the room. A room the brain can
+// no longer reach, made with a key the team has since replaced, is left to
+// the reaper. No room, or one already stopped, is not an error.
+func (k *Keeper) Stop(ctx context.Context, o Owner, team uuid.UUID, idle func(context.Context) (bool, error)) error {
+	release, err := k.local.lock(ctx, o.Kind+":"+o.ID.String())
+	if err != nil {
+		return err
+	}
+	defer release()
+	return k.store.WithRoomLock(ctx, o.Kind, o.ID, func(ctx context.Context) error {
+		row, err := k.store.GetSandboxRoom(ctx, db.GetSandboxRoomParams{OwnerKind: o.Kind, OwnerID: o.ID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("reading the room: %w", err)
+		}
+		if row.StoppedAt != nil {
+			return nil
+		}
+		if ok, err := idle(ctx); err != nil || !ok {
+			return err
+		}
+		cfg, err := k.settings(ctx, team)
+		if errors.Is(err, sandbox.ErrNoProvider) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !cfg.owns(&row) {
+			return nil
+		}
+		rooms, err := k.rooms(ctx, team, cfg.provider, cfg.url, cfg.keyID)
+		if err != nil {
+			return err
+		}
+		if err := rooms.Stop(ctx, row.RoomID); err != nil && !errors.Is(err, sandbox.ErrNotFound) {
+			// Gone already is not an error: the next Ensure makes another.
+			return fmt.Errorf("stopping the room: %w", err)
+		}
+		return k.store.MarkSandboxRoomStopped(ctx, row.ID)
+	})
 }
 
 // discard deletes a room being replaced, as this brain can when the room is
@@ -362,7 +453,7 @@ func (k *Keeper) create(ctx context.Context, rooms sandbox.Rooms, o Owner, team 
 
 	roomID, err := rooms.Create(ctx, sandbox.Spec{
 		Image: w.Image, Env: env, Egress: w.Egress,
-		Network: w.Network, Workspace: w.Workspace,
+		Network: w.Network, Workspace: w.Workspace, Size: w.Size,
 		Labels: map[string]string{
 			"openarity-team":       team.String(),
 			"openarity-owner-kind": o.Kind,
@@ -478,6 +569,8 @@ type teamSandbox struct {
 	url      string
 	template string
 	keyID    uuid.UUID
+	// size is the team's workspace size, or nil for the provider's.
+	size *sandbox.Size
 }
 
 func (k *Keeper) settings(ctx context.Context, team uuid.UUID) (teamSandbox, error) {
@@ -501,6 +594,12 @@ func (k *Keeper) settings(ctx context.Context, team uuid.UUID) (teamSandbox, err
 	}
 	if s.SandboxTemplate != nil {
 		cfg.template = *s.SandboxTemplate
+	}
+	// The table holds a size whole or not at all.
+	if s.SandboxWorkspaceMemoryMb != nil && s.SandboxWorkspaceCpus != nil && s.SandboxWorkspaceDiskMb != nil {
+		cfg.size = &sandbox.Size{
+			MemoryMB: int(*s.SandboxWorkspaceMemoryMb), CPUs: int(*s.SandboxWorkspaceCpus), DiskMB: int(*s.SandboxWorkspaceDiskMb),
+		}
 	}
 	return cfg, nil
 }

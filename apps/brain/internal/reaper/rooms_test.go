@@ -138,7 +138,7 @@ func (w *roomsWorld) sweep() (rooms, keys Result) {
 	w.t.Helper()
 
 	var err error
-	rooms, err = New(Rooms(w.store, w.keeper, idleFor), discardLogger()).Sweep(w.t.Context())
+	rooms, err = New(Rooms(w.store, w.keeper, idleFor, discardLogger()), discardLogger()).Sweep(w.t.Context())
 	if err != nil {
 		w.t.Fatalf("sweeping rooms: %v", err)
 	}

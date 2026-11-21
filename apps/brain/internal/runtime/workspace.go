@@ -37,6 +37,9 @@ var WorkspaceToolNames = []string{BashToolName, ReadToolName, WriteToolName, Edi
 type Workspaces interface {
 	Ensure(ctx context.Context, team, session uuid.UUID) (sandbox.Endpoint, error)
 	Touch(ctx context.Context, session uuid.UUID) error
+	// Stop stops the session's room, keeping its files, if idle still says
+	// so once the room's lock is held.
+	Stop(ctx context.Context, team, session uuid.UUID, idle func(context.Context) (bool, error)) error
 }
 
 type WorkspaceDeps struct {

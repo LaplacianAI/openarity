@@ -12,7 +12,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -50,6 +50,11 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.ImprovementDailyPasses,
 		&i.ImprovementPassTokens,
 		&i.ImprovementPassMinutes,
+		&i.SandboxKeepHours,
+		&i.SandboxIdleMinutes,
+		&i.SandboxWorkspaceMemoryMb,
+		&i.SandboxWorkspaceCpus,
+		&i.SandboxWorkspaceDiskMb,
 	)
 	return i, err
 }
@@ -79,7 +84,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 `
 
 type SetTeamApprovalParams struct {
@@ -125,6 +130,11 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.ImprovementDailyPasses,
 		&i.ImprovementPassTokens,
 		&i.ImprovementPassMinutes,
+		&i.SandboxKeepHours,
+		&i.SandboxIdleMinutes,
+		&i.SandboxWorkspaceMemoryMb,
+		&i.SandboxWorkspaceCpus,
+		&i.SandboxWorkspaceDiskMb,
 	)
 	return i, err
 }
@@ -150,7 +160,9 @@ INSERT INTO team_settings (
     browser_provider, browser_url, browser_secret_id,
     judge_model_name, judge_model_max_tokens, judge_model_temperature,
     improvement_sample_share, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes,
-    improvement_since
+    improvement_since,
+    sandbox_keep_hours, sandbox_idle_minutes,
+    sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 ) VALUES (
     $1,
     $2, $3, $4,
@@ -164,7 +176,11 @@ INSERT INTO team_settings (
     $23, COALESCE($24::smallint, 20),
     COALESCE($25::integer, 400000),
     COALESCE($26::smallint, 20),
-    CASE WHEN $8::bool THEN now() END
+    CASE WHEN $8::bool THEN now() END,
+    -- The caller sends what is stored for these when a save leaves them out:
+    -- a null idle or size is the provider's, not "keep".
+    COALESCE($27::integer, 24), $28,
+    $29, $30, $31
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -189,6 +205,11 @@ ON CONFLICT (team_id) DO UPDATE SET
     judge_model_max_tokens  = EXCLUDED.judge_model_max_tokens,
     judge_model_temperature = EXCLUDED.judge_model_temperature,
     improvement_sample_share = EXCLUDED.improvement_sample_share,
+    sandbox_keep_hours          = EXCLUDED.sandbox_keep_hours,
+    sandbox_idle_minutes        = EXCLUDED.sandbox_idle_minutes,
+    sandbox_workspace_memory_mb = EXCLUDED.sandbox_workspace_memory_mb,
+    sandbox_workspace_cpus      = EXCLUDED.sandbox_workspace_cpus,
+    sandbox_workspace_disk_mb   = EXCLUDED.sandbox_workspace_disk_mb,
     improvement_daily_passes = COALESCE($24::smallint, team_settings.improvement_daily_passes),
     improvement_pass_tokens  = COALESCE($25::integer, team_settings.improvement_pass_tokens),
     improvement_pass_minutes = COALESCE($26::smallint, team_settings.improvement_pass_minutes),
@@ -198,36 +219,41 @@ ON CONFLICT (team_id) DO UPDATE SET
         WHEN EXCLUDED.improvement AND NOT team_settings.improvement THEN now()
         ELSE team_settings.improvement_since END,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 `
 
 type UpsertTeamSettingsParams struct {
-	TeamID                 uuid.UUID
-	ModelName              *string
-	ModelMaxTokens         *int32
-	ModelTemperature       *float64
-	SearchProvider         string
-	SearchUrl              *string
-	SearchSecretID         *uuid.UUID
-	Improvement            bool
-	CompactionMessages     int32
-	CompactionTokensMin    int32
-	CompactionTokensMax    int32
-	HubAgentID             *uuid.UUID
-	SandboxProvider        string
-	SandboxUrl             *string
-	SandboxSecretID        *uuid.UUID
-	SandboxTemplate        *string
-	BrowserProvider        string
-	BrowserUrl             *string
-	BrowserSecretID        *uuid.UUID
-	JudgeModelName         *string
-	JudgeModelMaxTokens    *int32
-	JudgeModelTemperature  *float64
-	ImprovementSampleShare int16
-	ImprovementDailyPasses *int16
-	ImprovementPassTokens  *int32
-	ImprovementPassMinutes *int16
+	TeamID                   uuid.UUID
+	ModelName                *string
+	ModelMaxTokens           *int32
+	ModelTemperature         *float64
+	SearchProvider           string
+	SearchUrl                *string
+	SearchSecretID           *uuid.UUID
+	Improvement              bool
+	CompactionMessages       int32
+	CompactionTokensMin      int32
+	CompactionTokensMax      int32
+	HubAgentID               *uuid.UUID
+	SandboxProvider          string
+	SandboxUrl               *string
+	SandboxSecretID          *uuid.UUID
+	SandboxTemplate          *string
+	BrowserProvider          string
+	BrowserUrl               *string
+	BrowserSecretID          *uuid.UUID
+	JudgeModelName           *string
+	JudgeModelMaxTokens      *int32
+	JudgeModelTemperature    *float64
+	ImprovementSampleShare   int16
+	ImprovementDailyPasses   *int16
+	ImprovementPassTokens    *int32
+	ImprovementPassMinutes   *int16
+	SandboxKeepHours         *int32
+	SandboxIdleMinutes       *int32
+	SandboxWorkspaceMemoryMb *int32
+	SandboxWorkspaceCpus     *int32
+	SandboxWorkspaceDiskMb   *int32
 }
 
 // The whole row every time. A save that keeps the search key passes the same
@@ -261,6 +287,11 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.ImprovementDailyPasses,
 		arg.ImprovementPassTokens,
 		arg.ImprovementPassMinutes,
+		arg.SandboxKeepHours,
+		arg.SandboxIdleMinutes,
+		arg.SandboxWorkspaceMemoryMb,
+		arg.SandboxWorkspaceCpus,
+		arg.SandboxWorkspaceDiskMb,
 	)
 	var i TeamSetting
 	err := row.Scan(
@@ -294,6 +325,11 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.ImprovementDailyPasses,
 		&i.ImprovementPassTokens,
 		&i.ImprovementPassMinutes,
+		&i.SandboxKeepHours,
+		&i.SandboxIdleMinutes,
+		&i.SandboxWorkspaceMemoryMb,
+		&i.SandboxWorkspaceCpus,
+		&i.SandboxWorkspaceDiskMb,
 	)
 	return i, err
 }

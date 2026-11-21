@@ -36,6 +36,8 @@ type Store interface {
 	RunShowsEvents(ctx context.Context, runID uuid.UUID) (bool, error)
 	RunTriggerWord(ctx context.Context, runID uuid.UUID) (string, error)
 	InsertEventReply(ctx context.Context, arg db.InsertEventReplyParams) (int64, error)
+	IdleSessionOf(ctx context.Context, runID uuid.UUID) (db.IdleSessionOfRow, error)
+	SessionIsIdle(ctx context.Context, sessionID uuid.UUID) (bool, error)
 	TxStore
 	ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
 	AdoptChild(ctx context.Context, arg db.AdoptChildParams) (db.Run, error)
@@ -514,7 +516,34 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 			e.logger.WarnContext(ctx, "run not enqueued; the sweep will start it", "run", followUp, "err", err)
 		}
 	}
+	if followUp == uuid.Nil {
+		e.stopWorkspace(ctx, runID)
+	}
 	return nil
+}
+
+// stopWorkspace stops the session's workspace room once its last run ends,
+// so it gives its memory back while nobody is using it; its files stay, and
+// the next call resumes it. The keeper asks again, under the room's lock,
+// whether the session is still idle. Trouble is logged and never fails the
+// run: the reaper stops a room left idle.
+func (e *Executor) stopWorkspace(ctx context.Context, runID uuid.UUID) {
+	ws := e.builder.workspaces
+	if ws == nil {
+		return
+	}
+	s, err := e.store.IdleSessionOf(ctx, runID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		e.logger.WarnContext(ctx, "the session's workspace was not stopped", "run", runID, "err", err)
+		return
+	}
+	idle := func(ctx context.Context) (bool, error) { return e.store.SessionIsIdle(ctx, s.SessionID) }
+	if err := ws.Rooms.Stop(ctx, s.TeamID, s.SessionID, idle); err != nil {
+		e.logger.WarnContext(ctx, "the session's workspace was not stopped", "run", runID, "session", s.SessionID, "err", err)
+	}
 }
 
 func startedOf(agentName string, spec agent.Spec) startedPayload {

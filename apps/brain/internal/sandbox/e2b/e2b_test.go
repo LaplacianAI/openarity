@@ -664,3 +664,65 @@ func TestAPublicRoomThatListsHostsIsRefused(t *testing.T) {
 		})
 	}
 }
+
+func TestStopPausesAndResumeConnects(t *testing.T) {
+	f := &fake{api: func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/sandboxes":
+			okCreate(w, r)
+		case "/sandboxes/" + sandboxID + "/pause":
+			w.WriteHeader(204)
+		case "/v2/sandboxes/" + sandboxID + "/connect":
+			writeJSON(w, 200, map[string]any{"sandboxID": sandboxID})
+		default:
+			http.NotFound(w, r)
+		}
+	}}
+	c, room := createRoom(t, f)
+	if err := c.Stop(t.Context(), room); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.last(t); got.Method != http.MethodPost || got.Path != "/sandboxes/"+sandboxID+"/pause" {
+		t.Fatalf("stop = %s %s", got.Method, got.Path)
+	}
+	if err := c.Resume(t.Context(), room, []string{"ignored"}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.last(t)
+	var body map[string]any
+	_ = json.Unmarshal(got.Body, &body)
+	if got.Path != "/v2/sandboxes/"+sandboxID+"/connect" || body["timeout"] != float64(3600) {
+		t.Fatalf("resume = %s %s", got.Path, got.Body)
+	}
+}
+
+func TestStopOfAPausedSandboxIsNotAnError(t *testing.T) {
+	f := &fake{api: func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/sandboxes" {
+			okCreate(w, r)
+			return
+		}
+		writeJSON(w, 409, map[string]any{"message": "already paused"})
+	}}
+	c, room := createRoom(t, f)
+	if err := c.Stop(t.Context(), room); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAResumeE2BLimitsIsErrFullAndAGoneOneErrNotFound(t *testing.T) {
+	for status, want := range map[int]error{429: sandbox.ErrFull, 404: sandbox.ErrNotFound} {
+		f := &fake{api: func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v2/sandboxes" {
+				okCreate(w, r)
+				return
+			}
+			writeJSON(w, status, map[string]any{"message": "no " + apiKey})
+		}}
+		c, room := createRoom(t, f)
+		err := c.Resume(t.Context(), room, nil)
+		if !errors.Is(err, want) || strings.Contains(err.Error(), apiKey) {
+			t.Errorf("%d: %v, want %v without the key", status, err, want)
+		}
+	}
+}
