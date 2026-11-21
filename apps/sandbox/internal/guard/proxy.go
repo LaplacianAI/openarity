@@ -85,7 +85,7 @@ func (g *Guard) serveProxy(r *room, l net.Listener) (stop func()) {
 	srv := &http.Server{
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.Method != http.MethodConnect && !(req.URL.IsAbs() && req.URL.Scheme == "http") {
+			if req.Method != http.MethodConnect && (!req.URL.IsAbs() || req.URL.Scheme != "http") {
 				http.Error(w, "this is the sandbox's proxy: send an absolute http:// URL, or CONNECT for anything else", http.StatusBadRequest)
 				return
 			}
