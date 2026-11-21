@@ -22,6 +22,7 @@ const STORED: TeamSettings = {
   improvement: false,
   judge_model: null,
   improvement_sample_share: 10,
+  improvement_daily_passes: 20,
   improvement_since: null,
   compaction_messages: 100,
   compaction_tokens_min: 50_000,

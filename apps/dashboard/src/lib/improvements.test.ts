@@ -7,7 +7,10 @@ import {
   kindWords,
   listNames,
   missingWrites,
+  passOutcome,
+  prunedWords,
   scopeWords,
+  signatureWords,
   tabOf,
   tabsFor,
   waitingFinding,
@@ -58,13 +61,15 @@ describe("what deciding needs", () => {
 describe("tabs", () => {
   it("shows a member Applied only, and an approver all three", () => {
     expect(tabsFor(false)).toEqual(["applied"]);
-    expect(tabsFor(true)).toEqual(["waiting", "applied", "closed"]);
+    expect(tabsFor(true)).toEqual(["waiting", "applied", "closed", "passes"]);
   });
 
   it("falls back to the first tab the caller has", () => {
     expect(tabOf("waiting", false)).toBe("applied");
     expect(tabOf(undefined, true)).toBe("waiting");
     expect(tabOf("closed", true)).toBe("closed");
+    expect(tabOf("passes", true)).toBe("passes");
+    expect(tabOf("passes", false)).toBe("applied");
   });
 });
 
@@ -102,5 +107,48 @@ describe("words", () => {
     expect(fieldWords("mcp_servers")).toBe("MCP servers");
     expect(fieldWords("files/scripts/round.py")).toBe("scripts/round.py");
     expect(fieldWords("something_new")).toBe("something new");
+  });
+});
+
+describe("passes", () => {
+  it("reads a signature as words, with the target apart", () => {
+    expect(signatureWords("instructions::skipped_step")).toEqual({
+      part: "instructions",
+      target: "",
+      cause: "skipped step",
+    });
+    expect(signatureWords("tool:crm__close_ticket:misused_tool")).toEqual({
+      part: "tool",
+      target: "crm__close_ticket",
+      cause: "misused tool",
+    });
+  });
+
+  it("says what was pruned", () => {
+    expect(prunedWords("skill:triage")).toBe("skill triage");
+    expect(prunedWords("tool:crm/close")).toBe("tool crm/close");
+    expect(prunedWords("odd")).toBe("odd");
+  });
+
+  it.each([
+    [{ status: "running", proposed: 0, screened_out: 0, error: null }, "Running…"],
+    [
+      { status: "failed", proposed: 0, screened_out: 0, error: "model timed out" },
+      "Failed: model timed out",
+    ],
+    [{ status: "failed", proposed: 0, screened_out: 0, error: null }, "Failed"],
+    [{ status: "done", proposed: 0, screened_out: 0, error: null }, "Nothing to change"],
+    [{ status: "done", proposed: 1, screened_out: 0, error: null }, "1 proposal"],
+    [{ status: "done", proposed: 2, screened_out: 0, error: null }, "2 proposals"],
+    [
+      { status: "done", proposed: 1, screened_out: 1, error: null },
+      "1 proposal, 1 held back by the screen",
+    ],
+    [
+      { status: "done", proposed: 0, screened_out: 3, error: null },
+      "Nothing to change, 3 held back by the screen",
+    ],
+  ] as const)("says what came of %o", (pass, said) => {
+    expect(passOutcome(pass)).toBe(said);
   });
 });

@@ -739,8 +739,10 @@ func TestTheSessionStreamMigrationRollsBackWithDataInIt(t *testing.T) {
 	// Back to before the stream's migration, through any applied after it.
 	streamColumns := `SELECT count(*) FROM information_schema.columns WHERE table_name = 'messages' AND column_name IN ('session_seq', 'asks', 'consumed_by')`
 	for rolled := 0; count(t, s, streamColumns) > 0; rolled++ {
-		if rolled == 30 {
-			t.Fatal("rolled back thirty migrations and the stream's is still applied")
+		// A bound on the loop, not a count to keep exact: each migration
+		// added since the stream's adds one more step back.
+		if rolled == 100 {
+			t.Fatal("rolled back a hundred migrations and the stream's is still applied")
 		}
 		if err := s.Rollback(t.Context()); err != nil {
 			t.Fatalf("Rollback: %v", err)

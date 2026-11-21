@@ -25,6 +25,8 @@ type Proposed struct {
 	Outsider   bool
 	Before     Snapshot
 	After      Snapshot
+	// The improver pass that wrote it; nil for one written any other way.
+	PassID *uuid.UUID
 }
 
 // Create stores a proposal after holding it to its kind's rules. Its marks
@@ -72,6 +74,7 @@ func Create(ctx context.Context, q *db.Queries, n Proposed) (db.ImprovementPropo
 		TeamID: n.TeamID, AgentID: n.AgentID, SkillID: n.SkillID, Kind: string(n.Kind),
 		Why: n.Why, Hypothesis: n.Hypothesis, Scope: n.Scope, Signature: n.Signature,
 		RunIds: runs, Outsider: n.Outsider, Marks: marks, Before: before, After: after,
+		PassID: n.PassID,
 	})
 }
 

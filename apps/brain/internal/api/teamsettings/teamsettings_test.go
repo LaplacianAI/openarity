@@ -54,6 +54,18 @@ func (f *fakeStore) GetTeamSettings(_ context.Context, team uuid.UUID) (db.TeamS
 	return *f.row, nil
 }
 
+// dailyPassesKept is what the upsert's COALESCE leaves: the save's, else
+// the stored cap, else the default.
+func dailyPassesKept(sent *int16, stored *db.TeamSetting) int16 {
+	switch {
+	case sent != nil:
+		return *sent
+	case stored != nil:
+		return stored.ImprovementDailyPasses
+	}
+	return 20
+}
+
 func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSettingsParams) (db.TeamSetting, error) {
 	f.upserts = append(f.upserts, p)
 	if f.upsertErr != nil {
@@ -83,6 +95,7 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		JudgeModelMaxTokens:    p.JudgeModelMaxTokens,
 		JudgeModelTemperature:  p.JudgeModelTemperature,
 		ImprovementSampleShare: p.ImprovementSampleShare,
+		ImprovementDailyPasses: dailyPassesKept(p.ImprovementDailyPasses, f.row),
 		UpdatedAt:              time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 	}
 	f.row = &row
@@ -1199,6 +1212,7 @@ type improveWire struct {
 		MaxTokens int32  `json:"max_tokens"`
 	} `json:"judge_model"`
 	ImprovementSampleShare int16      `json:"improvement_sample_share"`
+	ImprovementDailyPasses int16      `json:"improvement_daily_passes"`
 	ImprovementSince       *time.Time `json:"improvement_since"`
 }
 
@@ -1261,6 +1275,29 @@ func TestTheSampleShare(t *testing.T) {
 		if rec := e.save(t, `{`+improveBase+`,"improvement_sample_share":`+bad+`}`); rec.Code != http.StatusBadRequest {
 			t.Errorf("share %s = %d, want 400", bad, rec.Code)
 		}
+	}
+}
+
+func TestTheDailyPasses(t *testing.T) {
+	e := newEnv()
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementDailyPasses != 20 {
+		t.Errorf("a first save's cap = %d, want the default 20", got.ImprovementDailyPasses)
+	}
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_daily_passes":5}`)); got.ImprovementDailyPasses != 5 {
+		t.Errorf("cap = %d, want 5", got.ImprovementDailyPasses)
+	}
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementDailyPasses != 5 {
+		t.Errorf("left out, the cap became %d", got.ImprovementDailyPasses)
+	}
+	saved := len(e.store.upserts)
+	for _, bad := range []string{"0", "201", "-3"} {
+		if rec := e.save(t, `{`+improveBase+`,"improvement_daily_passes":`+bad+`}`); rec.Code != http.StatusBadRequest ||
+			!strings.Contains(rec.Body.String(), "improvement_daily_passes") {
+			t.Errorf("cap %s = %d %q, want 400 naming it", bad, rec.Code, rec.Body)
+		}
+	}
+	if len(e.store.upserts) != saved {
+		t.Error("a refused cap was saved")
 	}
 }
 

@@ -31,6 +31,7 @@ import type {
   Improvement,
   ImprovementDecision,
   ImprovementStatus,
+  ImproverPass,
   ListedAgent,
   ListedChannel,
   ListedSession,
@@ -1023,4 +1024,25 @@ export function decideImprovement(
     method: "POST",
     body: decision,
   });
+}
+
+/**
+ * The improver's passes, newest first. Needs improvement:approve; anyone else
+ * is refused with a 403.
+ */
+export function listImproverPasses(
+  teamId: string,
+  filter: { agent?: string; limit?: number } = {},
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<Page<ImproverPass>> {
+  const params = new URLSearchParams();
+  if (filter.agent) params.set("agent", filter.agent);
+  if (filter.limit) params.set("limit", String(filter.limit));
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return request<Page<ImproverPass>>(
+    `/teams/${teamId}/improvements/passes${query ? `?${query}` : ""}`,
+    signal ? { signal } : {},
+  );
 }

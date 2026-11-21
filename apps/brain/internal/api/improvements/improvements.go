@@ -41,6 +41,7 @@ type Reads interface {
 	ListTeamSkillNames(ctx context.Context, arg db.ListTeamSkillNamesParams) ([]db.ListTeamSkillNamesRow, error)
 	ListTeamServerNames(ctx context.Context, arg db.ListTeamServerNamesParams) ([]db.ListTeamServerNamesRow, error)
 	ListVisibleRuns(ctx context.Context, arg db.ListVisibleRunsParams) ([]db.ListVisibleRunsRow, error)
+	ListImproverPasses(ctx context.Context, arg db.ListImproverPassesParams) ([]db.ImproverPass, error)
 }
 
 type handler struct {
@@ -55,6 +56,7 @@ func New(logger *slog.Logger, reads Reads, a api.Authorizer, d Decider) *api.Rou
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/improvements", h.list)
+	r.Get("/{id}/improvements/passes", h.passes)
 	r.Get("/{id}/improvements/{proposalID}", h.get)
 	r.Post("/{id}/improvements/{proposalID}/decision", h.decide)
 	return r
@@ -73,20 +75,22 @@ type runRef struct {
 }
 
 type view struct {
-	ID         uuid.UUID  `json:"id"`
-	Kind       string     `json:"kind"`
-	Status     string     `json:"status"`
-	Agent      ref        `json:"agent"`
-	Skill      *ref       `json:"skill"`
-	Why        string     `json:"why"`
-	Hypothesis string     `json:"hypothesis"`
-	Scope      string     `json:"scope"`
-	Signature  *string    `json:"signature"`
-	Marks      []string   `json:"marks"`
-	Reaches    []ref      `json:"reaches"`
-	Changes    []Change   `json:"changes"`
-	Runs       []runRef   `json:"runs"`
-	Outsider   bool       `json:"outsider"`
+	ID         uuid.UUID `json:"id"`
+	Kind       string    `json:"kind"`
+	Status     string    `json:"status"`
+	Agent      ref       `json:"agent"`
+	Skill      *ref      `json:"skill"`
+	Why        string    `json:"why"`
+	Hypothesis string    `json:"hypothesis"`
+	Scope      string    `json:"scope"`
+	Signature  *string   `json:"signature"`
+	Marks      []string  `json:"marks"`
+	Reaches    []ref     `json:"reaches"`
+	Changes    []Change  `json:"changes"`
+	Runs       []runRef  `json:"runs"`
+	Outsider   bool      `json:"outsider"`
+	// The improver pass that wrote it; null for one written otherwise.
+	PassID     *uuid.UUID `json:"pass_id"`
 	CreatedAt  time.Time  `json:"created_at"`
 	DecidedBy  *uuid.UUID `json:"decided_by"`
 	DecidedAt  *time.Time `json:"decided_at"`
@@ -331,7 +335,7 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 		Agent: ref{ID: row.AgentID, Name: n.of(n.agents, row.AgentID)},
 		Why:   row.Why, Hypothesis: row.Hypothesis, Scope: row.Scope, Signature: row.Signature,
 		Marks: Marks(Kind(row.Kind), p.Before, p.After), Reaches: []ref{}, Changes: changesOf(p, n),
-		Runs: []runRef{}, Outsider: row.Outsider, CreatedAt: row.CreatedAt,
+		Runs: []runRef{}, Outsider: row.Outsider, PassID: row.PassID, CreatedAt: row.CreatedAt,
 		DecidedBy: row.DecidedBy, DecidedAt: row.DecidedAt, RevertedBy: row.RevertedBy, RevertedAt: row.RevertedAt,
 	}
 	if v.Marks == nil {

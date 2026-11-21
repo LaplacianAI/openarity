@@ -717,6 +717,45 @@ func (e ImprovementStatus) Valid() bool {
 	}
 }
 
+// Defines values for ImproverPassStatus.
+const (
+	ImproverPassStatusDone    ImproverPassStatus = "done"
+	ImproverPassStatusFailed  ImproverPassStatus = "failed"
+	ImproverPassStatusRunning ImproverPassStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ImproverPassStatus enum.
+func (e ImproverPassStatus) Valid() bool {
+	switch e {
+	case ImproverPassStatusDone:
+		return true
+	case ImproverPassStatusFailed:
+		return true
+	case ImproverPassStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImproverPassTrigger.
+const (
+	ImproverPassTriggerDaily   ImproverPassTrigger = "daily"
+	ImproverPassTriggerPattern ImproverPassTrigger = "pattern"
+)
+
+// Valid indicates whether the value is a known member of the ImproverPassTrigger enum.
+func (e ImproverPassTrigger) Valid() bool {
+	switch e {
+	case ImproverPassTriggerDaily:
+		return true
+	case ImproverPassTriggerPattern:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListedChannelReplyMode.
 const (
 	ListedChannelReplyModeEvents ListedChannelReplyMode = "events"
@@ -953,25 +992,25 @@ func (e RunOutcomeImplicit) Valid() bool {
 
 // Defines values for RunOutcomeVerdict.
 const (
-	CantTell RunOutcomeVerdict = "cant_tell"
-	Done     RunOutcomeVerdict = "done"
-	NotDone  RunOutcomeVerdict = "not_done"
-	Partly   RunOutcomeVerdict = "partly"
-	Wrong    RunOutcomeVerdict = "wrong"
+	RunOutcomeVerdictCantTell RunOutcomeVerdict = "cant_tell"
+	RunOutcomeVerdictDone     RunOutcomeVerdict = "done"
+	RunOutcomeVerdictNotDone  RunOutcomeVerdict = "not_done"
+	RunOutcomeVerdictPartly   RunOutcomeVerdict = "partly"
+	RunOutcomeVerdictWrong    RunOutcomeVerdict = "wrong"
 )
 
 // Valid indicates whether the value is a known member of the RunOutcomeVerdict enum.
 func (e RunOutcomeVerdict) Valid() bool {
 	switch e {
-	case CantTell:
+	case RunOutcomeVerdictCantTell:
 		return true
-	case Done:
+	case RunOutcomeVerdictDone:
 		return true
-	case NotDone:
+	case RunOutcomeVerdictNotDone:
 		return true
-	case Partly:
+	case RunOutcomeVerdictPartly:
 		return true
-	case Wrong:
+	case RunOutcomeVerdictWrong:
 		return true
 	default:
 		return false
@@ -2335,6 +2374,9 @@ type Improvement struct {
 	// Outsider A channel sender who is not a member spoke in a session it came from
 	Outsider bool `json:"outsider" yaml:"outsider"`
 
+	// PassID The improver pass that wrote it; null for one written any other way
+	PassID *openapi_types.UUID `json:"pass_id,omitempty" yaml:"pass_id,omitempty"`
+
 	// Reaches For a skill_edit, every agent that holds the skill now
 	Reaches    []NamedRef          `json:"reaches" yaml:"reaches"`
 	RevertedAt *time.Time          `json:"reverted_at,omitempty" yaml:"reverted_at,omitempty"`
@@ -2413,6 +2455,49 @@ type ImprovementPage struct {
 
 // ImprovementStatus defines model for ImprovementStatus.
 type ImprovementStatus string
+
+// ImproverPass defines model for ImproverPass.
+type ImproverPass struct {
+	Agent        NamedRef           `json:"agent" yaml:"agent"`
+	Error        *string            `json:"error,omitempty" yaml:"error,omitempty"`
+	FinishedAt   *time.Time         `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+	ID           openapi_types.UUID `json:"id" yaml:"id"`
+	InputTokens  int64              `json:"input_tokens" yaml:"input_tokens"`
+	Model        string             `json:"model" yaml:"model"`
+	OutputTokens int64              `json:"output_tokens" yaml:"output_tokens"`
+	Proposed     int32              `json:"proposed" yaml:"proposed"`
+
+	// Pruned The prune candidates it was given, skill:<name> or tool:<server>/<tool>
+	Pruned []string `json:"pruned" yaml:"pruned"`
+
+	// Report What it found, proposed and left alone, and why
+	Report string `json:"report" yaml:"report"`
+
+	// ScreenedOut Proposals the screen refused for carrying one run's specifics
+	ScreenedOut int32 `json:"screened_out" yaml:"screened_out"`
+
+	// Signatures The patterns it was given, part:target:cause
+	Signatures []string           `json:"signatures" yaml:"signatures"`
+	StartedAt  time.Time          `json:"started_at" yaml:"started_at"`
+	Status     ImproverPassStatus `json:"status" yaml:"status"`
+
+	// Trigger A signature recurred in enough runs, or the daily pass
+	Trigger ImproverPassTrigger `json:"trigger" yaml:"trigger"`
+}
+
+// ImproverPassStatus defines model for ImproverPass.Status.
+type ImproverPassStatus string
+
+// ImproverPassTrigger A signature recurred in enough runs, or the daily pass
+type ImproverPassTrigger string
+
+// ImproverPassPage defines model for ImproverPassPage.
+type ImproverPassPage struct {
+	Items []ImproverPass `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
 
 // ListedAgent A row of the agents list: the summary, how the agent works with the
 // web and with other agents, and what it is granted, as counts. The
@@ -3743,9 +3828,13 @@ type TeamSettings struct {
 	// Improvement Whether the team's agents improve themselves from their runs. While
 	// it is on, every finished top-level run is judged in the background
 	// (was the task done?), members may give 👍/👎 on answers, and runs
-	// judged bad, plus a sampled share of good ones, are digested for the
-	// improver. The part that proposes changes arrives in a later release.
+	// judged bad, plus a sampled share of good ones, are digested, and when
+	// one weakness recurs for an agent, or once a day, an improver pass
+	// proposes changes to its setup for an approver to decide.
 	Improvement bool `json:"improvement" yaml:"improvement"`
+
+	// ImprovementDailyPasses The improver passes the team may run in a day (UTC), at most. 20 until set.
+	ImprovementDailyPasses *int32 `json:"improvement_daily_passes,omitempty" yaml:"improvement_daily_passes,omitempty"`
 
 	// ImprovementSampleShare The percentage of runs judged done that are digested anyway, for contrast. 10 until set.
 	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`
@@ -3789,6 +3878,9 @@ type TeamSettingsRequest struct {
 	// Examples: triage
 	Hub         *string `json:"hub,omitempty" yaml:"hub,omitempty"`
 	Improvement bool    `json:"improvement" yaml:"improvement"`
+
+	// ImprovementDailyPasses Left out, the stored cap stays.
+	ImprovementDailyPasses *int32 `json:"improvement_daily_passes,omitempty" yaml:"improvement_daily_passes,omitempty"`
 
 	// ImprovementSampleShare Left out, the stored share stays.
 	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`
@@ -4122,6 +4214,21 @@ type ListImprovementsParams struct {
 	Status *[]ImprovementStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
 
 	// Agent Only proposals about this agent.
+	Agent *openapi_types.UUID `form:"agent,omitempty" json:"agent,omitempty" yaml:"agent,omitempty"`
+}
+
+// ListImproverPassesParams defines parameters for ListImproverPasses.
+type ListImproverPassesParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Agent Only passes over this agent.
 	Agent *openapi_types.UUID `form:"agent,omitempty" json:"agent,omitempty" yaml:"agent,omitempty"`
 }
 
@@ -5258,6 +5365,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
 	ListImprovements(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListImproverPasses List the improver's passes over a team's agents
+	//
+	// Requires `improvement:approve`: a pass's report says what runs showed,
+	// and those may be in conversations other members cannot read. Each pass
+	// says why it ran, what it was given and what came of it. Newest first.
+	//
+	// Corresponds with GET /teams/{id}/improvements/passes (the `ListImproverPasses` operationId).
+	ListImproverPasses(ctx context.Context, id TeamID, params *ListImproverPassesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetImprovement Read one proposed improvement, with its changes
 	//
@@ -7617,6 +7733,25 @@ func (c *Client) GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGra
 // Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
 func (c *Client) ListImprovements(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListImprovementsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListImproverPasses List the improver's passes over a team's agents
+//
+// Requires `improvement:approve`: a pass's report says what runs showed,
+// and those may be in conversations other members cannot read. Each pass
+// says why it ran, what it was given and what came of it. Newest first.
+//
+// Corresponds with GET /teams/{id}/improvements/passes (the `ListImproverPasses` operationId).
+func (c *Client) ListImproverPasses(ctx context.Context, id TeamID, params *ListImproverPassesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListImproverPassesRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -11448,6 +11583,91 @@ func NewListImprovementsRequest(server string, id TeamID, params *ListImprovemen
 	return req, nil
 }
 
+// NewListImproverPassesRequest constructs an http.Request for the ListImproverPasses method
+func NewListImproverPassesRequest(server string, id TeamID, params *ListImproverPassesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/improvements/passes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Agent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetImprovementRequest constructs an http.Request for the GetImprovement method
 func NewGetImprovementRequest(server string, id TeamID, proposalID ImprovementID) (*http.Request, error) {
 	var err error
@@ -15238,6 +15458,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
 	ListImprovementsWithResponse(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*ListImprovementsResponse, error)
 
+	// ListImproverPassesWithResponse List the improver's passes over a team's agents
+	//
+	// Requires `improvement:approve`: a pass's report says what runs showed,
+	// and those may be in conversations other members cannot read. Each pass
+	// says why it ran, what it was given and what came of it. Newest first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/improvements/passes (the `ListImproverPasses` operationId).
+	ListImproverPassesWithResponse(ctx context.Context, id TeamID, params *ListImproverPassesParams, reqEditors ...RequestEditorFn) (*ListImproverPassesResponse, error)
+
 	// GetImprovementWithResponse Read one proposed improvement, with its changes
 	//
 	// Any member may read an applied or reverted one; a waiting, rejected
@@ -18122,6 +18353,54 @@ func (r ListImprovementsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListImprovementsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListImproverPassesResponse401Headers the declared response headers of an HTTP 401 response for ListImproverPasses
+type ListImproverPassesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListImproverPassesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImproverPassPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListImproverPassesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListImproverPassesResponse) GetJSON200() *ImproverPassPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListImproverPassesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListImproverPassesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListImproverPassesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListImproverPassesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21852,6 +22131,23 @@ func (c *ClientWithResponses) ListImprovementsWithResponse(ctx context.Context, 
 	return ParseListImprovementsResponse(rsp)
 }
 
+// ListImproverPassesWithResponse List the improver's passes over a team's agents
+//
+// Requires `improvement:approve`: a pass's report says what runs showed,
+// and those may be in conversations other members cannot read. Each pass
+// says why it ran, what it was given and what came of it. Newest first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/improvements/passes (the `ListImproverPasses` operationId).
+func (c *ClientWithResponses) ListImproverPassesWithResponse(ctx context.Context, id TeamID, params *ListImproverPassesParams, reqEditors ...RequestEditorFn) (*ListImproverPassesResponse, error) {
+	rsp, err := c.ListImproverPasses(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListImproverPassesResponse(rsp)
+}
+
 // GetImprovementWithResponse Read one proposed improvement, with its changes
 //
 // Any member may read an applied or reverted one; a waiting, rejected
@@ -24762,6 +25058,45 @@ func ParseListImprovementsResponse(rsp *http.Response) (*ListImprovementsRespons
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ListImprovementsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListImproverPassesResponse parses an HTTP response from a ListImproverPassesWithResponse call
+func ParseListImproverPassesResponse(rsp *http.Response) (*ListImproverPassesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListImproverPassesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImproverPassPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListImproverPassesResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -48,12 +48,13 @@ func (q *Queries) ClearAgentToolNotes(ctx context.Context, agentID uuid.UUID) er
 const createImprovementProposal = `-- name: CreateImprovementProposal :one
 INSERT INTO improvement_proposals (
     team_id, agent_id, skill_id, kind, why, hypothesis, scope, signature,
-    run_ids, outsider, marks, before, after
+    run_ids, outsider, marks, before, after, pass_id
 ) VALUES (
     $1, $2, $3, $4,
     $5, $6, $7, $8,
-    $9, $10, $11, $12, $13
-) RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by
+    $9, $10, $11, $12, $13,
+    $14
+) RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id
 `
 
 type CreateImprovementProposalParams struct {
@@ -70,6 +71,7 @@ type CreateImprovementProposalParams struct {
 	Marks      []string
 	Before     []byte
 	After      []byte
+	PassID     *uuid.UUID
 }
 
 func (q *Queries) CreateImprovementProposal(ctx context.Context, arg CreateImprovementProposalParams) (ImprovementProposal, error) {
@@ -87,6 +89,7 @@ func (q *Queries) CreateImprovementProposal(ctx context.Context, arg CreateImpro
 		arg.Marks,
 		arg.Before,
 		arg.After,
+		arg.PassID,
 	)
 	var i ImprovementProposal
 	err := row.Scan(
@@ -111,6 +114,7 @@ func (q *Queries) CreateImprovementProposal(ctx context.Context, arg CreateImpro
 		&i.RevertedBy,
 		&i.RevertedAt,
 		&i.WithdrawnBy,
+		&i.PassID,
 	)
 	return i, err
 }
@@ -119,7 +123,7 @@ const decideImprovementProposal = `-- name: DecideImprovementProposal :one
 UPDATE improvement_proposals
 SET status = $1, decided_by = $2, decided_at = now()
 WHERE id = $3 AND status = 'waiting'
-RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by
+RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id
 `
 
 type DecideImprovementProposalParams struct {
@@ -153,12 +157,13 @@ func (q *Queries) DecideImprovementProposal(ctx context.Context, arg DecideImpro
 		&i.RevertedBy,
 		&i.RevertedAt,
 		&i.WithdrawnBy,
+		&i.PassID,
 	)
 	return i, err
 }
 
 const getImprovementProposal = `-- name: GetImprovementProposal :one
-SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by FROM improvement_proposals WHERE id = $1 AND team_id = $2
+SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id FROM improvement_proposals WHERE id = $1 AND team_id = $2
 `
 
 type GetImprovementProposalParams struct {
@@ -191,6 +196,7 @@ func (q *Queries) GetImprovementProposal(ctx context.Context, arg GetImprovement
 		&i.RevertedBy,
 		&i.RevertedAt,
 		&i.WithdrawnBy,
+		&i.PassID,
 	)
 	return i, err
 }
@@ -259,7 +265,7 @@ func (q *Queries) ListAgentsHoldingSkill(ctx context.Context, skillID uuid.UUID)
 }
 
 const listImprovementProposals = `-- name: ListImprovementProposals :many
-SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by FROM improvement_proposals
+SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id FROM improvement_proposals
 WHERE team_id = $1
   AND status = ANY ($2::text[])
   AND ($3::uuid IS NULL OR agent_id = $3::uuid)
@@ -322,6 +328,7 @@ func (q *Queries) ListImprovementProposals(ctx context.Context, arg ListImprovem
 			&i.RevertedBy,
 			&i.RevertedAt,
 			&i.WithdrawnBy,
+			&i.PassID,
 		); err != nil {
 			return nil, err
 		}
@@ -529,7 +536,7 @@ func (q *Queries) LockAgent(ctx context.Context, arg LockAgentParams) (Agent, er
 }
 
 const lockImprovementProposal = `-- name: LockImprovementProposal :one
-SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by FROM improvement_proposals WHERE id = $1 AND team_id = $2 FOR UPDATE
+SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id FROM improvement_proposals WHERE id = $1 AND team_id = $2 FOR UPDATE
 `
 
 type LockImprovementProposalParams struct {
@@ -564,6 +571,7 @@ func (q *Queries) LockImprovementProposal(ctx context.Context, arg LockImproveme
 		&i.RevertedBy,
 		&i.RevertedAt,
 		&i.WithdrawnBy,
+		&i.PassID,
 	)
 	return i, err
 }
@@ -603,7 +611,7 @@ const revertImprovementProposal = `-- name: RevertImprovementProposal :one
 UPDATE improvement_proposals
 SET status = 'reverted', reverted_by = $1, reverted_at = now()
 WHERE id = $2 AND status = 'applied'
-RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by
+RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id
 `
 
 type RevertImprovementProposalParams struct {
@@ -636,6 +644,7 @@ func (q *Queries) RevertImprovementProposal(ctx context.Context, arg RevertImpro
 		&i.RevertedBy,
 		&i.RevertedAt,
 		&i.WithdrawnBy,
+		&i.PassID,
 	)
 	return i, err
 }

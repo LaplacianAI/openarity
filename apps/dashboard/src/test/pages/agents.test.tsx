@@ -433,6 +433,7 @@ describe("defining an agent", () => {
           improvement: false,
           judge_model: null,
           improvement_sample_share: 10,
+          improvement_daily_passes: 20,
           improvement_since: null,
           compaction_messages: 40,
           compaction_tokens_min: 50_000,

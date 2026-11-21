@@ -314,6 +314,19 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
         </p>
       ) : null}
 
+      {item.pass_id && canDecide ? (
+        <p className="text-xs">
+          <Link
+            to="/ui/improvements"
+            search={{ tab: "passes", agent: item.agent.id }}
+            className="inline-flex items-center gap-0.5 rounded text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            From a pass
+            <ArrowRight aria-hidden className="size-3" />
+          </Link>
+        </p>
+      ) : null}
+
       {action.length > 0 && canDecide ? (
         <div className="space-y-2 border-t border-rule pt-3">
           {withheld ? (

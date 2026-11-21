@@ -129,6 +129,7 @@ func (w *world) serve(t *testing.T, method, path string, body any) *httptest.Res
 	rs := authz.NewRoutes()
 	for _, r := range []struct{ method, path string }{
 		{"GET", "/teams/{id}/improvements"},
+		{"GET", "/teams/{id}/improvements/passes"},
 		{"GET", "/teams/{id}/improvements/{proposalID}"},
 		{"POST", "/teams/{id}/improvements/{proposalID}/decision"},
 	} {

@@ -22,6 +22,7 @@ const (
 	providerFirecrawlOSS   = "firecrawl-oss"
 
 	maxSampleShare = 100
+	maxDailyPasses = 200
 
 	minCompaction = 10
 	maxCompaction = 10000
@@ -45,6 +46,9 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 	}
 	if s := req.ImprovementSampleShare; s != nil && (*s < 0 || *s > maxSampleShare) {
 		return fmt.Errorf("improvement_sample_share must be between 0 and %d", maxSampleShare)
+	}
+	if n := req.ImprovementDailyPasses; n != nil && (*n < 1 || *n > maxDailyPasses) {
+		return fmt.Errorf("improvement_daily_passes must be between 1 and %d", maxDailyPasses)
 	}
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
 		return fmt.Errorf("compaction_messages must be between %d and %d", minCompaction, maxCompaction)

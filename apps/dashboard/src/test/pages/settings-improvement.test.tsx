@@ -24,6 +24,7 @@ const OFF: TeamSettings = {
   improvement: false,
   judge_model: null,
   improvement_sample_share: 10,
+  improvement_daily_passes: 20,
   improvement_since: null,
   compaction_messages: 100,
   compaction_tokens_min: 50_000,
@@ -36,6 +37,7 @@ const JUDGED: TeamSettings = {
   ...ON,
   judge_model: { name: "judge-1", max_tokens: 8000, temperature: 0.1 },
   improvement_sample_share: 25,
+  improvement_daily_passes: 20,
 };
 
 const SETTINGS = "/teams/{id}/settings";
@@ -97,6 +99,26 @@ describe("the request", () => {
     });
   });
 
+  it("leaves out the daily passes while they did not change, and sends them when they did", () => {
+    expect(settingsRequest(draftOf(ON), ON)).not.toHaveProperty("improvement_daily_passes");
+    expect(settingsRequest({ ...draftOf(ON), dailyPasses: " 45 " }, ON)).toMatchObject({
+      improvement_daily_passes: 45,
+    });
+    expect(settingsRequest({ ...draftOf(ON), dailyPasses: "200" }, ON)).toMatchObject({
+      improvement_daily_passes: 200,
+    });
+  });
+
+  it.each([
+    [{ dailyPasses: "0" }, /1 to 200/],
+    [{ dailyPasses: "201" }, /1 to 200/],
+    [{ dailyPasses: "-3" }, /1 to 200/],
+    [{ dailyPasses: "" }, /1 to 200/],
+    [{ dailyPasses: "2.5" }, /1 to 200/],
+  ])("refuses passes of %o before asking the brain", (patch, said) => {
+    expect(settingsRequest({ ...draftOf(ON), ...patch }, ON)).toMatch(said);
+  });
+
   it.each([
     [{ sampleShare: "101" }, /0 to 100/],
     [{ sampleShare: "-1" }, /0 to 100/],
@@ -122,9 +144,11 @@ describe("the request", () => {
     const old = { ...OFF } as Partial<TeamSettings>;
     delete old.judge_model;
     delete old.improvement_sample_share;
+    delete old.improvement_daily_passes;
     const d = draftOf(old as TeamSettings);
     expect(d.judgeOn).toBe(false);
     expect(d.sampleShare).toBe("10");
+    expect(d.dailyPasses).toBe("20");
   });
 });
 
@@ -171,6 +195,37 @@ describe("the Improvement section", () => {
     expect(put(seen)).toMatchObject({ improvement: true, improvement_sample_share: 30 });
     expect(put(seen)).not.toHaveProperty("judge_model");
     expect(await within(section()).findByText("Saved")).toBeInTheDocument();
+  });
+
+  it("offers the passes a day at 20, and sends a change in the PUT", async () => {
+    const seen = at(ON);
+    const passes = await screen.findByLabelText(/passes a day, at most/i);
+    expect(passes).toHaveValue("20");
+    await userEvent.clear(passes);
+    await userEvent.type(passes, "35");
+    await userEvent.click(within(section()).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(put(seen)).toBeDefined());
+    expect(put(seen).improvement_daily_passes).toBe(35);
+    expect(put(seen)).not.toHaveProperty("improvement_sample_share");
+  });
+
+  it("says what is wrong with passes out of range, and sends nothing", async () => {
+    const seen = at(ON);
+    const passes = await screen.findByLabelText(/passes a day, at most/i);
+    await userEvent.clear(passes);
+    await userEvent.type(passes, "201");
+    await userEvent.click(within(section()).getByRole("button", { name: /^save$/i }));
+    expect(
+      await within(section()).findByText(/must be a whole number from 1 to 200/i),
+    ).toBeInTheDocument();
+    expect(put(seen)).toBeUndefined();
+  });
+
+  it("says the improver proposes changes for an approver to decide", async () => {
+    at(OFF);
+    expect(await screen.findByText(/the improver proposes changes/i)).toBeInTheDocument();
+    expect(screen.queryByText(/later release/i)).toBeNull();
   });
 
   it("sends a judge model chosen here", async () => {

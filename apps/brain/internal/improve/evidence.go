@@ -312,17 +312,23 @@ func (ev evidence) text(ctxLines, trace []string, extra []section) string {
 	}, extra...)
 	var b strings.Builder
 	for _, p := range parts {
-		lines := slices.DeleteFunc(slices.Clone(p.lines), func(l string) bool { return l == "" })
-		if len(lines) == 0 {
-			continue
-		}
-		b.WriteString("## " + p.title + "\n")
-		for _, l := range lines {
-			for line := range strings.SplitSeq(l, "\n") {
-				b.WriteString(evidenceMark + line + "\n")
-			}
-		}
-		b.WriteString("\n")
+		writeSection(&b, p)
 	}
 	return b.String()
+}
+
+// writeSection writes one section, its lines marked as evidence; a section
+// with no lines is left out.
+func writeSection(b *strings.Builder, p section) {
+	lines := slices.DeleteFunc(slices.Clone(p.lines), func(l string) bool { return l == "" })
+	if len(lines) == 0 {
+		return
+	}
+	b.WriteString("## " + p.title + "\n")
+	for _, l := range lines {
+		for line := range strings.SplitSeq(l, "\n") {
+			b.WriteString(evidenceMark + line + "\n")
+		}
+	}
+	b.WriteString("\n")
 }

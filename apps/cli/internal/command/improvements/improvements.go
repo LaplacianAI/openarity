@@ -39,6 +39,7 @@ func New(opts *cli.Options) *cobra.Command {
 	cmd.AddCommand(
 		newListCmd(opts),
 		newShowCmd(opts),
+		newPassesCmd(opts),
 		newDecisionCmd(opts, "approve", client.Approve, "approved",
 			"Apply the proposal to the agent",
 			"The change is made now, and can be reverted later. It is refused when\n"+
@@ -60,6 +61,7 @@ type view struct {
 	ID         string       `json:"id" yaml:"id"`
 	Agent      ref          `json:"agent" yaml:"agent"`
 	Skill      *ref         `json:"skill" yaml:"skill"`
+	PassID     *string      `json:"pass_id" yaml:"pass_id"`
 	Kind       string       `json:"kind" yaml:"kind"`
 	Status     string       `json:"status" yaml:"status"`
 	Scope      string       `json:"scope" yaml:"scope"`
@@ -112,6 +114,7 @@ func viewOf(p *client.Improvement) view {
 		Runs: make([]runView, 0, len(p.Runs)), Outsider: p.Outsider,
 		DecidedBy: idOrNil(p.DecidedBy), DecidedAt: p.DecidedAt,
 		RevertedBy: idOrNil(p.RevertedBy), RevertedAt: p.RevertedAt, CreatedAt: p.CreatedAt,
+		PassID: idOrNil(p.PassID),
 	}
 	if p.Skill != nil {
 		s := refOf(*p.Skill)
@@ -421,6 +424,9 @@ func printOne(opts *cli.Options, v view, did string) error {
 					names = append(names, cli.Safe(r.Name))
 				}
 				table.Row("reaches", strings.Join(names, ", "), "")
+			}
+			if v.PassID != nil {
+				table.Row("pass", *v.PassID, "")
 			}
 			table.Row("proposed", v.CreatedAt.Format(stampLayout), "")
 			if v.DecidedAt != nil {

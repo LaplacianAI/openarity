@@ -103,6 +103,10 @@ func newJobs(
 		return nil, nil, err
 	}
 	judging := newImproveJob(cfg, logger, dbStore)
+	improving, err := newImproverJob(cfg, logger, dbStore, secretStore)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if cfg.EmbeddingModel == "" {
 		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected or searched")
@@ -110,7 +114,7 @@ func newJobs(
 		if err != nil {
 			return nil, nil, err
 		}
-		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), judging}, func() {}, nil
+		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), judging, improving}, func() {}, nil
 	}
 
 	g, embedder, closeGraph, err := dialGraph(ctx, cfg)
@@ -125,8 +129,24 @@ func newJobs(
 	}
 	projector := graph.NewProjector(dbStore, g, embedder, logger)
 	return []worker.Job{
-		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), graph.DrainJob(projector, logger), judging,
+		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), graph.DrainJob(projector, logger), judging, improving,
 	}, closeGraph, nil
+}
+
+// newImproverJob finds each agent's patterns and runs the improver on them,
+// on the judge's model endpoint; it reads skill files from the store the
+// runs read them from.
+func newImproverJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) (*improve.ImproverJob, error) {
+	attachments, err := newAttachmentStore(cfg, secretStore, logger)
+	if err != nil {
+		return nil, err
+	}
+	judge := improve.NewJudge(openaicompat.Factory(), agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey})
+	im, err := improve.NewImprover(dbStore, attachments, judge, runtime.Loops(), logger)
+	if err != nil {
+		return nil, err
+	}
+	return improve.NewImproverJob(im, dbStore), nil
 }
 
 // newImproveJob judges a team's finished runs and digests them, on the same

@@ -79,6 +79,7 @@ describe("the tabs", () => {
       "Waiting",
       "Applied",
       "Closed",
+      "Passes",
     ]);
     expect(seen.some((s) => s.path.includes("status=waiting"))).toBe(true);
 

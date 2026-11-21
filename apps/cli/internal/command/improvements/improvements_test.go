@@ -85,7 +85,7 @@ func TestTheHelpNamesEveryVerb(t *testing.T) {
 	if err != nil {
 		t.Fatalf("improvements --help: %v", err)
 	}
-	contains(t, out, "list", "show", "approve", "reject", "revert")
+	contains(t, out, "list", "show", "passes", "approve", "reject", "revert")
 }
 
 func TestListShowsAgentKindStatusScopeMarksAgeAndWhyOnOneLine(t *testing.T) {

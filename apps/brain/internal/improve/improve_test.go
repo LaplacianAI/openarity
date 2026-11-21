@@ -33,8 +33,9 @@ type fakeModel struct {
 }
 
 type reply struct {
-	text string
-	err  error
+	text  string
+	err   error
+	calls []agent.ToolCall
 }
 
 func (f *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
@@ -53,7 +54,7 @@ func (f *fakeModel) Complete(_ context.Context, req agent.Request) (agent.Respon
 		return agent.Response{}, r.err
 	}
 	return agent.Response{
-		Message: agent.Message{Role: agent.RoleAssistant, Content: []agent.Content{{Type: agent.ContentText, Text: r.text}}},
+		Message: agent.Message{Role: agent.RoleAssistant, Content: []agent.Content{{Type: agent.ContentText, Text: r.text}}, ToolCalls: r.calls},
 		Usage:   agent.Usage{InputTokens: 120, OutputTokens: 30},
 	}, nil
 }

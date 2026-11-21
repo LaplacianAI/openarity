@@ -124,7 +124,7 @@ apps/brain/
   internal/reaper/     the sweep: one loop, one Effect per outside system
     job.go             the reaper as background work: SweepAll, and its Job
     rooms.go           the room effect: idle rooms expired, rooms deleted with the key that made them
-  internal/improve/    with improvement on: each finished run judged in the background, the ones worth learning from digested into signatures; the improver's evidence
+  internal/improve/    with improvement on: each finished run judged in the background, the ones worth learning from digested into signatures; and the improver: patterns over the bar, a pass per agent that proposes changes, each screened before it is stored
   internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
   internal/whatsapp/   WhatsApp numbers linked as devices: leases, connections, pairing, paced sending
   internal/runtime/    a run: the agent built from its row, executed, recorded

@@ -4,6 +4,7 @@ import type {
   ImprovementKind,
   ImprovementMark,
   ImprovementStatus,
+  ImproverPass,
 } from "@/api/types";
 import { waitedFor } from "@/lib/format";
 import { count } from "@/lib/runs";
@@ -104,12 +105,16 @@ export function fieldWords(field: string): string {
 }
 
 /**
- * The tabs: what is waiting, what is in force, and everything that ended
- * without being (or no longer being) in force.
+ * The tabs: what is waiting, what is in force, everything that ended without
+ * being (or no longer being) in force, and the passes of the improver that
+ * wrote them.
  */
-export type Tab = "waiting" | "applied" | "closed";
+export type Tab = "waiting" | "applied" | "closed" | "passes";
 
-export const TAB_STATUSES: Record<Tab, ImprovementStatus[]> = {
+/** The tabs that list proposals, each by the statuses it holds. */
+export type StatusTab = Exclude<Tab, "passes">;
+
+export const TAB_STATUSES: Record<StatusTab, ImprovementStatus[]> = {
   waiting: ["waiting"],
   applied: ["applied"],
   closed: ["rejected", "reverted", "withdrawn"],
@@ -119,17 +124,48 @@ export const TAB_WORDS: Record<Tab, string> = {
   waiting: "Waiting",
   applied: "Applied",
   closed: "Closed",
+  passes: "Passes",
 };
 
-/** The tabs a caller may open: waiting and the closed group quote runs only an approver may read. */
+/** The tabs a caller may open: waiting, the closed group and the passes quote runs only an approver may read. */
 export function tabsFor(canApprove: boolean): Tab[] {
-  return canApprove ? ["waiting", "applied", "closed"] : ["applied"];
+  return canApprove ? ["waiting", "applied", "closed", "passes"] : ["applied"];
 }
 
 /** The tab asked for if it may be opened, else the first the caller has. */
 export function tabOf(asked: Tab | undefined, canApprove: boolean): Tab {
   const tabs = tabsFor(canApprove);
   return asked !== undefined && tabs.includes(asked) ? asked : (tabs[0] as Tab);
+}
+
+/** What a pass found, one signature read apart: "tool", "crm__close_ticket", "misused tool". */
+export type SignatureWords = { part: string; target: string; cause: string };
+
+/** "tool:crm__close_ticket:misused_tool", or "instructions::skipped_step", in words. */
+export function signatureWords(signature: string): SignatureWords {
+  const [part = "", target = "", ...rest] = signature.split(":");
+  const words = (t: string) => t.replace(/_/g, " ").trim();
+  return { part: words(part), target, cause: words(rest.join(":")) };
+}
+
+/** "skill:triage" as "skill triage"; a tool is "server/tool", which stays as it is. */
+export function prunedWords(pruned: string): string {
+  const at = pruned.indexOf(":");
+  return at < 0 ? pruned : `${pruned.slice(0, at)} ${pruned.slice(at + 1)}`;
+}
+
+/** What came of a pass, as a sentence: a person is told what it did, not its status. */
+export function passOutcome(
+  pass: Pick<ImproverPass, "status" | "proposed" | "screened_out" | "error">,
+): string {
+  if (pass.status === "running") return "Running…";
+  if (pass.status === "failed") return pass.error ? `Failed: ${pass.error}` : "Failed";
+  const held =
+    pass.screened_out > 0
+      ? `${pass.screened_out.toLocaleString("en-US")} held back by the screen`
+      : null;
+  const made = pass.proposed > 0 ? count(pass.proposed, "proposal") : "Nothing to change";
+  return held ? `${made}, ${held}` : made;
 }
 
 /** "2 changes wait for approval; the oldest for 3 days." */

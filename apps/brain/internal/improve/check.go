@@ -93,6 +93,10 @@ func judgeModelOf(s db.GetImprovementSettingsRow) (agent.ModelRef, bool) {
 	return agent.ModelRef{}, false
 }
 
+// A run judged done is digested anyway when one tool failed this many
+// times in its tree: it got there, but fought the tool on the way.
+const repeatedToolFailures = 2
+
 var errNoModel = errFinal{"the team has no model to judge with: set its model, or a judge model"}
 
 // Check judges one settled run, once. An answer that is unusable, or a team
@@ -194,7 +198,11 @@ func (c *Checker) record(ctx context.Context, row db.RecordRunOutcomeParams, fai
 		if err != nil {
 			return err
 		}
-		row.Digest = digestFor(Effective(row.Verdict, row.Implicit, counts.Up, counts.Down), row.Sampled)
+		trouble, err := q.RunHasRepeatedToolFailures(ctx, db.RunHasRepeatedToolFailuresParams{RootRunID: row.RunID, AtLeast: repeatedToolFailures})
+		if err != nil {
+			return err
+		}
+		row.Digest = digestFor(Effective(row.Verdict, row.Implicit, counts.Up, counts.Down), row.Sampled, trouble)
 		_, err = q.RecordRunOutcome(ctx, row)
 		return err
 	})

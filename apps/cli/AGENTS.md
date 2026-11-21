@@ -82,14 +82,14 @@ apps/cli/
     config/            oa config show|set|unset|path
     context/           oa context list|use|create|rename|delete
     teams/             oa teams list|create|delete|restore, oa teams members list|add|remove,
-                       oa teams settings show|set (--improvement turns self-improvement on or off; --judge-model, --judge-max-tokens, --judge-temperature, --no-judge-model and --sample-share tune what judges runs)
+                       oa teams settings show|set (--improvement turns self-improvement on or off; --judge-model, --judge-max-tokens, --judge-temperature, --no-judge-model and --sample-share tune what judges runs; --daily-passes caps the improver's passes a day)
     channels/          oa channels list|create|update|delete|pair (pair draws a WhatsApp QR or shows a code and waits until linked; create takes --secret-stdin or --secret-file PATH, --credential-stdin NAME, --answers-in, --trigger-word and --no-notify-strangers; update takes --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers, --reply-mode, --answers-in and --trigger-word), oa channels senders …
     sessions/          oa sessions list|get|read|feedback — the conversations, their messages, and your 👍/👎 on a run (up|down [--note], or --clear)
     runs/              oa runs start|list|get|events|cancel — events is an SSE stream; get shows the judge's outcome and your feedback
     users/             oa users list — who has logged in, and their id
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
     agents/            oa agents list|get|create|replace|delete — a file, grants by name
-    improvements/      oa improvements list|show|approve|reject|revert — the changes agents propose to themselves, with a line diff per change
+    improvements/      oa improvements list|show|passes|approve|reject|revert — the changes agents propose to themselves, with a line diff per change
     mcpservers/        oa mcp-servers list|get|create|replace|delete|tools|discover|connect|disconnect
     blueprints/        oa export, oa plan, oa apply — a team in one file; skills read from their folders;
                        oa build and oa proposals — the team's builder

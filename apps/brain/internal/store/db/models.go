@@ -206,6 +206,27 @@ type ImprovementProposal struct {
 	RevertedBy  *uuid.UUID
 	RevertedAt  *time.Time
 	WithdrawnBy *uuid.UUID
+	PassID      *uuid.UUID
+}
+
+type ImproverPass struct {
+	ID           uuid.UUID
+	TeamID       uuid.UUID
+	AgentID      uuid.UUID
+	Trigger      string
+	Signatures   []string
+	Pruned       []string
+	RunIds       []uuid.UUID
+	Status       string
+	Report       string
+	Proposed     int32
+	ScreenedOut  int32
+	Model        string
+	InputTokens  int64
+	OutputTokens int64
+	Error        *string
+	StartedAt    time.Time
+	FinishedAt   *time.Time
 }
 
 type McpOauthClient struct {
@@ -580,6 +601,7 @@ type TeamSetting struct {
 	JudgeModelTemperature  *float64
 	ImprovementSampleShare int16
 	ImprovementSince       *time.Time
+	ImprovementDailyPasses int16
 }
 
 type User struct {

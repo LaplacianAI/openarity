@@ -8,6 +8,7 @@ import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import { Choice } from "@/components/choices";
 import { ImprovementCard } from "@/components/improvement-card";
+import { ImproverPasses } from "@/components/improver-passes";
 import { ErrorState } from "@/components/states";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,7 +30,7 @@ type ImprovementsSearch = {
   q?: string | undefined;
 };
 
-const TABS: Tab[] = ["waiting", "applied", "closed"];
+const TABS: Tab[] = ["waiting", "applied", "closed", "passes"];
 
 export const Route = createFileRoute("/ui/improvements")({
   // The tab, the agent and the words searched for, in the URL so a view of
@@ -68,6 +69,7 @@ function Improvements() {
   const agent = search.agent;
   const q = search.q;
   const agents = useAgentOptions(teamId);
+  const passes = tab === "passes";
 
   // The box answers at once; the address and the brain follow once typing pauses.
   const [typed, setTyped] = useState(q ?? "");
@@ -95,13 +97,17 @@ function Improvements() {
     queryFn: ({ pageParam, signal }) =>
       listImprovements(
         teamId as string,
-        { status: TAB_STATUSES[tab], ...(agent ? { agent } : {}), ...(q ? { q } : {}) },
+        {
+          status: tab === "passes" ? [] : TAB_STATUSES[tab],
+          ...(agent ? { agent } : {}),
+          ...(q ? { q } : {}),
+        },
         pageParam,
         signal,
       ),
     initialPageParam: null as string | null,
     getNextPageParam: nextCursorOf,
-    enabled: Boolean(teamId) && !perms.isPending,
+    enabled: Boolean(teamId) && !perms.isPending && !passes,
   });
   const rows = list.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -167,17 +173,21 @@ function Improvements() {
                   }
                 />
               </div>
-              <Input
-                type="search"
-                aria-label="Search the reasons"
-                placeholder="Search…"
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                className="w-full sm:w-48"
-              />
+              {passes ? null : (
+                <Input
+                  type="search"
+                  aria-label="Search the reasons"
+                  placeholder="Search…"
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  className="w-full sm:w-48"
+                />
+              )}
             </div>
           </div>
-          {list.isPending ? (
+          {passes ? (
+            <ImproverPasses teamId={teamId} agent={agent} />
+          ) : list.isPending ? (
             <Loading />
           ) : list.isError ? (
             <ErrorState
