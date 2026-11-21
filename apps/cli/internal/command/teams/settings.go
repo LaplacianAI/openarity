@@ -317,7 +317,7 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--stop-idle-minutes and --no-stop-idle-minutes contradict each other")
 	case slices.ContainsFunc(sizeFlags, changed) && f.noSize:
 		return errors.New("--no-workspace-size cannot be combined with a workspace size")
-	case slices.ContainsFunc(sizeFlags, changed) && !(changed("workspace-memory-mb") && changed("workspace-cpus") && changed("workspace-disk-mb")):
+	case slices.ContainsFunc(sizeFlags, changed) && (!changed("workspace-memory-mb") || !changed("workspace-cpus") || !changed("workspace-disk-mb")):
 		return errors.New("a workspace size is --workspace-memory-mb, --workspace-cpus and --workspace-disk-mb together")
 	case changed("hub") && f.noHub:
 		return errors.New("--hub and --no-hub contradict each other")
@@ -457,7 +457,7 @@ func (f *settingsFlags) sandboxBody(s *client.SandboxSettingsRequest) (json.RawM
 	if s == nil {
 		return nil, nil
 	}
-	raw, err := json.Marshal(s)
+	raw, err := json.Marshal(s) //nolint:gosec // the key is sent to the brain, which is what this request is for
 	if err != nil {
 		return nil, err
 	}
