@@ -23,6 +23,7 @@ import type {
   ApprovalRuleMode,
   ApprovalSettings,
   BrowserProvider,
+  ModelRef,
   SandboxProvider,
   SearchProvider,
   TeamSettings,
@@ -257,6 +258,13 @@ export type SettingsDraft = {
   /** A self-hosted browser only: reach it with no key. */
   dropBrowserKey: boolean;
   improvement: boolean;
+  /** Whether runs are judged on a model of their own, not the team's. */
+  judgeOn: boolean;
+  judgeName: string;
+  judgeMaxTokens: string;
+  judgeTemperature: string;
+  /** The share of good runs studied, as typed. */
+  sampleShare: string;
   /** Messages, and the token lines, as typed: compared by value. */
   compaction: string;
   tokensMin: string;
@@ -286,6 +294,12 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     browserKey: "",
     dropBrowserKey: false,
     improvement: s.improvement,
+    judgeOn: s.judge_model != null,
+    judgeName: s.judge_model?.name ?? "",
+    judgeMaxTokens: s.judge_model ? String(s.judge_model.max_tokens) : "4096",
+    judgeTemperature:
+      s.judge_model?.temperature === undefined ? "" : String(s.judge_model?.temperature ?? ""),
+    sampleShare: String(s.improvement_sample_share ?? 10),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -311,7 +325,14 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
   search: ["provider", "url", "key", "dropKey"],
   sandbox: ["sandbox", "sandboxURL", "sandboxTemplate", "sandboxKey"],
   browser: ["browser", "browserURL", "browserKey", "dropBrowserKey"],
-  improvement: ["improvement"],
+  improvement: [
+    "improvement",
+    "judgeOn",
+    "judgeName",
+    "judgeMaxTokens",
+    "judgeTemperature",
+    "sampleShare",
+  ],
 };
 
 function same(a: SettingsDraft[keyof SettingsDraft], b: SettingsDraft[keyof SettingsDraft]) {
@@ -323,7 +344,12 @@ function same(a: SettingsDraft[keyof SettingsDraft], b: SettingsDraft[keyof Sett
 }
 
 /** Fields compared by the number they hold: "60000" is the stored 60,000. */
-const BY_VALUE = new Set<keyof SettingsDraft>(["compaction", "tokensMin", "tokensMax"]);
+const BY_VALUE = new Set<keyof SettingsDraft>([
+  "compaction",
+  "tokensMin",
+  "tokensMax",
+  "sampleShare",
+]);
 
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
@@ -384,16 +410,9 @@ export function settingsRequest(
 ): TeamSettingsRequest | string {
   let model: TeamSettingsRequest["model"] = null;
   if (d.modelOn) {
-    const name = d.modelName.trim();
-    if (name === "") return "Name the model, as your model gateway names it.";
-    const maxTokens = wholeNumber(d.maxTokens);
-    if (maxTokens === null || maxTokens < 1) return "Max tokens must be a whole number above 0.";
-    model = { name, max_tokens: maxTokens };
-    if (d.temperature.trim() !== "") {
-      const t = Number(d.temperature.trim());
-      if (!Number.isFinite(t) || t < 0 || t > 2) return "Temperature must be between 0 and 2.";
-      model.temperature = t;
-    }
+    const ref = modelRef(d.modelName, d.maxTokens, d.temperature, "Name the model");
+    if (typeof ref === "string") return ref;
+    model = ref;
   }
 
   const compaction = parsedCompaction(compactionOf(d));
@@ -433,18 +452,81 @@ export function settingsRequest(
   const browser = browserRequest(d, stored);
   if (typeof browser === "string") return browser;
 
+  // Sent only when changed: left out, the brain keeps what it holds, so a Save
+  // from another group, or a tab opened before someone else's change, never
+  // writes over them.
+  const improvement = improvementRequest(d, stored);
+  if (typeof improvement === "string") return improvement;
+
   return {
     model,
     search,
     sandbox,
     browser,
     improvement: d.improvement,
+    ...improvement,
     compaction_messages: compaction.messages,
     compaction_tokens_min: compaction.least,
     compaction_tokens_max: compaction.most,
     // Whole, as the rest is: null sends the team back to the built-in orchestrator.
     hub: d.hub?.name ?? null,
   };
+}
+
+/** A model as the brain takes it, or the sentence saying why it cannot. */
+function modelRef(
+  nameTyped: string,
+  maxTyped: string,
+  temperatureTyped: string,
+  nameIt: string,
+): ModelRef | string {
+  const name = nameTyped.trim();
+  if (name === "") return `${nameIt}, as your model gateway names it.`;
+  const maxTokens = wholeNumber(maxTyped);
+  if (maxTokens === null || maxTokens < 1) return "Max tokens must be a whole number above 0.";
+  const ref: ModelRef = { name, max_tokens: maxTokens };
+  if (temperatureTyped.trim() !== "") {
+    const t = Number(temperatureTyped.trim());
+    if (!Number.isFinite(t) || t < 0 || t > 2) return "Temperature must be between 0 and 2.";
+    ref.temperature = t;
+  }
+  return ref;
+}
+
+/**
+ * The judge model and the sample share, each only when it differs from what
+ * the brain holds. A judge model of null sends the team back to judging on its
+ * own model.
+ */
+function improvementRequest(
+  d: SettingsDraft,
+  stored: TeamSettings,
+): Pick<TeamSettingsRequest, "judge_model" | "improvement_sample_share"> | string {
+  const base = draftOf(stored);
+  const out: Pick<TeamSettingsRequest, "judge_model" | "improvement_sample_share"> = {};
+  const judgeChanged = (
+    ["judgeOn", "judgeName", "judgeMaxTokens", "judgeTemperature"] as const
+  ).some((f) => d[f] !== base[f]);
+  if (judgeChanged) {
+    if (d.judgeOn) {
+      const ref = modelRef(
+        d.judgeName,
+        d.judgeMaxTokens,
+        d.judgeTemperature,
+        "Name the judge model",
+      );
+      if (typeof ref === "string") return ref;
+      out.judge_model = ref;
+    } else {
+      out.judge_model = null;
+    }
+  }
+  if (parseWhole(d.sampleShare) !== parseWhole(base.sampleShare)) {
+    const share = wholeNumber(d.sampleShare);
+    if (share === null || share > 100) return "The share must be a whole number from 0 to 100.";
+    out.improvement_sample_share = share;
+  }
+  return out;
 }
 
 /**
@@ -764,6 +846,11 @@ function TokensInput({
     </div>
   );
 }
+
+const JUDGES: readonly { value: "team" | "own"; label: string }[] = [
+  { value: "team", label: "Same as the team's model" },
+  { value: "own", label: "A different model" },
+];
 
 const GROUPS: Group[] = [
   "model",
@@ -1135,15 +1222,88 @@ function SettingsForm({
 
       <Section
         title="Improvement"
-        about="Changes the team's agents propose to themselves from their runs."
+        about="How the team's agents improve from their runs."
         {...props("improvement")}
       >
         <SwitchField
           label="Improve agents from their runs"
-          description="Agents propose changes to their own instructions, skills and tools from their runs, for someone who may approve to accept. The parts that propose arrive in a later release; until then this changes nothing."
+          description="While this is on, each finished run is judged in the background on whether the task was done, and members can mark an answer right or wrong. Agents proposing changes to themselves from this arrives in a later release."
           checked={draft.improvement}
           onCheckedChange={(improvement) => set("improvement", { improvement })}
         />
+        {draft.improvement ? (
+          <>
+            <Field
+              label="Judge model"
+              htmlFor="settings-judge"
+              hint="The model that judges each run, and studies the ones worth improving from."
+            >
+              <Choice
+                id="settings-judge"
+                value={draft.judgeOn ? "own" : "team"}
+                options={JUDGES}
+                onChange={(v) => set("improvement", { judgeOn: v === "own" })}
+              />
+            </Field>
+            {draft.judgeOn ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Field
+                  label="Judge's model name"
+                  htmlFor="settings-judge-model"
+                  hint="As the model gateway names it."
+                >
+                  <Input
+                    id="settings-judge-model"
+                    value={draft.judgeName}
+                    onChange={(e) => set("improvement", { judgeName: e.target.value })}
+                  />
+                </Field>
+                <Field label="Judge's max tokens" htmlFor="settings-judge-max-tokens">
+                  <Input
+                    id="settings-judge-max-tokens"
+                    inputMode="numeric"
+                    value={draft.judgeMaxTokens}
+                    onChange={(e) => set("improvement", { judgeMaxTokens: e.target.value })}
+                  />
+                </Field>
+                <Field
+                  label="Judge's temperature"
+                  htmlFor="settings-judge-temperature"
+                  hint="0 to 2; empty for the model's own."
+                >
+                  <Input
+                    id="settings-judge-temperature"
+                    inputMode="decimal"
+                    value={draft.judgeTemperature}
+                    onChange={(e) => set("improvement", { judgeTemperature: e.target.value })}
+                  />
+                </Field>
+              </div>
+            ) : null}
+            <Field
+              label="Share of good runs to study"
+              htmlFor="settings-sample-share"
+              hint="Runs judged bad are always studied. A share of the good ones is too, so agents keep what works. Each one studied costs another model call."
+            >
+              <div className="relative max-w-40">
+                <Input
+                  id="settings-sample-share"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="pr-9 tabular-nums"
+                  value={draft.sampleShare}
+                  onChange={(e) => set("improvement", { sampleShare: e.target.value })}
+                />
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
+                >
+                  %
+                </span>
+              </div>
+            </Field>
+          </>
+        ) : null}
       </Section>
 
       <ApprovalSections teamId={teamId} canWrite={canWrite} />

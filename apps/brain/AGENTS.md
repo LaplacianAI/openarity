@@ -87,7 +87,7 @@ apps/brain/
     <domain>/          one package per domain, each its own Router
       <domain>.go      handler, New, the handlers
       schema.go        request and response structs — the wire contract
-    runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream
+    runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream; feedback.go a member's 👍/👎 and a run's judged outcome
     sessions/          read a conversation; start one and write in it on the dashboard; follow its stream
     loops/             the loops an agent may choose, which are the runner's
     blueprints/        a team's servers, skills, agents and approval rules (ask or deny, only ever stricter) in one document: export, plan (pure), apply in one tx; the builder's proposals
@@ -124,6 +124,7 @@ apps/brain/
   internal/reaper/     the sweep: one loop, one Effect per outside system
     job.go             the reaper as background work: SweepAll, and its Job
     rooms.go           the room effect: idle rooms expired, rooms deleted with the key that made them
+  internal/improve/    with improvement on: each finished run judged in the background, the ones worth learning from digested into signatures; the improver's evidence
   internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
   internal/whatsapp/   WhatsApp numbers linked as devices: leases, connections, pairing, paced sending
   internal/runtime/    a run: the agent built from its row, executed, recorded

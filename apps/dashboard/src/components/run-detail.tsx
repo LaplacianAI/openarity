@@ -28,6 +28,7 @@ import { cancelRun, followRunEvents, getRun } from "@/api";
 import type { Run, RunEvent } from "@/api/types";
 import { CopyId } from "@/components/facts";
 import { Markdown } from "@/components/markdown";
+import { OutcomeLine } from "@/components/run-outcome";
 import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -193,14 +194,24 @@ export function RunDetail({
   onChanged: () => void;
 }) {
   const { events, failed } = useRunEvents(teamId, run.id, onChanged);
+  // A list leaves out how a run was judged; a single run's read carries it.
+  // Read once the run is over, as it is judged only then, and only when the
+  // run in hand does not already carry it.
+  const judged = useQuery({
+    queryKey: ["runs", teamId, run.id],
+    queryFn: () => getRun(teamId, run.id),
+    enabled: !isLive(run.status) && run.outcome === undefined,
+  });
+  const outcome = run.outcome ?? judged.data?.outcome;
   return (
     <RunView
       teamId={teamId}
-      run={run}
+      run={outcome ? { ...run, outcome } : run}
       canCancel={canCancel}
       onChanged={onChanged}
       events={events}
       failed={failed}
+      outcomeUnread={!outcome && judged.isError}
     />
   );
 }
@@ -216,6 +227,7 @@ export function RunView({
   onChanged,
   events,
   failed,
+  outcomeUnread = false,
 }: {
   teamId: string;
   run: Run;
@@ -224,6 +236,8 @@ export function RunView({
   events: RunEvent[];
   /** Why the stream could not be followed, if it could not. */
   failed: string | null;
+  /** How the run was judged could not be read: said, not mistaken for "not judged". */
+  outcomeUnread?: boolean;
 }) {
   const trace = useMemo(() => groupTrace(events), [events]);
   const live = isLive(run.status) && !trace.ended && !failed;
@@ -270,6 +284,13 @@ export function RunView({
             {finding ? (
               <p data-finding className="text-sm">
                 {finding}
+              </p>
+            ) : null}
+            {run.outcome ? (
+              <OutcomeLine outcome={run.outcome} />
+            ) : outcomeUnread ? (
+              <p data-outcome-unread className="text-xs text-muted-foreground">
+                How this run was judged could not be read.
               </p>
             ) : null}
             {delegates.length > 0 ? (

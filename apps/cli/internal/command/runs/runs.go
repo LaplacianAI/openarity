@@ -62,6 +62,11 @@ type runView struct {
 	ParentRunID  *string    `json:"parent_run_id" yaml:"parent_run_id"`
 	Depth        int32      `json:"depth" yaml:"depth"`
 	Hub          bool       `json:"hub" yaml:"hub"`
+
+	// Outcome and MyFeedback are on a single run's read, and only once there
+	// is something to say; a list's rows and a run never judged carry neither.
+	Outcome    *client.RunOutcome  `json:"outcome,omitempty" yaml:"outcome,omitempty"`
+	MyFeedback *client.RunFeedback `json:"my_feedback,omitempty" yaml:"my_feedback,omitempty"`
 }
 
 func viewOf(r *client.Run) runView {
@@ -70,7 +75,7 @@ func viewOf(r *client.Run) runView {
 		Input: r.Input, Output: r.Output, Error: r.Error,
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Depth: r.Depth,
-		Hub: r.Hub,
+		Hub: r.Hub, Outcome: r.Outcome, MyFeedback: r.MyFeedback,
 	}
 	if r.ParentRunID != nil {
 		parent := r.ParentRunID.String()
@@ -420,6 +425,7 @@ func printRun(opts *cli.Options, r *client.Run, did, teamRef string) error {
 			if view.FinishedAt != nil {
 				table.Row("finished", view.FinishedAt.Format(stampLayout), "")
 			}
+			outcomeRows(table, opts, view)
 		},
 	})
 	if err != nil || view.Output == nil {
@@ -438,6 +444,49 @@ func printRun(opts *cli.Options, r *client.Run, did, teamRef string) error {
 	}
 	opts.Out.Note(text)
 	return nil
+}
+
+// outcomeRows shows how the run was judged apart from what people said of it:
+// the judge's words are a stranger's text, a person's vote is a count and a
+// word. Nothing at all for a run that was never judged and never voted on.
+func outcomeRows(table *printer.Table, opts *cli.Options, v runView) {
+	if o := v.Outcome; o != nil {
+		table.Row("judged", verdictWords(string(o.Verdict)), opts.Styles.Muted.Render(o.JudgedAt.Format(stampLayout)))
+		if o.Missed != "" {
+			table.Row("  missed", cli.Safe(clip(o.Missed)), "")
+		}
+		if o.Why != "" {
+			table.Row("  why", cli.Safe(clip(o.Why)), "")
+		}
+		table.Row("comes to", cli.Safe(string(o.Effective)), "")
+		table.Row("members", fmt.Sprintf("👍 %d  👎 %d", o.Feedback.Up, o.Feedback.Down), "")
+	}
+	if f := v.MyFeedback; f != nil {
+		table.Row("your feedback", thumbs(string(f.Value)), opts.Styles.Muted.Render(f.UpdatedAt.Format(stampLayout)))
+		if f.Note != "" {
+			table.Row("  note", cli.Safe(clip(f.Note)), "")
+		}
+	}
+}
+
+// verdictWords is the judge's verdict as a person reads it.
+func verdictWords(v string) string {
+	switch v {
+	case "not_done":
+		return "not done"
+	case "cant_tell":
+		return "can't tell"
+	case "partly":
+		return "partly done"
+	}
+	return cli.Safe(v)
+}
+
+func thumbs(v string) string {
+	if v == "up" {
+		return "👍 up"
+	}
+	return "👎 down"
 }
 
 func status(opts *cli.Options, s string) string {

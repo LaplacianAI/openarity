@@ -1,6 +1,7 @@
 package teamsettings
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,11 +41,16 @@ type hubRef struct {
 }
 
 type settings struct {
-	Model               *modelRef  `json:"model"`
-	Search              search     `json:"search"`
-	Sandbox             sandbox    `json:"sandbox"`
-	Browser             browser    `json:"browser"`
-	Improvement         bool       `json:"improvement"`
+	Model       *modelRef `json:"model"`
+	Search      search    `json:"search"`
+	Sandbox     sandbox   `json:"sandbox"`
+	Browser     browser   `json:"browser"`
+	Improvement bool      `json:"improvement"`
+	// The model that judges and digests runs; null is the team's model.
+	JudgeModel             *modelRef `json:"judge_model"`
+	ImprovementSampleShare int16     `json:"improvement_sample_share"`
+	// When the switch last went on; runs before it are never judged.
+	ImprovementSince    *time.Time `json:"improvement_since"`
 	CompactionMessages  int32      `json:"compaction_messages"`
 	CompactionTokensMin int32      `json:"compaction_tokens_min"`
 	CompactionTokensMax int32      `json:"compaction_tokens_max"`
@@ -76,14 +82,30 @@ type browserRequest struct {
 }
 
 type settingsRequest struct {
-	Model              *modelRef       `json:"model"`
-	Search             searchRequest   `json:"search"`
-	Sandbox            *sandboxRequest `json:"sandbox"`
-	Browser            *browserRequest `json:"browser"`
-	Improvement        bool            `json:"improvement"`
-	CompactionMessages int32           `json:"compaction_messages"`
+	Model       *modelRef       `json:"model"`
+	Search      searchRequest   `json:"search"`
+	Sandbox     *sandboxRequest `json:"sandbox"`
+	Browser     *browserRequest `json:"browser"`
+	Improvement bool            `json:"improvement"`
+	// Left out, the stored judge model stays; null clears it to the team's.
+	JudgeModel maybeModel `json:"judge_model"`
+	// Left out, the stored share stays.
+	ImprovementSampleShare *int16 `json:"improvement_sample_share"`
+	CompactionMessages     int32  `json:"compaction_messages"`
 	// Left out, the stored value stays, as a sandbox does.
 	CompactionTokensMin *int32  `json:"compaction_tokens_min"`
 	CompactionTokensMax *int32  `json:"compaction_tokens_max"`
 	Hub                 *string `json:"hub"`
+}
+
+// maybeModel tells a model left out of a request from one sent as null: its
+// UnmarshalJSON runs only for a key that is present.
+type maybeModel struct {
+	Set   bool
+	Model *modelRef
+}
+
+func (m *maybeModel) UnmarshalJSON(b []byte) error {
+	m.Set = true
+	return json.Unmarshal(b, &m.Model)
 }

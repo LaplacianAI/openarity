@@ -101,16 +101,16 @@ func (e ApprovalDecisionScope) Valid() bool {
 
 // Defines values for ApprovalDecisionVia.
 const (
-	Cli       ApprovalDecisionVia = "cli"
-	Dashboard ApprovalDecisionVia = "dashboard"
+	ApprovalDecisionViaCli       ApprovalDecisionVia = "cli"
+	ApprovalDecisionViaDashboard ApprovalDecisionVia = "dashboard"
 )
 
 // Valid indicates whether the value is a known member of the ApprovalDecisionVia enum.
 func (e ApprovalDecisionVia) Valid() bool {
 	switch e {
-	case Cli:
+	case ApprovalDecisionViaCli:
 		return true
-	case Dashboard:
+	case ApprovalDecisionViaDashboard:
 		return true
 	default:
 		return false
@@ -849,6 +849,135 @@ func (e ProposalState) Valid() bool {
 	}
 }
 
+// Defines values for RunFeedbackValue.
+const (
+	RunFeedbackValueDown RunFeedbackValue = "down"
+	RunFeedbackValueUp   RunFeedbackValue = "up"
+)
+
+// Valid indicates whether the value is a known member of the RunFeedbackValue enum.
+func (e RunFeedbackValue) Valid() bool {
+	switch e {
+	case RunFeedbackValueDown:
+		return true
+	case RunFeedbackValueUp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunFeedbackRequestValue.
+const (
+	RunFeedbackRequestValueDown RunFeedbackRequestValue = "down"
+	RunFeedbackRequestValueUp   RunFeedbackRequestValue = "up"
+)
+
+// Valid indicates whether the value is a known member of the RunFeedbackRequestValue enum.
+func (e RunFeedbackRequestValue) Valid() bool {
+	switch e {
+	case RunFeedbackRequestValueDown:
+		return true
+	case RunFeedbackRequestValueUp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunFeedbackRequestVia.
+const (
+	RunFeedbackRequestViaCli       RunFeedbackRequestVia = "cli"
+	RunFeedbackRequestViaDashboard RunFeedbackRequestVia = "dashboard"
+)
+
+// Valid indicates whether the value is a known member of the RunFeedbackRequestVia enum.
+func (e RunFeedbackRequestVia) Valid() bool {
+	switch e {
+	case RunFeedbackRequestViaCli:
+		return true
+	case RunFeedbackRequestViaDashboard:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunOutcomeEffective.
+const (
+	Bad     RunOutcomeEffective = "bad"
+	Good    RunOutcomeEffective = "good"
+	Neither RunOutcomeEffective = "neither"
+)
+
+// Valid indicates whether the value is a known member of the RunOutcomeEffective enum.
+func (e RunOutcomeEffective) Valid() bool {
+	switch e {
+	case Bad:
+		return true
+	case Good:
+		return true
+	case Neither:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunOutcomeImplicit.
+const (
+	RunOutcomeImplicitCorrection RunOutcomeImplicit = "correction"
+	RunOutcomeImplicitNone       RunOutcomeImplicit = "none"
+	RunOutcomeImplicitRepeat     RunOutcomeImplicit = "repeat"
+	RunOutcomeImplicitRetry      RunOutcomeImplicit = "retry"
+	RunOutcomeImplicitThanks     RunOutcomeImplicit = "thanks"
+)
+
+// Valid indicates whether the value is a known member of the RunOutcomeImplicit enum.
+func (e RunOutcomeImplicit) Valid() bool {
+	switch e {
+	case RunOutcomeImplicitCorrection:
+		return true
+	case RunOutcomeImplicitNone:
+		return true
+	case RunOutcomeImplicitRepeat:
+		return true
+	case RunOutcomeImplicitRetry:
+		return true
+	case RunOutcomeImplicitThanks:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunOutcomeVerdict.
+const (
+	CantTell RunOutcomeVerdict = "cant_tell"
+	Done     RunOutcomeVerdict = "done"
+	NotDone  RunOutcomeVerdict = "not_done"
+	Partly   RunOutcomeVerdict = "partly"
+	Wrong    RunOutcomeVerdict = "wrong"
+)
+
+// Valid indicates whether the value is a known member of the RunOutcomeVerdict enum.
+func (e RunOutcomeVerdict) Valid() bool {
+	switch e {
+	case CantTell:
+		return true
+	case Done:
+		return true
+	case NotDone:
+		return true
+	case Partly:
+		return true
+	case Wrong:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RunStatus.
 const (
 	RunStatusCancelled RunStatus = "cancelled"
@@ -948,6 +1077,24 @@ func (e SessionKind) Valid() bool {
 	case SessionKindGroup:
 		return true
 	case SessionKindThread:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionFeedbackItemsValue.
+const (
+	SessionFeedbackItemsValueDown SessionFeedbackItemsValue = "down"
+	SessionFeedbackItemsValueUp   SessionFeedbackItemsValue = "up"
+)
+
+// Valid indicates whether the value is a known member of the SessionFeedbackItemsValue enum.
+func (e SessionFeedbackItemsValue) Valid() bool {
+	switch e {
+	case SessionFeedbackItemsValueDown:
+		return true
+	case SessionFeedbackItemsValueUp:
 		return true
 	default:
 		return false
@@ -2982,6 +3129,14 @@ type Run struct {
 	// run started any other way.
 	MessageID *openapi_types.UUID `json:"message_id,omitempty" yaml:"message_id,omitempty"`
 
+	// MyFeedback The caller's 👍/👎 on the run, on a single run's read only; absent when none.
+	MyFeedback *RunFeedback `json:"my_feedback,omitempty" yaml:"my_feedback,omitempty"`
+
+	// Outcome How the run was judged, on a single run's read only, once it has
+	// been; absent before, in lists, and for a team that never had
+	// improvement on.
+	Outcome *RunOutcome `json:"outcome,omitempty" yaml:"outcome,omitempty"`
+
 	// Output The agent's answer, null until it succeeds. A run stopped at its
 	// token budget or wall clock keeps what it had, its latest summary
 	// when it compacted, beside its error.
@@ -3016,6 +3171,69 @@ type RunCounts struct {
 	Running   int64 `json:"running" yaml:"running"`
 	Succeeded int64 `json:"succeeded" yaml:"succeeded"`
 }
+
+// RunFeedback defines model for RunFeedback.
+type RunFeedback struct {
+	// Note What was wrong, if they said; empty otherwise
+	Note      string           `json:"note" yaml:"note"`
+	UpdatedAt time.Time        `json:"updated_at" yaml:"updated_at"`
+	Value     RunFeedbackValue `json:"value" yaml:"value"`
+}
+
+// RunFeedbackValue defines model for RunFeedback.Value.
+type RunFeedbackValue string
+
+// RunFeedbackRequest defines model for RunFeedbackRequest.
+type RunFeedbackRequest struct {
+	Note  *string                 `json:"note,omitempty" yaml:"note,omitempty"`
+	Value RunFeedbackRequestValue `json:"value" yaml:"value"`
+
+	// Via Where it was given; dashboard when left out
+	Via *RunFeedbackRequestVia `json:"via,omitempty" yaml:"via,omitempty"`
+}
+
+// RunFeedbackRequestValue defines model for RunFeedbackRequest.Value.
+type RunFeedbackRequestValue string
+
+// RunFeedbackRequestVia Where it was given; dashboard when left out
+type RunFeedbackRequestVia string
+
+// RunOutcome The judge's verdict on a run, and what it comes to once members'
+// feedback is weighed. Visible to whoever may read the run.
+type RunOutcome struct {
+	// Effective A member's 👎 or 👍 if there is one, else the verdict
+	Effective RunOutcomeEffective `json:"effective" yaml:"effective"`
+
+	// Feedback How many members gave 👍 and 👎; never who
+	Feedback struct {
+		Down int32 `json:"down" yaml:"down"`
+		Up   int32 `json:"up" yaml:"up"`
+	} `json:"feedback" yaml:"feedback"`
+
+	// Implicit What the judge read in the people's next messages. Evidence only:
+	// channel text never decides an outcome on its own.
+	Implicit RunOutcomeImplicit `json:"implicit" yaml:"implicit"`
+	JudgedAt time.Time          `json:"judged_at" yaml:"judged_at"`
+
+	// Missed What was asked and not delivered; empty when nothing was
+	Missed string `json:"missed" yaml:"missed"`
+
+	// Verdict The judge model's verdict on whether the task was done
+	Verdict RunOutcomeVerdict `json:"verdict" yaml:"verdict"`
+
+	// Why The judge's reason
+	Why string `json:"why" yaml:"why"`
+}
+
+// RunOutcomeEffective A member's 👎 or 👍 if there is one, else the verdict
+type RunOutcomeEffective string
+
+// RunOutcomeImplicit What the judge read in the people's next messages. Evidence only:
+// channel text never decides an outcome on its own.
+type RunOutcomeImplicit string
+
+// RunOutcomeVerdict The judge model's verdict on whether the task was done
+type RunOutcomeVerdict string
 
 // RunPage defines model for RunPage.
 type RunPage struct {
@@ -3270,6 +3488,20 @@ type Session struct {
 // team's, a `direct` is one person's.
 type SessionKind string
 
+// SessionFeedback defines model for SessionFeedback.
+type SessionFeedback struct {
+	Items []struct {
+		// Note What was wrong, if they said; empty otherwise
+		Note      string                    `json:"note" yaml:"note"`
+		RunID     openapi_types.UUID        `json:"run_id" yaml:"run_id"`
+		UpdatedAt time.Time                 `json:"updated_at" yaml:"updated_at"`
+		Value     SessionFeedbackItemsValue `json:"value" yaml:"value"`
+	} `json:"items" yaml:"items"`
+}
+
+// SessionFeedbackItemsValue defines model for SessionFeedback.Items.Value.
+type SessionFeedbackItemsValue string
+
 // SessionPage defines model for SessionPage.
 type SessionPage struct {
 	Items []Session `json:"items" yaml:"items"`
@@ -3508,10 +3740,21 @@ type TeamSettings struct {
 	// again when the chosen agent is deleted.
 	Hub *HubRef `json:"hub,omitempty" yaml:"hub,omitempty"`
 
-	// Improvement Whether the team's agents propose improvements to themselves from
-	// their runs, for approval. The parts that propose arrive in a later
-	// release; until then this setting changes nothing.
+	// Improvement Whether the team's agents improve themselves from their runs. While
+	// it is on, every finished top-level run is judged in the background
+	// (was the task done?), members may give 👍/👎 on answers, and runs
+	// judged bad, plus a sampled share of good ones, are digested for the
+	// improver. The part that proposes changes arrives in a later release.
 	Improvement bool `json:"improvement" yaml:"improvement"`
+
+	// ImprovementSampleShare The percentage of runs judged done that are digested anyway, for contrast. 10 until set.
+	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`
+
+	// ImprovementSince When improvement was last turned on; runs that finished before it are never judged.
+	ImprovementSince *time.Time `json:"improvement_since,omitempty" yaml:"improvement_since,omitempty"`
+
+	// JudgeModel The model that judges and digests runs; null means the team's model.
+	JudgeModel *ModelRef `json:"judge_model,omitempty" yaml:"judge_model,omitempty"`
 
 	// Model The model the team's built-in agents run on. Null until chosen, and until then they do not run.
 	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
@@ -3546,6 +3789,13 @@ type TeamSettingsRequest struct {
 	// Examples: triage
 	Hub         *string `json:"hub,omitempty" yaml:"hub,omitempty"`
 	Improvement bool    `json:"improvement" yaml:"improvement"`
+
+	// ImprovementSampleShare Left out, the stored share stays.
+	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`
+
+	// JudgeModel Left out, the stored judge model stays; null clears it, so runs are
+	// judged on the team's model.
+	JudgeModel *ModelRef `json:"judge_model,omitempty" yaml:"judge_model,omitempty"`
 
 	// Model Null or absent for no model, which stops the built-in agents running.
 	Model *ModelRef `json:"model,omitempty" yaml:"model,omitempty"`
@@ -4135,6 +4385,9 @@ type ApplyProposalJSONRequestBody = ProposalApply
 
 // StartRunJSONRequestBody defines body for StartRun for application/json ContentType.
 type StartRunJSONRequestBody = RunRequest
+
+// GiveRunFeedbackJSONRequestBody defines body for GiveRunFeedback for application/json ContentType.
+type GiveRunFeedbackJSONRequestBody = RunFeedbackRequest
 
 // StartConversationJSONRequestBody defines body for StartConversation for application/json ContentType.
 type StartConversationJSONRequestBody = SayRequest
@@ -5567,6 +5820,41 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 	StreamRunEvents(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ClearRunFeedback Remove your 👍/👎 on a run
+	//
+	// Requires `run:write`, as giving it does. Removing none answers 204
+	// too. Allowed whether or not the team still has `improvement` on: a
+	// word that still counts can always be taken back.
+	//
+	// Corresponds with DELETE /teams/{id}/runs/{runID}/feedback (the `ClearRunFeedback` operationId).
+	ClearRunFeedback(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GiveRunFeedbackWithBody Give or change your 👍/👎 on a run's answer
+	//
+	// Requires `run:write`, and the run must be visible to the caller. One
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
+	// `improvement` on. A signed-in member's word outranks the judge's
+	// verdict on this run; a 👎 also has the run digested if it was not.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+	GiveRunFeedbackWithBody(ctx context.Context, id TeamID, runID RunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GiveRunFeedback Give or change your 👍/👎 on a run's answer
+	//
+	// Requires `run:write`, and the run must be visible to the caller. One
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
+	// `improvement` on. A signed-in member's word outranks the judge's
+	// verdict on this run; a 👎 also has the run digested if it was not.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+	GiveRunFeedback(ctx context.Context, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListTeamPendingSenders List senders waiting on any of the team's channels
 	//
 	// Every channel's queue as one list, oldest first: the sender who has
@@ -5745,6 +6033,14 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/events (the `StreamSessionEvents` operationId).
 	StreamSessionEvents(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSessionFeedback Your own 👍/👎 on every run of a session
+	//
+	// Any member who may read the session. Only the caller's own feedback;
+	// what others gave is counted on each run's outcome, never named.
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/feedback (the `ListSessionFeedback` operationId).
+	ListSessionFeedback(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessionMessages Read a conversation
 	//
@@ -8273,6 +8569,71 @@ func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, pa
 	return c.Client.Do(req)
 }
 
+// ClearRunFeedback Remove your 👍/👎 on a run
+//
+// Requires `run:write`, as giving it does. Removing none answers 204
+// too. Allowed whether or not the team still has `improvement` on: a
+// word that still counts can always be taken back.
+//
+// Corresponds with DELETE /teams/{id}/runs/{runID}/feedback (the `ClearRunFeedback` operationId).
+func (c *Client) ClearRunFeedback(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClearRunFeedbackRequest(c.Server, id, runID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GiveRunFeedbackWithBody Give or change your 👍/👎 on a run's answer
+//
+// Requires `run:write`, and the run must be visible to the caller. One
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
+// `improvement` on. A signed-in member's word outranks the judge's
+// verdict on this run; a 👎 also has the run digested if it was not.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+func (c *Client) GiveRunFeedbackWithBody(ctx context.Context, id TeamID, runID RunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGiveRunFeedbackRequestWithBody(c.Server, id, runID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GiveRunFeedback Give or change your 👍/👎 on a run's answer
+//
+// Requires `run:write`, and the run must be visible to the caller. One
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
+// `improvement` on. A signed-in member's word outranks the judge's
+// verdict on this run; a 👎 also has the run digested if it was not.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+func (c *Client) GiveRunFeedback(ctx context.Context, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGiveRunFeedbackRequest(c.Server, id, runID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListTeamPendingSenders List senders waiting on any of the team's channels
 //
 // Every channel's queue as one list, oldest first: the sender who has
@@ -8522,6 +8883,24 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // Corresponds with GET /teams/{id}/sessions/{sessionID}/events (the `StreamSessionEvents` operationId).
 func (c *Client) StreamSessionEvents(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStreamSessionEventsRequest(c.Server, id, sessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSessionFeedback Your own 👍/👎 on every run of a session
+//
+// Any member who may read the session. Only the caller's own feedback;
+// what others gave is counted on each run's outcome, never named.
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/feedback (the `ListSessionFeedback` operationId).
+func (c *Client) ListSessionFeedback(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSessionFeedbackRequest(c.Server, id, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -12575,6 +12954,101 @@ func NewStreamRunEventsRequest(server string, id TeamID, runID RunID, params *St
 	return req, nil
 }
 
+// NewClearRunFeedbackRequest constructs an http.Request for the ClearRunFeedback method
+func NewClearRunFeedbackRequest(server string, id TeamID, runID RunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "runID", runID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/runs/%s/feedback", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGiveRunFeedbackRequest calls the generic GiveRunFeedback builder with application/json body
+func NewGiveRunFeedbackRequest(server string, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGiveRunFeedbackRequestWithBody(server, id, runID, "application/json", bodyReader)
+}
+
+// NewGiveRunFeedbackRequestWithBody constructs an http.Request for the GiveRunFeedback method, with any body, and a specified content type
+func NewGiveRunFeedbackRequestWithBody(server string, id TeamID, runID RunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "runID", runID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/runs/%s/feedback", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListTeamPendingSendersRequest constructs an http.Request for the ListTeamPendingSenders method
 func NewListTeamPendingSendersRequest(server string, id TeamID, params *ListTeamPendingSendersParams) (*http.Request, error) {
 	var err error
@@ -13031,6 +13505,47 @@ func NewStreamSessionEventsRequest(server string, id TeamID, sessionID openapi_t
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
 		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListSessionFeedbackRequest constructs an http.Request for the ListSessionFeedback method
+func NewListSessionFeedbackRequest(server string, id TeamID, sessionID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "sessionID", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/sessions/%s/feedback", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -15324,6 +15839,43 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/runs/{runID}/events (the `StreamRunEvents` operationId).
 	StreamRunEventsWithResponse(ctx context.Context, id TeamID, runID RunID, params *StreamRunEventsParams, reqEditors ...RequestEditorFn) (*StreamRunEventsResponse, error)
 
+	// ClearRunFeedbackWithResponse Remove your 👍/👎 on a run
+	//
+	// Requires `run:write`, as giving it does. Removing none answers 204
+	// too. Allowed whether or not the team still has `improvement` on: a
+	// word that still counts can always be taken back.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/runs/{runID}/feedback (the `ClearRunFeedback` operationId).
+	ClearRunFeedbackWithResponse(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*ClearRunFeedbackResponse, error)
+
+	// GiveRunFeedbackWithBodyWithResponse Give or change your 👍/👎 on a run's answer
+	//
+	// Requires `run:write`, and the run must be visible to the caller. One
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
+	// `improvement` on. A signed-in member's word outranks the judge's
+	// verdict on this run; a 👎 also has the run digested if it was not.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+	GiveRunFeedbackWithBodyWithResponse(ctx context.Context, id TeamID, runID RunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GiveRunFeedbackResponse, error)
+
+	// GiveRunFeedbackWithResponse Give or change your 👍/👎 on a run's answer
+	//
+	// Requires `run:write`, and the run must be visible to the caller. One
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
+	// `improvement` on. A signed-in member's word outranks the judge's
+	// verdict on this run; a 👎 also has the run digested if it was not.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+	GiveRunFeedbackWithResponse(ctx context.Context, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*GiveRunFeedbackResponse, error)
+
 	// ListTeamPendingSendersWithResponse List senders waiting on any of the team's channels
 	//
 	// Every channel's queue as one list, oldest first: the sender who has
@@ -15514,6 +16066,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/sessions/{sessionID}/events (the `StreamSessionEvents` operationId).
 	StreamSessionEventsWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, params *StreamSessionEventsParams, reqEditors ...RequestEditorFn) (*StreamSessionEventsResponse, error)
+
+	// ListSessionFeedbackWithResponse Your own 👍/👎 on every run of a session
+	//
+	// Any member who may read the session. Only the caller's own feedback;
+	// what others gave is counted on each run's outcome, never named.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/sessions/{sessionID}/feedback (the `ListSessionFeedback` operationId).
+	ListSessionFeedbackWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*ListSessionFeedbackResponse, error)
 
 	// ListSessionMessagesWithResponse Read a conversation
 	//
@@ -18929,6 +19491,95 @@ func (r StreamRunEventsResponse) ContentType() string {
 	return ""
 }
 
+// ClearRunFeedbackResponse401Headers the declared response headers of an HTTP 401 response for ClearRunFeedback
+type ClearRunFeedbackResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ClearRunFeedbackResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ClearRunFeedbackResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r ClearRunFeedbackResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClearRunFeedbackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClearRunFeedbackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClearRunFeedbackResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GiveRunFeedbackResponse401Headers the declared response headers of an HTTP 401 response for GiveRunFeedback
+type GiveRunFeedbackResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GiveRunFeedbackResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RunFeedback
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GiveRunFeedbackResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GiveRunFeedbackResponse) GetJSON200() *RunFeedback {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GiveRunFeedbackResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GiveRunFeedbackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GiveRunFeedbackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GiveRunFeedbackResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListTeamPendingSendersResponse401Headers the declared response headers of an HTTP 401 response for ListTeamPendingSenders
 type ListTeamPendingSendersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -19261,6 +19912,54 @@ func (r StreamSessionEventsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r StreamSessionEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListSessionFeedbackResponse401Headers the declared response headers of an HTTP 401 response for ListSessionFeedback
+type ListSessionFeedbackResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListSessionFeedbackResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SessionFeedback
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListSessionFeedbackResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSessionFeedbackResponse) GetJSON200() *SessionFeedback {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSessionFeedbackResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSessionFeedbackResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSessionFeedbackResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSessionFeedbackResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21983,6 +22682,61 @@ func (c *ClientWithResponses) StreamRunEventsWithResponse(ctx context.Context, i
 	return ParseStreamRunEventsResponse(rsp)
 }
 
+// ClearRunFeedbackWithResponse Remove your 👍/👎 on a run
+//
+// Requires `run:write`, as giving it does. Removing none answers 204
+// too. Allowed whether or not the team still has `improvement` on: a
+// word that still counts can always be taken back.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/runs/{runID}/feedback (the `ClearRunFeedback` operationId).
+func (c *ClientWithResponses) ClearRunFeedbackWithResponse(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*ClearRunFeedbackResponse, error) {
+	rsp, err := c.ClearRunFeedback(ctx, id, runID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClearRunFeedbackResponse(rsp)
+}
+
+// GiveRunFeedbackWithBodyWithResponse Give or change your 👍/👎 on a run's answer
+//
+// Requires `run:write`, and the run must be visible to the caller. One
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
+// `improvement` on. A signed-in member's word outranks the judge's
+// verdict on this run; a 👎 also has the run digested if it was not.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+func (c *ClientWithResponses) GiveRunFeedbackWithBodyWithResponse(ctx context.Context, id TeamID, runID RunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GiveRunFeedbackResponse, error) {
+	rsp, err := c.GiveRunFeedbackWithBody(ctx, id, runID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGiveRunFeedbackResponse(rsp)
+}
+
+// GiveRunFeedbackWithResponse Give or change your 👍/👎 on a run's answer
+//
+// Requires `run:write`, and the run must be visible to the caller. One
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
+// `improvement` on. A signed-in member's word outranks the judge's
+// verdict on this run; a 👎 also has the run digested if it was not.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
+func (c *ClientWithResponses) GiveRunFeedbackWithResponse(ctx context.Context, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*GiveRunFeedbackResponse, error) {
+	rsp, err := c.GiveRunFeedback(ctx, id, runID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGiveRunFeedbackResponse(rsp)
+}
+
 // ListTeamPendingSendersWithResponse List senders waiting on any of the team's channels
 //
 // Every channel's queue as one list, oldest first: the sender who has
@@ -22220,6 +22974,22 @@ func (c *ClientWithResponses) StreamSessionEventsWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseStreamSessionEventsResponse(rsp)
+}
+
+// ListSessionFeedbackWithResponse Your own 👍/👎 on every run of a session
+//
+// Any member who may read the session. Only the caller's own feedback;
+// what others gave is counted on each run's outcome, never named.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/sessions/{sessionID}/feedback (the `ListSessionFeedback` operationId).
+func (c *ClientWithResponses) ListSessionFeedbackWithResponse(ctx context.Context, id TeamID, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*ListSessionFeedbackResponse, error) {
+	rsp, err := c.ListSessionFeedback(ctx, id, sessionID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSessionFeedbackResponse(rsp)
 }
 
 // ListSessionMessagesWithResponse Read a conversation
@@ -25089,6 +25859,74 @@ func ParseStreamRunEventsResponse(rsp *http.Response) (*StreamRunEventsResponse,
 	return response, nil
 }
 
+// ParseClearRunFeedbackResponse parses an HTTP response from a ClearRunFeedbackWithResponse call
+func ParseClearRunFeedbackResponse(rsp *http.Response) (*ClearRunFeedbackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClearRunFeedbackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ClearRunFeedbackResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGiveRunFeedbackResponse parses an HTTP response from a GiveRunFeedbackWithResponse call
+func ParseGiveRunFeedbackResponse(rsp *http.Response) (*GiveRunFeedbackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GiveRunFeedbackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunFeedback
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GiveRunFeedbackResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListTeamPendingSendersResponse parses an HTTP response from a ListTeamPendingSendersWithResponse call
 func ParseListTeamPendingSendersResponse(rsp *http.Response) (*ListTeamPendingSendersResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -25360,6 +26198,45 @@ func ParseStreamSessionEventsResponse(rsp *http.Response) (*StreamSessionEventsR
 	switch {
 	case rsp.StatusCode == 401:
 		var headers StreamSessionEventsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSessionFeedbackResponse parses an HTTP response from a ListSessionFeedbackWithResponse call
+func ParseListSessionFeedbackResponse(rsp *http.Response) (*ListSessionFeedbackResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSessionFeedbackResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SessionFeedback
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListSessionFeedbackResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

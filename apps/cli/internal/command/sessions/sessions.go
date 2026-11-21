@@ -33,6 +33,7 @@ func New(opts *cli.Options) *cobra.Command {
 		newListCmd(opts),
 		newGetCmd(opts),
 		newReadCmd(opts),
+		newFeedbackCmd(opts),
 	)
 	return cmd
 }

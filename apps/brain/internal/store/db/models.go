@@ -424,6 +424,23 @@ type Run struct {
 	CachedInputTokens int64
 }
 
+type RunDigest struct {
+	RunID        uuid.UUID
+	AgentID      uuid.UUID
+	TeamID       uuid.UUID
+	Went         string
+	Summary      string
+	Part         string
+	Target       string
+	Cause        string
+	Behaviour    string
+	Outsider     bool
+	Model        string
+	InputTokens  int64
+	OutputTokens int64
+	CreatedAt    time.Time
+}
+
 type RunEvent struct {
 	RunID      uuid.UUID
 	Seq        int32
@@ -432,6 +449,35 @@ type RunEvent struct {
 	CreatedAt  time.Time
 	SessionID  *uuid.UUID
 	SessionSeq *int64
+}
+
+type RunFeedback struct {
+	RunID     uuid.UUID
+	TeamID    uuid.UUID
+	UserID    uuid.UUID
+	Value     string
+	Note      string
+	Via       string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RunOutcome struct {
+	RunID        uuid.UUID
+	TeamID       uuid.UUID
+	Verdict      string
+	Implicit     string
+	Asked        []byte
+	Missed       string
+	Why          string
+	Error        *string
+	Model        string
+	InputTokens  int64
+	OutputTokens int64
+	Sampled      bool
+	Digest       string
+	DigestRound  int32
+	CreatedAt    time.Time
 }
 
 type SandboxRoom struct {
@@ -507,28 +553,33 @@ type TeamMember struct {
 }
 
 type TeamSetting struct {
-	TeamID              uuid.UUID
-	ModelName           *string
-	ModelMaxTokens      *int32
-	ModelTemperature    *float64
-	SearchProvider      string
-	SearchUrl           *string
-	SearchSecretID      *uuid.UUID
-	Improvement         bool
-	CompactionMessages  int32
-	UpdatedAt           time.Time
-	HubAgentID          *uuid.UUID
-	SandboxProvider     string
-	SandboxUrl          *string
-	SandboxSecretID     *uuid.UUID
-	SandboxTemplate     *string
-	ApprovalMode        string
-	ApprovalTtlMinutes  int32
-	BrowserProvider     string
-	BrowserUrl          *string
-	BrowserSecretID     *uuid.UUID
-	CompactionTokensMin int32
-	CompactionTokensMax int32
+	TeamID                 uuid.UUID
+	ModelName              *string
+	ModelMaxTokens         *int32
+	ModelTemperature       *float64
+	SearchProvider         string
+	SearchUrl              *string
+	SearchSecretID         *uuid.UUID
+	Improvement            bool
+	CompactionMessages     int32
+	UpdatedAt              time.Time
+	HubAgentID             *uuid.UUID
+	SandboxProvider        string
+	SandboxUrl             *string
+	SandboxSecretID        *uuid.UUID
+	SandboxTemplate        *string
+	ApprovalMode           string
+	ApprovalTtlMinutes     int32
+	BrowserProvider        string
+	BrowserUrl             *string
+	BrowserSecretID        *uuid.UUID
+	CompactionTokensMin    int32
+	CompactionTokensMax    int32
+	JudgeModelName         *string
+	JudgeModelMaxTokens    *int32
+	JudgeModelTemperature  *float64
+	ImprovementSampleShare int16
+	ImprovementSince       *time.Time
 }
 
 type User struct {

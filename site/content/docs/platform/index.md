@@ -53,9 +53,10 @@ a message on a channel.
 
 - **Slack and Discord adapters.** The seam they plug into is written, and
   `custom` is a working generic webhook in the meantime.
-- **Agents proposing changes from their runs.** A proposed change to an agent
-  or a skill can be approved, rejected and reverted, on the dashboard and with
-  `oa improvements`; the background job that reads runs and writes those
-  proposals is not built.
+- **Agents proposing changes from their runs.** With improvement on, every
+  finished run is judged and the ones worth learning from are digested, and a
+  proposed change can be approved, rejected and reverted on the dashboard and
+  with `oa improvements`; the job that writes proposals from the digests is
+  not built.
 - **A sandbox.** `code` is a pattern name the runner refuses, because running
   model-written code needs process confinement that is not written.

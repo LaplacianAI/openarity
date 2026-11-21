@@ -27,6 +27,7 @@ import { ConversationView } from "@/components/conversation-view";
 import { Time } from "@/components/facts";
 import { saveDownload } from "@/components/file-chip";
 import { isLive, RunDetail, RunStatus } from "@/components/run-detail";
+import { RunFeedbackControls, useCanGiveFeedback } from "@/components/run-feedback";
 import { HandedTo } from "@/components/run-table";
 import { useSessionStream } from "@/components/session-stream";
 import { ErrorState } from "@/components/states";
@@ -291,6 +292,7 @@ function Conversation({
   };
   const files = attachments.data?.pages.flatMap((p) => p.items) ?? [];
   const follow = useFollowBottom(c);
+  const feedbackOn = useCanGiveFeedback(teamId);
 
   return (
     <section aria-label="Messages" className="space-y-4">
@@ -315,6 +317,12 @@ function Conversation({
           sessionId={sessionId}
           rows={runs.data?.pages.flatMap((p) => p.items) ?? []}
           people={{ nameOf, me }}
+          afterRun={(id) =>
+            // A delegate's run is not the answer; only the run a person's message got is rated.
+            feedbackOn && c.runs[id]?.parent === null && c.runs[id]?.status === "succeeded" ? (
+              <RunFeedbackControls teamId={teamId} sessionId={sessionId} runId={id} />
+            ) : null
+          }
           files={{
             open: (f) => void download(f),
             load: (f) => downloadAttachment(teamId, sessionId, f.id),

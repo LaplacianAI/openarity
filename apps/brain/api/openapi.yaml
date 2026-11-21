@@ -1445,6 +1445,39 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/sessions/{sessionID}/feedback:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - name: sessionID
+        in: path
+        required: true
+        description: The session
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listSessionFeedback
+      tags: [runs]
+      summary: Your own 👍/👎 on every run of a session
+      description: |
+        Any member who may read the session. Only the caller's own feedback;
+        what others gave is counted on each run's outcome, never named.
+      responses:
+        "200":
+          description: The caller's feedback, one item per run they gave it on
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionFeedback"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/sessions/{sessionID}/runs:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -2745,6 +2778,74 @@ paths:
               schema:
                 type: string
                 examples: ["the run has already finished"]
+
+  /teams/{id}/runs/{runID}/feedback:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/RunID"
+    put:
+      operationId: giveRunFeedback
+      tags: [runs]
+      summary: Give or change your 👍/👎 on a run's answer
+      description: |
+        Requires `run:write`, and the run must be visible to the caller. One
+        per person per run; giving it again replaces it. Only on a finished
+        top-level run, the one that answered, and only while the team has
+        `improvement` on. A signed-in member's word outranks the judge's
+        verdict on this run; a 👎 also has the run digested if it was not.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunFeedbackRequest"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunFeedback"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A delegate's run, a run not finished, or self-improvement is off for the team
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["self-improvement is off for this team, so feedback is not recorded"]
+    delete:
+      operationId: clearRunFeedback
+      tags: [runs]
+      summary: Remove your 👍/👎 on a run
+      description: |
+        Requires `run:write`, as giving it does. Removing none answers 204
+        too. Allowed whether or not the team still has `improvement` on: a
+        word that still counts can always be taken back.
+      responses:
+        "204":
+          description: Removed, or there was none
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A delegate's run
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /teams/{id}/settings:
     parameters:
@@ -6730,9 +6831,27 @@ components:
         improvement:
           type: boolean
           description: |
-            Whether the team's agents propose improvements to themselves from
-            their runs, for approval. The parts that propose arrive in a later
-            release; until then this setting changes nothing.
+            Whether the team's agents improve themselves from their runs. While
+            it is on, every finished top-level run is judged in the background
+            (was the task done?), members may give 👍/👎 on answers, and runs
+            judged bad, plus a sampled share of good ones, are digested for the
+            improver. The part that proposes changes arrives in a later release.
+        judge_model:
+          $ref: "#/components/schemas/ModelRef"
+          nullable: true
+          description: The model that judges and digests runs; null means the team's model.
+        improvement_sample_share:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: The percentage of runs judged done that are digested anyway, for contrast. 10 until set.
+        improvement_since:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: When improvement was last turned on; runs that finished before it are never judged.
         compaction_messages:
           type: integer
           format: int32
@@ -6881,6 +7000,18 @@ components:
           $ref: "#/components/schemas/BrowserSettingsRequest"
         improvement:
           type: boolean
+        judge_model:
+          $ref: "#/components/schemas/ModelRef"
+          nullable: true
+          description: |
+            Left out, the stored judge model stays; null clears it, so runs are
+            judged on the team's model.
+        improvement_sample_share:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: Left out, the stored share stays.
         compaction_messages:
           type: integer
           format: int32
@@ -7402,6 +7533,15 @@ components:
             What became of the run's answer to the channel conversation it
             came from; null for a run that answers none, such as one started
             from the dashboard or a delegate's.
+        outcome:
+          $ref: "#/components/schemas/RunOutcome"
+          description: |
+            How the run was judged, on a single run's read only, once it has
+            been; absent before, in lists, and for a team that never had
+            improvement on.
+        my_feedback:
+          $ref: "#/components/schemas/RunFeedback"
+          description: The caller's 👍/👎 on the run, on a single run's read only; absent when none.
         parent_run_id:
           type: string
           format: uuid
@@ -7472,6 +7612,94 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    RunOutcome:
+      type: object
+      required: [verdict, missed, why, implicit, effective, judged_at, feedback]
+      description: |
+        The judge's verdict on a run, and what it comes to once members'
+        feedback is weighed. Visible to whoever may read the run.
+      properties:
+        verdict:
+          type: string
+          enum: [done, partly, not_done, wrong, cant_tell]
+          description: The judge model's verdict on whether the task was done
+        missed:
+          type: string
+          description: What was asked and not delivered; empty when nothing was
+        why:
+          type: string
+          description: The judge's reason
+        implicit:
+          type: string
+          enum: [none, correction, repeat, retry, thanks]
+          description: |
+            What the judge read in the people's next messages. Evidence only:
+            channel text never decides an outcome on its own.
+        effective:
+          type: string
+          enum: [good, bad, neither]
+          description: A member's 👎 or 👍 if there is one, else the verdict
+        judged_at:
+          type: string
+          format: date-time
+        feedback:
+          type: object
+          required: [up, down]
+          description: How many members gave 👍 and 👎; never who
+          properties:
+            up:
+              type: integer
+              format: int32
+            down:
+              type: integer
+              format: int32
+
+    RunFeedback:
+      type: object
+      required: [value, note, updated_at]
+      properties:
+        value:
+          type: string
+          enum: [up, down]
+        note:
+          type: string
+          description: What was wrong, if they said; empty otherwise
+        updated_at:
+          type: string
+          format: date-time
+
+    RunFeedbackRequest:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value:
+          type: string
+          enum: [up, down]
+        note:
+          type: string
+          maxLength: 1000
+        via:
+          type: string
+          enum: [dashboard, cli]
+          description: Where it was given; dashboard when left out
+
+    SessionFeedback:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/RunFeedback"
+              - type: object
+                required: [run_id]
+                properties:
+                  run_id:
+                    type: string
+                    format: uuid
 
     Reply:
       type: object

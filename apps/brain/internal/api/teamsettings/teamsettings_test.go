@@ -60,26 +60,30 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		return db.TeamSetting{}, f.upsertErr
 	}
 	row := db.TeamSetting{
-		TeamID:              p.TeamID,
-		ModelName:           p.ModelName,
-		ModelMaxTokens:      p.ModelMaxTokens,
-		ModelTemperature:    p.ModelTemperature,
-		SearchProvider:      p.SearchProvider,
-		SearchUrl:           p.SearchUrl,
-		SearchSecretID:      p.SearchSecretID,
-		Improvement:         p.Improvement,
-		CompactionMessages:  p.CompactionMessages,
-		CompactionTokensMin: p.CompactionTokensMin,
-		CompactionTokensMax: p.CompactionTokensMax,
-		HubAgentID:          p.HubAgentID,
-		SandboxProvider:     p.SandboxProvider,
-		BrowserProvider:     p.BrowserProvider,
-		BrowserUrl:          p.BrowserUrl,
-		BrowserSecretID:     p.BrowserSecretID,
-		SandboxUrl:          p.SandboxUrl,
-		SandboxSecretID:     p.SandboxSecretID,
-		SandboxTemplate:     p.SandboxTemplate,
-		UpdatedAt:           time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
+		TeamID:                 p.TeamID,
+		ModelName:              p.ModelName,
+		ModelMaxTokens:         p.ModelMaxTokens,
+		ModelTemperature:       p.ModelTemperature,
+		SearchProvider:         p.SearchProvider,
+		SearchUrl:              p.SearchUrl,
+		SearchSecretID:         p.SearchSecretID,
+		Improvement:            p.Improvement,
+		CompactionMessages:     p.CompactionMessages,
+		CompactionTokensMin:    p.CompactionTokensMin,
+		CompactionTokensMax:    p.CompactionTokensMax,
+		HubAgentID:             p.HubAgentID,
+		SandboxProvider:        p.SandboxProvider,
+		BrowserProvider:        p.BrowserProvider,
+		BrowserUrl:             p.BrowserUrl,
+		BrowserSecretID:        p.BrowserSecretID,
+		SandboxUrl:             p.SandboxUrl,
+		SandboxSecretID:        p.SandboxSecretID,
+		SandboxTemplate:        p.SandboxTemplate,
+		JudgeModelName:         p.JudgeModelName,
+		JudgeModelMaxTokens:    p.JudgeModelMaxTokens,
+		JudgeModelTemperature:  p.JudgeModelTemperature,
+		ImprovementSampleShare: p.ImprovementSampleShare,
+		UpdatedAt:              time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 	}
 	f.row = &row
 	return row, nil
@@ -1183,3 +1187,96 @@ func TestAHubFromAnotherTeamIsNeverNamed(t *testing.T) {
 type liveTeams struct{}
 
 func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }
+
+// ---------------------------------------------------------------------------
+// The judge model and the sample share: left out, the stored value stays.
+
+const improveBase = `"model":null,"search":{"provider":"none"},"improvement":true,"compaction_messages":100`
+
+type improveWire struct {
+	JudgeModel *struct {
+		Name      string `json:"name"`
+		MaxTokens int32  `json:"max_tokens"`
+	} `json:"judge_model"`
+	ImprovementSampleShare int16      `json:"improvement_sample_share"`
+	ImprovementSince       *time.Time `json:"improvement_since"`
+}
+
+func decodeImprove(t *testing.T, rec *httptest.ResponseRecorder) improveWire {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body)
+	}
+	var w improveWire
+	if err := json.Unmarshal(rec.Body.Bytes(), &w); err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+func TestTheJudgeModelIsSavedKeptAndCleared(t *testing.T) {
+	e := newEnv()
+
+	got := decodeImprove(t, e.save(t, `{`+improveBase+`,"judge_model":{"name":"small/judge","max_tokens":800}}`))
+	if got.JudgeModel == nil || got.JudgeModel.Name != "small/judge" || got.JudgeModel.MaxTokens != 800 {
+		t.Fatalf("judge_model = %+v", got.JudgeModel)
+	}
+
+	got = decodeImprove(t, e.save(t, `{`+improveBase+`}`))
+	if got.JudgeModel == nil || got.JudgeModel.Name != "small/judge" {
+		t.Errorf("left out, the judge model was lost: %+v", got.JudgeModel)
+	}
+
+	got = decodeImprove(t, e.save(t, `{`+improveBase+`,"judge_model":null}`))
+	if got.JudgeModel != nil {
+		t.Errorf("null did not clear the judge model: %+v", got.JudgeModel)
+	}
+}
+
+func TestABadJudgeModelIsRefused(t *testing.T) {
+	e := newEnv()
+	for _, jm := range []string{`{"name":"","max_tokens":10}`, `{"name":"x","max_tokens":0}`, `{"name":"x","max_tokens":10,"temperature":3}`} {
+		rec := e.save(t, `{`+improveBase+`,"judge_model":`+jm+`}`)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "judge_model") {
+			t.Errorf("judge_model %s = %d %q, want 400 naming judge_model", jm, rec.Code, rec.Body)
+		}
+	}
+	if len(e.store.upserts) != 0 {
+		t.Errorf("a refused judge model was saved")
+	}
+}
+
+func TestTheSampleShare(t *testing.T) {
+	e := newEnv()
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementSampleShare != 10 {
+		t.Errorf("a first save's share = %d, want the default 10", got.ImprovementSampleShare)
+	}
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_sample_share":25}`)); got.ImprovementSampleShare != 25 {
+		t.Errorf("share = %d, want 25", got.ImprovementSampleShare)
+	}
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementSampleShare != 25 {
+		t.Errorf("left out, the share became %d", got.ImprovementSampleShare)
+	}
+	for _, bad := range []string{"-1", "101"} {
+		if rec := e.save(t, `{`+improveBase+`,"improvement_sample_share":`+bad+`}`); rec.Code != http.StatusBadRequest {
+			t.Errorf("share %s = %d, want 400", bad, rec.Code)
+		}
+	}
+}
+
+// improvement_since is the brain's to write: a client cannot move it back to
+// have old runs judged.
+func TestImprovementSinceIsNotAccepted(t *testing.T) {
+	e := newEnv()
+	if rec := e.save(t, `{`+improveBase+`,"improvement_since":"2020-01-01T00:00:00Z"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("a client-set improvement_since = %d, want 400", rec.Code)
+	}
+}
+
+func TestTheDefaultsIncludeTheSampleShare(t *testing.T) {
+	e := newEnv()
+	got := decodeImprove(t, e.call(t, e.member(), http.MethodGet, ""))
+	if got.ImprovementSampleShare != 10 || got.JudgeModel != nil || got.ImprovementSince != nil {
+		t.Errorf("defaults = %+v", got)
+	}
+}

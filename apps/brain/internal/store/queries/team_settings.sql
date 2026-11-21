@@ -12,7 +12,9 @@ INSERT INTO team_settings (
     search_provider, search_url, search_secret_id,
     improvement, compaction_messages, compaction_tokens_min, compaction_tokens_max, hub_agent_id,
     sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
-    browser_provider, browser_url, browser_secret_id
+    browser_provider, browser_url, browser_secret_id,
+    judge_model_name, judge_model_max_tokens, judge_model_temperature,
+    improvement_sample_share, improvement_since
 ) VALUES (
     sqlc.arg(team_id),
     sqlc.narg(model_name), sqlc.narg(model_max_tokens), sqlc.narg(model_temperature),
@@ -20,7 +22,10 @@ INSERT INTO team_settings (
     sqlc.arg(improvement), sqlc.arg(compaction_messages),
     sqlc.arg(compaction_tokens_min), sqlc.arg(compaction_tokens_max), sqlc.narg(hub_agent_id),
     sqlc.arg(sandbox_provider), sqlc.narg(sandbox_url), sqlc.narg(sandbox_secret_id), sqlc.narg(sandbox_template),
-    sqlc.arg(browser_provider), sqlc.narg(browser_url), sqlc.narg(browser_secret_id)
+    sqlc.arg(browser_provider), sqlc.narg(browser_url), sqlc.narg(browser_secret_id),
+    sqlc.narg(judge_model_name), sqlc.narg(judge_model_max_tokens), sqlc.narg(judge_model_temperature),
+    sqlc.arg(improvement_sample_share),
+    CASE WHEN sqlc.arg(improvement)::bool THEN now() END
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -41,6 +46,15 @@ ON CONFLICT (team_id) DO UPDATE SET
     browser_provider    = EXCLUDED.browser_provider,
     browser_url         = EXCLUDED.browser_url,
     browser_secret_id   = EXCLUDED.browser_secret_id,
+    judge_model_name        = EXCLUDED.judge_model_name,
+    judge_model_max_tokens  = EXCLUDED.judge_model_max_tokens,
+    judge_model_temperature = EXCLUDED.judge_model_temperature,
+    improvement_sample_share = EXCLUDED.improvement_sample_share,
+    -- Set each time the switch goes on, kept while it stays on: runs from
+    -- before it went on are never judged.
+    improvement_since   = CASE
+        WHEN EXCLUDED.improvement AND NOT team_settings.improvement THEN now()
+        ELSE team_settings.improvement_since END,
     updated_at          = now()
 RETURNING *;
 
