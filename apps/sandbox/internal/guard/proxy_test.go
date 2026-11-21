@@ -202,3 +202,78 @@ func TestClosingAPublicRoomCutsItsTunnels(t *testing.T) {
 		t.Fatal("the proxy still listens for a closed room")
 	}
 }
+
+// pipeDial is a dialer whose upstream end is served by serve.
+func pipeDial(serve func(net.Conn)) func(context.Context, string, string) (net.Conn, error) {
+	return func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go serve(b)
+		return a, nil
+	}
+}
+
+func TestAMailPortIsRefused(t *testing.T) {
+	t.Parallel()
+	up := &fakeUpstream{got: make(chan []byte, 1)}
+	g := New(quiet())
+	g.dial = up.dial
+	proxy := publicRoom(t, g)
+	for _, target := range []string{"smtp.example.com:25", "smtp.example.com:465", "smtp.example.com:587"} {
+		if _, _, status := connectThrough(t, proxy, target); !strings.HasPrefix(status, "403") {
+			t.Errorf("CONNECT %s: %q, want 403", target, status)
+		}
+	}
+	if d := up.dialed(); len(d) != 0 {
+		t.Fatalf("dialed %v", d)
+	}
+}
+
+func TestARoomHoldsSoManyTunnelsAtOnce(t *testing.T) {
+	t.Parallel()
+	g := New(quiet())
+	g.dial = pipeDial(func(c net.Conn) { _, _ = io.Copy(io.Discard, c) })
+	proxy := publicRoom(t, g)
+	for i := range MaxTunnels {
+		if _, _, status := connectThrough(t, proxy, "a.example.com:443"); !strings.HasPrefix(status, "200") {
+			t.Fatalf("tunnel %d: %q", i+1, status)
+		}
+	}
+	if _, _, status := connectThrough(t, proxy, "a.example.com:443"); !strings.HasPrefix(status, "429") {
+		t.Fatalf("one tunnel past the cap: %q, want 429", status)
+	}
+}
+
+// A tunnel that carries nothing is cut; one carrying bytes either way is
+// kept, though the other side is quiet.
+func TestAnIdleTunnelIsCutAndABusyOneIsNot(t *testing.T) {
+	t.Parallel()
+	g := New(quiet())
+	g.tunnelIdle = 300 * time.Millisecond
+	g.dial = pipeDial(func(c net.Conn) {
+		defer c.Close()
+		for range 8 {
+			if _, err := c.Write([]byte("x")); err != nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		_, _ = io.Copy(io.Discard, c)
+	})
+	proxy := publicRoom(t, g)
+	c, br, status := connectThrough(t, proxy, "a.example.com:443")
+	if !strings.HasPrefix(status, "200") {
+		t.Fatalf("status %q", status)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got := make([]byte, 8)
+	if _, err := io.ReadFull(br, got); err != nil {
+		t.Fatalf("a tunnel busy downstream was cut after %q: %v", got, err)
+	}
+	start := time.Now()
+	if _, err := br.ReadByte(); err == nil {
+		t.Fatal("the quiet tunnel carried more")
+	}
+	if waited := time.Since(start); waited > 3*time.Second {
+		t.Fatalf("the idle tunnel was cut after %s, want about %s", waited, g.tunnelIdle)
+	}
+}

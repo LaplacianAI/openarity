@@ -36,8 +36,10 @@ type ExecResult struct {
 }
 
 // run runs command with bash in dir, as its own process group, and ends the
-// whole group when the command does: nothing it starts outlives the call, so
-// a call's cost is bounded by its timeout.
+// whole group when the command does, so what a command leaves running in the
+// background goes with it. A process that leaves the group (setsid, a
+// daemon) is not followed; it lives until the room goes, within the room's
+// memory, CPU and pids limits.
 func run(ctx context.Context, dir string, env []string, command string, timeout time.Duration) ExecResult {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

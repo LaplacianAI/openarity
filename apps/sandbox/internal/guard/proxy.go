@@ -6,12 +6,27 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"time"
 )
 
 // ProxyPort is where a public room's proxy listens, on sandboxd's address in
 // the room's network: 3128, as Squid's, so a tool that guesses finds it.
 const ProxyPort = 3128
+
+const (
+	// MaxTunnels is how many tunnels one public room holds open at once:
+	// enough for a package manager's parallel downloads, and a bound on what
+	// one room takes of sandboxd's sockets.
+	MaxTunnels = 64
+	// TunnelIdle is how long a tunnel may carry nothing before it is cut,
+	// so one left open by a command that died holds nothing for long.
+	TunnelIdle = 5 * time.Minute
+)
+
+// mailPorts are SMTP's: a room that sent mail would send it from sandboxd's
+// address, whose reputation is the operator's.
+var mailPorts = map[string]bool{"25": true, "465": true, "587": true}
 
 // A public room reaches the internet, and nothing private, through a forward
 // proxy: CONNECT for TLS and every other protocol that tunnels, and an
@@ -45,6 +60,11 @@ func (g *Guard) serveProxy(r *room, l net.Listener) (stop func()) {
 	srv := &http.Server{
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if _, port, err := net.SplitHostPort(req.Host); err == nil && mailPorts[port] {
+				g.refused(r, req.Host, errors.New("a mail port"))
+				http.Error(w, "the sandbox does not send mail: port "+port+" is refused", http.StatusForbidden)
+				return
+			}
 			switch {
 			case req.Method == http.MethodConnect:
 				g.tunnel(r, w, req)
@@ -68,6 +88,11 @@ func (g *Guard) tunnel(r *room, w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "CONNECT needs a host and a port", http.StatusBadRequest)
 		return
 	}
+	if !r.openTunnel() {
+		http.Error(w, "the sandbox has "+strconv.Itoa(MaxTunnels)+" connections open; close some first", http.StatusTooManyRequests)
+		return
+	}
+	defer r.closeTunnel()
 	ctx, cancel := context.WithTimeout(req.Context(), 15*time.Second)
 	up, err := g.dialFor(r)(ctx, "tcp", req.Host)
 	cancel()
@@ -101,7 +126,61 @@ func (g *Guard) tunnel(r *room, w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	relay(c, up)
+	relay(idle(c, g.tunnelIdle), idle(up, g.tunnelIdle))
+}
+
+func (r *room) openTunnel() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.tunnels >= MaxTunnels {
+		return false
+	}
+	r.tunnels++
+	return true
+}
+
+func (r *room) closeTunnel() {
+	r.mu.Lock()
+	r.tunnels--
+	r.mu.Unlock()
+}
+
+// idleConn is one side of a tunnel, whose reads and writes must each come
+// within d of its last. A side that only receives is written to, so a
+// download keeps both sides open, and a tunnel carrying nothing is cut.
+type idleConn struct {
+	net.Conn
+	d time.Duration
+}
+
+func idle(c net.Conn, d time.Duration) *idleConn {
+	_ = c.SetDeadline(time.Now().Add(d))
+	return &idleConn{Conn: c, d: d}
+}
+
+func (c *idleConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		_ = c.SetDeadline(time.Now().Add(c.d))
+	}
+	return n, err
+}
+
+func (c *idleConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		_ = c.SetDeadline(time.Now().Add(c.d))
+	}
+	return n, err
+}
+
+// CloseWrite half-closes the connection under it, as relay expects of one
+// that can.
+func (c *idleConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return c.Close()
 }
 
 // dialFor is the guard's dialer for a tunnel, whose connection the room cuts

@@ -44,8 +44,9 @@ func TestParseWorkspace(t *testing.T) {
 }
 
 // The token guards the room from outside; a command run inside it must not
-// be able to read it from its own environment.
-func TestACommandNeverSeesTheWorkspaceToken(t *testing.T) {
+// find it in its own environment. That the workspace's /proc/<pid>/environ is kept
+// from it too is workspace.Harden's test, and the provider contract's.
+func TestACommandsEnvironmentHoldsNoWorkspaceToken(t *testing.T) {
 	t.Setenv(WorkspaceTokenEnv, "the-secret-token")
 	addr := freeAddr(t)
 	root := filepath.Join(t.TempDir(), "workspace")

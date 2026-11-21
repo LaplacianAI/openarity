@@ -101,11 +101,17 @@ from, and `SANDBOXD_WORKSPACE_MEMORY` (1.5 GiB) and `SANDBOXD_WORKSPACE_CPUS`
 
 `sandbox workspace` is the room's main process. Each command runs with
 `bash -c` in `/workspace`, as its own process group, and the whole group is
-killed when the command ends or times out (270 seconds at most), so nothing it
-starts outlives the call. stdout and stderr each keep their first and last
-128 KiB. The token is taken out of the environment before any command runs.
-A path is relative to `/workspace` unless absolute: the room is the boundary,
-not the directory.
+killed when the command ends or times out (270 seconds at most), so what it
+leaves in the background goes with it; a process that leaves the group
+(`setsid`) lives until the room goes, within its limits. stdout and stderr
+each keep their first and last 128 KiB. The process is made undumpable
+(`workspace.Harden`) and the token is taken out of the environment before any
+command runs, so no command reads it from its own environment or from the
+workspace's `/proc/<pid>/environ`; the file tools refuse `/proc`, since they
+run in the workspace process itself.
+A path is relative to `/workspace` unless absolute, with its links followed:
+the room is the boundary, not the directory, and `/proc` the one place the
+file tools refuse.
 
 ## How the shim works
 

@@ -231,7 +231,7 @@ func walk(base string, fn func(p, rel string, d fs.DirEntry) error) error {
 			return nil
 		}
 		if d.IsDir() {
-			if p != base && skipped[d.Name()] {
+			if p != base && (skipped[d.Name()] || inProc(p)) {
 				return fs.SkipDir
 			}
 			return nil

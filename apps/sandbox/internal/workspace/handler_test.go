@@ -351,3 +351,97 @@ func TestMatchPath(t *testing.T) {
 		}
 	}
 }
+
+// The file tools run in the workspace process, which can always read its own
+// environ, where the token it was started with stays. So none of them reads
+// /proc, by its name or through a link.
+func TestTheFileToolsKeepOutOfProc(t *testing.T) {
+	r := newRoom(t)
+	link := filepath.Join(r.root, "env")
+	if err := os.Symlink("/proc/self/environ", link); err != nil {
+		t.Fatal(err)
+	}
+	calls := []struct {
+		route string
+		body  map[string]any
+	}{
+		{"/read", map[string]any{"path": "/proc/self/environ"}},
+		{"/read", map[string]any{"path": "/proc/1/../self/environ"}},
+		{"/write", map[string]any{"path": "/proc/self/attr", "content": "x"}},
+		{"/edit", map[string]any{"path": "/proc/self/environ", "old_string": "a", "new_string": "b"}},
+		{"/glob", map[string]any{"pattern": "*", "path": "/proc"}},
+		{"/grep", map[string]any{"pattern": "TOKEN", "path": "/proc/self"}},
+	}
+	if _, err := os.Stat("/proc/self/environ"); err == nil {
+		calls = append(calls, struct {
+			route string
+			body  map[string]any
+		}{"/read", map[string]any{"path": "env"}})
+	}
+	for _, c := range calls {
+		var f failure
+		if code := r.call(t, c.route, c.body, &f); code != 422 || !strings.Contains(f.Error, "/proc") {
+			t.Errorf("%s %v: %d %q, want it refused for /proc", c.route, c.body["path"], code, f.Error)
+		}
+	}
+}
+
+// A handler made with no token lets nobody in, though an empty bearer token
+// compares equal to it. Go's server trims the header to "Bearer", so the
+// request is built here, untrimmed, as another server might pass it on.
+func TestAWorkspaceWithNoTokenLetsNobodyIn(t *testing.T) {
+	h := NewHandler(t.TempDir(), "", nil, slog.New(slog.DiscardHandler))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/exec", nil)
+	req.Header.Set("Authorization", "Bearer ")
+	if h.authorized(req) {
+		t.Error("an empty token was let in by a workspace with none")
+	}
+}
+
+// An edit keeps the file's mode, and leaves nothing beside it.
+func TestAnEditKeepsTheModeAndLeavesNoTemporaryFile(t *testing.T) {
+	r := newRoom(t)
+	r.put(t, "run.sh", "echo a\n")
+	if err := os.Chmod(filepath.Join(r.root, "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := r.call(t, "/edit", map[string]any{"path": "run.sh", "old_string": "a", "new_string": "b"}, nil); code != 200 {
+		t.Fatalf("edit: %d", code)
+	}
+	info, err := os.Stat(filepath.Join(r.root, "run.sh"))
+	if err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("mode %v, %v: want 0755 kept", info.Mode(), err)
+	}
+	if entries, _ := os.ReadDir(r.root); len(entries) != 1 {
+		t.Fatalf("the workspace holds %d entries, want the file alone", len(entries))
+	}
+}
+
+func TestAnEditRefusesAFileTooLargeToHold(t *testing.T) {
+	r := newRoom(t)
+	big := filepath.Join(r.root, "big.txt")
+	if err := os.WriteFile(big, []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(big, maxEdit+1); err != nil {
+		t.Fatal(err)
+	}
+	var f failure
+	if code := r.call(t, "/edit", map[string]any{"path": "big.txt", "old_string": "a", "new_string": "b"}, &f); code != 422 || !strings.Contains(f.Error, "Bash") {
+		t.Fatalf("%d %q, want it refused with a way round", code, f.Error)
+	}
+}
+
+// A read returns 2,000 lines at most, however many are asked for: more could
+// pass what the brain reads of an answer.
+func TestAReadReturnsAtMostSoManyLines(t *testing.T) {
+	r := newRoom(t)
+	r.put(t, "long.txt", strings.Repeat("line\n", DefaultLines+500))
+	var got ReadResult
+	if code := r.call(t, "/read", map[string]any{"path": "long.txt", "limit": 5000}, &got); code != 200 {
+		t.Fatalf("read: %d", code)
+	}
+	if n := strings.Count(got.Content, "\n"); n != DefaultLines || got.Lines != DefaultLines+500 {
+		t.Fatalf("%d lines of %d, want %d of %d", n, got.Lines, DefaultLines, DefaultLines+500)
+	}
+}

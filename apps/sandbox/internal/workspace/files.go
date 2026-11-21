@@ -14,13 +14,16 @@ import (
 
 const (
 	// DefaultLines is how many lines a read returns when the caller names
-	// no limit.
+	// no limit, and the most it returns.
 	DefaultLines = 2000
 	// maxLine is the longest line a read returns whole; past it, the line is
 	// cut, as a minified file's would flood the model.
 	maxLine = 2000
 	// sniff is how much of a file is looked at to tell text from binary.
 	sniff = 8000
+	// maxEdit is the largest file Edit takes: it holds the file twice in
+	// memory, in a room of a fixed size.
+	maxEdit = 8 << 20
 )
 
 // A Problem is the caller's to fix: a path that is not there, an edit that
@@ -57,7 +60,8 @@ func read(path string, offset, limit int) (ReadResult, error) {
 	if offset < 1 {
 		offset = 1
 	}
-	if limit < 1 {
+	if limit < 1 || limit > DefaultLines {
+		// More would pass what the brain reads of an answer.
 		limit = DefaultLines
 	}
 	var out strings.Builder
@@ -109,6 +113,9 @@ func edit(path, old, new string, all bool) (int, error) {
 	if err != nil {
 		return 0, asProblem(err)
 	}
+	if info.Size() > maxEdit {
+		return 0, problem("%s is %d bytes, over the %d MiB Edit takes; change it with Bash (sed, a script)", path, info.Size(), maxEdit>>20)
+	}
 	body, err := os.ReadFile(path) //nolint:gosec // any path in the room is the agent's to read
 	if err != nil {
 		return 0, asProblem(err)
@@ -124,10 +131,35 @@ func edit(path, old, new string, all bool) (int, error) {
 		n = 1
 	}
 	out := strings.Replace(string(body), old, new, n)
-	if err := os.WriteFile(path, []byte(out), info.Mode().Perm()); err != nil { //nolint:gosec // as above
+	if err := replaceFile(path, []byte(out), info.Mode().Perm()); err != nil {
 		return 0, asProblem(err)
 	}
 	return n, nil
+}
+
+// replaceFile writes the file's new content beside it and renames it over
+// the old, so a write that fails (the workspace full) leaves the file as it
+// was rather than cut short.
+func replaceFile(path string, data []byte, perm fs.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".edit-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, perm)
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 // open opens a regular file for reading, or says why it cannot.

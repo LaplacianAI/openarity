@@ -89,6 +89,8 @@ type Guard struct {
 	dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	// proxyPort is ProxyPort but in tests, which listen on loopback.
 	proxyPort int
+	// tunnelIdle is TunnelIdle but in tests.
+	tunnelIdle time.Duration
 
 	mu    sync.Mutex
 	rooms map[string]*room
@@ -100,7 +102,7 @@ func New(logger *slog.Logger) *Guard {
 		panic("guard: a nil logger")
 	}
 	d := &net.Dialer{Timeout: 10 * time.Second, Control: refusePrivate}
-	return &Guard{logger: logger, dial: d.DialContext, proxyPort: ProxyPort, rooms: map[string]*room{}}
+	return &Guard{logger: logger, dial: d.DialContext, proxyPort: ProxyPort, tunnelIdle: TunnelIdle, rooms: map[string]*room{}}
 }
 
 type room struct {
@@ -109,9 +111,10 @@ type room struct {
 	listeners []net.Listener
 	stopProxy func() // a public room's; nil otherwise
 
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
-	done  bool
+	mu      sync.Mutex
+	conns   map[net.Conn]struct{}
+	tunnels int // a public room's open tunnels
+	done    bool
 }
 
 // Open listens, for each distinct port in hosts, on bind, and on ProxyPort
@@ -320,6 +323,15 @@ var extraBlocked = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT
 	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
 	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"), // reserved, and the broadcast address
+	// IPv6 forms that carry an IPv4 address to a translator or a tunnel,
+	// which may be a private one: NAT64, local-use NAT64, 6to4 and Teredo.
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("fec0::/10"), // site-local, deprecated and still routed by some
+	netip.MustParsePrefix("100::/64"),  // discard
 }
 
 func isPrivate(a netip.Addr) bool {

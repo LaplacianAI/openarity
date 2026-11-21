@@ -188,7 +188,10 @@ func (h *Handler) grep(r *http.Request) (any, error) {
 }
 
 // resolve is the absolute path a caller means: relative to the workspace,
-// or as given. The room is the boundary, not the workspace directory.
+// or as given, with its links followed. The room is the boundary, not the
+// workspace directory, with one exception: /proc. These tools run in the
+// workspace process, which can always read its own environ, where the token
+// it was started with stays; Harden keeps it from everything else.
 func (h *Handler) resolve(p string) (string, error) {
 	if strings.TrimSpace(p) == "" {
 		return "", problem("path is empty")
@@ -196,20 +199,50 @@ func (h *Handler) resolve(p string) (string, error) {
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(h.root, p)
 	}
-	return filepath.Clean(p), nil
+	p = filepath.Clean(p)
+	if real, err := realPath(p); err == nil {
+		p = real
+	}
+	if inProc(p) {
+		return "", problem("%s is under /proc, which these tools do not read; use Bash", p)
+	}
+	return p, nil
 }
 
-// base is where a search starts: the workspace when no path is given.
+// realPath is p with every link followed, or, for a file not there yet, its
+// directory's.
+func realPath(p string) (string, error) {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real, nil
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(p))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, filepath.Base(p)), nil
+}
+
+func inProc(p string) bool { return p == "/proc" || strings.HasPrefix(p, "/proc/") }
+
+// base is where a search starts: the workspace when no path is given. It is
+// the path as given, so what is found is named as the caller named it; the
+// walk follows no link, and skips /proc.
 func (h *Handler) base(p string) (string, error) {
 	if p == "" {
 		return h.root, nil
 	}
-	return h.resolve(p)
+	if _, err := h.resolve(p); err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(h.root, p)
+	}
+	return filepath.Clean(p), nil
 }
 
 func (h *Handler) authorized(r *http.Request) bool {
 	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return ok && subtle.ConstantTimeCompare([]byte(got), []byte(h.token)) == 1
+	return ok && h.token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(h.token)) == 1
 }
 
 // decode reads the body into v, refusing fields v does not have: a caller

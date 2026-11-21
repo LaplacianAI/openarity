@@ -103,11 +103,15 @@ func runShim(ctx context.Context, cmd command, logger *slog.Logger, stderr io.Wr
 	return end
 }
 
-// runWorkspace serves the room's workspace until told to stop. The token is
-// taken out of the environment first, so no command the agent runs can read
-// it from its own; it guards the room from everything outside it, and inside
-// it would add nothing.
+// runWorkspace serves the room's workspace until told to stop. The token
+// guards the room from everything outside it, so nothing inside may read it:
+// the process is made undumpable first, so no command reads it from the
+// environ this process was started with, and it is taken out of the
+// environment every command inherits.
 func runWorkspace(ctx context.Context, cmd command, logger *slog.Logger) error {
+	if err := workspace.Harden(); err != nil {
+		return fmt.Errorf("making the workspace undumpable: %w", err)
+	}
 	if err := os.Unsetenv(WorkspaceTokenEnv); err != nil {
 		return err
 	}
