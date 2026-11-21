@@ -60,9 +60,12 @@ const maxStartRequest = 1 << 20
 // the stream. envd keeps the process running when the stream is dropped, as it
 // does for E2B's own SDKs' background commands.
 func (c *Client) startProcess(ctx context.Context, r room, token string, argv []string) error {
+	// exec, so the login shell is replaced by the command rather than left
+	// as its parent: a shell kept running would hold the room's environment,
+	// its secrets among them, where the command's own children could read it.
 	msg, err := json.Marshal(startRequest{Process: processConfig{
 		Cmd:  "/bin/bash",
-		Args: []string{"-l", "-c", shellJoin(argv)},
+		Args: []string{"-l", "-c", "exec " + shellJoin(argv)},
 	}})
 	if err != nil {
 		return fmt.Errorf("e2b: encode the start request: %w", err)
@@ -88,9 +91,7 @@ func (c *Client) startProcess(ctx context.Context, r room, token string, argv []
 	req.Header.Set("Content-Type", "application/connect+json")
 	req.Header.Set("Connect-Protocol-Version", "1")
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(defaultUser+":")))
-	if token != "" {
-		req.Header.Set("X-Access-Token", token)
-	}
+	req.Header.Set("X-Access-Token", token)
 	secrets := []string{c.apiKey, token, r.Traffic}
 
 	resp, err := c.http.Do(req)

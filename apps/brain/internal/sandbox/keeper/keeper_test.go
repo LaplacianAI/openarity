@@ -285,6 +285,10 @@ func TestAChangedSpecReplacesTheRoom(t *testing.T) {
 		"egress": func(w *keeper.Want) { w.Egress = nil },
 		"image":  func(w *keeper.Want) { w.Image = "registry.example/other:1" },
 		"port":   func(w *keeper.Want) { w.Port = 9999 },
+		"network": func(w *keeper.Want) {
+			w.Network, w.Egress = sandbox.NetworkPublic, nil
+		},
+		"workspace": func(w *keeper.Want) { w.Workspace = true },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
@@ -730,5 +734,18 @@ func TestARoomIsLabelledWithItsOwner(t *testing.T) {
 	labels := w.rooms.Created()[0].Labels
 	if labels["openarity-team"] != w.team.String() || labels["openarity-owner"] != w.owner.ID.String() || labels["openarity-owner-kind"] != "mcp_server" {
 		t.Errorf("labels = %v", labels)
+	}
+}
+
+func TestARoomIsMadeWithItsNetworkAndAsAWorkspace(t *testing.T) {
+	t.Parallel()
+
+	w := newWorld(t)
+	wanted := want()
+	wanted.Network, wanted.Egress, wanted.Workspace = sandbox.NetworkPublic, nil, true
+	w.ensure(w.keeper(), wanted)
+
+	if got := w.rooms.Created()[0]; got.Network != sandbox.NetworkPublic || !got.Workspace {
+		t.Errorf("spec = %+v, want a public workspace", got)
 	}
 }

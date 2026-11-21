@@ -563,6 +563,27 @@ func TestAFileSendsItsBrowserAsWritten(t *testing.T) {
 	}
 }
 
+func TestAFileSendsItsWorkspaceAsWritten(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml string
+		want any
+	}{
+		"left out": {"", nil},
+		"on":       {"workspace: true\n", true},
+		"off":      {"workspace: false\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script, err := delegating(t, tc.yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sent(t, script, http.MethodPost)["workspace"]; got != tc.want {
+				t.Errorf("workspace = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAgentsGetSaysWhetherItHasABrowser(t *testing.T) {
 	for name, tc := range map[string]struct {
 		browser string
@@ -587,6 +608,35 @@ func TestAgentsGetSaysWhetherItHasABrowser(t *testing.T) {
 			}
 			if row != tc.want {
 				t.Errorf("browser row = %q, want %q:\n%s", row, tc.want, out)
+			}
+		})
+	}
+}
+
+func TestAgentsGetSaysWhetherItHasAWorkspace(t *testing.T) {
+	for name, tc := range map[string]struct {
+		workspace string
+		want      string
+	}{
+		"on":  {`"workspace":true,`, "workspace on a shell and files in the session's sandbox"},
+		"off": {`"workspace":false,`, "workspace off"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, routes(map[string]clitest.Reply{
+				"GET /teams/{id}/agents/{agentID}": {Status: http.StatusOK, Body: strings.Replace(oneAgent, `"max_steps":5,`, `"max_steps":5,`+tc.workspace, 1)},
+			}))
+			out, err := clitest.Execute(t, commands, "agents", "get", "platform", "triage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var row string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "workspace ") {
+					row = strings.Join(strings.Fields(line), " ")
+				}
+			}
+			if row != tc.want {
+				t.Errorf("workspace row = %q, want %q:\n%s", row, tc.want, out)
 			}
 		})
 	}

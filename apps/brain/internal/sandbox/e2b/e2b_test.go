@@ -145,6 +145,7 @@ func TestCreateSendsTheTemplateEnvLabelsAndAPrivateNetwork(t *testing.T) {
 		Timeout    int               `json:"timeout"`
 		EnvVars    map[string]string `json:"envVars"`
 		Metadata   map[string]string `json:"metadata"`
+		Secure     *bool             `json:"secure"`
 		Network    struct {
 			AllowPublicTraffic *bool    `json:"allowPublicTraffic"`
 			AllowOut           []string `json:"allowOut"`
@@ -162,6 +163,9 @@ func TestCreateSendsTheTemplateEnvLabelsAndAPrivateNetwork(t *testing.T) {
 	}
 	if body.Network.AllowPublicTraffic == nil || *body.Network.AllowPublicTraffic {
 		t.Error("allowPublicTraffic must be sent, and false")
+	}
+	if body.Secure == nil || !*body.Secure {
+		t.Error("secure must be sent, and true: envd then wants its token from inside the room too")
 	}
 	if strings.Join(body.Network.DenyOut, ",") != "0.0.0.0/0" {
 		t.Errorf("denyOut = %v", body.Network.DenyOut)
@@ -397,7 +401,7 @@ func TestStartAsksForTheTokenThenSpeaksConnectToEnvd(t *testing.T) {
 	if err := json.Unmarshal(post.Body[5:], &msg); err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"-l", "-c", `'sandbox' 'shim' '--listen' ':8080' '--' 'npx' '-y' 'it'\''s@2.1.3'`}
+	wantArgs := []string{"-l", "-c", `exec 'sandbox' 'shim' '--listen' ':8080' '--' 'npx' '-y' 'it'\''s@2.1.3'`}
 	if msg.Process.Cmd != "/bin/bash" || strings.Join(msg.Process.Args, "\x00") != strings.Join(wantArgs, "\x00") {
 		t.Errorf("process = %+v", msg.Process)
 	}
@@ -424,6 +428,15 @@ func getOK(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestStartMapsFailures(t *testing.T) {
+	t.Run("the sandbox is not secure", func(t *testing.T) {
+		started := false
+		err := startWith(t, func(w http.ResponseWriter, _ *http.Request) { started = true }, func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, 200, map[string]any{"envdAccessToken": ""})
+		})
+		if err == nil || !strings.Contains(err.Error(), "not made secure") || started {
+			t.Fatalf("err = %v, started %v: a sandbox with no envd token must not be started in", err, started)
+		}
+	})
 	t.Run("the sandbox is gone", func(t *testing.T) {
 		err := startWith(t, nil, func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, 404, map[string]any{"code": 404, "message": "sandbox not found"})
@@ -603,5 +616,51 @@ func TestStartRefusesACommandTooLargeToFrame(t *testing.T) {
 		if call.Path == "/process.Process/Start" {
 			t.Fatal("envd was sent a start request over the bound")
 		}
+	}
+}
+
+// A public room reaches every address but a private one: E2B lets through
+// what denyOut does not name when nothing is allowed.
+func TestAPublicRoomDeniesOnlyPrivateAddresses(t *testing.T) {
+	f := &fake{api: okCreate}
+	if _, err := newClient(f).Create(t.Context(), sandbox.Spec{Image: templateID, Network: sandbox.NetworkPublic, Workspace: true}); err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]map[string]any
+	_ = json.Unmarshal(f.last(t).Body, &body)
+	if _, ok := body["network"]["allowOut"]; ok {
+		t.Error("a public room sent allowOut")
+	}
+	deny, _ := body["network"]["denyOut"].([]any)
+	got := map[string]bool{}
+	for _, d := range deny {
+		if s, ok := d.(string); ok {
+			got[s] = true
+		}
+	}
+	for _, want := range []string{"10.0.0.0/8", "169.254.0.0/16", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fe80::/10"} {
+		if !got[want] {
+			t.Errorf("denyOut %v lacks %s", deny, want)
+		}
+	}
+	if got["0.0.0.0/0"] {
+		t.Error("a public room denied everything")
+	}
+}
+
+func TestAPublicRoomThatListsHostsIsRefused(t *testing.T) {
+	for name, s := range map[string]sandbox.Spec{
+		"hosts":              {Image: "t", Network: sandbox.NetworkPublic, Egress: []sandbox.HostPort{{Host: "a.example.com", Port: 443}}},
+		"an unknown network": {Image: "t", Network: "host"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fake{api: okCreate}
+			if _, err := newClient(f).Create(t.Context(), s); !errors.Is(err, sandbox.ErrRefused) {
+				t.Fatalf("err = %v, want ErrRefused", err)
+			}
+			if len(f.calls) != 0 {
+				t.Error("a refused spec still reached E2B")
+			}
+		})
 	}
 }

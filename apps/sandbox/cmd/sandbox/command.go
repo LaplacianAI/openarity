@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -17,17 +18,19 @@ import (
 type role string
 
 const (
-	roleShim  role = "shim"
-	roleServe role = "serve"
+	roleShim      role = "shim"
+	roleServe     role = "serve"
+	roleWorkspace role = "workspace"
 )
 
 type command struct {
 	role role
 
-	// shim
+	// shim and workspace
 	listen string
 	token  string
 	argv   []string
+	root   string // workspace
 
 	// serve
 	serve serveSettings
@@ -50,18 +53,24 @@ const defaultImages = "ghcr.io/laplacianai/openarity-sandbox"
 
 const usage = `usage: sandbox shim [--listen ADDR] -- COMMAND [ARGS...]
        sandbox serve [--listen ADDR]
+       sandbox workspace [--listen ADDR] [--root DIR]
 
   serve  the self-hosted sandbox provider: rooms on a rootless Docker daemon.
          Environment: SANDBOXD_TOKEN, SANDBOXD_PUBLIC_URL, SANDBOXD_DOCKER_SOCKET
          (required); SANDBOXD_CONTAINER (default $HOSTNAME), SANDBOXD_MEMORY_BUDGET,
-         SANDBOXD_ROOM_MEMORY, SANDBOXD_ROOM_HOME, SANDBOXD_ROOM_PIDS, SANDBOXD_ROOM_CPUS (optional)
+         SANDBOXD_ROOM_MEMORY, SANDBOXD_ROOM_HOME, SANDBOXD_ROOM_PIDS, SANDBOXD_ROOM_CPUS,
+         SANDBOXD_WORKSPACE_MEMORY, SANDBOXD_WORKSPACE_BYTES, SANDBOXD_WORKSPACE_CPUS (optional)
          SANDBOXD_IMAGES: the image prefixes a room may run, comma-separated
          (default ghcr.io/laplacianai/openarity-sandbox); SANDBOXD_PULL: images
          to pull in the background at start, each one allowed (optional);
          sandboxd pulls an allowed image it does not have
 
   shim   serve an MCP server that speaks stdio over Streamable HTTP, at /mcp;
-         SHIM_TOKEN is the bearer token every caller must send`
+         SHIM_TOKEN is the bearer token every caller must send
+
+  workspace  serve an agent's Bash, Read, Write, Edit, Glob and Grep in this
+         room, rooted at --root (default /workspace); WORKSPACE_TOKEN is the
+         bearer token every caller must send, and no command sees it`
 
 // parse reads the arguments and the environment it is given; it starts
 // nothing.
@@ -74,6 +83,8 @@ func parse(args []string, env func(string) string) (command, error) {
 		return parseShim(args[1:], env)
 	case roleServe:
 		return parseServe(args[1:], env)
+	case roleWorkspace:
+		return parseWorkspace(args[1:], env)
 	default:
 		return command{}, fmt.Errorf("unknown role %q\n%s", args[0], usage)
 	}
@@ -94,6 +105,31 @@ func parseShim(args []string, env func(string) string) (command, error) {
 	c.token = env("SHIM_TOKEN")
 	if c.token == "" {
 		return command{}, errors.New("SHIM_TOKEN is required: every caller must send it")
+	}
+	return c, nil
+}
+
+// WorkspaceTokenEnv is where the workspace reads its bearer token from.
+const WorkspaceTokenEnv = "WORKSPACE_TOKEN"
+
+func parseWorkspace(args []string, env func(string) string) (command, error) {
+	c := command{role: roleWorkspace}
+	flags := flag.NewFlagSet("workspace", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&c.listen, "listen", ":8081", "the address to serve on")
+	flags.StringVar(&c.root, "root", "/workspace", "the directory commands run in and paths start from")
+	if err := flags.Parse(args); err != nil {
+		return command{}, fmt.Errorf("%w\n%s", err, usage)
+	}
+	if flags.NArg() > 0 {
+		return command{}, fmt.Errorf("workspace takes no arguments\n%s", usage)
+	}
+	if !filepath.IsAbs(c.root) {
+		return command{}, fmt.Errorf("--root must be an absolute path, not %q", c.root)
+	}
+	c.token = env(WorkspaceTokenEnv)
+	if c.token == "" {
+		return command{}, errors.New(WorkspaceTokenEnv + " is required: every caller must send it")
 	}
 	return c, nil
 }
@@ -141,6 +177,9 @@ func parseServe(args []string, env func(string) string) (command, error) {
 		{"SANDBOXD_ROOM_HOME", &s.limits.HomeBytes, 1},
 		{"SANDBOXD_ROOM_PIDS", &s.limits.PidsLimit, 1},
 		{"SANDBOXD_ROOM_CPUS", &s.limits.NanoCPUs, 1e9},
+		{"SANDBOXD_WORKSPACE_MEMORY", &s.limits.WorkspaceMemory, 1},
+		{"SANDBOXD_WORKSPACE_BYTES", &s.limits.WorkspaceBytes, 1},
+		{"SANDBOXD_WORKSPACE_CPUS", &s.limits.WorkspaceCPUs, 1e9},
 	} {
 		v := env(n.name)
 		if v == "" {
@@ -159,6 +198,13 @@ func parseServe(args []string, env func(string) string) (command, error) {
 	// would be killed for filling it rather than told it is full.
 	if s.limits.HomeBytes > s.limits.Memory {
 		return command{}, errors.New("SANDBOXD_ROOM_HOME is more than SANDBOXD_ROOM_MEMORY: the home directory is memory, charged to the room")
+	}
+	if s.limits.WorkspaceMemory > s.limits.MemoryBudget {
+		return command{}, errors.New("SANDBOXD_WORKSPACE_MEMORY is more than SANDBOXD_MEMORY_BUDGET: no workspace could be made")
+	}
+	// /workspace and the home are both memory in a workspace room.
+	if s.limits.WorkspaceBytes+s.limits.HomeBytes > s.limits.WorkspaceMemory {
+		return command{}, errors.New("SANDBOXD_WORKSPACE_BYTES and SANDBOXD_ROOM_HOME are more than SANDBOXD_WORKSPACE_MEMORY: both are memory, charged to the room")
 	}
 	if s.images, err = parseImages(env("SANDBOXD_IMAGES")); err != nil {
 		return command{}, err

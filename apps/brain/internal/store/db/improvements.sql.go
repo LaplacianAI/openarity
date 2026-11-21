@@ -487,7 +487,7 @@ func (q *Queries) ListVisibleRuns(ctx context.Context, arg ListVisibleRunsParams
 }
 
 const lockAgent = `-- name: LockAgent :one
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser FROM agents WHERE id = $1 AND team_id = $2 FOR UPDATE
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace FROM agents WHERE id = $1 AND team_id = $2 FOR UPDATE
 `
 
 type LockAgentParams struct {
@@ -524,6 +524,7 @@ func (q *Queries) LockAgent(ctx context.Context, arg LockAgentParams) (Agent, er
 		&i.Delegation,
 		&i.Web,
 		&i.Browser,
+		&i.Workspace,
 	)
 	return i, err
 }

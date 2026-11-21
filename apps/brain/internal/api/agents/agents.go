@@ -337,6 +337,7 @@ func Columns(req Request) (db.CreateAgentParams, error) {
 		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
 		Parser: req.Parser, TokenBudget: req.TokenBudget, Delegation: delegationOf(req),
 		Web: req.Web != nil && *req.Web, Browser: req.Browser != nil && *req.Browser,
+		Workspace: req.Workspace != nil && *req.Workspace,
 	}
 
 	if req.OutputSchema != nil {
@@ -357,13 +358,13 @@ func Columns(req Request) (db.CreateAgentParams, error) {
 // RequestOf is the request Columns would turn into this row, grants aside:
 // what an agent is, said the way it is asked for.
 func RequestOf(row db.Agent) (Request, error) {
-	delegation, web, browser := row.Delegation, row.Web, row.Browser
+	delegation, web, browser, workspace := row.Delegation, row.Web, row.Browser, row.Workspace
 	req := Request{
 		Name: row.Name, Description: row.Description, Kind: Kind(row.Kind), Instructions: row.Instructions,
 		Model:   ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
 		Pattern: row.Pattern, MaxSteps: row.MaxSteps, SteerContinuations: row.SteerContinuations,
 		Parser: row.Parser, TokenBudget: row.TokenBudget, Delegation: &delegation, Web: &web,
-		Browser: &browser,
+		Browser: &browser, Workspace: &workspace,
 	}
 
 	if row.OutputSchema != nil {
@@ -389,6 +390,7 @@ func UpdateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 		OutputSchema: c.OutputSchema, Parser: c.Parser,
 		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
 		TokenBudget: c.TokenBudget, Delegation: c.Delegation, Web: c.Web, Browser: c.Browser,
+		Workspace: c.Workspace,
 	}
 }
 
@@ -481,6 +483,7 @@ func view(row db.Agent, g grants) (detail, error) {
 		Delegates:          g.delegates,
 		Web:                row.Web,
 		Browser:            row.Browser,
+		Workspace:          row.Workspace,
 		ToolNotes:          g.notes,
 	}
 	if d.ToolNotes == nil {
@@ -525,6 +528,7 @@ func viewListed(row db.ListAgentsByTeamRow) listed {
 	return listed{
 		summary:    viewSummary(row.Agent),
 		Delegation: row.Agent.Delegation, Web: row.Agent.Web, Browser: row.Agent.Browser,
+		Workspace:   row.Agent.Workspace,
 		ServerCount: row.ServerCount, SkillCount: row.SkillCount, DelegateCount: row.DelegateCount,
 	}
 }

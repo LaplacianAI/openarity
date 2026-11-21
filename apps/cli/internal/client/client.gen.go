@@ -1289,6 +1289,10 @@ type Agent struct {
 	// Web Whether the agent has web_search and web_fetch when it runs as
 	// itself. The team's hub has both whatever this says.
 	Web bool `json:"web" yaml:"web"`
+
+	// Workspace Whether the agent has Bash, Read, Write, Edit, Glob and Grep in
+	// its session's workspace, when the team has a sandbox.
+	Workspace bool `json:"workspace" yaml:"workspace"`
 }
 
 // AgentPage defines model for AgentPage.
@@ -1371,6 +1375,16 @@ type AgentRequest struct {
 	// PUT replaces the whole agent, so a replace that leaves it out
 	// takes the grant away.
 	Web *bool `json:"web,omitempty" yaml:"web,omitempty"`
+
+	// Workspace Gives the agent a workspace: Bash, Read, Write, Edit, Glob and Grep
+	// in a sandbox room of its session's, shared by every agent working
+	// on that session, with the public internet and nothing private. It
+	// needs the team's sandbox provider; every call passes the team's
+	// approval policy, and Bash is classed as a write. An agent's own
+	// improvement proposals cannot grant it; a builder blueprint can,
+	// for a person to apply, as it can web and browser. Left out, it is
+	// false, and a PUT that leaves it out takes the grant away.
+	Workspace *bool `json:"workspace,omitempty" yaml:"workspace,omitempty"`
 }
 
 // AgentSummary defines model for AgentSummary.
@@ -1655,6 +1669,7 @@ type BlueprintAgent struct {
 	SteerContinuations *int32    `json:"steer_continuations,omitempty" yaml:"steer_continuations,omitempty"`
 	TokenBudget        *int64    `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
 	Web                *bool     `json:"web,omitempty" yaml:"web,omitempty"`
+	Workspace          *bool     `json:"workspace,omitempty" yaml:"workspace,omitempty"`
 }
 
 // BlueprintApplied defines model for BlueprintApplied.
@@ -2451,6 +2466,9 @@ type ListedAgent struct {
 
 	// Web Whether it has web_search and web_fetch by its own grant
 	Web bool `json:"web" yaml:"web"`
+
+	// Workspace Whether it has a workspace by its own grant
+	Workspace bool `json:"workspace" yaml:"workspace"`
 }
 
 // ListedChannel A row of the channels list, with how recently it was used. Both facts

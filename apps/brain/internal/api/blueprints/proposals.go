@@ -186,7 +186,7 @@ type proposalSkill struct {
 const blueprintFields = "Write only these fields. An MCP server: name, url, auth_secret, command, vars, env, egress, bare. " +
 	"A skill: files [{path, text}] and nothing else; its name and description go in SKILL.md's front matter. " +
 	"An agent: name, description, instructions, model {name, max_tokens}, pattern, max_steps, mcp_servers " +
-	"[{name, allow}], skills, delegation, delegates, web, browser, token_budget, output_schema. " +
+	"[{name, allow}], skills, delegation, delegates, web, browser, workspace, token_budget, output_schema. " +
 	"approvals: {rules: [{tool or server, mode ask or deny, require_other}]}. No other field, such as a reason, anywhere."
 
 func fromProposal(raw json.RawMessage) (Blueprint, error) {

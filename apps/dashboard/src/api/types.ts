@@ -603,6 +603,8 @@ export type ListedAgent = AgentSummary & {
   web: boolean;
   /** The team's browser, by its own grant. */
   browser: boolean;
+  /** A shell and files in its session's sandbox, by its own grant. Absent from a brain that predates it. */
+  workspace?: boolean;
   mcp_server_count: number;
   skill_count: number;
   /** Read only when delegation is listed. */
@@ -630,6 +632,11 @@ export type Agent = AgentSummary & {
   web: boolean;
   /** The team's browser, to drive pages with. A hub has it whatever this says. */
   browser: boolean;
+  /**
+   * Bash, Read, Write, Edit, Glob and Grep in its session's sandbox room. The
+   * hub never has it. Absent from a brain that predates it.
+   */
+  workspace?: boolean;
   /**
    * Usage notes on tools, left by approved improvements. Read only: a PUT
    * never sends them, and the brain refuses a body that does.
@@ -669,6 +676,8 @@ export type AgentRequest = {
   web?: boolean;
   /** Left out, the brain reads false. */
   browser?: boolean;
+  /** Left out, the brain reads false, and a PUT that leaves it out takes it away. */
+  workspace?: boolean;
 };
 
 /** GET /teams/{id}/mcp-servers. Credentials are references, never values. */

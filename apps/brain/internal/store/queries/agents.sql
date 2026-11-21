@@ -3,12 +3,12 @@ INSERT INTO agents (
     team_id, name, description, kind, instructions,
     model_name, max_tokens, temperature, pattern, max_steps, steer_continuations,
     output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature,
-    token_budget, delegation, web, browser
+    token_budget, delegation, web, browser, workspace
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
-    $17, $18, $19, $20
+    $17, $18, $19, $20, $21
 ) RETURNING *;
 
 -- name: GetAgent :one
@@ -48,6 +48,7 @@ UPDATE agents SET
     delegation          = sqlc.arg('delegation'),
     web                 = sqlc.arg('web'),
     browser             = sqlc.arg('browser'),
+    workspace           = sqlc.arg('workspace'),
     updated_at          = now()
 WHERE id = sqlc.arg('id')
 RETURNING *;

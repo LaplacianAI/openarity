@@ -22,7 +22,8 @@ a message on a channel.
 
 - **Agents**: a model, a reasoning pattern (ReAct, plan-then-act, ReWOO or
   reflection), the MCP servers and skills they are granted, who they may
-  delegate to, and whether they may use the web.
+  delegate to, whether they may use the web, and whether they have a
+  workspace to run commands and keep files in.
 - **The hub**: every team has a front door. It is the built-in orchestrator
   unless the team names one of its own agents, and it can plan, find an agent
   in the graph and hand it the work, search the web and read a page.

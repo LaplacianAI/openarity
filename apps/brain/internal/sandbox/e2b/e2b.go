@@ -92,7 +92,12 @@ type createRequest struct {
 	Timeout    int               `json:"timeout"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	EnvVars    map[string]string `json:"envVars,omitempty"`
-	Network    network           `json:"network"`
+	// Secure makes envd, the daemon in the sandbox, want its access token
+	// on every call, from inside the sandbox as from outside: the room's
+	// environment does not hold it, so a command cannot start processes or
+	// list theirs. Sent rather than left to the default.
+	Secure  bool    `json:"secure"`
+	Network network `json:"network"`
 }
 
 type created struct {
@@ -108,7 +113,7 @@ func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 	if s.Image == "" {
 		return "", fmt.Errorf("%w: no E2B template is set", sandbox.ErrRefused)
 	}
-	n, err := c.egress(ctx, s.Egress)
+	n, err := c.network(ctx, s)
 	if err != nil {
 		return "", err
 	}
@@ -118,6 +123,7 @@ func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 		Timeout:    int(c.Timeout / time.Second),
 		Metadata:   s.Labels,
 		EnvVars:    s.Env,
+		Secure:     true,
 		Network:    n,
 	})
 	if err != nil {
@@ -164,6 +170,10 @@ func (c *Client) Start(ctx context.Context, roomID string, argv []string) error 
 	}
 	if _, err := c.api(ctx, http.MethodGet, "/sandboxes/"+url.PathEscape(r.ID), nil, &detail, []string{c.apiKey}); err != nil {
 		return err
+	}
+	if detail.EnvdAccessToken == "" {
+		// A secure sandbox always has one; one without is not the room made.
+		return errors.New("e2b: the sandbox has no envd access token, so it was not made secure")
 	}
 	return c.startProcess(ctx, r, detail.EnvdAccessToken, argv)
 }

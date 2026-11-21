@@ -34,6 +34,7 @@ type Agent struct {
 	Delegation         string
 	Web                bool
 	Browser            bool
+	Workspace          bool
 }
 
 type AgentDelegate struct {

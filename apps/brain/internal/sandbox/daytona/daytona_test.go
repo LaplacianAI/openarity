@@ -553,3 +553,43 @@ func TestDaytonaCloudResolvesHostsWhenTheDomainListCannotSayItAll(t *testing.T) 
 		})
 	}
 }
+
+// On Daytona cloud a public room is sent with no lists and is not blocked.
+func TestAPublicRoomOnDaytonaCloudSendsNoLists(t *testing.T) {
+	f := newFake(t)
+	if _, err := f.client().Create(t.Context(), sandbox.Spec{Network: sandbox.NetworkPublic, Workspace: true}); err != nil {
+		t.Fatal(err)
+	}
+	b := f.last(http.MethodPost).Body
+	for _, k := range []string{"networkBlockAll", "networkAllowList", "domainAllowList"} {
+		if v, ok := b[k]; ok && v != "" {
+			t.Errorf("%s = %v on a public room", k, v)
+		}
+	}
+}
+
+// A self-hosted Daytona can only allow, never deny, so it cannot keep a room
+// off the network it runs on: a public room there is refused before any call.
+func TestAPublicRoomOnASelfHostedDaytonaIsRefused(t *testing.T) {
+	f := newFake(t)
+	c := f.client()
+	c.DomainFirewall = false
+	_, err := c.Create(t.Context(), sandbox.Spec{Network: sandbox.NetworkPublic})
+	if !errors.Is(err, sandbox.ErrRefused) || !strings.Contains(err.Error(), "private addresses") {
+		t.Fatalf("err = %v, want ErrRefused saying why", err)
+	}
+	f.mu.Lock()
+	reached := len(f.calls)
+	f.mu.Unlock()
+	if reached != 0 {
+		t.Error("a refused room still reached Daytona")
+	}
+	for _, s := range []sandbox.Spec{
+		{Network: sandbox.NetworkPublic, Egress: []sandbox.HostPort{{Host: "a.example.com", Port: 443}}},
+		{Network: "host"},
+	} {
+		if _, err := f.client().Create(t.Context(), s); !errors.Is(err, sandbox.ErrRefused) {
+			t.Errorf("%+v: %v, want ErrRefused", s, err)
+		}
+	}
+}

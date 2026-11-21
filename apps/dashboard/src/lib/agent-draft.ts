@@ -18,12 +18,13 @@ export type Draft = {
   delegates: string[];
   web: boolean;
   browser: boolean;
+  workspace: boolean;
 };
 
 /** The brain refuses more; this only says so before the round trip. */
 const MAX_TOKEN_BUDGET = 100_000_000;
 
-/** A new agent: alone, off the web and with no browser, as the brain's own defaults are. */
+/** A new agent: alone, off the web, with no browser and no workspace, as the brain's own defaults are. */
 export const EMPTY: Draft = {
   name: "",
   description: "",
@@ -39,6 +40,7 @@ export const EMPTY: Draft = {
   delegates: [],
   web: false,
   browser: false,
+  workspace: false,
 };
 
 /**
@@ -74,6 +76,7 @@ export function agentRequest(d: Draft): AgentRequest | string {
     ...(d.delegation === "listed" ? { delegates: d.delegates } : {}),
     web: d.web,
     browser: d.browser,
+    workspace: d.workspace,
   };
 }
 
@@ -94,6 +97,7 @@ export function draftOf(a: Agent): Draft {
     delegates: a.delegates,
     web: a.web === true,
     browser: a.browser === true,
+    workspace: a.workspace === true,
   };
 }
 

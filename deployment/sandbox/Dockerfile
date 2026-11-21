@@ -1,6 +1,7 @@
-# The room image: what a command MCP server runs in. Every sandbox provider
-# starts its rooms from it, and the provider runs `sandbox shim -- <command>`
-# itself, so there is no ENTRYPOINT here to hide the command.
+# The room image: what a command MCP server, or an agent's workspace, runs in.
+# Every sandbox provider starts its rooms from it, and the provider runs
+# `sandbox shim -- <command>` or `sandbox workspace` itself, so there is no
+# ENTRYPOINT here to hide the command.
 #
 # Build context is the repository root, so this file can see apps/sandbox.
 #
@@ -45,6 +46,15 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=build /sandbox /usr/local/bin/sandbox
+
+# What an agent's Bash reaches for first, beside node, npm, python and uv.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# An agent's workspace. Providers run rooms as users of their own (sandboxd
+# as 65534, which mounts a tmpfs here), so it is writable by any.
+RUN mkdir -m 1777 /workspace
 
 # A named user, not root. Its home is where npx and uvx keep their caches, so
 # it has to be writable by it.

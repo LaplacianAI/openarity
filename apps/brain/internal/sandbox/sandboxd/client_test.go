@@ -92,6 +92,19 @@ func TestCreateSendsEmptyCollectionsNotNull(t *testing.T) {
 	}
 }
 
+func TestCreateSendsAPublicWorkspaceAsSuch(t *testing.T) {
+	t.Parallel()
+	s := newServer(t, http.StatusCreated, `{"id":"r1"}`)
+	c := sandboxd.New(s.URL, "tok", s.Client())
+	if _, err := c.Create(t.Context(), sandbox.Spec{Image: "room:1", Network: sandbox.NetworkPublic, Workspace: true}); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"image":"room:1","env":{},"egress":[],"labels":{},"network":"public","workspace":true}`
+	if got := s.last(t).Body; got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+}
+
 func TestCreateMaps422ToErrRefusedWithSandboxdsReason(t *testing.T) {
 	t.Parallel()
 	s := newServer(t, http.StatusUnprocessableEntity, `{"error":"two hosts on port 25"}`)

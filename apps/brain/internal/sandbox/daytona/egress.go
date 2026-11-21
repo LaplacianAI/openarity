@@ -59,6 +59,30 @@ const (
 
 var domainPattern = regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
 
+// network is the room's network fields. A public room on Daytona cloud has
+// neither list and is not blocked: Daytona's runners are not on any network
+// of ours, and its own sandbox network keeps a room off its hosts. A
+// self-hosted Daytona runs on someone's own network, and can only allow at
+// most ten CIDRs, never deny: "every public address" is about thirty of them,
+// so a public room there is refused rather than made able to reach the
+// host's network.
+func (c *Client) network(ctx context.Context, s sandbox.Spec) (network, error) {
+	switch s.Network {
+	case sandbox.NetworkListed:
+		return mapEgress(ctx, s.Egress, c.DomainFirewall, c.Resolve)
+	case sandbox.NetworkPublic:
+		if len(s.Egress) > 0 {
+			return network{}, refuse("a public room lists no hosts")
+		}
+		if !c.DomainFirewall {
+			return network{}, refuse("a self-hosted Daytona cannot keep a room off private addresses, so it cannot run a workspace; choose sandboxd, E2B or Daytona cloud")
+		}
+		return network{}, nil
+	default:
+		return network{}, refuse("no network %q", s.Network)
+	}
+}
+
 // network is the three network fields of Daytona's create request.
 type network struct {
 	blockAll bool

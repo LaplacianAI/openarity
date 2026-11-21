@@ -104,7 +104,7 @@ type sandboxView struct {
 // Create makes a room, from the spec's image, and waits until it is started.
 // The room never auto-stops: a stopped room has lost the shim in it.
 func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
-	n, err := mapEgress(ctx, s.Egress, c.DomainFirewall, c.Resolve)
+	n, err := c.network(ctx, s)
 	if err != nil {
 		return "", err
 	}

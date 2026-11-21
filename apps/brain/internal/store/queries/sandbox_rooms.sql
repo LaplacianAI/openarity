@@ -31,6 +31,13 @@ RETURNING *;
 -- name: TouchSandboxRoom :exec
 UPDATE sandbox_rooms SET last_used_at = now() WHERE id = $1;
 
+-- An owner's room, used again by a caller that already holds its endpoint,
+-- so the sweep of idle rooms leaves it while it is in use.
+--
+-- name: TouchSandboxRoomByOwner :exec
+UPDATE sandbox_rooms SET last_used_at = now()
+WHERE owner_kind = sqlc.arg('owner_kind') AND owner_id = sqlc.arg('owner_id');
+
 -- A room replaced, or found gone, or one that does not answer: its row goes,
 -- and the trigger records the room and its token, which the sweep deletes.
 -- Deleted by id, so a row another brain has already replaced is left alone.

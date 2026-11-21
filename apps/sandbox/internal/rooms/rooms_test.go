@@ -177,16 +177,17 @@ func (f *fakeEngine) ContainerID(context.Context, string) (string, error) {
 type fakeEgress struct {
 	mu     sync.Mutex
 	opened map[string][]guard.Host
+	public map[string]bool
 	closed []string
 }
 
-func (e *fakeEgress) Open(id string, _ netip.Addr, h []guard.Host) error {
+func (e *fakeEgress) Open(id string, _ netip.Addr, h []guard.Host, public bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.opened == nil {
-		e.opened = map[string][]guard.Host{}
+		e.opened, e.public = map[string][]guard.Host{}, map[string]bool{}
 	}
-	e.opened[id] = h
+	e.opened[id], e.public[id] = h, public
 	return nil
 }
 
@@ -228,6 +229,8 @@ func TestCreateRefusesWhatItCannotHonourAndMakesNothing(t *testing.T) {
 		{Image: "a b"},
 		{Image: "x", Env: map[string]string{"A=B": "c"}},
 		{Image: "x", Egress: []guard.Host{{Name: "a.example.com", Port: 25}, {Name: "b.example.com", Port: 25}}},
+		{Image: "x", Network: "host"},
+		{Image: "x", Network: NetworkPublic, Egress: []guard.Host{{Name: "a.example.com", Port: 443}}},
 	}
 	for _, sp := range bad {
 		if _, err := s.Create(t.Context(), sp); !errors.Is(err, ErrRefused) {
@@ -453,7 +456,7 @@ func TestTheProxyTokenIsPerRoomAndDerivedFromTheKey(t *testing.T) {
 
 type busyEgress struct{ fakeEgress }
 
-func (*busyEgress) Open(string, netip.Addr, []guard.Host) error {
+func (*busyEgress) Open(string, netip.Addr, []guard.Host, bool) error {
 	return fmt.Errorf("%w: port 9090", guard.ErrUnavailable)
 }
 
@@ -469,5 +472,80 @@ func TestAnEgressPortSandboxdCannotListenOnIsRefusedAndLeavesNothing(t *testing.
 	}
 	if len(e.networks) != 0 {
 		t.Fatal("a network was left behind")
+	}
+}
+
+func TestAPublicRoomListingNoHostsStillOpensTheProxy(t *testing.T) {
+	t.Parallel()
+	s, _, g := service(DefaultLimits())
+	id, err := s.Create(t.Context(), Spec{Image: "room:1", Network: NetworkPublic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.public[id] {
+		t.Fatalf("a public room was opened as %v", g.public)
+	}
+	server, err := s.Create(t.Context(), Spec{Image: "room:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, opened := g.opened[server]; opened {
+		t.Fatal("a room with no hosts and no public network was given the guard")
+	}
+}
+
+// A workspace takes more of the budget than a server, so the budget sums
+// what each room is, not a count of rooms.
+func TestTheBudgetCountsEachRoomAtItsOwnSize(t *testing.T) {
+	t.Parallel()
+	l := DefaultLimits()
+	l.MemoryBudget = l.WorkspaceMemory + l.Memory
+	s, _, _ := service(l)
+	if _, err := s.Create(t.Context(), Spec{Image: "x", Workspace: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(t.Context(), Spec{Image: "x"}); err != nil {
+		t.Fatalf("a server beside a workspace within the budget: %v", err)
+	}
+	if _, err := s.Create(t.Context(), Spec{Image: "x"}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("past the budget: %v, want ErrBusy", err)
+	}
+
+	// The room asked for counts at its own size too: a workspace that does
+	// not fit is refused where a server would have fitted.
+	l.MemoryBudget = l.Memory + l.WorkspaceMemory - 1
+	s, _, _ = service(l)
+	if _, err := s.Create(t.Context(), Spec{Image: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(t.Context(), Spec{Image: "x", Workspace: true}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("a workspace past the budget: %v, want ErrBusy", err)
+	}
+}
+
+func TestHardenGivesAWorkspaceItsSizeAndAPublicRoomTheProxy(t *testing.T) {
+	t.Parallel()
+	l := DefaultLimits()
+	c := Harden("abc", Spec{Image: "room:1", Network: NetworkPublic, Workspace: true}, []string{"sandbox", "workspace"}, "10.0.0.2", l)
+	h := c.HostConfig
+	if h.Memory != l.WorkspaceMemory || h.MemorySwap != l.WorkspaceMemory || h.NanoCPUs != l.WorkspaceCPUs {
+		t.Errorf("limits = %d %d %d", h.Memory, h.MemorySwap, h.NanoCPUs)
+	}
+	ws := h.Tmpfs[WorkspaceDir]
+	if !strings.Contains(ws, ",exec,") || !strings.Contains(ws, "size=536870912") || !strings.Contains(ws, "uid=65534") {
+		t.Errorf("/workspace = %q", ws)
+	}
+	env := strings.Join(c.Env, ",")
+	for _, want := range []string{"HTTPS_PROXY=http://10.0.0.2:3128", "http_proxy=http://10.0.0.2:3128", "NO_PROXY=localhost"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("env %s lacks %s", env, want)
+		}
+	}
+	if len(h.ExtraHosts) != 0 {
+		t.Errorf("a public room's hosts = %v", h.ExtraHosts)
+	}
+	server := Harden("abc", Spec{Image: "room:1"}, []string{"sandbox", "shim"}, "10.0.0.2", l)
+	if _, ok := server.HostConfig.Tmpfs[WorkspaceDir]; ok || strings.Contains(strings.Join(server.Env, ","), "PROXY") {
+		t.Errorf("a server's room was given a workspace or the proxy: %v %v", server.HostConfig.Tmpfs, server.Env)
 	}
 }
