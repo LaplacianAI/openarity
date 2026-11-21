@@ -330,7 +330,7 @@ func globText(g workroom.Glob) string {
 
 func grepText(g workroom.Grep) string {
 	// By the output, not the count: whatever was found is shown.
-	if g.Output == "" {
+	if g.Output == "" && !g.Truncated {
 		return "No matches."
 	}
 	if g.Truncated {

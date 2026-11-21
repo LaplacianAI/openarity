@@ -62,8 +62,10 @@ func read(path string, offset, limit int) (ReadResult, error) {
 	br := bufio.NewReaderSize(f, sniff)
 	head, _ := br.Peek(sniff)
 	if binary(head) {
-		info, _ := f.Stat()
-		return ReadResult{}, problem("%s is a binary file of %d bytes; Read shows text only", path, info.Size())
+		if info, err := f.Stat(); err == nil {
+			return ReadResult{}, problem("%s is a binary file of %d bytes; Read shows text only", path, info.Size())
+		}
+		return ReadResult{}, problem("%s is a binary file; Read shows text only", path)
 	}
 	if offset < 1 {
 		offset = 1
