@@ -9,6 +9,7 @@ package contract
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -80,6 +81,22 @@ func Workspace(t *testing.T, rooms sandbox.Rooms, image string, hc *http.Client)
 		out, err := ws.Exec(ctx, "pwd; cat probe.txt", 30)
 		if err != nil || out.Stdout != workroom.Dir+"\nprobe-value\n" {
 			t.Fatalf("Exec = %+v, %v", out, err)
+		}
+	})
+
+	t.Run("keeps its token from the room", func(t *testing.T) {
+		// The token guards the room from outside; a command that read it
+		// could hand it to whoever wrote the prompt it is following.
+		out, err := ws.Exec(ctx, "grep -l -s -a "+want.TokenEnv+"= /proc/[0-9]*/environ; env | grep -c "+want.TokenEnv+"; true", 30)
+		if err != nil {
+			t.Fatalf("Exec: %v", err)
+		}
+		if got := strings.TrimSpace(out.Stdout); got != "0" {
+			t.Errorf("a command found the token: %q", got)
+		}
+		var p *workroom.Problem
+		if _, err := ws.Read(ctx, "/proc/self/environ", 0, 0); !errors.As(err, &p) {
+			t.Errorf("Read of the workspace's own environ: %v, want it refused", err)
 		}
 	})
 

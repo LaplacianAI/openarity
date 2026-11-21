@@ -1380,9 +1380,10 @@ type AgentRequest struct {
 	// in a sandbox room of its session's, shared by every agent working
 	// on that session, with the public internet and nothing private. It
 	// needs the team's sandbox provider; every call passes the team's
-	// approval policy, and Bash is classed as a write. An agent cannot
-	// propose this grant for itself. Left out, it is false, and a PUT
-	// that leaves it out takes the grant away.
+	// approval policy, and Bash is classed as a write. An agent's own
+	// improvement proposals cannot grant it; a builder blueprint can,
+	// for a person to apply, as it can web and browser. Left out, it is
+	// false, and a PUT that leaves it out takes the grant away.
 	Workspace *bool `json:"workspace,omitempty" yaml:"workspace,omitempty"`
 }
 

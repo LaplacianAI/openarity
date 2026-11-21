@@ -7,12 +7,12 @@ SET LOCAL lock_timeout = '3s';
 ALTER TABLE agents ADD COLUMN workspace boolean NOT NULL DEFAULT false;
 
 -- A session is the second thing a room is owned by: one room per session,
--- shared by every run on it. Replaced NOT VALID, then validated, so the
--- table is not locked while every row is read.
+-- shared by every run on it. The migration is one transaction, so the table
+-- is locked from the drop to the commit and every row is checked under it;
+-- sandbox_rooms holds a row per room in use, so that is brief.
 ALTER TABLE sandbox_rooms DROP CONSTRAINT sandbox_rooms_owner_kind_known;
 ALTER TABLE sandbox_rooms ADD CONSTRAINT sandbox_rooms_owner_kind_known
-    CHECK (owner_kind IN ('mcp_server', 'session')) NOT VALID;
-ALTER TABLE sandbox_rooms VALIDATE CONSTRAINT sandbox_rooms_owner_kind_known;
+    CHECK (owner_kind IN ('mcp_server', 'session'));
 
 -- A session deleted, on its own or with its team, takes its room, as a
 -- command MCP server does: the rows going is what makes the tombstone the

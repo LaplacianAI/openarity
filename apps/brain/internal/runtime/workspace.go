@@ -76,14 +76,16 @@ type runWorkspace struct {
 // open is the workspace's client, ensuring its room on the first call.
 func (w *runWorkspace) open(ctx context.Context) (*workroom.Client, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.client != nil {
+	if c := w.client; c != nil {
+		w.mu.Unlock()
 		// The call about to be made finds out whether the room answers; this
-		// only keeps the sweep of idle rooms off it. A failed touch costs at
-		// most a room, which the next call makes again.
+		// only keeps the sweep of idle rooms off it, so calls in parallel do
+		// not wait on each other's. A failed touch costs at most a room,
+		// which the next call makes again.
 		_ = w.deps.Rooms.Touch(ctx, w.session)
-		return w.client, nil
+		return c, nil
 	}
+	defer w.mu.Unlock()
 	ep, err := w.deps.Rooms.Ensure(ctx, w.team, w.session)
 	if err != nil {
 		return nil, fmt.Errorf("the workspace could not be started: %w", err)
@@ -121,6 +123,13 @@ func (w *runWorkspace) call(ctx context.Context, fn func(*workroom.Client) (stri
 		w.forget(c)
 		return "", errors.New("the workspace's room was gone, so the call did not reach it; it was " +
 			"cleared, as an idle workspace is. Call again to start a fresh one: what was in it before is not there")
+	case errors.Is(err, workroom.ErrNoAnswer):
+		// The next call finds the room again if it still answers, or a new
+		// one if not.
+		w.forget(c)
+		return "", errors.New("the call was sent and no answer came back, so it may or may not have run. " +
+			"Look at the workspace (ls, git status, the file) before repeating it; if the room was lost, " +
+			"the next call starts a fresh one and what was in it before is not there")
 	default:
 		return "", err
 	}
@@ -162,7 +171,7 @@ func (w *runWorkspace) tools() []agent.Tool {
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
 				`"path":{"type":"string"},` +
 				`"offset":{"type":"integer","minimum":1,"description":"The first line to read, from 1"},` +
-				`"limit":{"type":"integer","minimum":1,"description":"How many lines; 2000 if left out"}},` +
+				`"limit":{"type":"integer","minimum":1,"maximum":2000,"description":"How many lines, 2000 at most; 2000 if left out"}},` +
 				`"required":["path"]}`),
 			Invoke: func(ctx context.Context, raw json.RawMessage) (string, error) {
 				var in struct {
@@ -175,7 +184,7 @@ func (w *runWorkspace) tools() []agent.Tool {
 				}
 				return w.call(ctx, func(c *workroom.Client) (string, error) {
 					out, err := c.Read(ctx, in.Path, in.Offset, in.Limit)
-					return readText(out, in.Offset, in.Limit), err
+					return readText(out, in.Offset), err
 				})
 			},
 		},
@@ -290,20 +299,19 @@ func execText(e workroom.Exec) string {
 	return b.String()
 }
 
-func readText(r workroom.Read, offset, limit int) string {
+func readText(r workroom.Read, offset int) string {
 	if r.Lines == 0 {
 		return "(the file is empty)"
 	}
 	if offset < 1 {
 		offset = 1
 	}
-	if limit < 1 {
-		limit = 2000
-	}
 	if r.Content == "" {
 		return fmt.Sprintf("(the file has %d lines, so nothing is at line %d)", r.Lines, offset)
 	}
-	if last := offset + limit - 1; last < r.Lines {
+	// The room may return fewer lines than were asked for, so the note
+	// counts the ones it did: each ends in a newline.
+	if last := offset + strings.Count(r.Content, "\n") - 1; last < r.Lines {
 		return r.Content + fmt.Sprintf("(lines %d to %d of %d; read on from offset %d)", offset, last, r.Lines, last+1)
 	}
 	return r.Content

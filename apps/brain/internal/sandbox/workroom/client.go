@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
@@ -24,9 +26,16 @@ type Problem struct{ Msg string }
 
 func (p *Problem) Error() string { return p.Msg }
 
-// ErrGone is a workspace whose room no longer answers at its address: the
-// provider lost it or the reaper took it. Ensure gives a new one.
-var ErrGone = errors.New("the workspace's room is gone")
+var (
+	// ErrGone is a call that never reached the workspace: nothing listens at
+	// its address, or the provider says it has no such room. The call did
+	// not run. Ensure gives the room again, or a new one.
+	ErrGone = errors.New("the workspace's room is gone")
+	// ErrNoAnswer is a call that was sent and got no answer: the connection
+	// broke, or the provider's proxy answered for a room that stopped
+	// answering. The call may or may not have run.
+	ErrNoAnswer = errors.New("the workspace took the call and gave no answer")
+)
 
 // Client calls one workspace.
 type Client struct {
@@ -142,7 +151,11 @@ func (c *Client) post(ctx context.Context, route string, body, out any) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("%w: %s", ErrGone, transport(err))
+		var op *net.OpError
+		if errors.As(err, &op) && op.Op == "dial" {
+			return fmt.Errorf("%w: %s", ErrGone, transport(err))
+		}
+		return fmt.Errorf("%w: %s", ErrNoAnswer, transport(err))
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
@@ -163,9 +176,13 @@ func (c *Client) post(ctx context.Context, route string, body, out any) error {
 			return fmt.Errorf("the workspace refused the call and said nothing")
 		}
 		return &Problem{Msg: p.Error}
-	case http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable:
+	case http.StatusNotFound:
 		// The provider's proxy answers for a room it no longer has.
 		return fmt.Errorf("%w: %d", ErrGone, resp.StatusCode)
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		// The proxy could not get an answer, which says nothing of whether
+		// the room had the call.
+		return fmt.Errorf("%w: %d", ErrNoAnswer, resp.StatusCode)
 	default:
 		return fmt.Errorf("the workspace answered %d: %s", resp.StatusCode, firstLine(raw))
 	}
@@ -173,9 +190,9 @@ func (c *Client) post(ctx context.Context, route string, body, out any) error {
 
 // transport is a failed request's cause without the URL it was for.
 func transport(err error) string {
-	var ue interface{ Unwrap() error }
-	if errors.As(err, &ue) && ue.Unwrap() != nil {
-		return ue.Unwrap().Error()
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return ue.Err.Error()
 	}
 	return "the request failed"
 }

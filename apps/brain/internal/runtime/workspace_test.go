@@ -191,12 +191,21 @@ func TestTheHubHasNoWorkspaceEvenAsAnAgentGrantedOne(t *testing.T) {
 	}
 }
 
-func TestNoWorkspacesOnDeployNoWorkspace(t *testing.T) {
+// A brain whose secret store cannot write keeps no room's token, so it makes
+// no rooms: a granted agent has no workspace, and is told why.
+func TestNoWorkspacesOnDeployNoWorkspaceAndSayWhy(t *testing.T) {
 	f, _ := newWorkspaceFixture(t, true)
 	f.builder.workspaces = nil
 	got := f.build(t)
-	if names := workspaceToolsIn(got); len(names) != 0 || len(got.Unavailable) != 0 {
-		t.Errorf("tools %v, unavailable %+v, on a brain with no sandbox wiring", names, got.Unavailable)
+	if names := workspaceToolsIn(got); len(names) != 0 {
+		t.Errorf("tools %v on a brain with no sandbox wiring", names)
+	}
+	for _, n := range WorkspaceToolNames {
+		if !slices.ContainsFunc(got.Unavailable, func(u Unavailable) bool {
+			return u.Name == n && strings.Contains(u.Reason, "secret store is read-only")
+		}) {
+			t.Errorf("%s is not said to be unavailable: %+v", n, got.Unavailable)
+		}
 	}
 }
 
@@ -259,6 +268,29 @@ func TestARoomFoundGoneIsNotRetriedAndTheNextCallStartsAnother(t *testing.T) {
 	}
 }
 
+// A call sent and never answered is not said not to have run, and is not
+// sent again: the model is told to look first.
+func TestACallWithNoAnswerIsNotRetriedAndMayHaveRun(t *testing.T) {
+	f, ws := newWorkspaceFixture(t, true)
+	got := f.build(t)
+	ws.room.answer("/exec", 502, `upstream`)
+
+	_, err := invoke(t, got, BashToolName, `{"command":"git push"}`)
+	if err == nil || !strings.Contains(err.Error(), "may or may not have run") {
+		t.Fatalf("Bash = %v, want the model told the outcome is unknown", err)
+	}
+	if n := ws.room.calls("/exec"); n != 1 {
+		t.Errorf("the command was sent %d times, want once", n)
+	}
+	ws.room.answer("/exec", 200, `{"stdout":"ok\n","stderr":"","exit_code":0}`)
+	if _, err := invoke(t, got, BashToolName, `{"command":"git status"}`); err != nil {
+		t.Fatalf("Bash after = %v", err)
+	}
+	if e, _ := ws.counts(); e != 2 {
+		t.Errorf("ensured %d times, want the room found again after no answer", e)
+	}
+}
+
 func TestAProblemIsSaidToTheModelInTheWorkspacesWords(t *testing.T) {
 	f, ws := newWorkspaceFixture(t, true)
 	ws.room.answer("/edit", 422, `{"error":"old_string is in f 2 times; give more of the text around it, or set replace_all"}`)
@@ -288,10 +320,11 @@ func TestWhatACallSaysBack(t *testing.T) {
 		{"output and a failure", execText(execOf("out\n", "boom\n", 2, false)), "out\nstderr:\nboom\nexit code 2"},
 		{"nothing", execText(execOf("", "", 0, false)), "(no output)"},
 		{"out of time", execText(execOf("part", "", -1, true)), "The command ran out of time and was stopped, with everything it started.\npart\nexit code -1"},
-		{"more to read", readText(readOf("     1\ta\n", 3), 1, 1), "     1\ta\n(lines 1 to 1 of 3; read on from offset 2)"},
-		{"read to the end", readText(readOf("     3\tc\n", 3), 3, 0), "     3\tc\n"},
-		{"empty file", readText(readOf("", 0), 0, 0), "(the file is empty)"},
-		{"past the end", readText(readOf("", 3), 9, 0), "(the file has 3 lines, so nothing is at line 9)"},
+		{"more to read", readText(readOf("     1\ta\n", 3), 1), "     1\ta\n(lines 1 to 1 of 3; read on from offset 2)"},
+		{"fewer than asked", readText(readOf("     2\tb\n     3\tc\n", 5000), 2), "     2\tb\n     3\tc\n(lines 2 to 3 of 5000; read on from offset 4)"},
+		{"read to the end", readText(readOf("     3\tc\n", 3), 3), "     3\tc\n"},
+		{"empty file", readText(readOf("", 0), 0), "(the file is empty)"},
+		{"past the end", readText(readOf("", 3), 9), "(the file has 3 lines, so nothing is at line 9)"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, tc.got, tc.want)

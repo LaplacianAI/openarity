@@ -117,15 +117,36 @@ func TestAProblemIsTheModelsToFix(t *testing.T) {
 
 func TestARoomTheProviderNoLongerHasIsGone(t *testing.T) {
 	t.Parallel()
-	for _, status := range []int{404, 502, 503} {
-		r := newRoom(t, status, `no such room`)
-		if _, err := r.client().Read(t.Context(), "a", 0, 0); !errors.Is(err, workroom.ErrGone) {
-			t.Errorf("%d: %v, want ErrGone", status, err)
+	r := newRoom(t, 404, `no such room`)
+	if _, err := r.client().Read(t.Context(), "a", 0, 0); !errors.Is(err, workroom.ErrGone) {
+		t.Errorf("404: %v, want ErrGone", err)
+	}
+	r = newRoom(t, 500, `{"error":"the workspace failed: disk"}`)
+	if _, err := r.client().Read(t.Context(), "a", 0, 0); err == nil || errors.Is(err, workroom.ErrGone) || errors.Is(err, workroom.ErrNoAnswer) {
+		t.Errorf("500: %v, want the workspace's own failure", err)
+	}
+}
+
+// A proxy that could not get an answer, or a connection that broke once the
+// call was sent, says nothing of whether the call ran.
+func TestACallThatWentUnansweredMayHaveRun(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{502, 503, 504} {
+		r := newRoom(t, status, `upstream`)
+		if _, err := r.client().Exec(t.Context(), "make", 30); !errors.Is(err, workroom.ErrNoAnswer) {
+			t.Errorf("%d: %v, want ErrNoAnswer", status, err)
 		}
 	}
-	r := newRoom(t, 500, `{"error":"the workspace failed: disk"}`)
-	if _, err := r.client().Read(t.Context(), "a", 0, 0); err == nil || errors.Is(err, workroom.ErrGone) {
-		t.Errorf("500: %v, want an error that is not ErrGone", err)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	_, err := workroom.NewClient(sandbox.Endpoint{URL: srv.URL}, srv.Client()).Exec(t.Context(), "make", 30)
+	if !errors.Is(err, workroom.ErrNoAnswer) || errors.Is(err, workroom.ErrGone) {
+		t.Errorf("a connection closed with the call in it: %v, want ErrNoAnswer", err)
 	}
 }
 

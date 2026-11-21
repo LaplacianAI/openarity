@@ -276,11 +276,13 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			}
 			built.Spec.Tools = append(built.Spec.Tools, gated)
 		}
-	case a.Workspace && b.workspaces != nil && !run.Hub && !run.Builder:
+	case a.Workspace && !run.Hub && !run.Builder:
+		reason := "the team has no sandbox, so its agents have no workspace: choose one in Settings"
+		if b.workspaces == nil {
+			reason = "this brain's secret store is read-only, so it keeps no sandbox room's token and its agents have no workspace"
+		}
 		for _, n := range WorkspaceToolNames {
-			built.Unavailable = append(built.Unavailable, Unavailable{
-				Name: n, Reason: "the team has no sandbox, so its agents have no workspace: choose one in Settings",
-			})
+			built.Unavailable = append(built.Unavailable, Unavailable{Name: n, Reason: reason})
 		}
 	}
 
