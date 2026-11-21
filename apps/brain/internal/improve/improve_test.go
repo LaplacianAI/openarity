@@ -329,7 +329,16 @@ func TestAnUnreachableModelIsTriedAgainThenGivenUp(t *testing.T) {
 		t.Errorf("verdict = %s after the second try", o.Verdict)
 	}
 
+	// Within its first day, a run whose tries all failed is left for the
+	// next hour: an outage loses no judgement.
 	gone := w.finished(t, w.session(t), "11 minutes")
+	if err := w.checker.GiveUp(t.Context(), gone, errors.New("503, five times")); err == nil {
+		t.Fatal("a run of eleven minutes was given up on")
+	}
+	if _, err := w.store.GetRunOutcome(t.Context(), gone); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("an early give-up wrote an outcome: %v", err)
+	}
+	w.checker.now = func() time.Time { return time.Now().Add(giveUpAfter) }
 	if err := w.checker.GiveUp(t.Context(), gone, errors.New("503, five times")); err != nil {
 		t.Fatal(err)
 	}
@@ -469,6 +478,13 @@ func TestAFailedDigestIsSkippedAndReopenedByADown(t *testing.T) {
 	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Digest != digestPending {
 		t.Fatalf("digest = %s after a 503, want still pending", o.Digest)
 	}
+	if err := w.checker.SkipDigest(t.Context(), run, 0, errors.New("503, five times")); err == nil {
+		t.Fatal("a digest judged moments ago was skipped")
+	}
+	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Digest != digestPending {
+		t.Fatalf("digest = %s after an early skip, want still pending", o.Digest)
+	}
+	w.checker.now = func() time.Time { return time.Now().Add(giveUpAfter) }
 	if err := w.checker.SkipDigest(t.Context(), run, 0, errors.New("503, five times")); err != nil {
 		t.Fatal(err)
 	}

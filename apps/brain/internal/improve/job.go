@@ -34,17 +34,22 @@ const (
 
 	// A model that cannot be reached is tried this many times more, waiting
 	// 5s, 10s, 20s, 40s and 80s between: a busy or rate-limited endpoint
-	// gets a few minutes before the run is given up on.
-	modelRetries  = 5
-	retryFirst    = 5 * time.Second
-	retryLongest  = 2 * time.Minute
+	// gets a few minutes in each hour's try. A run is given up on only
+	// once giveUpAfter has passed; until then the next hour tries again.
+	modelRetries = 5
+	retryFirst   = 5 * time.Second
+	retryLongest = 2 * time.Minute
+
+	// The give-up and skip steps only write to the store, so they are
+	// tried a few times on its account alone.
 	giveUpRetries = 3
 
 	// A workflow id holds the hour it was queued in. Within the hour a
 	// run swept again is the same workflow, judged once; in a later hour
-	// one that ended without writing (the store was down while it gave
-	// up, or the team was off while it ran) is queued again, rather than
-	// listed every minute and never run.
+	// one that ended without writing (its model unreachable within the
+	// run's first day, the store down while it gave up, or the team off
+	// while it ran) is queued again, rather than listed every minute and
+	// never run.
 	idHour = "2006010215"
 )
 
@@ -67,7 +72,7 @@ func (*Job) Name() string { return "improve" }
 
 func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	if j.checker == nil || j.queues == nil {
-		return nil, errors.New("the improve job has no checker or store, so no run would be judged")
+		return nil, errors.New("the improve job has no checker or queues, so no run would be judged")
 	}
 	if _, err := dbos.RegisterQueue(d, outcomeQueue, dbos.WithWorkerConcurrency(checksPerWorker)); err != nil {
 		return nil, fmt.Errorf("registering the outcome queue: %w", err)
@@ -98,6 +103,13 @@ func retrying(name string) []dbos.StepOption {
 	}
 }
 
+// stopped is whether a step's end leaves nothing to give up on: it worked,
+// or it was cancelled (the worker shutting down, or the call), which is
+// never the model's failure and is left for recovery or the next sweep.
+func stopped(ctx context.Context, err error) bool {
+	return err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled)
+}
+
 func (j *Job) outcome(ctx dbos.Context, runID string) (string, error) {
 	id, err := uuid.Parse(runID)
 	if err != nil {
@@ -106,7 +118,7 @@ func (j *Job) outcome(ctx dbos.Context, runID string) (string, error) {
 	_, failed := dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
 		return runID, j.checker.Check(sctx, id)
 	}, retrying("check")...)
-	if failed == nil || ctx.Err() != nil {
+	if stopped(ctx, failed) {
 		return runID, failed
 	}
 	return dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
@@ -125,7 +137,7 @@ func (j *Job) digest(ctx dbos.Context, input string) (string, error) {
 	_, failed := dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
 		return input, j.checker.Digest(sctx, id, round)
 	}, retrying("digest")...)
-	if failed == nil || ctx.Err() != nil {
+	if stopped(ctx, failed) {
 		return input, failed
 	}
 	return dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {

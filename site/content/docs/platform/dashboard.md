@@ -117,6 +117,8 @@ what was wrong; that outranks the judge for that run. A run's trace shows how
 it was judged, and how many members gave 👍 and 👎, never who. Judging
 sends the run's conversation, trace and tool results to the same model
 endpoint the team's agents use, and what it says is stored with the run.
+While that endpoint cannot be reached, a run is tried again every hour for
+a day before it is marked as one the judge could not tell.
 Only runs that finish while improvement is on are judged: turning it off
 and on again starts from that moment.
 Compaction says when a run folds its earlier turns into a summary: past a

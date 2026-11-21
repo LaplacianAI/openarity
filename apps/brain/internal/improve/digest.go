@@ -92,7 +92,7 @@ func (a digestAnswer) rows(o db.RunOutcome, subjects map[string]subject, outside
 	var out []db.AddRunDigestParams
 	seen := map[uuid.UUID]bool{}
 	for _, d := range a.Agents {
-		s, ok := subjects[strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(d.Agent), strings.TrimSpace(evidenceMark)))]
+		s, ok := subjects[agentKey(d.Agent)]
 		sig := d.Signature
 		if !ok || seen[s.id] || !oneOf(d.Went, wents) || !oneOf(sig.Part, parts) || !oneOf(sig.Cause, causes) {
 			continue
@@ -113,6 +113,13 @@ func (a digestAnswer) rows(o db.RunOutcome, subjects map[string]subject, outside
 		out[0].InputTokens, out[0].OutputTokens = int64(usage.InputTokens), int64(usage.OutputTokens)
 	}
 	return out
+}
+
+// agentKey is the agent's name as the model gave it back, without the
+// evidence mark it may have copied from the list it was shown.
+func agentKey(name string) string {
+	name = strings.TrimSpace(name)
+	return strings.TrimSpace(strings.TrimPrefix(name, strings.TrimSpace(evidenceMark)))
 }
 
 // targetOf is the signature's target when the agent held it, else empty: a
@@ -172,8 +179,20 @@ func (c *Checker) Digest(ctx context.Context, runID uuid.UUID, round int32) erro
 }
 
 // SkipDigest leaves a run whose digest failed every try skipped, so it is
-// not studied again and again; a later 👎 reopens it.
+// not studied again and again (a later 👎 reopens it); but only once it was
+// judged giveUpAfter ago. Until then it returns the failure, writing
+// nothing, and the next hour's sweep queues the digest again.
 func (c *Checker) SkipDigest(ctx context.Context, runID uuid.UUID, round int32, cause error) error {
+	o, err := c.store.GetRunOutcome(ctx, runID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading run %s's outcome: %w", runID, err)
+	}
+	if c.now().Sub(o.CreatedAt) < giveUpAfter {
+		return fmt.Errorf("run %s's digest is tried again next hour: %w", runID, cause)
+	}
 	c.logger.WarnContext(ctx, "A run's digest failed every try", "run", runID, "err", cause)
 	return c.finishDigest(ctx, runID, round, nil, digestSkipped)
 }

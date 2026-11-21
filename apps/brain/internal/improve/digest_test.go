@@ -1,6 +1,9 @@
 package improve
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -76,5 +79,40 @@ func TestJudgeModelOf(t *testing.T) {
 	}
 	if _, ok := judgeModelOf(db.GetImprovementSettingsRow{}); ok {
 		t.Error("no model at all must say so")
+	}
+}
+
+func TestAnAgentIsKnownWithOrWithoutTheMark(t *testing.T) {
+	for in, want := range map[string]string{
+		"support-bot":      "support-bot",
+		"| support-bot":    "support-bot",
+		"  |support-bot  ": "support-bot",
+		"|":                "",
+	} {
+		if got := agentKey(in); got != want {
+			t.Errorf("agentKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestOnlyACancelLeavesNothingToGiveUpOn(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"worked":    {nil, true},
+		"cancelled": {fmt.Errorf("asking m: %w", context.Canceled), true},
+		"timed out": {fmt.Errorf("asking m: %w", context.DeadlineExceeded), false},
+		"a 503":     {errors.New("503"), false},
+	} {
+		if got := stopped(ctx, tc.err); got != tc.want {
+			t.Errorf("%s: stopped = %v", name, got)
+		}
+	}
+	gone, cancel := context.WithCancel(ctx)
+	cancel()
+	if !stopped(gone, errors.New("503")) {
+		t.Error("a failure after shutdown was given up on")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -31,10 +32,11 @@ type Checker struct {
 	store  Store
 	judge  Judge
 	logger *slog.Logger
+	now    func() time.Time
 }
 
 func NewChecker(s Store, j Judge, logger *slog.Logger) *Checker {
-	return &Checker{store: s, judge: j, logger: logger}
+	return &Checker{store: s, judge: j, logger: logger, now: time.Now}
 }
 
 type askedPart struct {
@@ -119,12 +121,22 @@ func (c *Checker) Check(ctx context.Context, runID uuid.UUID) error {
 	return c.record(ctx, row, err)
 }
 
+// giveUpAfter is how long a run's check keeps being tried, an hour apart,
+// before it is recorded as given up: an outage shorter than this loses no
+// judgement.
+const giveUpAfter = 24 * time.Hour
+
 // GiveUp records a run whose check failed every try as cant_tell, with the
-// last failure, so it is not judged again and again.
+// last failure, so it is not judged again and again; but only once the run
+// is giveUpAfter old. Until then it returns the failure, writing nothing,
+// and the next hour's sweep queues the check again.
 func (c *Checker) GiveUp(ctx context.Context, runID uuid.UUID, cause error) error {
 	run, settings, on, err := c.target(ctx, runID)
 	if err != nil || !on {
 		return err
+	}
+	if run.FinishedAt != nil && c.now().Sub(*run.FinishedAt) < giveUpAfter {
+		return fmt.Errorf("run %s is tried again next hour: %w", runID, cause)
 	}
 	row := newOutcome(run, settings)
 	if model, ok := judgeModelOf(settings); ok {
