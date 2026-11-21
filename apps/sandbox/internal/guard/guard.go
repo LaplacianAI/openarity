@@ -111,10 +111,10 @@ type room struct {
 	listeners []net.Listener
 	stopProxy func() // a public room's; nil otherwise
 
-	mu      sync.Mutex
-	conns   map[net.Conn]struct{}
-	tunnels int // a public room's open tunnels
-	done    bool
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
+	held  int // a public room's connections out: its tunnels and forwarded requests
+	done  bool
 }
 
 // Open listens, for each distinct port in hosts, on bind, and on ProxyPort

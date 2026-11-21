@@ -3,6 +3,7 @@
 package workspace
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"strings"
@@ -48,5 +49,18 @@ func TestAFileOpenedOnProcIsKnownForOne(t *testing.T) {
 	defer g.Close()
 	if onProc(g) {
 		t.Error("a temporary file is taken for procfs")
+	}
+}
+
+// open refuses procfs by itself, not only behind resolve's check of the path.
+func TestOpenRefusesProcByTheFile(t *testing.T) {
+	f, err := open("/proc/self/environ")
+	if err == nil {
+		_ = f.Close()
+		t.Fatal("open read the process's environ")
+	}
+	var p *Problem
+	if !errors.As(err, &p) || !strings.Contains(p.msg, "/proc") {
+		t.Fatalf("open: %v, want it refused for /proc", err)
 	}
 }

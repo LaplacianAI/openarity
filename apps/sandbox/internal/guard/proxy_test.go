@@ -249,7 +249,7 @@ func TestARoomHoldsSoManyTunnelsAtOnce(t *testing.T) {
 	g := New(quiet())
 	g.dial = pipeDial(func(c net.Conn) { _, _ = io.Copy(io.Discard, c) })
 	proxy := publicRoom(t, g)
-	for i := range MaxTunnels {
+	for i := range MaxConns {
 		if _, _, status := connectThrough(t, proxy, "a.example.com:443"); !strings.HasPrefix(status, "200") {
 			t.Fatalf("tunnel %d: %q", i+1, status)
 		}

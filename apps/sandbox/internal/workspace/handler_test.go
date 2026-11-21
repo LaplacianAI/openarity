@@ -487,3 +487,76 @@ func TestASearchOfALinkedDirectoryFindsItsFiles(t *testing.T) {
 		t.Fatalf("%d %v, want a.go found through the link", code, got.Paths)
 	}
 }
+
+// Write onto a directory is the caller's to fix, and Write over a file keeps
+// its mode and leaves nothing beside it.
+func TestWriteOverWhatIsThere(t *testing.T) {
+	r := newRoom(t)
+	if err := os.Mkdir(filepath.Join(r.root, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var f failure
+	if code := r.call(t, "/write", map[string]any{"path": "dir", "content": "x"}, &f); code != 422 || !strings.Contains(f.Error, "directory") {
+		t.Fatalf("Write onto a directory: %d %q, want 422", code, f.Error)
+	}
+	r.put(t, "run.sh", "echo a\n")
+	if err := os.Chmod(filepath.Join(r.root, "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := r.call(t, "/write", map[string]any{"path": "run.sh", "content": "echo b\n"}, nil); code != 200 {
+		t.Fatalf("Write over a file: %d", code)
+	}
+	info, err := os.Stat(filepath.Join(r.root, "run.sh"))
+	if err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("mode %v, %v: want 0755 kept", info.Mode(), err)
+	}
+	if body, _ := os.ReadFile(filepath.Join(r.root, "run.sh")); string(body) != "echo b\n" {
+		t.Fatalf("content %q", body)
+	}
+	if entries, _ := os.ReadDir(r.root); len(entries) != 2 {
+		t.Fatalf("the workspace holds %d entries, want dir and run.sh", len(entries))
+	}
+}
+
+// A file whose name is near the longest allowed is still replaced: the
+// temporary name beside it is short.
+func TestALongNamedFileIsReplaced(t *testing.T) {
+	r := newRoom(t)
+	name := strings.Repeat("n", 245)
+	r.put(t, name, "a\n")
+	if code := r.call(t, "/edit", map[string]any{"path": name, "old_string": "a", "new_string": "b"}, nil); code != 200 {
+		t.Fatalf("Edit: %d", code)
+	}
+	if code := r.call(t, "/write", map[string]any{"path": name, "content": "c\n"}, nil); code != 200 {
+		t.Fatalf("Write: %d", code)
+	}
+}
+
+// A FIFO would hold a read until something wrote to it.
+func TestAReadOfAFifoIsRefused(t *testing.T) {
+	r := newRoom(t)
+	if err := mkfifo(filepath.Join(r.root, "pipe")); err != nil {
+		t.Skip("no mkfifo here:", err)
+	}
+	var f failure
+	if code := r.call(t, "/read", map[string]any{"path": "pipe"}, &f); code != 422 || !strings.Contains(f.Error, "regular file") {
+		t.Fatalf("%d %q, want it refused", code, f.Error)
+	}
+}
+
+// Code is full of <, > and &; the answer carries them as they are.
+func TestAnAnswerDoesNotEscapeCode(t *testing.T) {
+	r := newRoom(t)
+	r.put(t, "a.go", "if a < b && c > d {}\n")
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, r.url+"/read", strings.NewReader(`{"path":"a.go"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "a < b && c > d") {
+		t.Fatalf("the answer escaped the code: %s", raw)
+	}
+}

@@ -73,7 +73,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	_ = encoder(w).Encode(out)
+}
+
+// encoder writes JSON without escaping <, > and &: an answer is read by the
+// brain, not a page, and code is full of them, each six bytes escaped.
+func encoder(w http.ResponseWriter) *json.Encoder {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return enc
 }
 
 type route func(*http.Request) (any, error)
@@ -272,10 +280,10 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var p *Problem
 	if errors.As(err, &p) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": p.msg})
+		_ = encoder(w).Encode(map[string]string{"error": p.msg})
 		return
 	}
 	h.logger.Error("workspace: request failed", "path", r.URL.Path, "error", err)
 	w.WriteHeader(http.StatusInternalServerError)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "the workspace failed: " + err.Error()})
+	_ = encoder(w).Encode(map[string]string{"error": "the workspace failed: " + err.Error()})
 }

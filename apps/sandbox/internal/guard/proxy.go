@@ -15,11 +15,11 @@ import (
 const ProxyPort = 3128
 
 const (
-	// MaxTunnels is how many connections one public room holds out at once,
+	// MaxConns is how many connections one public room holds out at once,
 	// its tunnels and its forwarded requests together:
 	// enough for a package manager's parallel downloads, and a bound on what
 	// one room takes of sandboxd's sockets.
-	MaxTunnels = 64
+	MaxConns = 64
 	// TunnelIdle is how long a tunnel may carry nothing before it is cut,
 	// so one left open by a command that died holds nothing for long.
 	TunnelIdle = 5 * time.Minute
@@ -101,11 +101,11 @@ func (g *Guard) serveProxy(r *room, l net.Listener) (stop func()) {
 			}
 			// A tunnel and a forwarded request alike hold a connection out,
 			// so both count against the room's.
-			if !r.openTunnel() {
-				http.Error(w, "the sandbox has "+strconv.Itoa(MaxTunnels)+" connections open; close some first", http.StatusTooManyRequests)
+			if !r.acquire() {
+				http.Error(w, "the sandbox has "+strconv.Itoa(MaxConns)+" connections open; close some first", http.StatusTooManyRequests)
 				return
 			}
-			defer r.closeTunnel()
+			defer r.release()
 			if req.Method == http.MethodConnect {
 				g.tunnel(r, w, req)
 				return
@@ -158,19 +158,19 @@ func (g *Guard) tunnel(r *room, w http.ResponseWriter, req *http.Request) {
 	relay(idle(c, g.tunnelIdle), idle(up, g.tunnelIdle))
 }
 
-func (r *room) openTunnel() bool {
+func (r *room) acquire() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.tunnels >= MaxTunnels {
+	if r.held >= MaxConns {
 		return false
 	}
-	r.tunnels++
+	r.held++
 	return true
 }
 
-func (r *room) closeTunnel() {
+func (r *room) release() {
 	r.mu.Lock()
-	r.tunnels--
+	r.held--
 	r.mu.Unlock()
 }
 

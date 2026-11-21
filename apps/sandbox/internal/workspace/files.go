@@ -21,9 +21,10 @@ const (
 	maxLine = 2000
 	// sniff is how much of a file is looked at to tell text from binary.
 	sniff = 8000
-	// maxRead is the most a read returns of a file's text, so 2,000 long
-	// lines stay well inside what the brain reads of an answer.
-	maxRead = 1 << 20
+	// maxRead is the most a read returns of a file's text: as much as a
+	// command's output, and inside what the brain reads of an answer
+	// however its bytes are escaped as JSON (six to one at worst).
+	maxRead = 256 << 10
 	// maxEdit is the largest file Edit takes: it holds the file twice in
 	// memory, in a room of a fixed size.
 	maxEdit = 8 << 20
@@ -135,6 +136,9 @@ func write(path, content string) (int, error) {
 	}
 	perm := fs.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
+		if info.IsDir() {
+			return 0, problem("%s is a directory; Write makes a file", path)
+		}
 		perm = info.Mode().Perm()
 	}
 	if err := replaceFile(path, []byte(content), perm); err != nil {
@@ -190,7 +194,9 @@ func edit(path, old, new string, all bool) (int, error) {
 // the old, so a write that fails (the workspace full) leaves the file as it
 // was rather than cut short.
 func replaceFile(path string, data []byte, perm fs.FileMode) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".edit-*")
+	// A short name of its own, so a file whose name is near the longest
+	// allowed can still be replaced.
+	f, err := os.CreateTemp(filepath.Dir(path), ".oa-edit-*")
 	if err != nil {
 		return err
 	}
@@ -220,6 +226,10 @@ func open(path string) (*os.File, error) {
 	if info.IsDir() {
 		return nil, problem("%s is a directory; use Glob or Bash ls to list it", path)
 	}
+	if !info.Mode().IsRegular() {
+		// A FIFO or a device would hold the call until it gave something.
+		return nil, problem("%s is not a regular file (%s); use Bash", path, info.Mode().Type())
+	}
 	f, err := os.Open(path) //nolint:gosec // any path in the room is the agent's to read
 	if err != nil {
 		return nil, asProblem(err)
@@ -239,7 +249,11 @@ func binary(head []byte) bool { return bytes.IndexByte(head, 0) >= 0 }
 // problem, which it is; anything else stays an error of the room's.
 func asProblem(err error) error {
 	var pe *fs.PathError
+	var le *os.LinkError
 	switch {
+	case errors.As(err, &le):
+		// A rename: the file replaced, or the one put in its place.
+		return problem("%s could not be replaced: %v", le.New, le.Err)
 	case errors.Is(err, fs.ErrNotExist) && errors.As(err, &pe):
 		return problem("%s does not exist", pe.Path)
 	case errors.Is(err, fs.ErrPermission) && errors.As(err, &pe):
