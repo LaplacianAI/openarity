@@ -361,9 +361,13 @@ func TestAnUpgradeKeepsRoomsOnTheLastBuiltTemplateWhileItBuilds(t *testing.T) {
 func TestAFailedUpgradeKeepsTheLastBuiltTemplate(t *testing.T) {
 	t.Parallel()
 	w, e, old, _ := e2bWorld(t)
-	_, _ = old.Want(t.Context(), w.team, w.keyID, 0)
+	if _, err := old.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+		t.Fatal(err)
+	}
 	e.state = sandbox.BuildReady
-	_ = old.Sweep(t.Context())
+	if err := old.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
 	e.refuse = errors.New("e2b: 500")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

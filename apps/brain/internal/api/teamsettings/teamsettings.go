@@ -97,7 +97,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := view(row, hub)
-	out.Sandbox.TemplateBuild = h.build(r.Context(), row, false)
+	out.Sandbox.TemplateBuild = h.build(r.Context(), row, readBuild)
 	api.WriteJSON(w, h.logger, http.StatusOK, out)
 }
 
@@ -180,7 +180,11 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := view(saved, hub)
-	out.Sandbox.TemplateBuild = h.build(r.Context(), saved, req.Sandbox != nil)
+	when := readBuild
+	if req.Sandbox != nil {
+		when = askForBuild
+	}
+	out.Sandbox.TemplateBuild = h.build(r.Context(), saved, when)
 	api.WriteJSON(w, h.logger, http.StatusOK, out)
 }
 
@@ -190,7 +194,16 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 // save of anything else, only reads. Trouble is
 // logged and shown as no build: the settings were saved, and the next room
 // asks again.
-func (h *handler) build(ctx context.Context, row db.TeamSetting, save bool) *templateBuild {
+// buildRequest is whether a call only reads the room template's build or
+// may ask for one.
+type buildRequest bool
+
+const (
+	readBuild   buildRequest = false
+	askForBuild buildRequest = true
+)
+
+func (h *handler) build(ctx context.Context, row db.TeamSetting, req buildRequest) *templateBuild {
 	if h.templates == nil || row.SandboxProvider != string(sandboxpkg.E2B) ||
 		row.SandboxTemplate != nil || row.SandboxSecretID == nil {
 		return nil
@@ -198,7 +211,7 @@ func (h *handler) build(ctx context.Context, row db.TeamSetting, save bool) *tem
 	var b db.E2BTemplate
 	var err error
 	found := true
-	if save {
+	if req == askForBuild {
 		b, err = h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, 0)
 	} else {
 		b, found, err = h.templates.Current(ctx, row.TeamID, *row.SandboxSecretID)

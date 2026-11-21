@@ -155,12 +155,16 @@ func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, err
 		t.ready.Store(cached, struct{}{})
 		return name, nil
 	}
-	prev, err := t.store.GetReadyE2BTemplate(ctx, db.GetReadyE2BTemplateParams{TeamID: team, SandboxSecretID: key})
-	switch {
-	case err == nil:
-		return prev.Name, nil
-	case !errors.Is(err, pgx.ErrNoRows):
-		return "", fmt.Errorf("reading the team's built room templates: %w", err)
+	prev, found, err := t.lastReady(ctx, team, key)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		if row.Status == TemplateFailed {
+			t.logger.WarnContext(ctx, "keeper: this release's room template failed to build; rooms start from the last one built",
+				"team_id", team, "template", name, "instead", prev, "error", deref(row.Error))
+		}
+		return prev, nil
 	}
 	switch row.Status {
 	case TemplateBuilding:
@@ -173,6 +177,18 @@ func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, err
 		return "", fmt.Errorf("%w: the team's room template did not build (%s); it is tried again "+
 			"in a few minutes, or when the sandbox is saved in Settings", sandbox.ErrRefused, reason)
 	}
+}
+
+// lastReady is the newest template already built under key, of any name.
+func (t *Templates) lastReady(ctx context.Context, team, key uuid.UUID) (string, bool, error) {
+	prev, err := t.store.GetReadyE2BTemplate(ctx, db.GetReadyE2BTemplateParams{TeamID: team, SandboxSecretID: key})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("reading the team's built room templates: %w", err)
+	}
+	return prev.Name, true, nil
 }
 
 func (t *Templates) start(ctx context.Context, team, key uuid.UUID, name string) (db.E2BTemplate, error) {

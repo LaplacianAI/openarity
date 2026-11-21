@@ -130,6 +130,9 @@ func newKeeper(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, se
 // settingsTemplates is the builder a save in Settings asks, or none when the
 // brain cannot keep rooms: no E2B room could start from what it built.
 func settingsTemplates(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) teamsettings.Templates {
+	// The same test newKeeper makes: a store that cannot write keeps no room
+	// token, so no room is made and a template would be built for nothing.
+	// A literal nil, never a nil *Templates, so the handler sees none.
 	if _, ok := secretStore.(secrets.Writer); !ok || dbStore == nil {
 		return nil
 	}

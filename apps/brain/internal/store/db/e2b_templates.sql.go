@@ -75,7 +75,7 @@ SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, erro
 WHERE team_id = $1
   AND sandbox_secret_id = $2
   AND status = 'ready'
-ORDER BY updated_at DESC
+ORDER BY updated_at DESC, id DESC
 LIMIT 1
 `
 

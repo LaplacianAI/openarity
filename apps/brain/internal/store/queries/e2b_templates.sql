@@ -66,5 +66,5 @@ SELECT * FROM e2b_templates
 WHERE team_id = sqlc.arg('team_id')
   AND sandbox_secret_id = sqlc.arg('sandbox_secret_id')
   AND status = 'ready'
-ORDER BY updated_at DESC
+ORDER BY updated_at DESC, id DESC
 LIMIT 1;
