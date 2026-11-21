@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -221,12 +222,19 @@ func (t *passTools) screenIt(ctx context.Context, settings db.GetImprovementSett
 
 // store creates the proposal, replacing what an earlier pass left waiting
 // on the same pattern with the same kind of change to the same target. It
-// is screened and paid for, so a limit reached meanwhile does not undo it.
+// is screened and paid for, so a limit reached meanwhile does not undo it;
+// a pass failed as lost meanwhile does, since another may have begun.
 func (t *passTools) store(ctx context.Context, n improvements.Proposed) (uuid.UUID, error) {
-	ctx, done := lasting(ctx)
-	defer done()
+	ctx, release := lasting(ctx)
+	defer release()
 	var stored db.ImprovementProposal
 	err := t.im.store.InTx(ctx, func(q *db.Queries) error {
+		if _, err := q.LockRunningImproverPass(ctx, t.pass.ID); errors.Is(err, pgx.ErrNoRows) {
+			t.halt(errPassLost)
+			return refused("%s: stop proposing", errPassLost)
+		} else if err != nil {
+			return err
+		}
 		var err error
 		if stored, err = improvements.Create(ctx, q, n); err != nil {
 			return err

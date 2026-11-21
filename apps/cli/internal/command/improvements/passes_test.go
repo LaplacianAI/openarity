@@ -37,7 +37,7 @@ func TestPassesListsWhyItRanStatusCountsTokensAndStart(t *testing.T) {
 		t.Fatalf("passes: %v", err)
 	}
 	contains(t, out, "support-bot", "pattern instructions::skipped_step, tool:crm::wrong_arg", "daily",
-		"done", "failed", "2 proposed / 1 screened out, cut short", "1200 in / 340 out", "2026-11-2", passA,
+		"done (cut short)", "failed", "2 proposed / 1 screened out", "1200 in / 340 out", "2026-11-2", passA,
 		"taken as lost", "running", "--cursor abc", "--agent support-bot")
 	if strings.Contains(out, "0 in / 0 out") {
 		t.Errorf("a running pass printed its tokens as nothing spent:\n%s", out)

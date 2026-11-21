@@ -169,6 +169,10 @@ describe("passes", () => {
       "Cut short before it proposed anything",
     ],
     [
+      { status: "done", proposed: 0, screened_out: 1, error: null, cut_short: true },
+      "Cut short with none kept, 1 held back by the screen",
+    ],
+    [
       { status: "done", proposed: 2, screened_out: 1, error: null, cut_short: true },
       "2 proposals, then cut short, 1 held back by the screen",
     ],

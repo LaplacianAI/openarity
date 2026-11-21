@@ -24,9 +24,15 @@ func triggerCell(p *client.ImproverPass) string {
 	return "pattern " + cli.Safe(strings.Join(p.Signatures, ", "))
 }
 
-func passStatusCell(opts *cli.Options, s client.ImproverPassStatus) string {
+// A pass cut short says so in its status, where a narrow terminal still
+// shows it.
+func passStatusCell(opts *cli.Options, p *client.ImproverPass) string {
+	s := p.Status
 	switch s {
 	case client.ImproverPassStatusDone:
+		if p.CutShort {
+			return opts.Styles.Warn.Render("done (cut short)")
+		}
 		return opts.Styles.OK.Render(string(s))
 	case client.ImproverPassStatusFailed:
 		return opts.Styles.Err.Render(string(s))
@@ -53,11 +59,7 @@ func outcomeCell(p *client.ImproverPass) string {
 	case p.Status == client.ImproverPassStatusFailed && p.Error != nil:
 		return cli.Safe(*p.Error)
 	}
-	counts := strconv.Itoa(int(p.Proposed)) + " proposed / " + strconv.Itoa(int(p.ScreenedOut)) + " screened out"
-	if p.CutShort {
-		return counts + ", cut short"
-	}
-	return counts
+	return strconv.Itoa(int(p.Proposed)) + " proposed / " + strconv.Itoa(int(p.ScreenedOut)) + " screened out"
 }
 
 func newPassesCmd(opts *cli.Options) *cobra.Command {
@@ -117,7 +119,7 @@ func newPassesCmd(opts *cli.Options) *cobra.Command {
 					table.Row(
 						opts.Styles.Value.Render(cli.Safe(p.Agent.Name)),
 						triggerCell(&p),
-						passStatusCell(opts, p.Status),
+						passStatusCell(opts, &p),
 						outcomeCell(&p),
 						tokensCell(&p),
 						opts.Styles.Muted.Render(p.StartedAt.Local().Format(stampLayout)),

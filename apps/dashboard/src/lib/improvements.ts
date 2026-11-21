@@ -189,10 +189,10 @@ export function passOutcome(
   // Cut short, "nothing to change" would claim a look it never finished.
   let made: string;
   if (pass.cut_short) {
-    made =
-      pass.proposed > 0
-        ? `${count(pass.proposed, "proposal")}, then cut short`
-        : "Cut short before it proposed anything";
+    if (pass.proposed > 0) made = `${count(pass.proposed, "proposal")}, then cut short`;
+    // Held back is proposed, then refused: "before it proposed" would be false.
+    else if (held) return `Cut short with none kept, ${held}`;
+    else made = "Cut short before it proposed anything";
   } else {
     made = pass.proposed > 0 ? count(pass.proposed, "proposal") : "Nothing to change";
   }

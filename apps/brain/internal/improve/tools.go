@@ -84,7 +84,7 @@ func (t *passTools) haltIfOverLocked() bool {
 
 func (t *passTools) overLocked() bool {
 	spent := t.before + t.runSpent.InputTokens + t.runSpent.OutputTokens + t.screenSpent.InputTokens + t.screenSpent.OutputTokens
-	return spent > t.tokens
+	return spent >= t.tokens
 }
 
 // spent is what the attempt cost: the run's own count, which sees every

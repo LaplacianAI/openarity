@@ -212,7 +212,7 @@ func (w *world) proposeWith(t *testing.T, im *Improver, pass db.ImproverPass, ar
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools := &passTools{im: im, pass: pass, material: m}
+	tools := &passTools{im: im, pass: pass, material: m, tokens: 1 << 30}
 	w.model.replies = screen
 	b, _ := json.Marshal(args)
 	out, err := tools.propose(t.Context(), b)
@@ -500,7 +500,7 @@ func TestAPassReadsOnlyWhatItWasGiven(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools := &passTools{im: im, pass: pass, material: m}
+	tools := &passTools{im: im, pass: pass, material: m, tokens: 1 << 30}
 	other := w.finished(t, w.session(t), "1 hour")
 	out, err := tools.readRun(t.Context(), json.RawMessage(`{"run":"`+other.String()+`"}`))
 	if err != nil || !strings.Contains(out, "not one of the Runs to read") {

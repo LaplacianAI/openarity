@@ -102,6 +102,13 @@ SELECT * FROM improver_passes WHERE workflow_id = $1;
 UPDATE improver_passes SET alive_at = now(), drew_on = sqlc.arg(drew_on)
 WHERE id = sqlc.arg(id) AND status = 'running';
 
+-- The pass, held while a proposal is stored, so it cannot be failed as
+-- lost in between. No row when it is no longer running.
+-- name: LockRunningImproverPass :one
+SELECT id FROM improver_passes
+WHERE id = sqlc.arg(id) AND status = 'running'
+FOR UPDATE;
+
 -- Passes whose worker stopped answering, failed so the agent may have
 -- another.
 -- name: FailLostImproverPasses :execrows

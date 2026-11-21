@@ -478,3 +478,23 @@ func TestAPassLostMidTryStopsAtItsNextStep(t *testing.T) {
 		t.Errorf("pass = %+v, want left as the sweep failed it", p)
 	}
 }
+
+// A proposal screened while the pass was failed as lost is not stored: the
+// agent may have a newer pass by then, and the failed one counts nothing.
+func TestAPassLostBeforeItStoresStoresNothing(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	var runs []uuid.UUID
+	for range 3 {
+		runs = append(runs, w.digested(t, skipped, "wrong", false))
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	w.exec(t, `UPDATE improver_passes SET status = 'failed', finished_at = now(), error = 'lost' WHERE id = $1`, pass.ID)
+	out, _ := w.proposeWith(t, im, pass, instructionsEdit(runs[0]), reply{text: screenOKText})
+	if !strings.Contains(out, "failed as lost") {
+		t.Errorf("propose = %q, want it refused as lost", out)
+	}
+	if got := w.proposals(t, "waiting"); len(got) != 0 {
+		t.Errorf("%d proposals stored under a lost pass", len(got))
+	}
+}
