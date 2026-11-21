@@ -58,8 +58,12 @@ what it expects to change; nothing changes until someone who may approve it
 does, and an approved change can be reverted. Built so far: every finished
 run is judged in the background on whether the task was done (a team member's
 👍/👎 outranks the judge; what people type in a channel never decides on its
-own), the runs worth learning from are digested, and proposals can be approved
-and reverted. The part that writes proposals from those digests is next.
+own), the runs worth learning from are digested, and when one weakness recurs
+for an agent in three runs, or once a day, an improver pass reads those runs
+and the agent's record and proposes the smallest change that addresses it.
+Every proposal is screened for one conversation's details before a person sees
+it, and a proposal from a conversation an outsider spoke in never widens what
+the agent can reach.
 
 A planner turns a request into a workflow with branches, loops and retries.
 Channels — Slack, Discord, Telegram, webhooks — are pluggable and all normalise
@@ -190,9 +194,9 @@ Telegram and Slack, to a signed reply URL for `custom`, a generic webhook.
 Not built yet: a Discord adapter; the seam it plugs into is.
 A change an agent proposes to itself waits on the dashboard's Improvements
 screen and in `oa improvements` for someone who may approve it, and is applied
-and reverted through the same write as a person's edit. Runs are judged and
-digested, but nothing writes proposals from them yet. There is no sandbox for
-model-written code.
+and reverted through the same write as a person's edit. Nothing yet watches an
+applied change for whether the agent's runs went better or worse after it.
+There is no sandbox for model-written code.
 A run whose granted tools are too many to send finds them instead: it searches
 the graph, reads a found tool's schema with `describe_tools` and runs it with
 `call_tool`, and an MCP server is reached only when one of its tools is called.

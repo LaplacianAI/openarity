@@ -106,7 +106,8 @@ What the dashboard does today, and must keep doing through any redesign:
   team's agents improve themselves.
 - **Improvements:** read the changes agents propose to their own harness, each
   with its reason, what it expects and the runs it came from; approve or
-  reject one, and revert an applied one. Only an approver sees what waits.
+  reject one, and revert an applied one. Only an approver sees what waits,
+  and the improver's passes: why each ran, what came of it and its report.
 
 Known gaps, not yet built:
 

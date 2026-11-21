@@ -14,7 +14,8 @@ INSERT INTO team_settings (
     sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template,
     browser_provider, browser_url, browser_secret_id,
     judge_model_name, judge_model_max_tokens, judge_model_temperature,
-    improvement_sample_share, improvement_since
+    improvement_sample_share, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes,
+    improvement_since
 ) VALUES (
     sqlc.arg(team_id),
     sqlc.narg(model_name), sqlc.narg(model_max_tokens), sqlc.narg(model_temperature),
@@ -24,7 +25,10 @@ INSERT INTO team_settings (
     sqlc.arg(sandbox_provider), sqlc.narg(sandbox_url), sqlc.narg(sandbox_secret_id), sqlc.narg(sandbox_template),
     sqlc.arg(browser_provider), sqlc.narg(browser_url), sqlc.narg(browser_secret_id),
     sqlc.narg(judge_model_name), sqlc.narg(judge_model_max_tokens), sqlc.narg(judge_model_temperature),
-    sqlc.arg(improvement_sample_share),
+    -- Null keeps what is stored, or the default on a first save.
+    sqlc.arg(improvement_sample_share), COALESCE(sqlc.narg(improvement_daily_passes)::smallint, 20),
+    COALESCE(sqlc.narg(improvement_pass_tokens)::integer, 400000),
+    COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, 20),
     CASE WHEN sqlc.arg(improvement)::bool THEN now() END
 )
 ON CONFLICT (team_id) DO UPDATE SET
@@ -50,6 +54,9 @@ ON CONFLICT (team_id) DO UPDATE SET
     judge_model_max_tokens  = EXCLUDED.judge_model_max_tokens,
     judge_model_temperature = EXCLUDED.judge_model_temperature,
     improvement_sample_share = EXCLUDED.improvement_sample_share,
+    improvement_daily_passes = COALESCE(sqlc.narg(improvement_daily_passes)::smallint, team_settings.improvement_daily_passes),
+    improvement_pass_tokens  = COALESCE(sqlc.narg(improvement_pass_tokens)::integer, team_settings.improvement_pass_tokens),
+    improvement_pass_minutes = COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, team_settings.improvement_pass_minutes),
     -- Set each time the switch goes on, kept while it stays on: runs from
     -- before it went on are never judged.
     improvement_since   = CASE

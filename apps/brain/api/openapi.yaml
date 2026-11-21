@@ -3125,6 +3125,42 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/improvements/passes:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listImproverPasses
+      tags: [improvements]
+      summary: List the improver's passes over a team's agents
+      description: |
+        Requires `improvement:approve`: a pass's report says what runs showed,
+        and those may be in conversations other members cannot read. Each pass
+        says why it ran, what it was given and what came of it. Newest first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: agent
+          in: query
+          description: Only passes over this agent.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: A page of passes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImproverPassPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/improvements/{proposalID}:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -6856,8 +6892,9 @@ components:
             Whether the team's agents improve themselves from their runs. While
             it is on, every finished top-level run is judged in the background
             (was the task done?), members may give 👍/👎 on answers, and runs
-            judged bad, plus a sampled share of good ones, are digested for the
-            improver. The part that proposes changes arrives in a later release.
+            judged bad, plus a sampled share of good ones, are digested, and when
+            one weakness recurs for an agent, or once a day, an improver pass
+            proposes changes to its setup for an approver to decide.
         judge_model:
           $ref: "#/components/schemas/ModelRef"
           nullable: true
@@ -6868,6 +6905,29 @@ components:
           minimum: 0
           maximum: 100
           description: The percentage of runs judged done that are digested anyway, for contrast. 10 until set.
+        improvement_daily_passes:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 200
+          description: The improver passes the team may run in a day (UTC), at most. 20 until set.
+        improvement_pass_tokens:
+          type: integer
+          format: int32
+          minimum: 100000
+          maximum: 2000000
+          description: >-
+            The tokens an improver pass may spend across its tries, its
+            screen's included; past them it stops and reports what it has.
+            400,000 until set.
+        improvement_pass_minutes:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 25
+          description: >-
+            The minutes one try at an improver pass may run; past them it
+            stops and reports what it has. 20 until set.
         improvement_since:
           type: string
           format: date-time
@@ -7066,6 +7126,24 @@ components:
           minimum: 0
           maximum: 100
           description: Left out, the stored share stays.
+        improvement_daily_passes:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 200
+          description: Left out, the stored cap stays.
+        improvement_pass_tokens:
+          type: integer
+          format: int32
+          minimum: 100000
+          maximum: 2000000
+          description: Left out, the stored value stays.
+        improvement_pass_minutes:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 25
+          description: Left out, the stored value stays.
         compaction_messages:
           type: integer
           format: int32
@@ -7412,6 +7490,11 @@ components:
         outsider:
           type: boolean
           description: A channel sender who is not a member spoke in a session it came from
+        pass_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: The improver pass that wrote it; null for one written any other way
         created_at:
           type: string
           format: date-time
@@ -7440,6 +7523,85 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Improvement"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+
+    ImproverPass:
+      type: object
+      required: [id, agent, trigger, signatures, pruned, status, cut_short, report, report_withheld, proposed, screened_out, model, input_tokens, output_tokens, started_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        agent:
+          $ref: "#/components/schemas/NamedRef"
+        trigger:
+          type: string
+          enum: [pattern, daily]
+          description: A signature recurred in enough runs, or the daily pass
+        signatures:
+          type: array
+          description: The patterns it was given, part:target:cause
+          items:
+            type: string
+        pruned:
+          type: array
+          description: The prune candidates it was given, skill:<name> or tool:<server>/<tool>
+          items:
+            type: string
+        status:
+          type: string
+          enum: [running, done, failed]
+        cut_short:
+          type: boolean
+          description: >-
+            Done before it finished: out of steps, tokens or time, improvement
+            turned off, or its agent gone. With nothing proposed, its patterns
+            are offered again after a few hours.
+        report:
+          type: string
+          description: What it found, proposed and left alone, and why; empty when withheld
+        report_withheld:
+          type: boolean
+          description: >-
+            The report draws on a conversation the caller may not read, so it
+            is not sent. Every conversation is readable with session:read_all.
+        proposed:
+          type: integer
+          format: int32
+        screened_out:
+          type: integer
+          format: int32
+          description: Proposals the screen refused for carrying one run's specifics
+        model:
+          type: string
+        input_tokens:
+          type: integer
+          format: int64
+        output_tokens:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+          description: Why a failed pass failed, as a clause to follow "Failed:"; the cause is in the brain's log
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ImproverPassPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImproverPass"
         next_cursor:
           type: string
           description: Absent on the last page

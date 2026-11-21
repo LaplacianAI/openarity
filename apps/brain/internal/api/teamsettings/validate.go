@@ -22,6 +22,12 @@ const (
 	providerFirecrawlOSS   = "firecrawl-oss"
 
 	maxSampleShare = 100
+	maxDailyPasses = 200
+	// What an improver pass may spend: tokens across its tries, at least
+	// enough for a few calls on a long setup; minutes for each try.
+	minPassTokens  = 100_000
+	maxPassTokens  = 2_000_000
+	maxPassMinutes = 25
 
 	minCompaction = 10
 	maxCompaction = 10000
@@ -45,6 +51,15 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 	}
 	if s := req.ImprovementSampleShare; s != nil && (*s < 0 || *s > maxSampleShare) {
 		return fmt.Errorf("improvement_sample_share must be between 0 and %d", maxSampleShare)
+	}
+	if n := req.ImprovementDailyPasses; n != nil && (*n < 1 || *n > maxDailyPasses) {
+		return fmt.Errorf("improvement_daily_passes must be between 1 and %d", maxDailyPasses)
+	}
+	if n := req.ImprovementPassTokens; n != nil && (*n < minPassTokens || *n > maxPassTokens) {
+		return fmt.Errorf("improvement_pass_tokens must be between %d and %d", minPassTokens, maxPassTokens)
+	}
+	if n := req.ImprovementPassMinutes; n != nil && (*n < 1 || *n > maxPassMinutes) {
+		return fmt.Errorf("improvement_pass_minutes must be between 1 and %d", maxPassMinutes)
 	}
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
 		return fmt.Errorf("compaction_messages must be between %d and %d", minCompaction, maxCompaction)

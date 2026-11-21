@@ -36,8 +36,9 @@ The room is made by the first call that needs it and is shared by every agent
 working on the conversation, delegates included, so a file one writes is there
 for the next. It stays while it is used, and an idle room is deleted after
 `OPENARITY_SANDBOX_IDLE` (thirty minutes by default) with what was in it. A
-conversation deleted takes its room with it. The [hub](hub.md) never has a
-workspace: it hands the work to an agent that does.
+conversation deleted takes its room with it. A [hub](hub.md) the team chose
+from its agents has one when it is granted one, like any agent, and can work
+in it as well as hand work on; the built-in hub has none.
 
 Each `Bash` call starts in `/workspace` in a fresh shell, so `cd` and exported
 variables do not carry over, and anything the command left running in the

@@ -137,6 +137,7 @@ export function navGroups(superAdmin: boolean): readonly NavGroup[] {
         { to: "/ui/channels", label: "Channels", icon: Radio, exact: false },
         { to: "/ui/build", label: "Builder", icon: Sparkles, exact: false },
         { to: "/ui/blueprint", label: "Blueprint", icon: FileCode2, exact: false },
+        IMPROVEMENTS,
       ],
     },
     {
@@ -147,7 +148,6 @@ export function navGroups(superAdmin: boolean): readonly NavGroup[] {
       label: "Team",
       items: [
         { to: "/ui/settings", label: "Team settings", icon: Settings, exact: false },
-        IMPROVEMENTS,
         TEAMS,
         ...(superAdmin ? [DELETED_TEAMS] : []),
       ],

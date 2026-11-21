@@ -26,7 +26,7 @@ const defaultJudgeMaxTokens = 4096
 var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
-	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share",
+	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share", "daily-passes", "pass-tokens", "pass-minutes",
 	"compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 	"browser", "browser-url", "browser-key-stdin", "no-browser-key",
@@ -90,6 +90,9 @@ type settingsFlags struct {
 	judgeTemperature float64
 	noJudgeModel     bool
 	sampleShare      int32
+	dailyPasses      int32
+	passTokens       int32
+	passMinutes      int32
 
 	compaction int32
 	tokensMin  int32
@@ -232,6 +235,12 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&f.noJudgeModel, "no-judge-model", false, "judge runs on the team's model again")
 	cmd.Flags().Int32Var(&f.sampleShare, "sample-share", 0,
 		"the percentage of runs judged done that are learned from anyway, 0 to 100")
+	cmd.Flags().Int32Var(&f.dailyPasses, "daily-passes", 0,
+		"the most improver passes the team may run in a day (UTC), 1 to 200; 20 until set")
+	cmd.Flags().Int32Var(&f.passTokens, "pass-tokens", 0,
+		"the tokens an improver pass may spend across its tries, 100000 to 2000000; 400000 until set")
+	cmd.Flags().Int32Var(&f.passMinutes, "pass-minutes", 0,
+		"the minutes one try at an improver pass may run, 1 to 25; 20 until set")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().Int32Var(&f.tokensMin, "compaction-tokens-min", 0,
 		"the least a run's next request may read before it compacts, 30000 to 1000000")
@@ -270,6 +279,12 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return errors.New("--judge-model takes a model's name; --no-judge-model returns to the team's model")
 	case changed("sample-share") && (f.sampleShare < 0 || f.sampleShare > 100):
 		return fmt.Errorf("--sample-share is a percentage, 0 to 100, not %d", f.sampleShare)
+	case changed("daily-passes") && (f.dailyPasses < 1 || f.dailyPasses > 200):
+		return fmt.Errorf("--daily-passes is a count of passes a day, 1 to 200, not %d", f.dailyPasses)
+	case changed("pass-tokens") && (f.passTokens < 100_000 || f.passTokens > 2_000_000):
+		return fmt.Errorf("--pass-tokens is a count of tokens, 100000 to 2000000, not %d", f.passTokens)
+	case changed("pass-minutes") && (f.passMinutes < 1 || f.passMinutes > 25):
+		return fmt.Errorf("--pass-minutes is a count of minutes, 1 to 25, not %d", f.passMinutes)
 	case changed("hub") && f.noHub:
 		return errors.New("--hub and --no-hub contradict each other")
 	case changed("hub") && strings.TrimSpace(f.hub) == "":
@@ -368,6 +383,15 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 	// Sent only when given: left out, the brain keeps what is stored.
 	if changed("sample-share") {
 		req.ImprovementSampleShare = &f.sampleShare
+	}
+	if changed("daily-passes") {
+		req.ImprovementDailyPasses = &f.dailyPasses
+	}
+	if changed("pass-tokens") {
+		req.ImprovementPassTokens = &f.passTokens
+	}
+	if changed("pass-minutes") {
+		req.ImprovementPassMinutes = &f.passMinutes
 	}
 	req.Sandbox = f.applySandbox(changed, cur.Sandbox, k.sandbox)
 	req.Browser = f.applyBrowser(changed, cur.Browser, k.browser)
@@ -542,6 +566,13 @@ func printJudge(table *printer.Table, opts *cli.Options, s *client.TeamSettings)
 		table.Row(label("judge model"), value(m))
 	}
 	table.Row(label("sample share"), value(strconv.Itoa(int(*s.ImprovementSampleShare))+"%"))
+	if s.ImprovementDailyPasses != nil {
+		table.Row(label("daily passes"), value(strconv.Itoa(int(*s.ImprovementDailyPasses))+" at most"))
+	}
+	if s.ImprovementPassTokens != nil && s.ImprovementPassMinutes != nil {
+		table.Row(label("pass budget"), value(strconv.Itoa(int(*s.ImprovementPassTokens))+" tokens a pass, "+
+			strconv.Itoa(int(*s.ImprovementPassMinutes))+" minutes a try"))
+	}
 }
 
 // printSandbox prints nothing for a brain that predates sandboxes, which

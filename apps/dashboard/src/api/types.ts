@@ -633,8 +633,8 @@ export type Agent = AgentSummary & {
   /** The team's browser, to drive pages with. A hub has it whatever this says. */
   browser: boolean;
   /**
-   * Bash, Read, Write, Edit, Glob and Grep in its session's sandbox room. The
-   * hub never has it. Absent from a brain that predates it.
+   * Bash, Read, Write, Edit, Glob and Grep in its session's sandbox room, a
+   * chosen hub's as any agent's. Absent from a brain that predates it.
    */
   workspace?: boolean;
   /**
@@ -869,6 +869,12 @@ export type TeamSettings = {
   judge_model: ModelRef | null;
   /** The percentage of runs judged done that are digested anyway, for contrast. */
   improvement_sample_share: number;
+  /** The most passes the improver makes for the team in a day; 1 to 200. */
+  improvement_daily_passes: number;
+  /** The tokens a pass may spend across its tries, its screen's included; 100,000 to 2,000,000. */
+  improvement_pass_tokens: number;
+  /** The minutes one try at a pass may run; 1 to 25. */
+  improvement_pass_minutes: number;
   /** When improvement was last turned on; runs that finished before it are never judged. Read only. */
   improvement_since: string | null;
   compaction_messages: number;
@@ -903,6 +909,12 @@ export type TeamSettingsRequest = {
   judge_model?: ModelRef | null;
   /** 0 to 100. Left out, the stored share stays. */
   improvement_sample_share?: number;
+  /** 1 to 200. Left out, the stored limit stays. */
+  improvement_daily_passes?: number;
+  /** 100,000 to 2,000,000. Left out, the stored value stays. */
+  improvement_pass_tokens?: number;
+  /** 1 to 25. Left out, the stored value stays. */
+  improvement_pass_minutes?: number;
   compaction_messages: number;
   /** Left out, the stored value stays. */
   compaction_tokens_min?: number;
@@ -1104,11 +1116,44 @@ export type Improvement = {
   runs: { id: string; readable: boolean; session_id?: string }[];
   /** A channel sender who is not a member spoke in a session it came from. */
   outsider: boolean;
+  /** The improver pass that wrote it; null for one that did not come from a pass. */
+  pass_id?: string | null;
   created_at: string;
   decided_by?: string | null;
   decided_at?: string | null;
   reverted_by?: string | null;
   reverted_at?: string | null;
+};
+
+/** What set an improver pass going: a weakness that recurred, or the day's turn. */
+export type ImproverTrigger = "pattern" | "daily";
+
+export type ImproverPassStatus = "running" | "done" | "failed";
+
+/** GET /teams/{id}/improvements/passes: one background read of an agent's failure patterns. */
+export type ImproverPass = {
+  id: string;
+  agent: NamedRef;
+  trigger: ImproverTrigger;
+  /** "part:target:cause", as "tool:crm__close_ticket:misused_tool"; the target may be empty. */
+  signatures: string[];
+  /** What it proposed to drop: "skill:<name>" or "tool:<server>/<tool>". */
+  pruned: string[];
+  status: ImproverPassStatus;
+  /** Done before it finished: out of steps, tokens or time, improvement turned off, or its agent gone. */
+  cut_short: boolean;
+  /** Plain text, possibly several paragraphs. */
+  report: string;
+  /** The report draws on a conversation the caller may not read, so it is not sent. */
+  report_withheld: boolean;
+  proposed: number;
+  screened_out: number;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
 };
 
 /** POST /teams/{id}/improvements/{proposalID}/decision */

@@ -62,6 +62,11 @@ type settings struct {
 	// The model that judges and digests runs; null is the team's model.
 	JudgeModel             *modelRef `json:"judge_model"`
 	ImprovementSampleShare int16     `json:"improvement_sample_share"`
+	ImprovementDailyPasses int16     `json:"improvement_daily_passes"`
+	// What a pass may spend: tokens across its tries, the screen's
+	// included, and minutes for each try.
+	ImprovementPassTokens  int32 `json:"improvement_pass_tokens"`
+	ImprovementPassMinutes int16 `json:"improvement_pass_minutes"`
 	// When the switch last went on; runs before it are never judged.
 	ImprovementSince    *time.Time `json:"improvement_since"`
 	CompactionMessages  int32      `json:"compaction_messages"`
@@ -104,6 +109,11 @@ type settingsRequest struct {
 	JudgeModel maybeModel `json:"judge_model"`
 	// Left out, the stored share stays.
 	ImprovementSampleShare *int16 `json:"improvement_sample_share"`
+	// The improver passes a day at most; left out keeps what is stored.
+	ImprovementDailyPasses *int16 `json:"improvement_daily_passes"`
+	// What a pass may spend; left out keeps what is stored.
+	ImprovementPassTokens  *int32 `json:"improvement_pass_tokens"`
+	ImprovementPassMinutes *int16 `json:"improvement_pass_minutes"`
 	CompactionMessages     int32  `json:"compaction_messages"`
 	// Left out, the stored value stays, as a sandbox does.
 	CompactionTokensMin *int32  `json:"compaction_tokens_min"`
