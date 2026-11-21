@@ -183,12 +183,12 @@ DELETE FROM sandbox_rooms r
 USING sandbox_rooms s
 LEFT JOIN team_settings ts ON ts.team_id = s.team_id
 WHERE r.id = s.id
-  AND s.stopped_at IS NOT NULL
   AND s.stopped_at < now() - make_interval(hours => coalesce(ts.sandbox_keep_hours, 24))
   AND pg_try_advisory_xact_lock(hashtextextended('sandbox-room:' || s.owner_kind || ':' || s.owner_id::text, 0))
 `
 
-// Stopped rooms past their team's keep hours: their rows go, which
+// Stopped rooms past their team's keep hours (a running room's NULL
+// stopped_at never compares): their rows go, which
 // tombstones each room and its token for the sweep. A room being resumed
 // right now is skipped.
 func (q *Queries) ExpireStoppedSandboxRooms(ctx context.Context) (int64, error) {

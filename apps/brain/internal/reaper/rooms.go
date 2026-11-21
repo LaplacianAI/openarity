@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,8 +97,9 @@ func (e roomEffect) Claim(ctx context.Context, retryBefore time.Time, batch int3
 // cannot be stopped now is logged and tried at the next sweep; it does not
 // hold back the tombstones.
 func (e roomEffect) stopIdle(ctx context.Context) error {
+	minutes := int32(min(e.idle/time.Minute, math.MaxInt32)) //nolint:gosec // held to MaxInt32 by min; past that is never, in practice
 	rows, err := e.rows.ListIdleWorkspaceRooms(ctx, db.ListIdleWorkspaceRoomsParams{
-		DefaultMinutes: int32(e.idle / time.Minute), Max: stopsPerSweep,
+		DefaultMinutes: minutes, Max: stopsPerSweep,
 	})
 	if err != nil {
 		return err

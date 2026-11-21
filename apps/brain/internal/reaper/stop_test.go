@@ -133,3 +133,23 @@ func TestACommandServersIdleRoomIsStillDeleted(t *testing.T) {
 		t.Fatalf("kept %v, stops %v", ok, w.rooms.Stops())
 	}
 }
+
+// A workspace already stopped is not listed again, so the rooms that are
+// stopped do not take the places of the ones still running in a sweep.
+func TestAStoppedWorkspaceIsNotListedAsIdle(t *testing.T) {
+	t.Parallel()
+	w := newRoomsWorld(t)
+	room, _ := w.workspace()
+	w.idleSince(room, time.Now().Add(-2*idleFor))
+	w.set(`UPDATE sandbox_rooms SET stopped_at = now() WHERE id = $1`, room.ID)
+
+	rows, err := w.store.ListIdleWorkspaceRooms(t.Context(), db.ListIdleWorkspaceRoomsParams{DefaultMinutes: 1, Max: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.ID == room.ID {
+			t.Fatal("a stopped workspace was listed as idle")
+		}
+	}
+}
