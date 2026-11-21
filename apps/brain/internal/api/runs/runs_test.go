@@ -62,12 +62,15 @@ type fakeStore struct {
 	cancelled      []uuid.UUID
 	visible        []db.GetRunVisibleParams
 	calls          int
+
+	fakeFeedback
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		agents: map[string]db.Agent{}, sessions: map[uuid.UUID]db.Session{},
 		runs: map[uuid.UUID]db.Run{}, events: map[uuid.UUID][]db.RunEvent{},
+		fakeFeedback: fakeFeedback{feedback: map[[2]uuid.UUID]db.RunFeedback{}, outcomes: map[uuid.UUID]db.RunOutcome{}},
 	}
 }
 
@@ -377,6 +380,9 @@ func runRoutes(t *testing.T) authz.Routes {
 		{"GET", "/teams/{id}/runs/{runID}", "member", nil},
 		{"GET", "/teams/{id}/runs/{runID}/events", "member", nil},
 		{"POST", "/teams/{id}/runs/{runID}/cancel", "team", &write},
+		{"PUT", "/teams/{id}/runs/{runID}/feedback", "team", &write},
+		{"DELETE", "/teams/{id}/runs/{runID}/feedback", "team", &write},
+		{"GET", "/teams/{id}/sessions/{sessionID}/feedback", "member", nil},
 	} {
 		if err := rs.Add(r.method, r.path, r.scope, r.permission); err != nil {
 			t.Fatalf("Add %s %s: %v", r.method, r.path, err)

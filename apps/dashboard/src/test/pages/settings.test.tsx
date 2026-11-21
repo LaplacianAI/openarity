@@ -30,6 +30,9 @@ const NEVER: TeamSettings = {
   search: { provider: "none", url: null, key_set: false },
   sandbox: { provider: "none", url: null, key_set: false },
   improvement: false,
+  judge_model: null,
+  improvement_sample_share: 10,
+  improvement_since: null,
   compaction_messages: 100,
   compaction_tokens_min: 50_000,
   compaction_tokens_max: 60_000,
@@ -42,6 +45,9 @@ const BRAVE: TeamSettings = {
   search: { provider: "brave", url: null, key_set: true },
   sandbox: { provider: "none", url: null, key_set: false },
   improvement: false,
+  judge_model: null,
+  improvement_sample_share: 10,
+  improvement_since: null,
   compaction_messages: 250,
   compaction_tokens_min: 50_000,
   compaction_tokens_max: 60_000,
@@ -247,11 +253,8 @@ it("shows the defaults for a team that never saved", async () => {
   expect(screen.getByLabelText(/^provider$/i)).toHaveTextContent("Off");
   expect(screen.getByLabelText(/improve agents from their runs/i)).not.toBeChecked();
   expect(screen.queryByText(/learn from each run/i)).toBeNull();
-  expect(
-    screen.getByText(
-      /The parts that propose arrive in a later release; until then this changes nothing\./,
-    ),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/each finished run is judged in the background/i)).toBeInTheDocument();
+  expect(screen.queryByText(/this changes nothing/i)).toBeNull();
   expect(screen.getByLabelText(/messages before a run compacts/i)).toHaveValue("100");
   expect(screen.getByLabelText(/^at least$/i)).toHaveValue("50,000");
   expect(screen.getByLabelText(/^at most$/i)).toHaveValue("60,000");

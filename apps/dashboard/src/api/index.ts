@@ -47,12 +47,15 @@ import type {
   Proposal,
   Run,
   RunEvent,
+  RunFeedback,
+  RunFeedbackRequest,
   RunRequest,
   RunStatus,
   Said,
   SayRequest,
   Session,
   SessionEnvelope,
+  SessionFeedback,
   SessionStatus,
   Skill,
   Team,
@@ -483,6 +486,32 @@ export function getRun(teamId: string, runId: string): Promise<Run> {
 
 export function cancelRun(teamId: string, runId: string): Promise<void> {
   return request<void>(`/teams/${teamId}/runs/${runId}/cancel`, { method: "POST" });
+}
+
+/**
+ * Give or change your 👍/👎 on a top-level run's answer. Needs run:write; the
+ * brain answers 409 with its reason for a delegate's run or when the team has
+ * improvement off.
+ */
+export function giveRunFeedback(
+  teamId: string,
+  runId: string,
+  feedback: RunFeedbackRequest,
+): Promise<RunFeedback> {
+  return request<RunFeedback>(`/teams/${teamId}/runs/${runId}/feedback`, {
+    method: "PUT",
+    body: feedback,
+  });
+}
+
+/** Remove your 👍/👎 on a run; removing none answers 204 too. */
+export function clearRunFeedback(teamId: string, runId: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/runs/${runId}/feedback`, { method: "DELETE" });
+}
+
+/** The caller's own 👍/👎 on every run of a session, in one request. */
+export function getSessionFeedback(teamId: string, sessionId: string): Promise<SessionFeedback> {
+  return request<SessionFeedback>(`/teams/${teamId}/sessions/${sessionId}/feedback`);
 }
 
 /** How long to wait before following a stream again that closed early. */

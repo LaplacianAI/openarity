@@ -11,6 +11,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/improve"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/purge"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
@@ -18,6 +19,8 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
+	"github.com/LaplacianAI/openarity/sdk/agent"
+	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
 )
 
 func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore *store.Store) error {
@@ -99,6 +102,7 @@ func newJobs(
 	if err != nil {
 		return nil, nil, err
 	}
+	judging := newImproveJob(cfg, logger, dbStore)
 
 	if cfg.EmbeddingModel == "" {
 		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected or searched")
@@ -106,7 +110,7 @@ func newJobs(
 		if err != nil {
 			return nil, nil, err
 		}
-		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent)}, func() {}, nil
+		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), judging}, func() {}, nil
 	}
 
 	g, embedder, closeGraph, err := dialGraph(ctx, cfg)
@@ -121,6 +125,13 @@ func newJobs(
 	}
 	projector := graph.NewProjector(dbStore, g, embedder, logger)
 	return []worker.Job{
-		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), graph.DrainJob(projector, logger),
+		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), graph.DrainJob(projector, logger), judging,
 	}, closeGraph, nil
+}
+
+// newImproveJob judges a team's finished runs and digests them, on the same
+// model endpoint the runs use.
+func newImproveJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store) *improve.Job {
+	judge := improve.NewJudge(openaicompat.Factory(), agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey})
+	return improve.NewJob(improve.NewChecker(dbStore, judge, logger))
 }

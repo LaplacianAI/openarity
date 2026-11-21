@@ -108,7 +108,13 @@ plan, and any change to the draft takes the plan away. It is a
 **Teams** lists the teams you can see and their members, with each member's
 role: `member`, `approver` or `admin`. **Team settings** groups the model,
 the hub, compaction, web search, the sandbox, the browser, and whether the
-team's agents improve themselves from their runs.
+team's agents improve themselves from their runs. While that is on, every
+finished run is judged in the background on whether the task was done, by the
+team's model or a judge model chosen here, and a share of the good runs (10%
+until changed) is studied beside every bad one. Under each answer in a
+conversation, a member who may run agents can press 👍 or 👎, with a line on
+what was wrong; that outranks the judge for that run. A run's trace shows how
+it was judged, and how many members gave 👍 and 👎, never who.
 Compaction says when a run folds its earlier turns into a summary: past a
 number of messages, and when its next request would read a tenth of its
 token budget, held between an at least and an at most the team chooses

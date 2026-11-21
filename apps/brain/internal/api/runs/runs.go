@@ -57,6 +57,7 @@ type Store interface {
 	// id is not arg.ID is one the input went to.
 	StartRun(ctx context.Context, arg StartArgs) (db.Run, error)
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
+	FeedbackStore
 }
 
 type Starter interface {
@@ -82,6 +83,9 @@ func New(logger *slog.Logger, s Store, a api.Authorizer, starter Starter) *api.R
 	r.Get("/{id}/runs/{runID}/events", h.events)
 	r.Get("/{id}/sessions/{sessionID}/runs", h.listBySession)
 	r.Post("/{id}/runs/{runID}/cancel", h.cancel)
+	r.Put("/{id}/runs/{runID}/feedback", h.putFeedback)
+	r.Delete("/{id}/runs/{runID}/feedback", h.deleteFeedback)
+	r.Get("/{id}/sessions/{sessionID}/feedback", h.listSessionFeedback)
 	return r
 }
 
@@ -216,6 +220,10 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	out, err := h.one(r.Context(), row)
 	if err != nil {
 		api.Fail(w, h.logger, api.Caller(r), "failed to read whom the run handed work to", err)
+		return
+	}
+	if out.Outcome, out.MyFeedback, err = h.outcomeOf(r.Context(), row.ID, api.Caller(r).ID); err != nil {
+		api.Fail(w, h.logger, api.Caller(r), "failed to read the run's outcome", err)
 		return
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, out)

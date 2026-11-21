@@ -344,7 +344,37 @@ export type Run = {
    * answers none. Optional: a brain from before the field sends none.
    */
   reply?: Reply | null;
+  /** How the run was judged, on a single run's read only; absent before, and for a team that never had improvement on. */
+  outcome?: RunOutcome;
+  /** The caller's 👍/👎 on a single run's read; absent when none. */
+  my_feedback?: RunFeedback;
 };
+
+export type RunVerdict = "done" | "partly" | "not_done" | "wrong" | "cant_tell";
+
+/** The judge's verdict on a run, and what it comes to once members' feedback is weighed. */
+export type RunOutcome = {
+  verdict: RunVerdict;
+  /** What was asked and not delivered; empty when nothing was. */
+  missed: string;
+  why: string;
+  implicit: "none" | "correction" | "repeat" | "retry" | "thanks";
+  /** A member's 👎 or 👍 if there is one, else the verdict. */
+  effective: "good" | "bad" | "neither";
+  judged_at: string;
+  /** How many members gave each, never who. */
+  feedback: { up: number; down: number };
+};
+
+export type FeedbackValue = "up" | "down";
+
+/** PUT /teams/{id}/runs/{runID}/feedback */
+export type RunFeedback = { value: FeedbackValue; note: string; updated_at: string };
+
+export type RunFeedbackRequest = { value: FeedbackValue; note?: string; via?: "dashboard" | "cli" };
+
+/** GET /teams/{id}/sessions/{sessionID}/feedback: the caller's own only. */
+export type SessionFeedback = { items: (RunFeedback & { run_id: string })[] };
 
 /** A run's reply to the channel conversation it came from, as the outbox holds it. */
 export type Reply = {
@@ -811,6 +841,12 @@ export type TeamSettings = {
   /** The key is never returned. Absent from a brain that predates browsers. */
   browser?: { provider: BrowserProvider; url: string | null; key_set: boolean };
   improvement: boolean;
+  /** The model that judges and digests runs; null means the team's model. */
+  judge_model: ModelRef | null;
+  /** The percentage of runs judged done that are digested anyway, for contrast. */
+  improvement_sample_share: number;
+  /** When improvement was last turned on; runs that finished before it are never judged. Read only. */
+  improvement_since: string | null;
   compaction_messages: number;
   /** A run compacts at a tenth of its budget, held between these two. */
   compaction_tokens_min: number;
@@ -839,6 +875,10 @@ export type TeamSettingsRequest = {
    */
   browser?: { provider: BrowserProvider; url?: string; api_key?: string };
   improvement: boolean;
+  /** Left out, the stored judge model stays; null clears it, so runs are judged on the team's model. */
+  judge_model?: ModelRef | null;
+  /** 0 to 100. Left out, the stored share stays. */
+  improvement_sample_share?: number;
   compaction_messages: number;
   /** Left out, the stored value stays. */
   compaction_tokens_min?: number;

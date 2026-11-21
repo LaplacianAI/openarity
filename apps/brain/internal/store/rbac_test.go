@@ -601,6 +601,11 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/runs/{runID}":         "member",
 		"GET /teams/{id}/runs/{runID}/events":  "member",
 		"POST /teams/{id}/runs/{runID}/cancel": "team run:write",
+		// A person's word on an answer is something said in the team, as a
+		// message is; reading your own on a session you may read is open.
+		"PUT /teams/{id}/runs/{runID}/feedback":         "team run:write",
+		"DELETE /teams/{id}/runs/{runID}/feedback":      "team run:write",
+		"GET /teams/{id}/sessions/{sessionID}/feedback": "member",
 
 		// Every member reads the settings: which model answers them and
 		// whether search is on is not a secret, and the key never leaves the

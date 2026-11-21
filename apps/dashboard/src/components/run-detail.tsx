@@ -28,6 +28,7 @@ import { cancelRun, followRunEvents, getRun } from "@/api";
 import type { Run, RunEvent } from "@/api/types";
 import { CopyId } from "@/components/facts";
 import { Markdown } from "@/components/markdown";
+import { OutcomeLine } from "@/components/run-outcome";
 import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -193,10 +194,19 @@ export function RunDetail({
   onChanged: () => void;
 }) {
   const { events, failed } = useRunEvents(teamId, run.id, onChanged);
+  // A list leaves out how a run was judged; a single run's read carries it.
+  // Read once the run is over, as it is judged only then. A failed read is no
+  // finding: the line is left out.
+  const judged = useQuery({
+    queryKey: ["runs", teamId, run.id],
+    queryFn: () => getRun(teamId, run.id),
+    enabled: !isLive(run.status),
+  });
+  const outcome = run.outcome ?? judged.data?.outcome;
   return (
     <RunView
       teamId={teamId}
-      run={run}
+      run={outcome ? { ...run, outcome } : run}
       canCancel={canCancel}
       onChanged={onChanged}
       events={events}
@@ -272,6 +282,7 @@ export function RunView({
                 {finding}
               </p>
             ) : null}
+            {run.outcome ? <OutcomeLine outcome={run.outcome} /> : null}
             {delegates.length > 0 ? (
               <p
                 data-delegates
