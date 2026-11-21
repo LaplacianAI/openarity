@@ -1071,6 +1071,27 @@ func (e SandboxProvider) Valid() bool {
 	}
 }
 
+// Defines values for SandboxTemplateBuildStatus.
+const (
+	SandboxTemplateBuildStatusBuilding SandboxTemplateBuildStatus = "building"
+	SandboxTemplateBuildStatusFailed   SandboxTemplateBuildStatus = "failed"
+	SandboxTemplateBuildStatusReady    SandboxTemplateBuildStatus = "ready"
+)
+
+// Valid indicates whether the value is a known member of the SandboxTemplateBuildStatus enum.
+func (e SandboxTemplateBuildStatus) Valid() bool {
+	switch e {
+	case SandboxTemplateBuildStatusBuilding:
+		return true
+	case SandboxTemplateBuildStatusFailed:
+		return true
+	case SandboxTemplateBuildStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchProvider.
 const (
 	SearchProviderBrave          SearchProvider = "brave"
@@ -3421,10 +3442,16 @@ type SandboxSettings struct {
 	// self-hosted and takes a url and its token as the key.
 	Provider SandboxProvider `json:"provider" yaml:"provider"`
 
-	// Template E2B only: the template rooms start from, built in the team's E2B
-	// account; null for the brain's default, openarity-sandbox. Every
-	// other provider is given the brain's own image.
+	// Template E2B only: a template of the team's own that rooms start from;
+	// null for the one the brain builds of its room image in the team's
+	// E2B account (see `template_build`). Every other provider is given
+	// the brain's own image.
 	Template *string `json:"template,omitempty" yaml:"template,omitempty"`
+
+	// TemplateBuild E2B with no template of the team's own: the brain's build of its
+	// room image in the team's account, asked for when the sandbox is
+	// saved. Null for every other sandbox, and before one is asked for.
+	TemplateBuild *SandboxTemplateBuild `json:"template_build,omitempty" yaml:"template_build,omitempty"`
 
 	// URL A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
 	//
@@ -3464,6 +3491,24 @@ type SandboxSettingsRequest struct {
 	// WorkspaceSize Omit it to keep the stored size; null is the provider's.
 	WorkspaceSize *WorkspaceSize `json:"workspace_size,omitempty" yaml:"workspace_size,omitempty"`
 }
+
+// SandboxTemplateBuild The room template the brain builds in an E2B team's account, named for
+// the brain's release. A room cannot start until it is `ready`; while it
+// is `building` an agent is told to try again in a few minutes. A
+// `failed` build is tried again after ten minutes, or at once when the
+// sandbox is saved.
+type SandboxTemplateBuild struct {
+	// Error Why the build failed, in E2B's words; null unless failed.
+	Error string `json:"error" yaml:"error"`
+
+	// Name Examples: openarity-sandbox-9c3931a7a1b2
+	Name      string                     `json:"name" yaml:"name"`
+	Status    SandboxTemplateBuildStatus `json:"status" yaml:"status"`
+	UpdatedAt time.Time                  `json:"updated_at" yaml:"updated_at"`
+}
+
+// SandboxTemplateBuildStatus defines model for SandboxTemplateBuild.Status.
+type SandboxTemplateBuildStatus string
 
 // SayRequest defines model for SayRequest.
 type SayRequest struct {

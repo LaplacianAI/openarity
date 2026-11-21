@@ -940,3 +940,48 @@ it("shows a hosted browser's key field, and no address", async () => {
   expect(screen.queryByLabelText(/^address$/i)).not.toBeInTheDocument();
   expect(screen.getByText(/a key is set\. leave this empty to keep it/i)).toBeInTheDocument();
 });
+
+describe("the room template an E2B team's rooms start from", () => {
+  const E2B: TeamSettings = {
+    ...NEVER,
+    sandbox: { provider: "e2b", url: null, template: null, key_set: true, template_build: null },
+    updated_at: "2026-11-21T09:00:00Z",
+  };
+  const withBuild = (build: TeamSettings["sandbox"]["template_build"]): TeamSettings => ({
+    ...E2B,
+    sandbox: { ...E2B.sandbox, template_build: build },
+  });
+  const build = {
+    name: "openarity-sandbox-9c3931a7a1b2",
+    error: null,
+    updated_at: "2026-11-21T09:00:00Z",
+  };
+
+  it.each([
+    [withBuild({ ...build, status: "building" }), /building the room template/i],
+    [withBuild({ ...build, status: "ready" }), /room template built/i],
+    [
+      withBuild({ ...build, status: "failed", error: "the image could not be pulled" }),
+      /failed to build: the image could not be pulled/i,
+    ],
+    [E2B, /built in your e2b account when the sandbox is saved/i],
+  ])("says how far its build is", async (stored, text) => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: stored } });
+    at();
+
+    const status = await within(await screen.findByRole("region", { name: /sandbox/i })).findByRole(
+      "status",
+    );
+    expect(status).toHaveTextContent(text);
+  });
+
+  it("says nothing of a build for a team naming its own template", async () => {
+    const own: TeamSettings = { ...E2B, sandbox: { ...E2B.sandbox, template: "acme/ours" } };
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: own } });
+    at();
+
+    const region = await screen.findByRole("region", { name: /sandbox/i });
+    expect(within(region).getByLabelText(/^template$/i)).toHaveValue("acme/ours");
+    expect(within(region).queryByText(/room template/i)).toBeNull();
+  });
+});

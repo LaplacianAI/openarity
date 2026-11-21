@@ -25,10 +25,15 @@ its key, and nothing else.
   an image under its `SANDBOXD_IMAGES` prefixes.
 - **Daytona** is sent the image reference and builds and caches it itself.
 - **E2B** does not run an image by name; it runs a template built in the
-  team's own E2B account, and it is the one provider a team says something
-  about: the template's name, in Settings or with `oa teams settings set
-  --e2b-template`. Left empty, the brain uses `openarity-sandbox`, which is
-  what `e2b/` builds by default:
+  team's own E2B account. The brain builds the room image there itself, as
+  `openarity-sandbox-<commit>` at 2 vCPUs and 2 GiB, when the team saves E2B
+  in Settings or its first room starts; Settings shows the build, and until it
+  is ready agents are told to try again in a few minutes. An upgrade builds the
+  new release's template the same way.
+
+  A team may instead name a template of its own, in Settings or with `oa teams
+  settings set --e2b-template`, and the brain then builds nothing. `e2b/`
+  builds one by hand:
 
   ```sh
   cd deployment/sandbox/e2b

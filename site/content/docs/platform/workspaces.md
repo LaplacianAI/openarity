@@ -114,6 +114,11 @@ files of the old one. With none set, the provider's size is used:
 sandboxd's disk is a soft cap: it measures every 30 seconds and stops a room
 past its size.
 
+On E2B the first room waits for that template to be built, a few minutes after
+the sandbox is saved, and again after an upgrade. Until it is, a call says the
+sandbox is still being prepared and nothing ran; Settings shows the build, and
+why it failed if it did.
+
 ## Approvals
 
 Every call passes the team's approval policy.

@@ -7020,9 +7020,10 @@ components:
           type: string
           nullable: true
           description: |
-            E2B only: the template rooms start from, built in the team's E2B
-            account; null for the brain's default, openarity-sandbox. Every
-            other provider is given the brain's own image.
+            E2B only: a template of the team's own that rooms start from;
+            null for the one the brain builds of its room image in the team's
+            E2B account (see `template_build`). Every other provider is given
+            the brain's own image.
         key_set:
           type: boolean
           description: Whether a key is stored. The key itself is never returned.
@@ -7048,6 +7049,13 @@ components:
           $ref: "#/components/schemas/WorkspaceSize"
           nullable: true
           description: The size of the team's workspace rooms; null is the provider's own.
+        template_build:
+          $ref: "#/components/schemas/SandboxTemplateBuild"
+          nullable: true
+          description: |
+            E2B with no template of the team's own: the brain's build of its
+            room image in the team's account, asked for when the sandbox is
+            saved. Null for every other sandbox, and before one is asked for.
 
     WorkspaceSize:
       type: object
@@ -7075,6 +7083,30 @@ components:
           format: int32
           minimum: 256
           maximum: 262144
+
+    SandboxTemplateBuild:
+      type: object
+      required: [name, status, error, updated_at]
+      description: |
+        The room template the brain builds in an E2B team's account, named for
+        the brain's release. A room cannot start until it is `ready`; while it
+        is `building` an agent is told to try again in a few minutes. A
+        `failed` build is tried again after ten minutes, or at once when the
+        sandbox is saved.
+      properties:
+        name:
+          type: string
+          examples: ["openarity-sandbox-9c3931a7a1b2"]
+        status:
+          type: string
+          enum: [building, ready, failed]
+        error:
+          type: string
+          nullable: true
+          description: Why the build failed, in E2B's words; null unless failed.
+        updated_at:
+          type: string
+          format: date-time
 
     SandboxProvider:
       type: string

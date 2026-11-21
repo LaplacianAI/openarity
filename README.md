@@ -725,9 +725,11 @@ stopped, keeping its files, and a team may set its own idle minutes in
 Settings. A workspace also stops when its conversation's last run ends, and a
 stopped one is deleted after the team's keep hours (24 by default). Empty `OPENARITY_SANDBOX_IMAGE` means the image published with this
 brain, `ghcr.io/laplacianai/openarity-sandbox:sha-<commit>`, or `:latest` when
-the brain was built without knowing its commit. E2B starts rooms from the
-team's own template, `openarity-sandbox` unless the team names one, and ignores
-it. The image build passes the commit as `REVISION`.
+the brain was built without knowing its commit. E2B runs no image by name: the
+brain builds that image (or `OPENARITY_SANDBOX_IMAGE`) into each E2B team's
+account as a template, `openarity-sandbox-<commit>`, when the sandbox is saved
+or its first room starts, at 2 vCPUs and 2 GiB, unless the team names a
+template of its own. The image build passes the commit as `REVISION`.
 
 ### Secrets and object storage
 

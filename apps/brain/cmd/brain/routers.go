@@ -84,7 +84,7 @@ func newRouters(
 		improvements.New(logger, dbStore, authorizer, improvements.NewDecider(dbStore, attachments, runtime.Loops())),
 		teamgraph.New(logger, graphs),
 		teamsummary.New(logger, dbStore, authorizer),
-		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks)),
+		teamsettings.New(logger, dbStore, secretWriter, reachable(cfg.MCPPrivateNetworks), settingsTemplates(cfg, logger, dbStore, secretStore)),
 		users.New(logger, dbStore),
 		sessions.New(logger, dbStore, authorizer, attachments, gateway.NewInbox(inbox{dbStore}, starter, logger),
 			// The dashboard's files arrive in the request: nothing to download.
