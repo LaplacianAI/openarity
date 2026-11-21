@@ -930,13 +930,14 @@ func (q *Queries) ListWentWrong(ctx context.Context, arg ListWentWrongParams) ([
 }
 
 const lockRunningImproverPass = `-- name: LockRunningImproverPass :one
-SELECT id FROM improver_passes
+UPDATE improver_passes SET alive_at = now()
 WHERE id = $1 AND status = 'running'
-FOR UPDATE
+RETURNING id
 `
 
-// The pass, held while a proposal is stored, so it cannot be failed as
-// lost in between. No row when it is no longer running.
+// The pass, held while a proposal is stored and marked alive, so it is
+// not failed as lost in between or just after. No row when it is no
+// longer running.
 func (q *Queries) LockRunningImproverPass(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, lockRunningImproverPass, id)
 	var id_2 uuid.UUID

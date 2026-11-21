@@ -498,3 +498,25 @@ func TestAPassLostBeforeItStoresStoresNothing(t *testing.T) {
 		t.Errorf("%d proposals stored under a lost pass", len(got))
 	}
 }
+
+// Storing a proposal marks the pass alive: one that had gone quiet is not
+// failed as lost just after, leaving its proposal under a failed pass.
+func TestStoringAProposalKeepsThePassAlive(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	var runs []uuid.UUID
+	for range 3 {
+		runs = append(runs, w.digested(t, skipped, "wrong", false))
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	w.exec(t, `UPDATE improver_passes SET alive_at = now() - interval '1 hour' WHERE id = $1`, pass.ID)
+	if out, _ := w.proposeWith(t, im, pass, instructionsEdit(runs[0]), reply{text: screenOKText}); !strings.HasPrefix(out, "Stored") {
+		t.Fatalf("propose = %q", out)
+	}
+	if err := im.FailLost(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := w.store.GetImproverPass(t.Context(), pass.ID); p.Status != passRunning {
+		t.Errorf("status = %s, want it still running after storing", p.Status)
+	}
+}
