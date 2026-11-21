@@ -119,15 +119,59 @@ type Spec struct {
 	// Workspace is a room an agent works in: more memory and CPU, and a
 	// /workspace to work in.
 	Workspace bool `json:"workspace,omitempty"`
+	// Size is a workspace's own, in place of the operator's: no more than
+	// the operator's in any part, which are the largest a workspace may be.
+	Size *Size `json:"size,omitempty"`
+}
+
+// Size is what a team asked for its workspace rooms.
+type Size struct {
+	MemoryMB int64 `json:"memory_mb"`
+	CPUs     int64 `json:"cpus"`
+	DiskMB   int64 `json:"disk_mb"`
+}
+
+// workspaceSize is what a workspace room of sp gets: its own size, or the
+// operator's.
+func (l Limits) workspaceSize(sp Spec) (memory, nanoCPUs, disk int64) {
+	if sp.Size == nil {
+		return l.WorkspaceMemory, l.WorkspaceCPUs, l.WorkspaceBytes
+	}
+	return sp.Size.MemoryMB << 20, sp.Size.CPUs * 1_000_000_000, sp.Size.DiskMB << 20
 }
 
 // memory is what a room of this spec may use, which is what it takes of the
 // budget.
 func (l Limits) memory(sp Spec) int64 {
 	if sp.Workspace {
-		return l.WorkspaceMemory
+		m, _, _ := l.workspaceSize(sp)
+		return m
 	}
 	return l.Memory
+}
+
+// fitsSize refuses a size past the operator's, or one a room cannot run in.
+func (l Limits) fitsSize(sp Spec) error {
+	if sp.Size == nil {
+		return nil
+	}
+	if !sp.Workspace {
+		return fmt.Errorf("%w: only a workspace room is sized", ErrRefused)
+	}
+	m, c, d := l.workspaceSize(sp)
+	switch {
+	case sp.Size.MemoryMB <= 0 || sp.Size.CPUs <= 0 || sp.Size.DiskMB <= 0:
+		return fmt.Errorf("%w: a size is memory, CPUs and disk, each more than zero", ErrRefused)
+	case m > l.WorkspaceMemory:
+		return fmt.Errorf("%w: %d MiB of memory is more than this sandbox gives a workspace, %d MiB", ErrRefused, sp.Size.MemoryMB, l.WorkspaceMemory>>20)
+	case c > l.WorkspaceCPUs:
+		return fmt.Errorf("%w: %d CPUs is more than this sandbox gives a workspace, %g", ErrRefused, sp.Size.CPUs, float64(l.WorkspaceCPUs)/1e9)
+	case d > l.WorkspaceBytes:
+		return fmt.Errorf("%w: %d MiB of disk is more than this sandbox gives a workspace, %d MiB", ErrRefused, sp.Size.DiskMB, l.WorkspaceBytes>>20)
+	case l.HomeBytes > m:
+		return fmt.Errorf("%w: %d MiB of memory is less than the room's home, %d MiB", ErrRefused, sp.Size.MemoryMB, l.HomeBytes>>20)
+	}
+	return nil
 }
 
 // Engine is the daemon.
@@ -353,6 +397,9 @@ func (s *Service) Create(ctx context.Context, sp Spec) (string, error) {
 	if err := s.allow(sp.Image); err != nil {
 		return "", err
 	}
+	if err := s.limits.fitsSize(sp); err != nil {
+		return "", err
+	}
 	spec, err := json.Marshal(sp)
 	if err != nil {
 		return "", err
@@ -549,7 +596,7 @@ func (s *Service) Start(ctx context.Context, id string, argv []string) error {
 		return err
 	}
 	if sp.Workspace {
-		if err := s.workspaceVolume(ctx, id); err != nil {
+		if err := s.workspaceVolume(ctx, id, sp); err != nil {
 			return err
 		}
 	}
@@ -568,12 +615,12 @@ func (s *Service) Start(ctx context.Context, id string, argv []string) error {
 
 // workspaceVolume makes the room's /workspace, unless the workspaces' disk
 // is spent: a new one may hold up to WorkspaceBytes.
-func (s *Service) workspaceVolume(ctx context.Context, id string) error {
+func (s *Service) workspaceVolume(ctx context.Context, id string, sp Spec) error {
 	sizes, err := s.engine.VolumeSizes(ctx, roomLabel)
 	if err != nil {
 		return err
 	}
-	used := s.limits.WorkspaceBytes
+	_, _, used := s.limits.workspaceSize(sp)
 	for _, n := range sizes {
 		used += n
 	}
@@ -630,8 +677,8 @@ func (s *Service) Resume(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		if sizes[volumeName(id)] > s.limits.WorkspaceBytes {
-			return fmt.Errorf("%w: %d MiB of %d", ErrOverDisk, sizes[volumeName(id)]>>20, s.limits.WorkspaceBytes>>20)
+		if _, _, disk := s.limits.workspaceSize(sp); sizes[volumeName(id)] > disk {
+			return fmt.Errorf("%w: %d MiB of %d", ErrOverDisk, sizes[volumeName(id)]>>20, disk>>20)
 		}
 	}
 	if err := s.fits(ctx, id, sp); err != nil {
@@ -664,16 +711,20 @@ func (s *Service) measure(ctx context.Context) {
 		return
 	}
 	for name, n := range sizes {
-		if n <= s.limits.WorkspaceBytes {
+		id := strings.TrimPrefix(name, networkPrefix)
+		disk := s.limits.WorkspaceBytes
+		if _, sp, err := s.room(ctx, id); err == nil {
+			_, _, disk = s.limits.workspaceSize(sp)
+		}
+		if n <= disk {
 			continue
 		}
-		id := strings.TrimPrefix(name, networkPrefix)
 		err := s.engine.StopContainer(ctx, containerName(id), stopGrace)
 		if err != nil && !docker.IsNotFound(err) {
 			s.logger.Error("stopping a workspace over its disk", "room", id, "err", err.Error())
 			continue
 		}
-		s.logger.Warn("stopped a workspace over its disk", "room", id, "bytes", n, "limit", s.limits.WorkspaceBytes)
+		s.logger.Warn("stopped a workspace over its disk", "room", id, "bytes", n, "limit", disk)
 	}
 }
 
@@ -776,7 +827,7 @@ func Harden(id string, sp Spec, argv []string, selfIP string, l Limits) docker.C
 		// An agent builds and runs what it writes, so its workspace executes:
 		// a volume is mounted exec. It is on disk, so a stopped room keeps it.
 		volumes = map[string]string{WorkspaceDir: volumeName(id)}
-		memory, cpus = l.WorkspaceMemory, l.WorkspaceCPUs
+		memory, cpus, _ = l.workspaceSize(sp)
 	}
 	if sp.Network == NetworkPublic {
 		// The room has no route and no DNS: every client that honours these
