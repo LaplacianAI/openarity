@@ -715,12 +715,15 @@ keeps it while it is used.
 
 | Variable                 | Default | What it does                                                                 |
 | ------------------------ | ------- | ---------------------------------------------------------------------------- |
-| `OPENARITY_SANDBOX_IDLE` | `30m`   | How long a room may go unused before the reaper deletes it                   |
+| `OPENARITY_SANDBOX_IDLE` | `30m`   | How long a room may go unused before the reaper stops or deletes it          |
 | `OPENARITY_SANDBOX_IMAGE`| empty   | The room image for sandboxd and Daytona, in place of the brain's own choice  |
 
 `OPENARITY_SANDBOX_IDLE` is a Go duration longer than zero; the reaper sweeps
 every fifteen minutes, so a room goes at the first sweep after it has been idle
-that long. Empty `OPENARITY_SANDBOX_IMAGE` means the image published with this
+that long. A command server's room is deleted; a conversation's workspace is
+stopped, keeping its files, and a team may set its own idle minutes in
+Settings. A workspace also stops when its conversation's last run ends, and a
+stopped one is deleted after the team's keep hours (24 by default). Empty `OPENARITY_SANDBOX_IMAGE` means the image published with this
 brain, `ghcr.io/laplacianai/openarity-sandbox:sha-<commit>`, or `:latest` when
 the brain was built without knowing its commit. E2B starts rooms from the
 team's own template, `openarity-sandbox` unless the team names one, and ignores

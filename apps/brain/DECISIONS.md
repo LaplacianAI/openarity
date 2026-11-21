@@ -884,6 +884,31 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   when the commit is unknown; `OPENARITY_SANDBOX_IMAGE` overrides it. E2B alone
   starts from a template in the team's account, so it takes the team's
   template or `openarity-sandbox`.
+- **A session's workspace is stopped, not deleted, when its last run ends.**
+  A room that sat idle for thirty minutes held its memory the whole time, and
+  on a small sandboxd that refused the next conversation's room ("sandbox is
+  busy"). So `Executor.finish` stops the room when no other run of the session
+  is queued or running, the reaper stops one left running past the team's
+  idle minutes (or `OPENARITY_SANDBOX_IDLE`), and a stopped room is deleted
+  after the team's keep hours (24 by default). The next call resumes it with
+  its files: `/workspace` is a volume on sandboxd, E2B pauses, Daytona stops.
+  What follows:
+  - **A waiting run does not hold the room.** A run waiting for a person may
+    wait hours; its room is stopped meanwhile and resumed when it calls again.
+    `IdleSessionOf` and `SessionIsIdle` leave `waiting` out on purpose.
+  - **A stop re-checks idleness under the owner's locks**, so a run that
+    starts between the check and the stop is never left without its room.
+  - **A resume refused for room (`ErrFull`) leaves the room stopped** and
+    says so; a room found gone, refused or unhealthy is replaced, without its
+    files.
+  - **Size is a team setting, and part of the room's hash.** A team chooses
+    memory, CPUs and disk, all three or none; a change gives its sessions new
+    rooms. sandboxd refuses a size past what its operator gives a workspace;
+    Daytona takes whole GB, rounded up; E2B's is its template's until a
+    template is built per size, so the API refuses a size for E2B.
+  - **sandboxd's disk is a soft cap.** Docker cannot cap a volume on every
+    storage driver, so sandboxd measures volumes every 30 seconds and stops a
+    room past its disk, and counts disk against `SANDBOXD_DISK_BUDGET`.
 - **The scheduler is a seam because scheduling has no specification.** Auth is a
   port over OIDC, so authentik is swappable for Dex or Okta by changing one
   variable. River, Temporal, DBOS and Restate agree on no model at all, and an

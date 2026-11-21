@@ -213,6 +213,11 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
    SANDBOXD_MEMORY_BUDGET=2415919104   # 2.25 GiB across every room: three rooms of 768 MiB
    ```
 
+   Only running rooms count against the memory budget: a conversation's
+   workspace stops when its last run ends, keeping its files in a volume.
+   Every volume together is held to `SANDBOXD_DISK_BUDGET` (default 8 GiB);
+   set it to what the disk can spare.
+
    and start it:
 
    ```sh
