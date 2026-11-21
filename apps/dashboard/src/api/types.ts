@@ -633,8 +633,8 @@ export type Agent = AgentSummary & {
   /** The team's browser, to drive pages with. A hub has it whatever this says. */
   browser: boolean;
   /**
-   * Bash, Read, Write, Edit, Glob and Grep in its session's sandbox room. The
-   * hub never has it. Absent from a brain that predates it.
+   * Bash, Read, Write, Edit, Glob and Grep in its session's sandbox room, a
+   * chosen hub's as any agent's. Absent from a brain that predates it.
    */
   workspace?: boolean;
   /**
