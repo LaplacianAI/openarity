@@ -377,3 +377,46 @@ func TestAFailedUpgradeKeepsTheLastBuiltTemplate(t *testing.T) {
 		t.Fatalf("%q, %v; want the last built", got, err)
 	}
 }
+
+// A failed upgrade is logged once, not on each room's start.
+func TestAFailedUpgradeIsLoggedOnce(t *testing.T) {
+	t.Parallel()
+	w, e, old, _ := e2bWorld(t)
+	if _, err := old.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+		t.Fatal(err)
+	}
+	e.state = sandbox.BuildReady
+	if err := old.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.refuse = errors.New("e2b: 500")
+	var logs syncBuffer
+	upgraded := keeper.NewTemplates(w.store, w.secrets, func(string) keeper.TemplateClient { return e },
+		keeper.Images{Commit: "def5678"}, slog.New(slog.NewTextHandler(&logs, nil)))
+	for range 3 {
+		if _, err := upgraded.Image(t.Context(), w.team, w.keyID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(logs.String(), "rooms start from the last one built"); n != 1 {
+		t.Fatalf("logged %d times, want once:\n%s", n, logs.String())
+	}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}

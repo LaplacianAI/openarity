@@ -64,6 +64,9 @@ type Templates struct {
 	// ready holds the teams' keys whose template of this brain's name is
 	// built, so a room's start asks the database only until it is.
 	ready sync.Map
+	// warned holds the failed builds already logged as covered by an older
+	// template, so a room's every start does not log it again.
+	warned sync.Map
 }
 
 // NewTemplates returns the builder.
@@ -160,7 +163,7 @@ func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, err
 		return "", err
 	}
 	if found {
-		if row.Status == TemplateFailed {
+		if _, seen := t.warned.LoadOrStore(row.ID.String()+":"+row.UpdatedAt.String(), struct{}{}); !seen && row.Status == TemplateFailed {
 			t.logger.WarnContext(ctx, "keeper: this release's room template failed to build; rooms start from the last one built",
 				"team_id", team, "template", name, "instead", prev, "error", deref(row.Error))
 		}

@@ -94,7 +94,8 @@ func (c *Client) BuildStatus(ctx context.Context, b sandbox.Build) (sandbox.Buil
 	case "error":
 		reason := "the build failed"
 		if s.Reason != nil && s.Reason.Message != "" {
-			reason = cut(s.Reason.Message)
+			// Shown to people and logged, so scrubbed as every E2B error is.
+			reason = cut(scrub(s.Reason.Message, []string{c.apiKey}))
 		}
 		return sandbox.BuildFailed, reason, nil
 	default:

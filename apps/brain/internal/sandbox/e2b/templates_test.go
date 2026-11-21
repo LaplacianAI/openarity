@@ -126,3 +126,13 @@ func TestBuildStatusTroubleIsAnErrorNotAFailedBuild(t *testing.T) {
 		})
 	}
 }
+
+func TestAFailedBuildsReasonCarriesNoKey(t *testing.T) {
+	f := &fake{api: func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, map[string]any{"status": "error", "reason": map[string]any{"message": "auth with " + apiKey + " failed"}})
+	}}
+	_, reason, err := newClient(f).BuildStatus(t.Context(), sandbox.Build{TemplateID: "t", BuildID: "b"})
+	if err != nil || strings.Contains(reason, apiKey) || !strings.Contains(reason, "failed") {
+		t.Fatalf("reason %q, err %v", reason, err)
+	}
+}
