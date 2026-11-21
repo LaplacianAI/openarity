@@ -329,7 +329,8 @@ func globText(g workroom.Glob) string {
 }
 
 func grepText(g workroom.Grep) string {
-	if g.Files == 0 {
+	// By the output, not the count: whatever was found is shown.
+	if g.Output == "" {
 		return "No matches."
 	}
 	if g.Truncated {

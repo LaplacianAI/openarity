@@ -325,6 +325,8 @@ func TestWhatACallSaysBack(t *testing.T) {
 		{"read to the end", readText(readOf("     3\tc\n", 3), 3), "     3\tc\n"},
 		{"empty file", readText(readOf("", 0), 0), "(the file is empty)"},
 		{"past the end", readText(readOf("", 3), 9), "(the file has 3 lines, so nothing is at line 9)"},
+		{"no matches", grepText(workroom.Grep{}), "No matches."},
+		{"cut before a file was counted", grepText(workroom.Grep{Output: "a.txt:1:hit\n", Truncated: true}), "a.txt:1:hit\n(more match than are shown: narrow the pattern, the path or the glob)"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, tc.got, tc.want)
