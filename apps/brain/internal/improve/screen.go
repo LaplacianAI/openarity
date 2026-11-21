@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -37,7 +37,7 @@ type screenAnswer struct {
 // and returns what that spent. It is asked twice before giving up: no
 // proposal reaches a person unscreened. An answer it could make nothing of
 // is final; a model it could not reach is not.
-func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettingsRow, n improvements.Proposed, in proposeArgs) (screenAnswer, agent.Usage, error) {
+func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettingsRow, n proposals.Proposed, in proposeArgs) (screenAnswer, agent.Usage, error) {
 	var spent agent.Usage
 	model, ok := judgeModelOf(settings)
 	if !ok {
@@ -83,7 +83,7 @@ func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettin
 
 // addedText is what a proposal adds that every later run and member would
 // read: its why and hypothesis, and the new side of each text it changes.
-func addedText(n improvements.Proposed, in proposeArgs) []string {
+func addedText(n proposals.Proposed, in proposeArgs) []string {
 	lines := []string{"why: " + in.Why, "hypothesis: " + in.Hypothesis}
 	b, a := n.Before, n.After
 	if a.Agent != nil && b.Agent != nil {
@@ -100,7 +100,7 @@ func addedText(n improvements.Proposed, in proposeArgs) []string {
 		}
 	}
 	if s := a.Skill; s != nil {
-		var old improvements.SkillState
+		var old proposals.SkillState
 		if b.Skill != nil {
 			old = *b.Skill
 		}
@@ -119,7 +119,7 @@ func addedText(n improvements.Proposed, in proposeArgs) []string {
 	return lines
 }
 
-func hasNote(notes []improvements.ToolNote, n improvements.ToolNote) bool {
+func hasNote(notes []proposals.ToolNote, n proposals.ToolNote) bool {
 	for _, x := range notes {
 		if x == n {
 			return true

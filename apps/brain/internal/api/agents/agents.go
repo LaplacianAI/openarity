@@ -15,6 +15,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -30,18 +31,7 @@ type Store interface {
 	ListAgentDelegates(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error)
 	ListAgentToolNotes(ctx context.Context, agentID uuid.UUID) ([]db.AgentToolNote, error)
 	DeleteAgent(ctx context.Context, id uuid.UUID) error
-	InTx(ctx context.Context, fn func(Queries) error) error
-}
-
-type Queries interface {
-	CreateAgent(ctx context.Context, arg db.CreateAgentParams) (db.Agent, error)
-	UpdateAgent(ctx context.Context, arg db.UpdateAgentParams) (db.Agent, error)
-	AddAgentMCPServer(ctx context.Context, arg db.AddAgentMCPServerParams) error
-	ClearAgentMCPServers(ctx context.Context, agentID uuid.UUID) error
-	AddAgentSkills(ctx context.Context, arg db.AddAgentSkillsParams) error
-	ClearAgentSkills(ctx context.Context, agentID uuid.UUID) error
-	AddAgentDelegates(ctx context.Context, arg db.AddAgentDelegatesParams) error
-	ClearAgentDelegates(ctx context.Context, agentID uuid.UUID) error
+	InTx(ctx context.Context, fn func(harness.AgentQueries) error) error
 }
 
 type handler struct {
@@ -51,10 +41,10 @@ type handler struct {
 }
 
 type grants struct {
-	servers   []ServerGrant
+	servers   []harness.ServerGrant
 	skills    []uuid.UUID
 	delegates []uuid.UUID
-	notes     []ToolNote
+	notes     []harness.ToolNote
 }
 
 func New(logger *slog.Logger, s Store, loops []string) *api.Router {
@@ -82,25 +72,25 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if req.Kind != "" && req.Kind != KindCustom {
+	if req.Kind != "" && req.Kind != harness.KindCustom {
 		http.Error(w, "kind must be custom: the other kinds are agents the brain provides", http.StatusBadRequest)
 		return
 	}
 
-	params, err := Columns(req)
+	params, err := harness.Columns(req)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to encode agent", err)
 		return
 	}
-	params.TeamID, params.Kind = teamID, string(KindCustom)
+	params.TeamID, params.Kind = teamID, string(harness.KindCustom)
 
 	var row db.Agent
-	err = h.store.InTx(r.Context(), func(q Queries) error {
+	err = h.store.InTx(r.Context(), func(q harness.AgentQueries) error {
 		var err error
 		if row, err = q.CreateAgent(r.Context(), params); err != nil {
 			return err
 		}
-		return Grant(r.Context(), q, row, req)
+		return harness.Grant(r.Context(), q, row, req)
 	})
 	if h.writeFailed(w, u, err) {
 		return
@@ -135,19 +125,19 @@ func (h *handler) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params, err := Columns(req)
+	params, err := harness.Columns(req)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to encode agent", err)
 		return
 	}
 
 	var row db.Agent
-	err = h.store.InTx(r.Context(), func(q Queries) error {
+	err = h.store.InTx(r.Context(), func(q harness.AgentQueries) error {
 		var err error
-		if row, err = q.UpdateAgent(r.Context(), UpdateParams(current.ID, params)); err != nil {
+		if row, err = q.UpdateAgent(r.Context(), harness.UpdateParams(current.ID, params)); err != nil {
 			return err
 		}
-		return Regrant(r.Context(), q, row, req)
+		return harness.Regrant(r.Context(), q, row, req)
 	})
 	if h.writeFailed(w, u, err) {
 		return
@@ -316,131 +306,32 @@ func (h *handler) write(w http.ResponseWriter, u *auth.User, status int, row db.
 	api.WriteJSON(w, h.logger, status, out)
 }
 
-func readRequest(w http.ResponseWriter, r *http.Request, loops []string) (Request, bool) {
-	var req Request
+func readRequest(w http.ResponseWriter, r *http.Request, loops []string) (harness.Request, bool) {
+	var req harness.Request
 	if !api.DecodeJSON(w, r, &req) {
-		return Request{}, false
+		return harness.Request{}, false
 	}
 
-	if err := Validate(req, loops); err != nil {
+	if err := harness.Validate(req, loops); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return Request{}, false
+		return harness.Request{}, false
 	}
 
 	return req, true
 }
 
-func Columns(req Request) (db.CreateAgentParams, error) {
-	p := db.CreateAgentParams{
-		Name: req.Name, Description: req.Description, Instructions: req.Instructions,
-		ModelName: req.Model.Name, MaxTokens: req.Model.MaxTokens, Temperature: req.Model.Temperature,
-		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
-		Parser: req.Parser, TokenBudget: req.TokenBudget, Delegation: delegationOf(req),
-		Web: req.Web != nil && *req.Web, Browser: req.Browser != nil && *req.Browser,
-		Workspace: req.Workspace != nil && *req.Workspace,
-	}
-
-	if req.OutputSchema != nil {
-		raw, err := json.Marshal(req.OutputSchema)
-		if err != nil {
-			return db.CreateAgentParams{}, err
-		}
-		p.OutputSchema = raw
-	}
-
-	if pm := req.ParserModel; pm != nil {
-		p.ParserModelName, p.ParserMaxTokens, p.ParserTemperature = &pm.Name, pm.MaxTokens, pm.Temperature
-	}
-
-	return p, nil
-}
-
-// RequestOf is the request Columns would turn into this row, grants aside:
-// what an agent is, said the way it is asked for.
-func RequestOf(row db.Agent) (Request, error) {
-	delegation, web, browser, workspace := row.Delegation, row.Web, row.Browser, row.Workspace
-	req := Request{
-		Name: row.Name, Description: row.Description, Kind: Kind(row.Kind), Instructions: row.Instructions,
-		Model:   ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
-		Pattern: row.Pattern, MaxSteps: row.MaxSteps, SteerContinuations: row.SteerContinuations,
-		Parser: row.Parser, TokenBudget: row.TokenBudget, Delegation: &delegation, Web: &web,
-		Browser: &browser, Workspace: &workspace,
-	}
-
-	if row.OutputSchema != nil {
-		var o OutputSchema
-		if err := json.Unmarshal(row.OutputSchema, &o); err != nil {
-			return Request{}, err
-		}
-		req.OutputSchema = &o
-	}
-
-	if row.ParserModelName != nil {
-		req.ParserModel = &ParserModel{Name: *row.ParserModelName, MaxTokens: row.ParserMaxTokens, Temperature: row.ParserTemperature}
-	}
-
-	return req, nil
-}
-
-func UpdateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
-	return db.UpdateAgentParams{
-		ID: id, Name: c.Name, Description: c.Description, Instructions: c.Instructions,
-		ModelName: c.ModelName, MaxTokens: c.MaxTokens, Temperature: c.Temperature,
-		Pattern: c.Pattern, MaxSteps: c.MaxSteps, SteerContinuations: c.SteerContinuations,
-		OutputSchema: c.OutputSchema, Parser: c.Parser,
-		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
-		TokenBudget: c.TokenBudget, Delegation: c.Delegation, Web: c.Web, Browser: c.Browser,
-		Workspace: c.Workspace,
-	}
-}
-
-// Regrant replaces what an agent may reach with what req grants it.
-func Regrant(ctx context.Context, q Queries, row db.Agent, req Request) error {
-	if err := q.ClearAgentMCPServers(ctx, row.ID); err != nil {
-		return err
-	}
-	if err := q.ClearAgentSkills(ctx, row.ID); err != nil {
-		return err
-	}
-	if err := q.ClearAgentDelegates(ctx, row.ID); err != nil {
-		return err
-	}
-	return Grant(ctx, q, row, req)
-}
-
-func Grant(ctx context.Context, q Queries, row db.Agent, req Request) error {
-	for _, g := range req.MCPServers {
-		err := q.AddAgentMCPServer(ctx, db.AddAgentMCPServerParams{
-			AgentID: row.ID, McpServerID: g.ID, TeamID: row.TeamID, Allow: g.Allow,
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	if len(req.Skills) > 0 {
-		if err := q.AddAgentSkills(ctx, db.AddAgentSkillsParams{AgentID: row.ID, SkillIds: req.Skills, TeamID: row.TeamID}); err != nil {
-			return err
-		}
-	}
-	if len(req.Delegates) == 0 {
-		return nil
-	}
-	return q.AddAgentDelegates(ctx, db.AddAgentDelegatesParams{AgentID: row.ID, DelegateIds: req.Delegates, TeamID: row.TeamID})
-}
-
-func requested(req Request) grants {
+func requested(req harness.Request) grants {
 	g := grants{servers: slices.Clone(req.MCPServers), skills: slices.Clone(req.Skills), delegates: slices.Clone(req.Delegates)}
-	slices.SortFunc(g.servers, func(a, b ServerGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+	slices.SortFunc(g.servers, func(a, b harness.ServerGrant) int { return bytes.Compare(a.ID[:], b.ID[:]) })
 	slices.SortFunc(g.skills, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
 	slices.SortFunc(g.delegates, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
 	return g
 }
 
 func stored(rows []db.AgentMcpServer, skills, delegates []uuid.UUID) grants {
-	servers := make([]ServerGrant, len(rows))
+	servers := make([]harness.ServerGrant, len(rows))
 	for i, row := range rows {
-		servers[i] = ServerGrant{ID: row.McpServerID, Allow: row.Allow}
+		servers[i] = harness.ServerGrant{ID: row.McpServerID, Allow: row.Allow}
 	}
 	return grants{servers: servers, skills: skills, delegates: delegates}
 }
@@ -487,10 +378,10 @@ func view(row db.Agent, g grants) (detail, error) {
 		ToolNotes:          g.notes,
 	}
 	if d.ToolNotes == nil {
-		d.ToolNotes = []ToolNote{}
+		d.ToolNotes = []harness.ToolNote{}
 	}
 	if d.MCPServers == nil {
-		d.MCPServers = []ServerGrant{}
+		d.MCPServers = []harness.ServerGrant{}
 	}
 	if d.Skills == nil {
 		d.Skills = []uuid.UUID{}
@@ -500,7 +391,7 @@ func view(row db.Agent, g grants) (detail, error) {
 	}
 
 	if row.OutputSchema != nil {
-		var o OutputSchema
+		var o harness.OutputSchema
 		if err := json.Unmarshal(row.OutputSchema, &o); err != nil {
 			return detail{}, err
 		}
@@ -508,7 +399,7 @@ func view(row db.Agent, g grants) (detail, error) {
 	}
 
 	if row.ParserModelName != nil {
-		d.ParserModel = &ParserModel{Name: *row.ParserModelName, MaxTokens: row.ParserMaxTokens, Temperature: row.ParserTemperature}
+		d.ParserModel = &harness.ParserModel{Name: *row.ParserModelName, MaxTokens: row.ParserMaxTokens, Temperature: row.ParserTemperature}
 	}
 
 	return d, nil
@@ -517,8 +408,8 @@ func view(row db.Agent, g grants) (detail, error) {
 func viewSummary(row db.Agent) summary {
 	return summary{
 		ID: row.ID, TeamID: row.TeamID, Name: row.Name, Description: row.Description,
-		Kind:      Kind(row.Kind),
-		Model:     ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
+		Kind:      harness.Kind(row.Kind),
+		Model:     harness.ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
 		Pattern:   row.Pattern,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
@@ -533,10 +424,10 @@ func viewListed(row db.ListAgentsByTeamRow) listed {
 	}
 }
 
-func toolNotes(rows []db.AgentToolNote) []ToolNote {
-	out := make([]ToolNote, len(rows))
+func toolNotes(rows []db.AgentToolNote) []harness.ToolNote {
+	out := make([]harness.ToolNote, len(rows))
 	for i, n := range rows {
-		out[i] = ToolNote{Server: n.McpServerID, Tool: n.Tool, Note: n.Note}
+		out[i] = harness.ToolNote{Server: n.McpServerID, Tool: n.Tool, Note: n.Note}
 	}
 	return out
 }

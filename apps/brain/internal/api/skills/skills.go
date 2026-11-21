@@ -19,6 +19,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -36,11 +37,11 @@ type Store interface {
 	GetSkillFile(ctx context.Context, arg db.GetSkillFileParams) (db.SkillFile, error)
 	DeleteSkill(ctx context.Context, id uuid.UUID) error
 	ReserveObjects(ctx context.Context, arg db.ReserveObjectsParams) error
-	InTx(ctx context.Context, fn func(Queries) error) error
+	InTx(ctx context.Context, fn func(harness.SkillQueries) error) error
 }
 
 type ObjectStore interface {
-	Objects
+	harness.SkillObjects
 	Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error)
 }
 

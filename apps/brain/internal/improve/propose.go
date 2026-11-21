@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -76,7 +76,7 @@ func asRefusal(err error) (refusal, bool) {
 	switch {
 	case errors.As(err, &r):
 		return r, true
-	case improvements.Refused(err):
+	case proposals.Refused(err):
 		return refusal{err.Error()}, true
 	}
 	return r, false
@@ -85,8 +85,8 @@ func asRefusal(err error) (refusal, bool) {
 // The marks a proposal from a conversation an outsider spoke in may not
 // carry.
 var widening = []string{
-	improvements.MarkWidensAccess, improvements.MarkWidensReach,
-	improvements.MarkRaisesCost, improvements.MarkChangesCode,
+	proposals.MarkWidensAccess, proposals.MarkWidensReach,
+	proposals.MarkRaisesCost, proposals.MarkChangesCode,
 }
 
 // propose is the propose_change tool: the proposal built, held to every
@@ -134,7 +134,7 @@ func (t *passTools) proposeOnce(ctx context.Context, raw json.RawMessage) (uuid.
 	n.RunIDs, n.PassID, n.Outsider = runs, &t.pass.ID, t.material.outsider
 	sig := in.Signature
 	n.Signature = &sig
-	if err := improvements.Check(n.Kind, n.Before, n.After); err != nil {
+	if err := proposals.Check(n.Kind, n.Before, n.After); err != nil {
 		return uuid.UUID{}, err
 	}
 	if err := t.guard(ctx, n); err != nil {
@@ -175,9 +175,9 @@ func (t *passTools) parse(raw json.RawMessage) (proposeArgs, []uuid.UUID, error)
 // guard holds a built proposal to what the pass may change: nothing that
 // widens an agent after an outsider spoke in what the pass read, and one
 // change to a target a pass.
-func (t *passTools) guard(ctx context.Context, n improvements.Proposed) error {
+func (t *passTools) guard(ctx context.Context, n proposals.Proposed) error {
 	if n.Outsider {
-		for _, m := range improvements.Marks(n.Kind, n.Before, n.After) {
+		for _, m := range proposals.Marks(n.Kind, n.Before, n.After) {
 			if slices.Contains(widening, m) {
 				return refused("someone outside the team spoke in a run this pass read, and it %s: such a change is never proposed from those runs", strings.ReplaceAll(m, "_", " "))
 			}
@@ -197,7 +197,7 @@ func (t *passTools) guard(ctx context.Context, n improvements.Proposed) error {
 // found one run's specifics or could make nothing of the answer. A screen
 // that cannot be reached stops the pass, for its step to try again: no
 // proposal reaches a person unscreened, and an outage is not a refusal.
-func (t *passTools) screenIt(ctx context.Context, settings db.GetImprovementSettingsRow, n improvements.Proposed, in proposeArgs) error {
+func (t *passTools) screenIt(ctx context.Context, settings db.GetImprovementSettingsRow, n proposals.Proposed, in proposeArgs) error {
 	if t.haltIfOverLocked() {
 		// A screen it cannot pay for would be a proposal it cannot keep.
 		return refused("the pass has spent its tokens: finish with your report")
@@ -224,7 +224,7 @@ func (t *passTools) screenIt(ctx context.Context, settings db.GetImprovementSett
 // on the same pattern with the same kind of change to the same target. It
 // is screened and paid for, so a limit reached meanwhile does not undo it;
 // a pass failed as lost meanwhile does, since another may have begun.
-func (t *passTools) store(ctx context.Context, n improvements.Proposed) (uuid.UUID, error) {
+func (t *passTools) store(ctx context.Context, n proposals.Proposed) (uuid.UUID, error) {
 	ctx, release := lasting(ctx)
 	defer release()
 	var stored db.ImprovementProposal
@@ -236,7 +236,7 @@ func (t *passTools) store(ctx context.Context, n improvements.Proposed) (uuid.UU
 			return err
 		}
 		var err error
-		if stored, err = improvements.Create(ctx, q, n); err != nil {
+		if stored, err = proposals.Create(ctx, q, n); err != nil {
 			return err
 		}
 		return q.WithdrawSupersededProposals(ctx, db.WithdrawSupersededProposalsParams{

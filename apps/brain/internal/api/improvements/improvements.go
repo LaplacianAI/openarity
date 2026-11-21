@@ -16,6 +16,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -48,10 +49,10 @@ type handler struct {
 	logger  *slog.Logger
 	reads   Reads
 	authz   api.Authorizer
-	decider Decider
+	decider proposals.Decider
 }
 
-func New(logger *slog.Logger, reads Reads, a api.Authorizer, d Decider) *api.Router {
+func New(logger *slog.Logger, reads Reads, a api.Authorizer, d proposals.Decider) *api.Router {
 	h := &handler{logger: logger, reads: reads, authz: a, decider: d}
 
 	r := api.NewRouter("/teams")
@@ -75,20 +76,20 @@ type runRef struct {
 }
 
 type view struct {
-	ID         uuid.UUID `json:"id"`
-	Kind       string    `json:"kind"`
-	Status     string    `json:"status"`
-	Agent      ref       `json:"agent"`
-	Skill      *ref      `json:"skill"`
-	Why        string    `json:"why"`
-	Hypothesis string    `json:"hypothesis"`
-	Scope      string    `json:"scope"`
-	Signature  *string   `json:"signature"`
-	Marks      []string  `json:"marks"`
-	Reaches    []ref     `json:"reaches"`
-	Changes    []Change  `json:"changes"`
-	Runs       []runRef  `json:"runs"`
-	Outsider   bool      `json:"outsider"`
+	ID         uuid.UUID          `json:"id"`
+	Kind       string             `json:"kind"`
+	Status     string             `json:"status"`
+	Agent      ref                `json:"agent"`
+	Skill      *ref               `json:"skill"`
+	Why        string             `json:"why"`
+	Hypothesis string             `json:"hypothesis"`
+	Scope      string             `json:"scope"`
+	Signature  *string            `json:"signature"`
+	Marks      []string           `json:"marks"`
+	Reaches    []ref              `json:"reaches"`
+	Changes    []proposals.Change `json:"changes"`
+	Runs       []runRef           `json:"runs"`
+	Outsider   bool               `json:"outsider"`
 	// The improver pass that wrote it; null for one written otherwise.
 	PassID     *uuid.UUID `json:"pass_id"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -204,7 +205,7 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Action != actionApprove && req.Action != actionReject && req.Action != actionRevert {
+	if req.Action != proposals.ActionApprove && req.Action != proposals.ActionReject && req.Action != proposals.ActionRevert {
 		http.Error(w, "action must be approve, reject or revert", http.StatusBadRequest)
 		return
 	}
@@ -217,8 +218,8 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	// the approve permission the route already checked. Rejecting writes
 	// nothing to the agent or skill, so approve alone decides it.
 	var needs []authz.Action
-	if req.Action != actionReject {
-		needs = writesFor(Kind(row.Kind))
+	if req.Action != proposals.ActionReject {
+		needs = writesFor(proposals.Kind(row.Kind))
 	}
 	for _, need := range needs {
 		if !h.can(r, u, teamID, need) {
@@ -228,16 +229,14 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.decider.Decide(r.Context(), teamID, row.ID, u.ID, req.Action)
-	var rule ruleError
-	var state errState
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		http.Error(w, "not found", http.StatusNotFound)
 		return
-	case errors.Is(err, errChanged):
+	case errors.Is(err, proposals.ErrChanged):
 		http.Error(w, changedMessage(targetWord(row), req.Action), http.StatusConflict)
 		return
-	case errors.As(err, &state), errors.As(err, &rule):
+	case proposals.WrongState(err), proposals.Refused(err):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case err != nil:
@@ -261,20 +260,20 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 // changedMessage says why a decision on a target changed since was refused,
 // and what is left to do.
 func changedMessage(target, action string) string {
-	if action == actionRevert {
+	if action == proposals.ActionRevert {
 		return "the " + target + " changed since this was applied, so it cannot be put back automatically; undo the change by hand"
 	}
 	return "the " + target + " changed since this was proposed, so it cannot be applied; reject it"
 }
 
-func writesFor(k Kind) []authz.Action {
+func writesFor(k proposals.Kind) []authz.Action {
 	switch k {
-	case KindSkillEdit:
+	case proposals.KindSkillEdit:
 		return []authz.Action{skillWrite}
-	case KindSkillNew:
+	case proposals.KindSkillNew:
 		return []authz.Action{agentWrite, skillWrite}
-	case KindInstructions, KindDescription, KindSkillGrant, KindSkillDrop, KindServerGrant, KindServerDrop,
-		KindToolsNarrow, KindBuiltinTool, KindToolNote, KindLimits, KindDelegation, KindPattern:
+	case proposals.KindInstructions, proposals.KindDescription, proposals.KindSkillGrant, proposals.KindSkillDrop, proposals.KindServerGrant, proposals.KindServerDrop,
+		proposals.KindToolsNarrow, proposals.KindBuiltinTool, proposals.KindToolNote, proposals.KindLimits, proposals.KindDelegation, proposals.KindPattern:
 		return []authz.Action{agentWrite}
 	}
 	// A kind this does not know needs both, which is the most a change can.
@@ -315,12 +314,12 @@ func (h *handler) find(w http.ResponseWriter, r *http.Request, u *auth.User) (db
 
 func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal) (view, error) {
 	ctx := r.Context()
-	p, err := decode(row)
+	p, err := proposals.Decode(row)
 	if err != nil {
 		return view{}, err
 	}
 
-	agentIDs, skillIDs, serverIDs := ids(p)
+	agentIDs, skillIDs, serverIDs := proposals.IDs(p)
 	agentIDs = append(agentIDs, row.AgentID)
 	if row.SkillID != nil {
 		skillIDs = append(skillIDs, *row.SkillID)
@@ -332,9 +331,9 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 
 	v := view{
 		ID: row.ID, Kind: row.Kind, Status: row.Status,
-		Agent: ref{ID: row.AgentID, Name: n.of(n.agents, row.AgentID)},
+		Agent: ref{ID: row.AgentID, Name: n.Agent(row.AgentID)},
 		Why:   row.Why, Hypothesis: row.Hypothesis, Scope: row.Scope, Signature: row.Signature,
-		Marks: Marks(Kind(row.Kind), p.Before, p.After), Reaches: []ref{}, Changes: changesOf(p, n),
+		Marks: proposals.Marks(proposals.Kind(row.Kind), p.Before, p.After), Reaches: []ref{}, Changes: proposals.Changes(p, n),
 		Runs: []runRef{}, Outsider: row.Outsider, PassID: row.PassID, CreatedAt: row.CreatedAt,
 		DecidedBy: row.DecidedBy, DecidedAt: row.DecidedAt, RevertedBy: row.RevertedBy, RevertedAt: row.RevertedAt,
 	}
@@ -342,7 +341,7 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 		v.Marks = []string{}
 	}
 	if row.SkillID != nil {
-		v.Skill = &ref{ID: *row.SkillID, Name: n.of(n.skills, *row.SkillID)}
+		v.Skill = &ref{ID: *row.SkillID, Name: n.Skill(*row.SkillID)}
 		holders, err := h.reads.ListAgentsHoldingSkill(ctx, *row.SkillID)
 		if err != nil {
 			return view{}, err
@@ -371,28 +370,28 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 	return v, nil
 }
 
-func (h *handler) names(ctx context.Context, teamID uuid.UUID, agentIDs, skillIDs, serverIDs []uuid.UUID) (names, error) {
-	n := names{agents: map[uuid.UUID]string{}, skills: map[uuid.UUID]string{}, servers: map[uuid.UUID]string{}}
+func (h *handler) names(ctx context.Context, teamID uuid.UUID, agentIDs, skillIDs, serverIDs []uuid.UUID) (proposals.Names, error) {
+	n := proposals.Names{Agents: map[uuid.UUID]string{}, Skills: map[uuid.UUID]string{}, Servers: map[uuid.UUID]string{}}
 	as, err := h.reads.ListTeamAgentNames(ctx, db.ListTeamAgentNamesParams{TeamID: teamID, Ids: agentIDs})
 	if err != nil {
-		return names{}, err
+		return proposals.Names{}, err
 	}
 	for _, a := range as {
-		n.agents[a.ID] = a.Name
+		n.Agents[a.ID] = a.Name
 	}
 	ss, err := h.reads.ListTeamSkillNames(ctx, db.ListTeamSkillNamesParams{TeamID: teamID, Ids: skillIDs})
 	if err != nil {
-		return names{}, err
+		return proposals.Names{}, err
 	}
 	for _, s := range ss {
-		n.skills[s.ID] = s.Name
+		n.Skills[s.ID] = s.Name
 	}
 	ms, err := h.reads.ListTeamServerNames(ctx, db.ListTeamServerNamesParams{TeamID: teamID, Ids: serverIDs})
 	if err != nil {
-		return names{}, err
+		return proposals.Names{}, err
 	}
 	for _, m := range ms {
-		n.servers[m.ID] = m.Name
+		n.Servers[m.ID] = m.Name
 	}
 	return n, nil
 }

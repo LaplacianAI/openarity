@@ -86,14 +86,14 @@ apps/brain/
     authorize.go       the Guard: one check per route, chosen by its scope
     <domain>/          one package per domain, each its own Router
       <domain>.go      handler, New, the handlers
-      schema.go        request and response structs — the wire contract
+      schema.go        request and response structs — the wire contract (an agent's request shape is harness.Request)
     runs/              start, read, cancel and follow a run; list a team's runs; events.go is the stream; feedback.go a member's 👍/👎 and a run's judged outcome
     sessions/          read a conversation; start one and write in it on the dashboard; follow its stream
     loops/             the loops an agent may choose, which are the runner's
     blueprints/        a team's servers, skills, agents and approval rules (ask or deny, only ever stricter) in one document: export, plan (pure), apply in one tx; the builder's proposals
     teamsettings/      a team's model, web search, self-improvement and compaction
     approvals/         what agents asked a person: list, read, answer (through the runtime's Decide); a team's approval settings and rules
-    improvements/      changes a team's agents propose to their own harness: before/after snapshots, the rules per kind, approve, reject, revert
+    improvements/      the routes for changes a team's agents propose to their own harness: list, read, approve, reject, revert, and the improver's passes
     teamsummary/       the Home counts: one statement, one snapshot
   internal/gateway/    a provider's webhook in, normalised messages out; replies back out
     providertest/      the conformance suite every adapter runs
@@ -110,6 +110,8 @@ apps/brain/
     inmemory/          the in-process fallback; attachments die with the process
   internal/skill/      a skill as the Agent Skills specification lays it out
     hub/               importing one: GitHub, or a zip from an allowed host
+  internal/harness/    an agent's harness as stored: its spec and the rules it is held to, its row and grants, a skill's files reserved and written
+  internal/proposals/  a change to a harness: the kinds and their rules, before/after snapshots, create, apply and revert in one transaction, the change list
   internal/approval/   the approval policy, pure: a call's class, allow, ask or deny, and the summary a person reads
   internal/discovery/  asking an MCP server for its tools, and what it may reach
   internal/mcpregistry/ looking MCP servers up in a registry with the official registry's API

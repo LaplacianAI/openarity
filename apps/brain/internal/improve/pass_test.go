@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -291,7 +291,7 @@ func TestASkillChangeMustChangeSomething(t *testing.T) {
 // Every kind a pass may propose has its builder.
 func TestEveryKindIsBuilt(t *testing.T) {
 	for _, k := range kinds {
-		if _, ok := agentEdits[improvements.Kind(k)]; !ok && k != "skill_edit" {
+		if _, ok := agentEdits[proposals.Kind(k)]; !ok && k != "skill_edit" {
 			t.Errorf("kind %s has no builder", k)
 		}
 	}
