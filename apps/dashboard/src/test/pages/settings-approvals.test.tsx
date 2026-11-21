@@ -359,6 +359,31 @@ it("names a browser tool, and says what a rule on the open covers", async () => 
   });
 });
 
+it("names a workspace's command, and says why it asks", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "POST /teams/{id}/approval-rules": { body: { ...RULE, id: "ru7" } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
+
+  await chooseServer(section, "Built-in tools");
+  await choose(within(section).getByLabelText("Tool"), "Bash");
+  expect(
+    within(section).getByText(
+      "Runs a command, which can reach any public host, so it asks wherever changes ask.",
+    ),
+  ).toBeInTheDocument();
+  await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
+    target_kind: "tool",
+    target: "Bash",
+  });
+});
+
 it("offers someone else's answer only for a rule that asks", async () => {
   const seen = brain({
     ...team(["team:settings"]),

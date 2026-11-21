@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
@@ -60,6 +61,7 @@ type Builder struct {
 	search         *SearchDeps
 	fetch          *FetchDeps
 	browsers       *BrowserDeps
+	workspaces     *WorkspaceDeps
 	delegates      *DelegateDeps
 	workshop       Workshop
 	registry       Registry
@@ -153,9 +155,13 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	// A browser runs a page's scripts and acts on it, so it is a grant of its
 	// own. The builder is never the hub and has no agent, so it has none.
 	browse := (run.Hub || a.Browser) && settings.BrowserProvider != noBrowserProvider
+	// A workspace is the agent's own grant, never the hub's: the orchestrator
+	// hands work to agents that hold the tools.
+	work := a.Workspace && !run.Hub && !run.Builder && b.workspaces != nil &&
+		settings.SandboxProvider != string(sandbox.None)
 	var held catalogue
 	if a.ID != uuid.Nil {
-		held, err = b.tools(ctx, a.ID, l.Narrow, run.Hub, web, browse, gates, &built)
+		held, err = b.tools(ctx, a.ID, l.Narrow, reservedFor{hub: run.Hub, web: web, browse: browse, work: work}, gates, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -258,6 +264,28 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		built.Spec.Tools = append(built.Spec.Tools, gated...)
 	}
 
+	switch {
+	case work:
+		ws := &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID}
+		for _, t := range ws.tools() {
+			built.answerable[t.Name] = t
+			gated, refused := gates.gate(t, target{name: t.Name, class: workspaceClass(t.Name)})
+			if refused != nil {
+				built.Unavailable = append(built.Unavailable, *refused)
+				continue
+			}
+			built.Spec.Tools = append(built.Spec.Tools, gated)
+		}
+	case a.Workspace && !run.Hub && !run.Builder:
+		reason := "the team has no sandbox, so its agents have no workspace: choose one in Settings"
+		if b.workspaces == nil {
+			reason = "this brain's secret store is read-only, so it keeps no sandbox room's token and its agents have no workspace"
+		}
+		for _, n := range WorkspaceToolNames {
+			built.Unavailable = append(built.Unavailable, Unavailable{Name: n, Reason: reason})
+		}
+	}
+
 	if a.ID != uuid.Nil {
 		built.Spec.Skills, err = b.skills(ctx, run.TeamID, a.ID, l.Narrow)
 		if err != nil {
@@ -339,7 +367,7 @@ type catalogue struct {
 	byServer map[string][]uuid.UUID
 }
 
-func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hub, web, browse bool, gates *policy, built *Built) (catalogue, error) {
+func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, r reservedFor, gates *policy, built *Built) (catalogue, error) {
 	grants, err := b.store.ListGrantedMCPServers(ctx, agentID)
 	if err != nil {
 		return catalogue{}, fmt.Errorf("reading the agent's MCP servers: %w", err)
@@ -409,7 +437,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 			if !n.keepsTool(name) {
 				continue
 			}
-			if reserved(name, hub, web, browse) {
+			if reserved(name, r) {
 				built.Unavailable = append(built.Unavailable, Unavailable{
 					Name:   name,
 					Reason: fmt.Sprintf("the MCP server %q offers a tool named %s, which is the brain's own", s.Name, name),
@@ -445,7 +473,11 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, hu
 // client checks it.
 var toolNameShape = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
-func reserved(name string, hub, web, browse bool) bool {
+// reservedFor is which of the brain's own tools a run holds, whose names an
+// MCP server's tool may not take.
+type reservedFor struct{ hub, web, browse, work bool }
+
+func reserved(name string, r reservedFor) bool {
 	switch name {
 	// Every run compacts, and the SDK refuses a second read_output.
 	case GraphToolName, DelegateToolName, agent.ReadOutputToolName, AttachmentsToolName, ReadAttachmentToolName:
@@ -455,12 +487,15 @@ func reserved(name string, hub, web, browse bool) bool {
 	case agent.DescribeToolsName, agent.CallToolName, agent.SkillToolName, agent.SkillResourceToolName:
 		return true
 	case PlanToolName:
-		return hub
+		return r.hub
 	case WebSearchToolName, WebFetchToolName:
-		return web
+		return r.web
 	}
 	if slices.Contains(BrowserToolNames, name) {
-		return browse
+		return r.browse
+	}
+	if slices.Contains(WorkspaceToolNames, name) {
+		return r.work
 	}
 	return false
 }

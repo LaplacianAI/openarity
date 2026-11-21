@@ -7,6 +7,7 @@ one binary, roles as arguments:
 | --- | --- |
 | `sandbox serve` | sandboxd, the optional self-hosted provider: rooms on a rootless Docker daemon, an egress guard for each, and a proxy to their ports |
 | `sandbox shim` | Inside a sandbox: serves an MCP server that speaks stdio over Streamable HTTP, so the brain can reach it at a URL |
+| `sandbox workspace` | Inside a sandbox: an agent's Bash, Read, Write, Edit, Glob and Grep, over HTTP behind the room's token |
 
 The brain never imports this module and this module never imports the brain.
 They meet only over HTTP: the brain asks a sandbox provider (E2B, Daytona, or
@@ -28,13 +29,18 @@ apps/sandbox/
   cmd/sandbox/
     main.go         run(): parse, then the role; the shim serves until its server exits
     command.go      argument parsing: pure, no dependencies; serve's settings from the environment
+  internal/workspace/
+    exec.go         a command in its own process group, killed when it ends or times out; each output's two ends kept
+    files.go        read (numbered lines, binary refused), write, edit (one match unless replace_all)
+    search.go       glob with **, grep with RE2; .git and node_modules left out
+    handler.go      the routes, the bearer token, a mistake the model can fix as 422
   internal/shim/
     child.go        the server on stdio: one MCP session, ids of the shim's own, answers routed back
     sessions.go     the callers sharing it: session ids, idle expiry, requests in flight
     handler.go      the HTTP side: POST, DELETE, the bearer token, /healthz
   internal/api/     sandboxd's HTTP: the rooms API (bearer), the proxy to a room's port (X-Sandboxd-Token)
   internal/rooms/   rooms on Docker: create, start, delete, the memory budget, the image allow-list and pulls, Harden (every container's fixed settings)
-  internal/guard/   the egress guard: a listener per room and port, SNI routing, the private-address refusal
+  internal/guard/   the egress guard: a listener per room and port, SNI routing, the private-address refusal; proxy.go, a public room's forward proxy
   internal/docker/  the Engine API over the unix socket, with net/http
   internal/integration/  tests against a real daemon; skipped unless SANDBOXD_TEST_DOCKER names its socket
   Dockerfile        sandboxd; the room image is deployment/sandbox/Dockerfile
@@ -76,6 +82,36 @@ sandboxd and `Reconcile` opens each room's egress guard again.
   brain's bearer token for the shim and must pass through untouched.
 - **Run it against a rootless daemon**, so root in a room is an unprivileged
   user on the host. `deployment/docker-compose.sandboxd.yml` says how.
+
+## How a public room reaches the internet
+
+A room asked for with `"network": "public"` lists no hosts. The guard serves a
+forward proxy on sandboxd's address in the room's network, on port 3128:
+CONNECT for TLS and anything that tunnels, an absolute URL for plain HTTP. The
+room's `HTTP(S)_PROXY` points at it. The room still has no route and no DNS of
+its own, so the proxy resolves every name and the guard's dialer refuses a
+private, loopback or link-local address after resolving. A program that
+ignores the proxy reaches nothing, which is a refusal, never a leak.
+
+A room asked for with `"workspace": true` gets a `/workspace` tmpfs it may run
+from, and `SANDBOXD_WORKSPACE_MEMORY` (1.5 GiB) and `SANDBOXD_WORKSPACE_CPUS`
+(one) in place of a server's limits. The budget sums each room's own memory.
+
+## How the workspace works
+
+`sandbox workspace` is the room's main process. Each command runs with
+`bash -c` in `/workspace`, as its own process group, and the whole group is
+killed when the command ends or times out (270 seconds at most), so what it
+leaves in the background goes with it; a process that leaves the group
+(`setsid`) lives until the room goes, within its limits. stdout and stderr
+each keep their first and last 128 KiB. The process is made undumpable
+(`workspace.Harden`) and the token is taken out of the environment before any
+command runs, so no command reads it from its own environment or from the
+workspace's `/proc/<pid>/environ`; the file tools refuse `/proc`, since they
+run in the workspace process itself.
+A path is relative to `/workspace` unless absolute, with its links followed:
+the room is the boundary, not the directory, and `/proc` the one place the
+file tools refuse.
 
 ## How the shim works
 

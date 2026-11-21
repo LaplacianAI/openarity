@@ -9,12 +9,14 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/daytona"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/e2b"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/mcproom"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/sandboxd"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/workroom"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 )
@@ -88,10 +90,26 @@ type roomSecrets struct {
 }
 
 // runCommandsInRooms lets the discoverer run a team's command servers in its
-// sandbox. When there is no keeper it leaves it refusing them.
-func runCommandsInRooms(d *discovery.Discoverer, cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) {
-	if k := newKeeper(cfg, logger, dbStore, secretStore); k != nil {
+// sandbox, and returns the keeper it made, for the workspaces to share. When
+// there is no keeper it leaves the discoverer refusing them, and returns nil.
+func runCommandsInRooms(d *discovery.Discoverer, cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) *keeper.Keeper {
+	k := newKeeper(cfg, logger, dbStore, secretStore)
+	if k != nil {
 		d.RunsCommandsIn(mcproom.New(k, secretStore))
+	}
+	return k
+}
+
+// newWorkspaces is sessions' workspaces in the keeper's rooms, called as a
+// command server's room is: at an address MCP_PRIVATE_NETWORKS may allow,
+// for sandboxd, and nowhere else private. With no keeper there are none.
+func newWorkspaces(k *keeper.Keeper, cfg *config.Config) *runtime.WorkspaceDeps {
+	if k == nil {
+		return nil
+	}
+	return &runtime.WorkspaceDeps{
+		Rooms:  workroom.New(k),
+		Client: discovery.PlainClient(discovery.Policy{Allow: reachable(cfg.MCPPrivateNetworks)}),
 	}
 }
 

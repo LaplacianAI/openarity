@@ -124,6 +124,8 @@ func TestIsPrivate(t *testing.T) {
 	for _, a := range []string{
 		"10.0.0.1", "172.16.5.5", "192.168.1.1", "127.0.0.1", "169.254.169.254", "0.0.0.0",
 		"::1", "fe80::1", "fc00::1", "::ffff:127.0.0.1", "::ffff:10.1.1.1", "100.64.0.1", "224.0.0.1",
+		"240.0.0.1", "255.255.255.255", "64:ff9b::a00:1", "64:ff9b:1::a00:1", "2002:a00:1::1",
+		"2001:0:a00:1::1", "fec0::1", "100::1",
 	} {
 		if !isPrivate(netip.MustParseAddr(a)) {
 			t.Errorf("%s was allowed", a)
@@ -222,7 +224,7 @@ func TestOneHostOnAPortIsDialledWithoutReadingTheClient(t *testing.T) {
 	g := New(quiet())
 	g.dial = up.dial
 	port := freePort(t)
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}, false); err != nil {
 		t.Fatal(err)
 	}
 	defer g.Close("r1")
@@ -245,7 +247,7 @@ func TestSeveralHostsOnAPortAreToldApartBySNIAndTheHelloIsReplayed(t *testing.T)
 	g.dial = up.dial
 	port := freePort(t)
 	hosts := []Host{{"a.example.com", port}, {"b.example.com", port}}
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts, false); err != nil {
 		t.Fatal(err)
 	}
 	defer g.Close("r1")
@@ -269,7 +271,7 @@ func TestAnUnlistedNameOnASharedPortIsRefusedAndNeverDialled(t *testing.T) {
 	g.dial = up.dial
 	port := freePort(t)
 	hosts := []Host{{"a.example.com", port}, {"b.example.com", port}}
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), hosts, false); err != nil {
 		t.Fatal(err)
 	}
 	defer g.Close("r1")
@@ -297,7 +299,7 @@ func TestClosingARoomStopsItsListenersAndCutsConnections(t *testing.T) {
 	g := New(quiet())
 	g.dial = up.dial
 	port := freePort(t)
-	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}); err != nil {
+	if err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"imap.example.com", port}}, false); err != nil {
 		t.Fatal(err)
 	}
 	c := connect(t, port)
@@ -317,7 +319,7 @@ func TestClosingARoomStopsItsListenersAndCutsConnections(t *testing.T) {
 func TestOpenRefusesTwoPlaintextHostsOnOnePort(t *testing.T) {
 	t.Parallel()
 	g := New(quiet())
-	err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"a.example.com", 25}, {"b.example.com", 25}})
+	err := g.Open("r1", netip.MustParseAddr("127.0.0.1"), []Host{{"a.example.com", 25}, {"b.example.com", 25}}, false)
 	if err == nil {
 		g.Close("r1")
 		t.Fatal("opened")

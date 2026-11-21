@@ -91,6 +91,7 @@ const FIELD_WORDS: Record<string, string> = {
   delegation: "Delegation",
   web: "Can search the web and read pages",
   browser: "Can drive a browser",
+  workspace: "Can work in a workspace",
   skills: "Skills",
   delegates: "Agents it may hand work to",
   mcp_servers: "MCP servers",

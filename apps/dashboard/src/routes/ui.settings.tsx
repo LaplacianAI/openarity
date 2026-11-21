@@ -1671,6 +1671,21 @@ const BUILT_INS: ChoiceGroup<string>[] = [
       { value: "browser_screenshot", label: "browser_screenshot" },
     ],
   },
+  {
+    label: "Workspace",
+    options: [
+      {
+        value: "Bash",
+        label: "Bash",
+        hint: "Runs a command, which can reach any public host, so it asks wherever changes ask.",
+      },
+      { value: "Read", label: "Read" },
+      { value: "Write", label: "Write" },
+      { value: "Edit", label: "Edit" },
+      { value: "Glob", label: "Glob" },
+      { value: "Grep", label: "Grep" },
+    ],
+  },
 ];
 const BUILT_IN_NAMES = BUILT_INS.flatMap((g) => g.options.map((o) => o.value));
 // Not a UUID, so no server's id can be it.

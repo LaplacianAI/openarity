@@ -84,7 +84,11 @@ const (
 	fDelegates    = "delegates"
 	fWeb          = "web"
 	fBrowser      = "browser"
-	fNotes        = "notes"
+	// fWorkspace is named so that a proposal from before the field existed
+	// still compares equal, and is in no kind: an agent may not propose
+	// itself a shell. A person grants it.
+	fWorkspace = "workspace"
+	fNotes     = "notes"
 	// Any field of the agent this list does not name, which no kind may change.
 	fOther = "other"
 )
@@ -136,6 +140,7 @@ func agentDiff(a, b AgentState) []string {
 	add(fDelegates, jsonEqual(x.Delegates, y.Delegates))
 	add(fWeb, flag(x.Web) == flag(y.Web))
 	add(fBrowser, flag(x.Browser) == flag(y.Browser))
+	add(fWorkspace, flag(x.Workspace) == flag(y.Workspace))
 	add(fNotes, jsonEqual(a.Notes, b.Notes))
 	// Every field named above blanked, what is left must match: a field added
 	// to the agent later is refused by every kind until a kind names it.
@@ -150,7 +155,7 @@ func unnamed(r agents.Request) agents.Request {
 	r.Pattern, r.MaxSteps, r.SteerContinuations = "", 0, 0
 	r.OutputSchema, r.Parser, r.ParserModel = nil, false, nil
 	r.MCPServers, r.Skills, r.TokenBudget = nil, nil, nil
-	r.Delegation, r.Delegates, r.Web, r.Browser = nil, nil, nil, nil
+	r.Delegation, r.Delegates, r.Web, r.Browser, r.Workspace = nil, nil, nil, nil, nil
 	return r
 }
 

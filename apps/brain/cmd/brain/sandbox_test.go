@@ -111,6 +111,22 @@ func TestCommandServersRunOnlyWhereTheSecretStoreWrites(t *testing.T) {
 	}
 }
 
+// Workspaces share the command servers' keeper: where there is none, there
+// are none, and where there is one, the worker's builder is given them.
+func TestWorkspacesShareTheKeeperOrThereAreNone(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	if ws := newWorkspaces(runCommandsInRooms(newDiscoverer(cfg, readOnly{}, nil), cfg, quietLogger(), &store.Store{}, readOnly{}), cfg); ws != nil {
+		t.Errorf("workspaces %+v with no keeper", ws)
+	}
+	k := runCommandsInRooms(newDiscoverer(cfg, static.New(), nil), cfg, quietLogger(), &store.Store{}, static.New())
+	ws := newWorkspaces(k, cfg)
+	if ws == nil || ws.Rooms == nil || ws.Client == nil {
+		t.Fatalf("workspaces = %+v over a keeper", ws)
+	}
+}
+
 type readOnly struct{}
 
 func (readOnly) Get(_ context.Context, _, _ string) (string, error) { return "", secrets.ErrNotFound }

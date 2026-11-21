@@ -81,6 +81,11 @@ type Want struct {
 	// the database could test a guessed password against.
 	Secrets map[string]string `json:"-"`
 	Egress  []sandbox.HostPort
+	// Network and Workspace are the room's, as sandbox.Spec has them. They
+	// are left out of the hash when unset, so a room made before they
+	// existed is still the one wanted.
+	Network   sandbox.Network `json:",omitempty"`
+	Workspace bool            `json:",omitempty"`
 	// Port is the room's port that is served, Path the part of its address
 	// that callers use, and HealthPath what answers 200 when it is ready.
 	Port       int
@@ -96,6 +101,7 @@ type Store interface {
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 	GetSandboxRoom(ctx context.Context, arg db.GetSandboxRoomParams) (db.SandboxRoom, error)
 	TouchSandboxRoom(ctx context.Context, id uuid.UUID) error
+	TouchSandboxRoomByOwner(ctx context.Context, arg db.TouchSandboxRoomByOwnerParams) error
 	ReplaceSandboxRoom(ctx context.Context, old *db.SandboxRoom, arg db.CreateSandboxRoomParams) (db.SandboxRoom, error)
 	RecordDeletedSecret(ctx context.Context, arg db.RecordDeletedSecretParams) error
 	WithRoomLock(ctx context.Context, kind string, owner uuid.UUID, fn func(context.Context) error) error
@@ -356,6 +362,7 @@ func (k *Keeper) create(ctx context.Context, rooms sandbox.Rooms, o Owner, team 
 
 	roomID, err := rooms.Create(ctx, sandbox.Spec{
 		Image: w.Image, Env: env, Egress: w.Egress,
+		Network: w.Network, Workspace: w.Workspace,
 		Labels: map[string]string{
 			"openarity-team":       team.String(),
 			"openarity-owner-kind": o.Kind,
@@ -441,6 +448,14 @@ func (k *Keeper) forget(ctx context.Context, team uuid.UUID, path string) {
 	if err != nil {
 		k.logger.ErrorContext(ctx, "keeper: a room's token outlived its failed start", "team_id", team, "error", err)
 	}
+}
+
+// Touch marks the owner's room used now, so the sweep of idle rooms leaves
+// it. A caller that holds an endpoint calls it in place of Ensure on every
+// request: Ensure takes the owner's lock and asks the room whether it
+// answers, which a request about to be sent is about to find out anyway.
+func (k *Keeper) Touch(ctx context.Context, o Owner) error {
+	return k.store.TouchSandboxRoomByOwner(ctx, db.TouchSandboxRoomByOwnerParams{OwnerKind: o.Kind, OwnerID: o.ID})
 }
 
 // Delete deletes a room at a provider with the key it was made with, for the

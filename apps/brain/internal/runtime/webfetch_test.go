@@ -696,7 +696,7 @@ func TestTheWebNamesAreReservedOnlyOnAWebRun(t *testing.T) {
 		{"web_fetch", false, true, true},
 		{"fetch", true, true, false},
 	} {
-		if got := reserved(tc.name, tc.hub, tc.web, false); got != tc.want {
+		if got := reserved(tc.name, reservedFor{hub: tc.hub, web: tc.web}); got != tc.want {
 			t.Errorf("reserved(%s, hub %v, web %v) = %v, want %v", tc.name, tc.hub, tc.web, got, tc.want)
 		}
 	}

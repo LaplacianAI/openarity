@@ -157,6 +157,7 @@ const draft = {
   delegates: [] as string[],
   web: false,
   browser: false,
+  workspace: false,
 };
 
 describe("the draft as the API takes it", () => {
@@ -173,6 +174,7 @@ describe("the draft as the API takes it", () => {
       delegation: "none",
       web: false,
       browser: false,
+      workspace: false,
     });
   });
 
@@ -262,6 +264,7 @@ describe("the PUT for an edit", () => {
       delegation: "none",
       web: false,
       browser: false,
+      workspace: false,
     });
   });
 });
@@ -474,8 +477,70 @@ describe("defining an agent", () => {
       "Tools and skills",
       "Delegation",
       "The web",
+      "Workspace",
       "Limits",
     ]);
+  });
+
+  function withSandbox(provider: string) {
+    return {
+      "GET /teams/{id}/settings": {
+        body: {
+          model: null,
+          search: { provider: "none", url: null, key_set: false },
+          sandbox: { provider, url: null, key_set: provider !== "none" },
+          improvement: false,
+          compaction_messages: 40,
+          compaction_tokens_min: 50_000,
+          compaction_tokens_max: 60_000,
+          hub: null,
+        },
+      },
+    };
+  }
+
+  it("grants the workspace when it is switched on", async () => {
+    const seen = brain({
+      ...team(["agent:write"]),
+      ...registry,
+      ...withSandbox("e2b"),
+      "GET /teams/{id}/agents": { body: { items: [listed] } },
+      "POST /teams/{id}/agents": { status: 201, body: { ...stored, id: "a9", name: "reviewer" } },
+      "GET /teams/{id}/agents/{agentID}": { body: { ...stored, id: "a9", name: "reviewer" } },
+    });
+    at("/ui/agents/new");
+    await named();
+    await userEvent.click(screen.getByRole("switch", { name: "Can work in a workspace" }));
+    expect(await define(seen)).toMatchObject({ workspace: true });
+  });
+
+  // The grant can be set ahead of the sandbox; the form says it waits, and
+  // where to choose one, and says nothing to a team that has one.
+  it("says a workspace waits for a sandbox, and where to choose one", async () => {
+    brain({
+      ...team(["agent:write"]),
+      ...registry,
+      ...withSandbox("none"),
+      "GET /teams/{id}/agents": { body: { items: [] } },
+    });
+    at("/ui/agents/new");
+    const link = await screen.findByRole("link", { name: /choose a sandbox in team settings/i });
+    expect(link).toHaveAttribute("href", "/ui/settings");
+    expect(screen.getByText(/has no sandbox yet/)).toBeVisible();
+    expect(screen.getByRole("switch", { name: "Can work in a workspace" })).toBeEnabled();
+  });
+
+  it("says nothing of a sandbox to a team that has one", async () => {
+    brain({
+      ...team(["agent:write"]),
+      ...registry,
+      ...withSandbox("sandboxd"),
+      "GET /teams/{id}/agents": { body: { items: [] } },
+    });
+    at("/ui/agents/new");
+    await screen.findByRole("switch", { name: "Can work in a workspace" });
+    await waitFor(() => expect(screen.queryByText(/has no sandbox yet/)).toBeNull());
+    expect(screen.queryByRole("link", { name: /choose a sandbox/i })).toBeNull();
   });
 
   // The graph tool finds an agent by its description; the form says so where
@@ -648,6 +713,7 @@ describe("editing an agent", () => {
     delegation: "none",
     web: false,
     browser: false,
+    workspace: false,
   };
 
   function editing(

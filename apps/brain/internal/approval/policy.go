@@ -64,6 +64,9 @@ const (
 	// can submit a form, sign in or buy, and a page's own script can send
 	// what is typed without a submit.
 	Acts Builtin = "acts"
+	// Room reads or changes only the session's own sandbox room, which no one
+	// outside it sees: a workspace's files.
+	Room Builtin = "room"
 )
 
 // An Actor is who a run's calls are made for.
@@ -81,7 +84,7 @@ type Actor struct {
 // would be carried out for unseen.
 func ClassFor(b Builtin, a Actor) Class {
 	switch b {
-	case Looks:
+	case Looks, Room:
 		return Read
 	case Egress:
 		if a.CanSelf && !a.Unattended {
