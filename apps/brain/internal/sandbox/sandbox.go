@@ -108,4 +108,24 @@ var (
 	// ErrNotReady is a room that was made and did not answer in time. The
 	// room is deleted, and the next call starts another.
 	ErrNotReady = errors.New("the sandbox room did not start in time")
+	// ErrPreparing is a room that cannot be made yet, because what it starts
+	// from is still being built: an E2B team's template, the first time and
+	// after an upgrade. Nothing was made; a later call can be.
+	ErrPreparing = errors.New("the team's sandbox is still being prepared, which takes a few minutes " +
+		"the first time and after an upgrade; nothing ran, so try again in a few minutes")
+)
+
+// A Build is one build of an E2B team's room template, as E2B names it.
+type Build struct {
+	TemplateID string `json:"templateID"`
+	BuildID    string `json:"buildID"`
+}
+
+// BuildState is where a template's build is.
+type BuildState string
+
+const (
+	BuildRunning BuildState = "building"
+	BuildReady   BuildState = "ready"
+	BuildFailed  BuildState = "failed"
 )

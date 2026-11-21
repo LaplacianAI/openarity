@@ -64,3 +64,8 @@ sql:
             go_type:
               type: int64
               pointer: true
+
+        # sqlc would name the e2b_templates row E2bTemplate; the initialism
+        # keeps one case, as everywhere else.
+        rename:
+          e2b_template: E2BTemplate

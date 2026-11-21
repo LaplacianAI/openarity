@@ -54,8 +54,8 @@ const (
 	// RoomImage is the repository the room image is published to; a tag is
 	// added to it.
 	RoomImage = "ghcr.io/laplacianai/openarity-sandbox"
-	// E2BTemplate is the template an E2B team's rooms start from when it
-	// names none.
+	// E2BTemplate is the stem of the template the room image is built as in
+	// an E2B team's account (Images.E2BName).
 	E2BTemplate = "openarity-sandbox"
 )
 
@@ -128,29 +128,36 @@ type Images struct {
 }
 
 // For is the image a room starts from at a provider; template is the team's
-// E2B template, if it named one.
+// E2B template, if it named one. With none, an E2B room starts from the
+// template the brain builds of the room image (Templates).
 func (i Images) For(p sandbox.Provider, template string) string {
 	if p == sandbox.E2B {
 		if template != "" {
 			return template
 		}
-		return E2BTemplate
+		return i.E2BName()
 	}
 
-	ref := i.Override
-	if ref == "" {
-		tag := "latest"
-		if i.Commit != "" {
-			tag = "sha-" + i.Commit
-		}
-		ref = RoomImage + ":" + tag
-	}
+	ref := i.Ref()
 	if p == sandbox.Daytona {
 		// Daytona reads a bare name as a snapshot; this prefix says it is an
 		// image to build from.
 		return "image:" + ref
 	}
 	return ref
+}
+
+// Ref is the room image itself: the operator's, or the one published with
+// the brain's commit.
+func (i Images) Ref() string {
+	if i.Override != "" {
+		return i.Override
+	}
+	tag := "latest"
+	if i.Commit != "" {
+		tag = "sha-" + i.Commit
+	}
+	return RoomImage + ":" + tag
 }
 
 // Keeper keeps rooms.
@@ -161,6 +168,9 @@ type Keeper struct {
 	probe   *http.Client
 	images  Images
 	logger  *slog.Logger
+	// templates builds an E2B team's room template; nil starts E2B rooms
+	// from the template's name without asking whether it is built.
+	templates *Templates
 
 	startTimeout time.Duration
 	pollEvery    time.Duration
@@ -185,6 +195,12 @@ func New(s Store, sec Secrets, connect Connect, probe *http.Client, images Image
 // asked. It is for tests, which cannot wait ninety seconds.
 func (k *Keeper) Starting(timeout, every time.Duration) *Keeper {
 	k.startTimeout, k.pollEvery = timeout, every
+	return k
+}
+
+// Building sets the builder of E2B teams' room templates.
+func (k *Keeper) Building(t *Templates) *Keeper {
+	k.templates = t
 	return k
 }
 
@@ -222,7 +238,10 @@ func (k *Keeper) ensure(ctx context.Context, o Owner, team uuid.UUID, w Want) (s
 		return sandbox.Endpoint{}, err
 	}
 
-	w.Image = k.image(w, cfg)
+	w.Image, err = k.image(ctx, team, w, cfg)
+	if err != nil {
+		return sandbox.Endpoint{}, err
+	}
 
 	old, err := k.store.GetSandboxRoom(ctx, db.GetSandboxRoomParams{OwnerKind: o.Kind, OwnerID: o.ID})
 	var row *db.SandboxRoom
@@ -519,24 +538,37 @@ func (c teamSandbox) owns(r *db.SandboxRoom) bool {
 		(r.ProviderUrl == nil) == (c.url == "") && (r.ProviderUrl == nil || *r.ProviderUrl == c.url)
 }
 
-func (k *Keeper) image(w Want, cfg teamSandbox) string {
+func (k *Keeper) image(ctx context.Context, team uuid.UUID, w Want, cfg teamSandbox) (string, error) {
 	if w.Image != "" {
-		return w.Image
+		return w.Image, nil
 	}
-	return k.images.For(cfg.provider, cfg.template)
+	if cfg.provider == sandbox.E2B && cfg.template == "" && k.templates != nil {
+		return k.templates.Image(ctx, team, cfg.keyID)
+	}
+	return k.images.For(cfg.provider, cfg.template), nil
 }
 
 // rooms is the client for a provider, with the key a team saved under keyID.
 // The key goes to the provider and nowhere else.
 func (k *Keeper) rooms(ctx context.Context, team uuid.UUID, p sandbox.Provider, url string, keyID uuid.UUID) (sandbox.Rooms, error) {
-	key, err := k.secrets.Get(ctx, secrets.Path(team, secrets.KindSandbox, keyID), KeyField)
+	key, err := sandboxKey(ctx, k.secrets, team, keyID)
 	if err != nil {
-		return nil, fmt.Errorf("reading the team's sandbox key: %w", err)
-	}
-	if key == "" {
-		return nil, fmt.Errorf("%w: the team's sandbox key is empty", secrets.ErrNotFound)
+		return nil, err
 	}
 	return k.connect(p, url, key)
+}
+
+// sandboxKey is the team's sandbox key saved under keyID. An empty one is
+// secrets.ErrNotFound, as a missing one is.
+func sandboxKey(ctx context.Context, s secrets.Store, team, keyID uuid.UUID) (string, error) {
+	key, err := s.Get(ctx, secrets.Path(team, secrets.KindSandbox, keyID), KeyField)
+	if err != nil {
+		return "", fmt.Errorf("reading the team's sandbox key: %w", err)
+	}
+	if key == "" {
+		return "", fmt.Errorf("%w: the team's sandbox key is empty", secrets.ErrNotFound)
+	}
+	return key, nil
 }
 
 // endpointOf is where a room's caller is sent: the provider's address of the
