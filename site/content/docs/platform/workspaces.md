@@ -57,7 +57,7 @@ interface alone, so one added later is held to the same:
 
 | Provider | How |
 | --- | --- |
-| sandboxd | The room has no route and no DNS of its own. Its HTTP and HTTPS go through sandboxd's proxy, which resolves every name and refuses a private, loopback, link-local or reserved address, and the IPv6 forms that carry one (NAT64, 6to4, Teredo). It refuses the mail ports (25, 465, 587), holds 64 connections a room, and cuts one idle for five minutes. A program that ignores `HTTP_PROXY` reaches nothing. Raw TCP and UDP do not leave |
+| sandboxd | The room has no route and no DNS of its own. Its HTTP and HTTPS go through sandboxd's proxy, which resolves every name and refuses a private, loopback, link-local or reserved address, and the IPv6 forms that carry one (NAT64, 6to4, Teredo). It refuses the mail ports (25, 465, 587), holds 64 connections out a room, its tunnels and plain HTTP requests together, and cuts a tunnel idle for five minutes. A program that ignores `HTTP_PROXY` reaches nothing. Raw TCP and UDP do not leave |
 | E2B | The private ranges are denied, and everything else is allowed |
 | Daytona cloud | Its runners are not on any network of yours |
 | Self-hosted Daytona | **Refused.** It can only allow up to ten address ranges, never deny, so it cannot keep a room off the network it runs on |
@@ -69,7 +69,14 @@ is behind its token.
 
 The room's token, which the brain sends with every call, is kept from what
 runs in the room: the workspace process is made undumpable, so no command
-reads its environment, and the file tools do not read `/proc`.
+reads its environment, and the file tools do not read `/proc`. That is
+proven on sandboxd by the provider contract. On E2B and Daytona it is not
+yet: their contract run is still to come. On both, the workspace's port is
+also behind the provider's own credential, which the brain holds and the
+room never does (E2B's traffic access token, Daytona's preview token), so a
+token read inside a room is not enough to call the workspace from outside.
+A provider whose commands run as root, or can `sudo`, keeps nothing in the
+room from them; the workspace warns when it starts as root.
 
 On sandboxd a workspace room has 1.5 GiB of memory, one CPU and a 512 MiB
 `/workspace`, set with `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS`

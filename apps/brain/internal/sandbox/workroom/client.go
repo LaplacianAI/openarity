@@ -160,6 +160,9 @@ func (c *Client) post(ctx context.Context, route string, body, out any) error {
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		// The call was taken; how it ended is not known.
 		return fmt.Errorf("%w: the answer broke off: %s", ErrNoAnswer, transport(err))
 	}
@@ -195,10 +198,14 @@ func (c *Client) post(ctx context.Context, route string, body, out any) error {
 // transport is a failed request's cause without the URL it was for.
 func transport(err error) string {
 	var ue *url.Error
-	if errors.As(err, &ue) && ue.Err != nil {
-		return ue.Err.Error()
+	if errors.As(err, &ue) {
+		if ue.Err != nil {
+			return ue.Err.Error()
+		}
+		return "the request failed"
 	}
-	return "the request failed"
+	// Not the request's own error, so it carries no URL: reading the answer.
+	return err.Error()
 }
 
 func firstLine(b []byte) string {

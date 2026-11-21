@@ -145,6 +145,7 @@ func TestCreateSendsTheTemplateEnvLabelsAndAPrivateNetwork(t *testing.T) {
 		Timeout    int               `json:"timeout"`
 		EnvVars    map[string]string `json:"envVars"`
 		Metadata   map[string]string `json:"metadata"`
+		Secure     *bool             `json:"secure"`
 		Network    struct {
 			AllowPublicTraffic *bool    `json:"allowPublicTraffic"`
 			AllowOut           []string `json:"allowOut"`
@@ -162,6 +163,9 @@ func TestCreateSendsTheTemplateEnvLabelsAndAPrivateNetwork(t *testing.T) {
 	}
 	if body.Network.AllowPublicTraffic == nil || *body.Network.AllowPublicTraffic {
 		t.Error("allowPublicTraffic must be sent, and false")
+	}
+	if body.Secure == nil || !*body.Secure {
+		t.Error("secure must be sent, and true: envd then wants its token from inside the room too")
 	}
 	if strings.Join(body.Network.DenyOut, ",") != "0.0.0.0/0" {
 		t.Errorf("denyOut = %v", body.Network.DenyOut)
@@ -424,6 +428,15 @@ func getOK(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestStartMapsFailures(t *testing.T) {
+	t.Run("the sandbox is not secure", func(t *testing.T) {
+		started := false
+		err := startWith(t, func(w http.ResponseWriter, _ *http.Request) { started = true }, func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, 200, map[string]any{"envdAccessToken": ""})
+		})
+		if err == nil || !strings.Contains(err.Error(), "not made secure") || started {
+			t.Fatalf("err = %v, started %v: a sandbox with no envd token must not be started in", err, started)
+		}
+	})
 	t.Run("the sandbox is gone", func(t *testing.T) {
 		err := startWith(t, nil, func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, 404, map[string]any{"code": 404, "message": "sandbox not found"})

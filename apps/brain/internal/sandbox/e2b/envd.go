@@ -91,9 +91,7 @@ func (c *Client) startProcess(ctx context.Context, r room, token string, argv []
 	req.Header.Set("Content-Type", "application/connect+json")
 	req.Header.Set("Connect-Protocol-Version", "1")
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(defaultUser+":")))
-	if token != "" {
-		req.Header.Set("X-Access-Token", token)
-	}
+	req.Header.Set("X-Access-Token", token)
 	secrets := []string{c.apiKey, token, r.Traffic}
 
 	resp, err := c.http.Do(req)
