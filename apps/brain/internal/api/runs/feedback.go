@@ -20,12 +20,9 @@ const maxNoteRunes = 1000
 
 // FeedbackStore is what a person's word on a run reads and writes.
 type FeedbackStore interface {
-	UpsertRunFeedback(ctx context.Context, arg db.UpsertRunFeedbackParams) (db.RunFeedback, error)
+	GiveRunFeedback(ctx context.Context, arg db.UpsertRunFeedbackParams) (db.RunFeedback, error)
 	DeleteRunFeedback(ctx context.Context, arg db.DeleteRunFeedbackParams) (int64, error)
-	GetRunFeedback(ctx context.Context, arg db.GetRunFeedbackParams) (db.RunFeedback, error)
-	CountRunFeedback(ctx context.Context, runID uuid.UUID) (db.CountRunFeedbackRow, error)
-	GetRunOutcome(ctx context.Context, runID uuid.UUID) (db.RunOutcome, error)
-	ReopenRunDigest(ctx context.Context, runID uuid.UUID) error
+	GetRunOutcomeView(ctx context.Context, arg db.GetRunOutcomeViewParams) (db.GetRunOutcomeViewRow, error)
 	ListMyFeedbackInSession(ctx context.Context, arg db.ListMyFeedbackInSessionParams) ([]db.ListMyFeedbackInSessionRow, error)
 }
 
@@ -47,13 +44,30 @@ type sessionFeedback struct {
 	feedbackView
 }
 
+type sessionFeedbackList struct {
+	Items []sessionFeedback `json:"items"`
+}
+
 // putFeedback records the caller's word on an answer, or replaces it. Only
-// on a top-level run, the one that answered, and only while the team has
-// improvement on: a team that has not opted in records nothing.
+// on a finished top-level run, the one that answered, and only while the
+// team has improvement on: a team that has not opted in records nothing.
 func (h *handler) putFeedback(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 	row, ok := h.feedbackTarget(w, r)
 	if !ok {
+		return
+	}
+	if !finished(row.Status) {
+		http.Error(w, "feedback is given once the run has finished", http.StatusConflict)
+		return
+	}
+	on, err := h.improving(r.Context(), row.TeamID)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the team's settings", err)
+		return
+	}
+	if !on {
+		http.Error(w, "self-improvement is off for this team, so feedback is not recorded", http.StatusConflict)
 		return
 	}
 	var req feedbackRequest
@@ -76,26 +90,22 @@ func (h *handler) putFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	saved, err := h.store.UpsertRunFeedback(r.Context(), db.UpsertRunFeedbackParams{
+	// A 👎 on a run judged good and left out of the sample reopens its
+	// digest, in the same transaction.
+	saved, err := h.store.GiveRunFeedback(r.Context(), db.UpsertRunFeedbackParams{
 		RunID: row.ID, TeamID: row.TeamID, UserID: u.ID, Value: req.Value, Note: req.Note, Via: req.Via,
 	})
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to save the feedback", err)
 		return
 	}
-	// A 👎 on a run judged good and left out of the sample: it is digested
-	// after all.
-	if req.Value == "down" {
-		if err := h.store.ReopenRunDigest(r.Context(), row.ID); err != nil {
-			api.Fail(w, h.logger, u, "failed to queue the run's digest", err)
-			return
-		}
-	}
 	h.logger.InfoContext(r.Context(), "Feedback given", "team_id", row.TeamID, "run_id", row.ID,
 		"value", req.Value, "via", req.Via, "user_id", u.ID)
 	api.WriteJSON(w, h.logger, http.StatusOK, feedbackView{Value: saved.Value, Note: saved.Note, UpdatedAt: saved.UpdatedAt})
 }
 
+// deleteFeedback withdraws the caller's word, whether or not the team still
+// has improvement on: a word that still counts can always be taken back.
 func (h *handler) deleteFeedback(w http.ResponseWriter, r *http.Request) {
 	u := api.Caller(r)
 	row, ok := h.feedbackTarget(w, r)
@@ -109,8 +119,8 @@ func (h *handler) deleteFeedback(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// feedbackTarget is the run feedback is given on: one the caller may read,
-// top-level, in a team with improvement on.
+// feedbackTarget is the run feedback is about: one the caller may read,
+// and top-level.
 func (h *handler) feedbackTarget(w http.ResponseWriter, r *http.Request) (db.Run, bool) {
 	row, _, ok := h.visible(w, r)
 	if !ok {
@@ -120,16 +130,13 @@ func (h *handler) feedbackTarget(w http.ResponseWriter, r *http.Request) (db.Run
 		http.Error(w, "feedback is given on the run that answered, not on work it handed to another agent", http.StatusConflict)
 		return db.Run{}, false
 	}
-	on, err := h.improving(r.Context(), row.TeamID)
-	if err != nil {
-		api.Fail(w, h.logger, api.Caller(r), "failed to read the team's settings", err)
-		return db.Run{}, false
-	}
-	if !on {
-		http.Error(w, "self-improvement is off for this team, so feedback is not recorded", http.StatusConflict)
-		return db.Run{}, false
-	}
 	return row, true
+}
+
+// finished is whether a run has ended, the only time its answer can be
+// weighed.
+func finished(status string) bool {
+	return status == "succeeded" || status == "failed" || status == "cancelled"
 }
 
 func (h *handler) improving(ctx context.Context, teamID uuid.UUID) (bool, error) {
@@ -173,7 +180,7 @@ func (h *handler) listSessionFeedback(w http.ResponseWriter, r *http.Request) {
 	for _, f := range rows {
 		items = append(items, sessionFeedback{RunID: f.RunID, feedbackView: feedbackView{Value: f.Value, Note: f.Note, UpdatedAt: f.UpdatedAt}})
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, map[string]any{"items": items})
+	api.WriteJSON(w, h.logger, http.StatusOK, sessionFeedbackList{Items: items})
 }
 
 // outcomeView is a judged run's outcome as whoever may read the run sees it.
@@ -192,31 +199,30 @@ type feedbackCount struct {
 	Down int32 `json:"down"`
 }
 
-// outcomeOf is a run's judged outcome and the caller's feedback on it; both
-// nil for a run not judged and not answered.
+// outcomeOf is a run's judged outcome and the caller's feedback on it,
+// read at once; each nil when there is none.
 func (h *handler) outcomeOf(ctx context.Context, runID, userID uuid.UUID) (*outcomeView, *feedbackView, error) {
-	var mine *feedbackView
-	f, err := h.store.GetRunFeedback(ctx, db.GetRunFeedbackParams{RunID: runID, UserID: userID})
-	switch {
-	case err == nil:
-		mine = &feedbackView{Value: f.Value, Note: f.Note, UpdatedAt: f.UpdatedAt}
-	case !errors.Is(err, pgx.ErrNoRows):
+	v, err := h.store.GetRunOutcomeView(ctx, db.GetRunOutcomeViewParams{RunID: runID, UserID: userID})
+	if err != nil {
 		return nil, nil, err
 	}
-	o, err := h.store.GetRunOutcome(ctx, runID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	var mine *feedbackView
+	if v.MyValue != nil && v.MyNote != nil && v.MyUpdatedAt != nil {
+		mine = &feedbackView{Value: *v.MyValue, Note: *v.MyNote, UpdatedAt: *v.MyUpdatedAt}
+	}
+	if v.Verdict == nil || v.Implicit == nil || v.JudgedAt == nil {
 		return nil, mine, nil
 	}
-	if err != nil {
-		return nil, nil, err
-	}
-	counts, err := h.store.CountRunFeedback(ctx, runID)
-	if err != nil {
-		return nil, nil, err
-	}
 	return &outcomeView{
-		Verdict: o.Verdict, Missed: o.Missed, Why: o.Why, Implicit: o.Implicit,
-		Effective: string(improve.Effective(o.Verdict, o.Implicit, counts.Up, counts.Down)),
-		JudgedAt:  o.CreatedAt, Feedback: feedbackCount{Up: counts.Up, Down: counts.Down},
+		Verdict: *v.Verdict, Missed: deref(v.Missed), Why: deref(v.Why), Implicit: *v.Implicit,
+		Effective: string(improve.Effective(*v.Verdict, *v.Implicit, v.Up, v.Down)),
+		JudgedAt:  *v.JudgedAt, Feedback: feedbackCount{Up: v.Up, Down: v.Down},
 	}, mine, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

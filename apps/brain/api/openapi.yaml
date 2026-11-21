@@ -2789,8 +2789,8 @@ paths:
       summary: Give or change your 👍/👎 on a run's answer
       description: |
         Requires `run:write`, and the run must be visible to the caller. One
-        per person per run; giving it again replaces it. Only on a top-level
-        run, the one that answered, and only while the team has
+        per person per run; giving it again replaces it. Only on a finished
+        top-level run, the one that answered, and only while the team has
         `improvement` on. A signed-in member's word outranks the judge's
         verdict on this run; a 👎 also has the run digested if it was not.
       requestBody:
@@ -2815,7 +2815,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: A delegate's run, or self-improvement is off for the team
+          description: A delegate's run, a run not finished, or self-improvement is off for the team
           content:
             text/plain:
               schema:
@@ -2825,7 +2825,10 @@ paths:
       operationId: clearRunFeedback
       tags: [runs]
       summary: Remove your 👍/👎 on a run
-      description: Requires `run:write`, as giving it does. Removing none answers 204 too.
+      description: |
+        Requires `run:write`, as giving it does. Removing none answers 204
+        too. Allowed whether or not the team still has `improvement` on: a
+        word that still counts can always be taken back.
       responses:
         "204":
           description: Removed, or there was none
@@ -2838,7 +2841,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: A delegate's run, or self-improvement is off for the team
+          description: A delegate's run
           content:
             text/plain:
               schema:

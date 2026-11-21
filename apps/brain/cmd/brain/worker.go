@@ -133,5 +133,5 @@ func newJobs(
 // model endpoint the runs use.
 func newImproveJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store) *improve.Job {
 	judge := improve.NewJudge(openaicompat.Factory(), agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey})
-	return improve.NewJob(improve.NewChecker(dbStore, judge, logger))
+	return improve.NewJob(improve.NewChecker(dbStore, judge, logger), dbStore)
 }

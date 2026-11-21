@@ -19,8 +19,8 @@ import { cn } from "@/lib/utils";
 const VERDICTS: Record<RunVerdict, { word: string; tone: string; icon: LucideIcon }> = {
   done: { word: "Done", tone: "text-succeeded", icon: CircleCheck },
   partly: { word: "Partly done", tone: "text-waiting", icon: CircleAlert },
-  not_done: { word: "Not done", tone: "text-waiting", icon: CircleMinus },
-  wrong: { word: "Wrong", tone: "text-waiting", icon: TriangleAlert },
+  not_done: { word: "Not done", tone: "text-failed", icon: CircleMinus },
+  wrong: { word: "Wrong", tone: "text-failed", icon: TriangleAlert },
   cant_tell: { word: "Can't tell", tone: "text-cancelled", icon: CircleHelp },
 };
 

@@ -126,31 +126,6 @@ func (q *Queries) GetImprovementSettings(ctx context.Context, teamID uuid.UUID) 
 	return i, err
 }
 
-const getRunFeedback = `-- name: GetRunFeedback :one
-SELECT run_id, team_id, user_id, value, note, via, created_at, updated_at FROM run_feedback WHERE run_id = $1 AND user_id = $2
-`
-
-type GetRunFeedbackParams struct {
-	RunID  uuid.UUID
-	UserID uuid.UUID
-}
-
-func (q *Queries) GetRunFeedback(ctx context.Context, arg GetRunFeedbackParams) (RunFeedback, error) {
-	row := q.db.QueryRow(ctx, getRunFeedback, arg.RunID, arg.UserID)
-	var i RunFeedback
-	err := row.Scan(
-		&i.RunID,
-		&i.TeamID,
-		&i.UserID,
-		&i.Value,
-		&i.Note,
-		&i.Via,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getRunFinishedSeq = `-- name: GetRunFinishedSeq :one
 SELECT session_seq FROM run_events WHERE run_id = $1 AND kind = 'finished'
 `
@@ -187,6 +162,54 @@ func (q *Queries) GetRunOutcome(ctx context.Context, runID uuid.UUID) (RunOutcom
 		&i.Digest,
 		&i.DigestRound,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getRunOutcomeView = `-- name: GetRunOutcomeView :one
+SELECT o.verdict, o.missed, o.why, o.implicit, o.created_at AS judged_at,
+       (SELECT count(*) FILTER (WHERE c.value = 'up') FROM run_feedback c WHERE c.run_id = x.id)::int AS up,
+       (SELECT count(*) FILTER (WHERE c.value = 'down') FROM run_feedback c WHERE c.run_id = x.id)::int AS down,
+       f.value AS my_value, f.note AS my_note, f.updated_at AS my_updated_at
+FROM (SELECT $1::uuid AS id) x
+LEFT JOIN run_outcomes o ON o.run_id = x.id
+LEFT JOIN run_feedback f ON f.run_id = x.id AND f.user_id = $2::uuid
+`
+
+type GetRunOutcomeViewParams struct {
+	RunID  uuid.UUID
+	UserID uuid.UUID
+}
+
+type GetRunOutcomeViewRow struct {
+	Verdict     *string
+	Missed      *string
+	Why         *string
+	Implicit    *string
+	JudgedAt    *time.Time
+	Up          int32
+	Down        int32
+	MyValue     *string
+	MyNote      *string
+	MyUpdatedAt *time.Time
+}
+
+// A run's judged outcome, its feedback counts and the caller's own word,
+// in one read: every column of the outcome is null when it is not judged.
+func (q *Queries) GetRunOutcomeView(ctx context.Context, arg GetRunOutcomeViewParams) (GetRunOutcomeViewRow, error) {
+	row := q.db.QueryRow(ctx, getRunOutcomeView, arg.RunID, arg.UserID)
+	var i GetRunOutcomeViewRow
+	err := row.Scan(
+		&i.Verdict,
+		&i.Missed,
+		&i.Why,
+		&i.Implicit,
+		&i.JudgedAt,
+		&i.Up,
+		&i.Down,
+		&i.MyValue,
+		&i.MyNote,
+		&i.MyUpdatedAt,
 	)
 	return i, err
 }
@@ -569,6 +592,19 @@ func (q *Queries) LockRunOutcome(ctx context.Context, runID uuid.UUID) (RunOutco
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const lockRunVotes = `-- name: LockRunVotes :exec
+SELECT pg_advisory_xact_lock(hashtext('run_votes'), hashtext($1::uuid::text))
+`
+
+// Held while a run's feedback changes or its outcome is recorded, so a 👎
+// and the judge's verdict cannot pass each other: whichever comes second
+// sees the first. Under READ COMMITTED a plain read could not see a 👎 not
+// yet committed.
+func (q *Queries) LockRunVotes(ctx context.Context, runID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockRunVotes, runID)
+	return err
 }
 
 const recordRunOutcome = `-- name: RecordRunOutcome :execrows

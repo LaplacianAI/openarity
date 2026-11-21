@@ -102,3 +102,28 @@ func TestClip(t *testing.T) {
 		t.Errorf("clip = %q", got)
 	}
 }
+
+func TestADigestInputRoundTrips(t *testing.T) {
+	id := uuid.New()
+	got, round, err := parseDigestInput(digestInput(id, 7))
+	if err != nil || got != id || round != 7 {
+		t.Errorf("parsed %s %d %v", got, round, err)
+	}
+	for _, bad := range []string{"", id.String(), "nope:1", id.String() + ":x"} {
+		if _, _, err := parseDigestInput(bad); err == nil {
+			t.Errorf("%q parsed", bad)
+		}
+	}
+}
+
+func TestAFenceIsStripped(t *testing.T) {
+	for in, want := range map[string]string{
+		"```json\n{\"a\":1}\n```": `{"a":1}`,
+		"```\n{\"a\":1}```":       `{"a":1}`,
+		"\t{\"a\":1}\n":           `{"a":1}`,
+	} {
+		if got := stripFence(in); got != want {
+			t.Errorf("stripFence(%q) = %q", in, got)
+		}
+	}
+}

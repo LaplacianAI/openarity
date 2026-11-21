@@ -114,7 +114,11 @@ team's model or a judge model chosen here, and a share of the good runs (10%
 until changed) is studied beside every bad one. Under each answer in a
 conversation, a member who may run agents can press 👍 or 👎, with a line on
 what was wrong; that outranks the judge for that run. A run's trace shows how
-it was judged, and how many members gave 👍 and 👎, never who.
+it was judged, and how many members gave 👍 and 👎, never who. Judging
+sends the run's conversation, trace and tool results to the same model
+endpoint the team's agents use, and what it says is stored with the run.
+Only runs that finish while improvement is on are judged: turning it off
+and on again starts from that moment.
 Compaction says when a run folds its earlier turns into a summary: past a
 number of messages, and when its next request would read a tenth of its
 token budget, held between an at least and an at most the team chooses

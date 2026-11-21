@@ -72,7 +72,7 @@ describe("the request", () => {
   it("sends the judge model when it changed, whole", () => {
     const d = { ...draftOf(ON), judgeOn: true, judgeName: " judge-2 ", judgeTemperature: "0.3" };
     expect(settingsRequest(d, ON)).toMatchObject({
-      judge_model: { name: "judge-2", max_tokens: 200000, temperature: 0.3 },
+      judge_model: { name: "judge-2", max_tokens: 4096, temperature: 0.3 },
     });
   });
 
@@ -180,7 +180,7 @@ describe("the Improvement section", () => {
     await userEvent.click(within(section()).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(put(seen)).toBeDefined());
-    expect(put(seen).judge_model).toEqual({ name: "judge-3", max_tokens: 200000 });
+    expect(put(seen).judge_model).toEqual({ name: "judge-3", max_tokens: 4096 });
     expect(put(seen)).not.toHaveProperty("improvement_sample_share");
   });
 

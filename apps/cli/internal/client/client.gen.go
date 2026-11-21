@@ -5822,7 +5822,9 @@ type ClientInterface interface {
 
 	// ClearRunFeedback Remove your 👍/👎 on a run
 	//
-	// Requires `run:write`, as giving it does. Removing none answers 204 too.
+	// Requires `run:write`, as giving it does. Removing none answers 204
+	// too. Allowed whether or not the team still has `improvement` on: a
+	// word that still counts can always be taken back.
 	//
 	// Corresponds with DELETE /teams/{id}/runs/{runID}/feedback (the `ClearRunFeedback` operationId).
 	ClearRunFeedback(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5830,8 +5832,8 @@ type ClientInterface interface {
 	// GiveRunFeedbackWithBody Give or change your 👍/👎 on a run's answer
 	//
 	// Requires `run:write`, and the run must be visible to the caller. One
-	// per person per run; giving it again replaces it. Only on a top-level
-	// run, the one that answered, and only while the team has
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
 	// `improvement` on. A signed-in member's word outranks the judge's
 	// verdict on this run; a 👎 also has the run digested if it was not.
 	//
@@ -5843,8 +5845,8 @@ type ClientInterface interface {
 	// GiveRunFeedback Give or change your 👍/👎 on a run's answer
 	//
 	// Requires `run:write`, and the run must be visible to the caller. One
-	// per person per run; giving it again replaces it. Only on a top-level
-	// run, the one that answered, and only while the team has
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
 	// `improvement` on. A signed-in member's word outranks the judge's
 	// verdict on this run; a 👎 also has the run digested if it was not.
 	//
@@ -8569,7 +8571,9 @@ func (c *Client) StreamRunEvents(ctx context.Context, id TeamID, runID RunID, pa
 
 // ClearRunFeedback Remove your 👍/👎 on a run
 //
-// Requires `run:write`, as giving it does. Removing none answers 204 too.
+// Requires `run:write`, as giving it does. Removing none answers 204
+// too. Allowed whether or not the team still has `improvement` on: a
+// word that still counts can always be taken back.
 //
 // Corresponds with DELETE /teams/{id}/runs/{runID}/feedback (the `ClearRunFeedback` operationId).
 func (c *Client) ClearRunFeedback(ctx context.Context, id TeamID, runID RunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8587,8 +8591,8 @@ func (c *Client) ClearRunFeedback(ctx context.Context, id TeamID, runID RunID, r
 // GiveRunFeedbackWithBody Give or change your 👍/👎 on a run's answer
 //
 // Requires `run:write`, and the run must be visible to the caller. One
-// per person per run; giving it again replaces it. Only on a top-level
-// run, the one that answered, and only while the team has
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
 // `improvement` on. A signed-in member's word outranks the judge's
 // verdict on this run; a 👎 also has the run digested if it was not.
 //
@@ -8610,8 +8614,8 @@ func (c *Client) GiveRunFeedbackWithBody(ctx context.Context, id TeamID, runID R
 // GiveRunFeedback Give or change your 👍/👎 on a run's answer
 //
 // Requires `run:write`, and the run must be visible to the caller. One
-// per person per run; giving it again replaces it. Only on a top-level
-// run, the one that answered, and only while the team has
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
 // `improvement` on. A signed-in member's word outranks the judge's
 // verdict on this run; a 👎 also has the run digested if it was not.
 //
@@ -15837,7 +15841,9 @@ type ClientWithResponsesInterface interface {
 
 	// ClearRunFeedbackWithResponse Remove your 👍/👎 on a run
 	//
-	// Requires `run:write`, as giving it does. Removing none answers 204 too.
+	// Requires `run:write`, as giving it does. Removing none answers 204
+	// too. Allowed whether or not the team still has `improvement` on: a
+	// word that still counts can always be taken back.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15847,8 +15853,8 @@ type ClientWithResponsesInterface interface {
 	// GiveRunFeedbackWithBodyWithResponse Give or change your 👍/👎 on a run's answer
 	//
 	// Requires `run:write`, and the run must be visible to the caller. One
-	// per person per run; giving it again replaces it. Only on a top-level
-	// run, the one that answered, and only while the team has
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
 	// `improvement` on. A signed-in member's word outranks the judge's
 	// verdict on this run; a 👎 also has the run digested if it was not.
 	//
@@ -15860,8 +15866,8 @@ type ClientWithResponsesInterface interface {
 	// GiveRunFeedbackWithResponse Give or change your 👍/👎 on a run's answer
 	//
 	// Requires `run:write`, and the run must be visible to the caller. One
-	// per person per run; giving it again replaces it. Only on a top-level
-	// run, the one that answered, and only while the team has
+	// per person per run; giving it again replaces it. Only on a finished
+	// top-level run, the one that answered, and only while the team has
 	// `improvement` on. A signed-in member's word outranks the judge's
 	// verdict on this run; a 👎 also has the run digested if it was not.
 	//
@@ -22678,7 +22684,9 @@ func (c *ClientWithResponses) StreamRunEventsWithResponse(ctx context.Context, i
 
 // ClearRunFeedbackWithResponse Remove your 👍/👎 on a run
 //
-// Requires `run:write`, as giving it does. Removing none answers 204 too.
+// Requires `run:write`, as giving it does. Removing none answers 204
+// too. Allowed whether or not the team still has `improvement` on: a
+// word that still counts can always be taken back.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -22694,8 +22702,8 @@ func (c *ClientWithResponses) ClearRunFeedbackWithResponse(ctx context.Context, 
 // GiveRunFeedbackWithBodyWithResponse Give or change your 👍/👎 on a run's answer
 //
 // Requires `run:write`, and the run must be visible to the caller. One
-// per person per run; giving it again replaces it. Only on a top-level
-// run, the one that answered, and only while the team has
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
 // `improvement` on. A signed-in member's word outranks the judge's
 // verdict on this run; a 👎 also has the run digested if it was not.
 //
@@ -22713,8 +22721,8 @@ func (c *ClientWithResponses) GiveRunFeedbackWithBodyWithResponse(ctx context.Co
 // GiveRunFeedbackWithResponse Give or change your 👍/👎 on a run's answer
 //
 // Requires `run:write`, and the run must be visible to the caller. One
-// per person per run; giving it again replaces it. Only on a top-level
-// run, the one that answered, and only while the team has
+// per person per run; giving it again replaces it. Only on a finished
+// top-level run, the one that answered, and only while the team has
 // `improvement` on. A signed-in member's word outranks the judge's
 // verdict on this run; a 👎 also has the run digested if it was not.
 //

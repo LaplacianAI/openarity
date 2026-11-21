@@ -296,7 +296,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     improvement: s.improvement,
     judgeOn: s.judge_model != null,
     judgeName: s.judge_model?.name ?? "",
-    judgeMaxTokens: s.judge_model ? String(s.judge_model.max_tokens) : "200000",
+    judgeMaxTokens: s.judge_model ? String(s.judge_model.max_tokens) : "4096",
     judgeTemperature:
       s.judge_model?.temperature === undefined ? "" : String(s.judge_model?.temperature ?? ""),
     sampleShare: String(s.improvement_sample_share ?? 10),

@@ -195,12 +195,12 @@ export function RunDetail({
 }) {
   const { events, failed } = useRunEvents(teamId, run.id, onChanged);
   // A list leaves out how a run was judged; a single run's read carries it.
-  // Read once the run is over, as it is judged only then. A failed read is no
-  // finding: the line is left out.
+  // Read once the run is over, as it is judged only then, and only when the
+  // run in hand does not already carry it.
   const judged = useQuery({
     queryKey: ["runs", teamId, run.id],
     queryFn: () => getRun(teamId, run.id),
-    enabled: !isLive(run.status),
+    enabled: !isLive(run.status) && run.outcome === undefined,
   });
   const outcome = run.outcome ?? judged.data?.outcome;
   return (
@@ -211,6 +211,7 @@ export function RunDetail({
       onChanged={onChanged}
       events={events}
       failed={failed}
+      outcomeUnread={!outcome && judged.isError}
     />
   );
 }
@@ -226,6 +227,7 @@ export function RunView({
   onChanged,
   events,
   failed,
+  outcomeUnread = false,
 }: {
   teamId: string;
   run: Run;
@@ -234,6 +236,8 @@ export function RunView({
   events: RunEvent[];
   /** Why the stream could not be followed, if it could not. */
   failed: string | null;
+  /** How the run was judged could not be read: said, not mistaken for "not judged". */
+  outcomeUnread?: boolean;
 }) {
   const trace = useMemo(() => groupTrace(events), [events]);
   const live = isLive(run.status) && !trace.ended && !failed;
@@ -282,7 +286,13 @@ export function RunView({
                 {finding}
               </p>
             ) : null}
-            {run.outcome ? <OutcomeLine outcome={run.outcome} /> : null}
+            {run.outcome ? (
+              <OutcomeLine outcome={run.outcome} />
+            ) : outcomeUnread ? (
+              <p data-outcome-unread className="text-xs text-muted-foreground">
+                How this run was judged could not be read.
+              </p>
+            ) : null}
             {delegates.length > 0 ? (
               <p
                 data-delegates

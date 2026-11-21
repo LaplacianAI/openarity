@@ -75,8 +75,23 @@ RETURNING *;
 -- name: DeleteRunFeedback :execrows
 DELETE FROM run_feedback WHERE run_id = $1 AND user_id = $2;
 
--- name: GetRunFeedback :one
-SELECT * FROM run_feedback WHERE run_id = $1 AND user_id = $2;
+-- A run's judged outcome, its feedback counts and the caller's own word,
+-- in one read: every column of the outcome is null when it is not judged.
+-- name: GetRunOutcomeView :one
+SELECT o.verdict, o.missed, o.why, o.implicit, o.created_at AS judged_at,
+       (SELECT count(*) FILTER (WHERE c.value = 'up') FROM run_feedback c WHERE c.run_id = x.id)::int AS up,
+       (SELECT count(*) FILTER (WHERE c.value = 'down') FROM run_feedback c WHERE c.run_id = x.id)::int AS down,
+       f.value AS my_value, f.note AS my_note, f.updated_at AS my_updated_at
+FROM (SELECT sqlc.arg(run_id)::uuid AS id) x
+LEFT JOIN run_outcomes o ON o.run_id = x.id
+LEFT JOIN run_feedback f ON f.run_id = x.id AND f.user_id = sqlc.arg(user_id)::uuid;
+
+-- Held while a run's feedback changes or its outcome is recorded, so a 👎
+-- and the judge's verdict cannot pass each other: whichever comes second
+-- sees the first. Under READ COMMITTED a plain read could not see a 👎 not
+-- yet committed.
+-- name: LockRunVotes :exec
+SELECT pg_advisory_xact_lock(hashtext('run_votes'), hashtext(sqlc.arg(run_id)::uuid::text));
 
 -- name: CountRunFeedback :one
 SELECT count(*) FILTER (WHERE value = 'up')::int AS up,

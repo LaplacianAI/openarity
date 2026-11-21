@@ -402,7 +402,7 @@ const OUTCOME: RunOutcome = {
   feedback: { up: 0, down: 1 },
 };
 
-function judged(outcome: RunOutcome | undefined, listedToo = false) {
+function judged(outcome: RunOutcome | undefined, listedToo = false, readFails = false) {
   feedbackBrain({
     extra: {
       "GET /teams/{id}/sessions/{sid}/runs": {
@@ -429,26 +429,28 @@ function judged(outcome: RunOutcome | undefined, listedToo = false) {
           ],
         },
       },
-      "GET /teams/{id}/runs/{rid}": {
-        body: {
-          id: "r9",
-          session_id: SID,
-          agent: "billing",
-          status: "succeeded",
-          input: "fix it",
-          output: "fixed",
-          error: null,
-          input_tokens: 1,
-          output_tokens: 1,
-          created_at: STAMP,
-          started_at: STAMP,
-          finished_at: STAMP,
-          parent_run_id: null,
-          depth: 0,
-          hub: false,
-          ...(outcome ? { outcome } : {}),
-        },
-      },
+      "GET /teams/{id}/runs/{rid}": readFails
+        ? { status: 500, text: "the store is down" }
+        : {
+            body: {
+              id: "r9",
+              session_id: SID,
+              agent: "billing",
+              status: "succeeded",
+              input: "fix it",
+              output: "fixed",
+              error: null,
+              input_tokens: 1,
+              output_tokens: 1,
+              created_at: STAMP,
+              started_at: STAMP,
+              finished_at: STAMP,
+              parent_run_id: null,
+              depth: 0,
+              hub: false,
+              ...(outcome ? { outcome } : {}),
+            },
+          },
       "GET /teams/{id}/runs/{rid}/events": () => ({ stream: chunks() }),
     },
   });
@@ -511,6 +513,15 @@ describe("a judged run's trace", () => {
     judged(OUTCOME, true);
     await openRun();
     await waitFor(() => expect(document.querySelector("[data-outcome]")).not.toBeNull());
+  });
+
+  it("says so when how it was judged cannot be read, rather than showing nothing", async () => {
+    judged(OUTCOME, true, true);
+    await openRun();
+    expect(
+      await screen.findByText("How this run was judged could not be read."),
+    ).toBeInTheDocument();
+    expect(document.querySelector("[data-outcome]")).toBeNull();
   });
 
   it("shows no line for a run that was not judged", async () => {

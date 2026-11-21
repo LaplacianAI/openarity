@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -283,21 +284,17 @@ func TestTheJudgeModelIsUsed(t *testing.T) {
 	}
 }
 
-// Nonsense, and a transport error after one retry, are stored as cant_tell
-// with their reason, so the run is never judged again and again.
-func TestAFailedCheckIsCantTell(t *testing.T) {
-	for name, tc := range map[string]struct {
-		replies []reply
-		calls   int
-	}{
-		"not json":        {[]reply{{text: "I think it went fine"}}, 1},
-		"unknown verdict": {[]reply{{text: `{"asked":[],"verdict":"great","missed":"","why":"","implicit":"none"}`}}, 1},
-		"down twice":      {[]reply{{err: errors.New("503")}, {err: errors.New("503")}}, 2},
+// An answer that is nonsense is stored as cant_tell with its reason, so the
+// run is not judged again and again: asking again would not mend it.
+func TestAnUnusableAnswerIsCantTell(t *testing.T) {
+	for name, text := range map[string]string{
+		"not json":        "I think it went fine",
+		"unknown verdict": `{"asked":[],"verdict":"great","missed":"","why":"","implicit":"none"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t)
 			run := w.finished(t, w.session(t), "11 minutes")
-			w.model.replies = tc.replies
+			w.model.replies = []reply{{text: text}}
 			if err := w.checker.Check(t.Context(), run); err != nil {
 				t.Fatal(err)
 			}
@@ -305,23 +302,90 @@ func TestAFailedCheckIsCantTell(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if o.Verdict != verdictCantTell || o.Error == nil || len(w.model.asked) != tc.calls {
-				t.Errorf("outcome = %+v after %d calls, want cant_tell with its reason after %d", o, len(w.model.asked), tc.calls)
+			if o.Verdict != verdictCantTell || o.Error == nil || len(w.model.asked) != 1 {
+				t.Errorf("outcome = %+v after %d calls, want cant_tell with its reason after 1", o, len(w.model.asked))
 			}
 		})
 	}
+}
 
-	t.Run("down once, then answered", func(t *testing.T) {
-		w := newWorld(t)
-		run := w.finished(t, w.session(t), "11 minutes")
-		w.model.replies = []reply{{err: errors.New("503")}, {text: goodAnswer}}
-		if err := w.checker.Check(t.Context(), run); err != nil {
-			t.Fatal(err)
-		}
-		if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Verdict != verdictDone {
-			t.Errorf("verdict = %s after a retry", o.Verdict)
-		}
-	})
+// A model that cannot be reached is not a verdict: nothing is stored and
+// the step is tried again; only once the tries run out is the run given up
+// on, as cant_tell with the failure.
+func TestAnUnreachableModelIsTriedAgainThenGivenUp(t *testing.T) {
+	w := newWorld(t)
+	run := w.finished(t, w.session(t), "11 minutes")
+	w.model.replies = []reply{{err: errors.New("503")}, {text: goodAnswer}}
+	if err := w.checker.Check(t.Context(), run); err == nil {
+		t.Fatal("a 503 was not returned to be tried again")
+	}
+	if _, err := w.store.GetRunOutcome(t.Context(), run); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("a 503 was stored as the outcome: %v", err)
+	}
+	if err := w.checker.Check(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Verdict != verdictDone {
+		t.Errorf("verdict = %s after the second try", o.Verdict)
+	}
+
+	gone := w.finished(t, w.session(t), "11 minutes")
+	if err := w.checker.GiveUp(t.Context(), gone, errors.New("503, five times")); err != nil {
+		t.Fatal(err)
+	}
+	o, err := w.store.GetRunOutcome(t.Context(), gone)
+	if err != nil || o.Verdict != verdictCantTell || o.Error == nil || !strings.Contains(*o.Error, "503, five times") {
+		t.Errorf("given up = %+v, err %v", o, err)
+	}
+	// Giving up on a run judged meanwhile changes nothing.
+	if err := w.checker.GiveUp(t.Context(), run, errors.New("late")); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Verdict != verdictDone || o.Error != nil {
+		t.Errorf("giving up overwrote a verdict: %+v", o)
+	}
+}
+
+// A 👎 committing at the moment the outcome is recorded: its reopen found
+// no outcome to reopen, so the record must see the 👎 itself. The vote
+// lock makes the record wait for it; without the lock it counts nothing
+// yet committed and the run judged good is lost to the sample.
+func TestADownGivenAsTheOutcomeIsRecordedIsSeen(t *testing.T) {
+	w := newWorld(t)
+	w.exec(t, `UPDATE team_settings SET improvement_sample_share = 0 WHERE team_id = $1`, w.team)
+	run := w.finished(t, w.session(t), "11 minutes")
+	w.model.replies = []reply{{text: goodAnswer}}
+
+	tx, err := w.raw.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+	q := db.New(tx)
+	if err := q.LockRunVotes(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.UpsertRunFeedback(t.Context(), db.UpsertRunFeedbackParams{
+		RunID: run, TeamID: w.team, UserID: w.user, Value: "down", Via: "dashboard",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.ReopenRunDigest(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+
+	checked := make(chan error, 1)
+	go func() { checked <- w.checker.Check(t.Context(), run) }()
+	time.Sleep(300 * time.Millisecond) // the check reaches its record
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-checked; err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Verdict != verdictDone || o.Digest != digestPending {
+		t.Errorf("outcome = %s, digest %s; want done and pending for the 👎", o.Verdict, o.Digest)
+	}
 }
 
 func TestACheckWithNoModelSaysSo(t *testing.T) {
@@ -367,7 +431,7 @@ func TestADigestWritesOnce(t *testing.T) {
 	if err != nil || len(pending) != 1 || pending[0].RunID != run {
 		t.Fatalf("pending = %+v, err %v", pending, err)
 	}
-	if err := w.checker.Digest(t.Context(), run); err != nil {
+	if err := w.checker.Digest(t.Context(), run, 0); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := w.store.ListRunDigests(t.Context(), run)
@@ -381,7 +445,7 @@ func TestADigestWritesOnce(t *testing.T) {
 		t.Error("the digest was not told which agents to digest")
 	}
 
-	if err := w.checker.Digest(t.Context(), run); err != nil {
+	if err := w.checker.Digest(t.Context(), run, 0); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ := w.store.ListRunDigests(t.Context(), run); len(rows) != 1 || len(w.model.asked) != 2 {
@@ -389,32 +453,57 @@ func TestADigestWritesOnce(t *testing.T) {
 	}
 }
 
-// A digest the model fails is skipped, not retried for ever; a member's 👎
-// reopens it, in a new round, and it runs again.
+// A digest the model cannot reach is tried again, then skipped, not
+// retried for ever; an unusable answer is skipped at once. A member's 👎
+// reopens it, in a new round, and it runs again; the old round does not.
 func TestAFailedDigestIsSkippedAndReopenedByADown(t *testing.T) {
 	w := newWorld(t)
 	run := w.finished(t, w.session(t), "11 minutes")
-	w.model.replies = []reply{{text: partlyAnswer}, {err: errors.New("503")}, {err: errors.New("503")}}
+	w.model.replies = []reply{{text: partlyAnswer}, {err: errors.New("503")}}
 	if err := w.checker.Check(t.Context(), run); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.checker.Digest(t.Context(), run); err != nil {
+	if err := w.checker.Digest(t.Context(), run, 0); err == nil {
+		t.Fatal("a 503 was not returned to be tried again")
+	}
+	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Digest != digestPending {
+		t.Fatalf("digest = %s after a 503, want still pending", o.Digest)
+	}
+	if err := w.checker.SkipDigest(t.Context(), run, 0, errors.New("503, five times")); err != nil {
 		t.Fatal(err)
 	}
-	o, _ := w.store.GetRunOutcome(t.Context(), run)
-	if o.Digest != digestSkipped {
-		t.Fatalf("digest = %s after a failure, want skipped", o.Digest)
+	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Digest != digestSkipped {
+		t.Fatalf("digest = %s after giving up, want skipped", o.Digest)
 	}
 
-	if err := w.store.ReopenRunDigest(t.Context(), run); err != nil {
+	if _, err := w.store.GiveRunFeedback(t.Context(), db.UpsertRunFeedbackParams{
+		RunID: run, TeamID: w.team, UserID: w.user, Value: "down", Via: "cli",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := w.store.ListPendingDigests(t.Context(), 10)
 	if len(pending) != 1 || pending[0].DigestRound != 1 {
 		t.Fatalf("pending = %+v, want the run in round 1", pending)
 	}
+	calls := len(w.model.asked)
+	if err := w.checker.Digest(t.Context(), run, 0); err != nil || len(w.model.asked) != calls {
+		t.Fatalf("round 0 ran again after round 1 began: err %v, %d calls", err, len(w.model.asked)-calls)
+	}
+	w.model.replies = []reply{{text: "not the schema"}}
+	if err := w.checker.Digest(t.Context(), run, 1); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := w.store.GetRunOutcome(t.Context(), run); o.Digest != digestSkipped {
+		t.Fatalf("digest = %s after an unusable answer, want skipped", o.Digest)
+	}
+
+	if _, err := w.store.GiveRunFeedback(t.Context(), db.UpsertRunFeedbackParams{
+		RunID: run, TeamID: w.team, UserID: w.user, Value: "down", Via: "cli",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	w.model.replies = []reply{{text: digestAnswerText}}
-	if err := w.checker.Digest(t.Context(), run); err != nil {
+	if err := w.checker.Digest(t.Context(), run, 2); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ := w.store.ListRunDigests(t.Context(), run); len(rows) != 1 {
@@ -434,7 +523,7 @@ func TestADigestOfAnOldRoundWritesNothing(t *testing.T) {
 	w.model.onAsk = func() {
 		w.exec(t, `UPDATE run_outcomes SET digest_round = 1 WHERE run_id = $1`, run)
 	}
-	if err := w.checker.Digest(t.Context(), run); err != nil {
+	if err := w.checker.Digest(t.Context(), run, 0); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ := w.store.ListRunDigests(t.Context(), run); len(rows) != 0 {

@@ -3,7 +3,6 @@ package improve
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -50,25 +49,16 @@ var digestSchema = &agent.OutputSchema{
 	Name:        "digest",
 	Description: "What each agent in the run did, and the part of its setup involved.",
 	Strict:      true,
-	JSON: json.RawMessage(`{
-  "type": "object", "additionalProperties": false, "required": ["agents"],
-  "properties": {"agents": {"type": "array", "items": {
-    "type": "object", "additionalProperties": false,
-    "required": ["agent", "summary", "went", "signature"],
-    "properties": {
-      "agent": {"type": "string"},
-      "summary": {"type": "string"},
-      "went": {"type": "string", "enum": ["wrong", "well"]},
-      "signature": {"type": "object", "additionalProperties": false,
-        "required": ["part", "target", "cause", "behaviour"],
-        "properties": {
-          "part": {"type": "string", "enum": ["instructions", "description", "skill", "tool", "server", "limits", "delegation", "pattern", "none"]},
-          "target": {"type": "string"},
-          "cause": {"type": "string", "enum": ["missing_knowledge", "skipped_step", "wrong_tool", "misused_tool", "misread_request", "gave_up", "ran_out", "wrong_delegate", "external", "other"]},
-          "behaviour": {"type": "string"}
-        }}
-    }}}}
-}`),
+	JSON: schemaJSON(object(obj{
+		"agents": listOf(object(obj{
+			"agent":   text(),
+			"summary": text(),
+			"went":    oneOfSet(wents),
+			"signature": object(obj{
+				"part": oneOfSet(parts), "target": text(), "cause": oneOfSet(causes), "behaviour": text(),
+			}),
+		})),
+	})),
 }
 
 // subject is a custom agent of the tree, with what its runs held.
@@ -102,7 +92,7 @@ func (a digestAnswer) rows(o db.RunOutcome, subjects map[string]subject, outside
 	var out []db.AddRunDigestParams
 	seen := map[uuid.UUID]bool{}
 	for _, d := range a.Agents {
-		s, ok := subjects[strings.TrimSpace(d.Agent)]
+		s, ok := subjects[strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(d.Agent), strings.TrimSpace(evidenceMark)))]
 		sig := d.Signature
 		if !ok || seen[s.id] || !oneOf(d.Went, wents) || !oneOf(sig.Part, parts) || !oneOf(sig.Cause, causes) {
 			continue
@@ -144,12 +134,13 @@ func targetOf(sig signature, h held) string {
 	return ""
 }
 
-// Digest studies one judged run, once. The model is asked outside any
-// transaction; the rows are written with the outcome held and still
-// pending, so two digests of one run cannot both write. A model failure
-// leaves the run skipped (a later 👎 reopens it); only the brain's own
-// failures are returned.
-func (c *Checker) Digest(ctx context.Context, runID uuid.UUID) error {
+// Digest studies one judged run in the round it was queued for. The model
+// is asked outside any transaction; the rows are written with the outcome
+// held and still pending in that round, so two digests of one run cannot
+// both write. An answer that is unusable leaves the run skipped (a later 👎
+// reopens it); a model or store that cannot be reached is returned, for
+// the step to try again, and SkipDigest records it once the tries run out.
+func (c *Checker) Digest(ctx context.Context, runID uuid.UUID, round int32) error {
 	o, err := c.store.GetRunOutcome(ctx, runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -157,29 +148,46 @@ func (c *Checker) Digest(ctx context.Context, runID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("reading run %s's outcome: %w", runID, err)
 	}
-	if o.Digest != digestPending {
+	if o.Digest != digestPending || o.DigestRound != round {
 		return nil
 	}
 	settings, err := c.store.GetImprovementSettings(ctx, o.TeamID)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !settings.Improvement) {
-		return nil
+		return nil // still pending: a sweep after it is turned back on finds it
 	}
 	if err != nil {
 		return fmt.Errorf("reading team %s's settings: %w", o.TeamID, err)
 	}
 
 	rows, err := c.study(ctx, o, settings)
+	if err != nil && !final(err) {
+		return err
+	}
 	state := digestDone
 	if err != nil {
 		c.logger.WarnContext(ctx, "A run could not be digested", "run", runID, "err", err)
 		state = digestSkipped
 	}
+	return c.finishDigest(ctx, runID, round, rows, state)
+}
+
+// SkipDigest leaves a run whose digest failed every try skipped, so it is
+// not studied again and again; a later 👎 reopens it.
+func (c *Checker) SkipDigest(ctx context.Context, runID uuid.UUID, round int32, cause error) error {
+	c.logger.WarnContext(ctx, "A run's digest failed every try", "run", runID, "err", cause)
+	return c.finishDigest(ctx, runID, round, nil, digestSkipped)
+}
+
+func (c *Checker) finishDigest(ctx context.Context, runID uuid.UUID, round int32, rows []db.AddRunDigestParams, state string) error {
 	return c.store.InTx(ctx, func(q *db.Queries) error {
 		held, err := q.LockRunOutcome(ctx, runID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("holding run %s's outcome: %w", runID, err)
 		}
-		if held.Digest != digestPending || held.DigestRound != o.DigestRound {
+		if held.Digest != digestPending || held.DigestRound != round {
 			return nil // digested, or reopened, meanwhile
 		}
 		for _, r := range rows {
@@ -195,7 +203,7 @@ func (c *Checker) Digest(ctx context.Context, runID uuid.UUID) error {
 func (c *Checker) study(ctx context.Context, o db.RunOutcome, settings db.GetImprovementSettingsRow) ([]db.AddRunDigestParams, error) {
 	model, ok := judgeModelOf(settings)
 	if !ok {
-		return nil, errors.New("the team has no model to digest with")
+		return nil, errNoModel
 	}
 	ev, err := gather(ctx, c.store, o.RunID, true)
 	if err != nil {
@@ -210,10 +218,12 @@ func (c *Checker) study(ctx context.Context, o db.RunOutcome, settings db.GetImp
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	user := ev.render(digestBudget) + "## How it was judged\n" + judged(o) + "\n\n## Agents to digest\n" + strings.Join(names, "\n") + "\n"
+	user := ev.render(digestBudget,
+		section{"How it was judged", []string{judged(o)}},
+		section{"Agents to digest", names})
 
 	var answer digestAnswer
-	usage, err := c.judge.doRetrying(ctx, ask{model: model, system: digestPrompt, user: user, schema: digestSchema}, &answer)
+	usage, err := c.judge.do(ctx, ask{model: model, system: digestPrompt, user: user, schema: digestSchema}, &answer)
 	if err != nil {
 		return nil, err
 	}

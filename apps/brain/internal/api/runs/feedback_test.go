@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -22,11 +21,14 @@ type fakeFeedback struct {
 	reopened []uuid.UUID
 }
 
-func (s *fakeStore) UpsertRunFeedback(_ context.Context, arg db.UpsertRunFeedbackParams) (db.RunFeedback, error) {
+func (s *fakeStore) GiveRunFeedback(_ context.Context, arg db.UpsertRunFeedbackParams) (db.RunFeedback, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f := db.RunFeedback{RunID: arg.RunID, TeamID: arg.TeamID, UserID: arg.UserID, Value: arg.Value, Note: arg.Note, Via: arg.Via, UpdatedAt: time.Now()}
 	s.feedback[[2]uuid.UUID{arg.RunID, arg.UserID}] = f
+	if arg.Value == "down" {
+		s.reopened = append(s.reopened, arg.RunID)
+	}
 	return f, nil
 }
 
@@ -41,48 +43,27 @@ func (s *fakeStore) DeleteRunFeedback(_ context.Context, arg db.DeleteRunFeedbac
 	return 1, nil
 }
 
-func (s *fakeStore) GetRunFeedback(_ context.Context, arg db.GetRunFeedbackParams) (db.RunFeedback, error) {
+func (s *fakeStore) GetRunOutcomeView(_ context.Context, arg db.GetRunOutcomeViewParams) (db.GetRunOutcomeViewRow, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, ok := s.feedback[[2]uuid.UUID{arg.RunID, arg.UserID}]
-	if !ok {
-		return db.RunFeedback{}, pgx.ErrNoRows
-	}
-	return f, nil
-}
-
-func (s *fakeStore) CountRunFeedback(_ context.Context, runID uuid.UUID) (db.CountRunFeedbackRow, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var c db.CountRunFeedbackRow
+	var v db.GetRunOutcomeViewRow
 	for k, f := range s.feedback {
-		if k[0] != runID {
+		if k[0] != arg.RunID {
 			continue
 		}
 		if f.Value == "up" {
-			c.Up++
+			v.Up++
 		} else {
-			c.Down++
+			v.Down++
+		}
+		if k[1] == arg.UserID {
+			v.MyValue, v.MyNote, v.MyUpdatedAt = &f.Value, &f.Note, &f.UpdatedAt
 		}
 	}
-	return c, nil
-}
-
-func (s *fakeStore) GetRunOutcome(_ context.Context, runID uuid.UUID) (db.RunOutcome, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	o, ok := s.outcomes[runID]
-	if !ok {
-		return db.RunOutcome{}, pgx.ErrNoRows
+	if o, ok := s.outcomes[arg.RunID]; ok {
+		v.Verdict, v.Missed, v.Why, v.Implicit, v.JudgedAt = &o.Verdict, &o.Missed, &o.Why, &o.Implicit, &o.CreatedAt
 	}
-	return o, nil
-}
-
-func (s *fakeStore) ReopenRunDigest(_ context.Context, runID uuid.UUID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reopened = append(s.reopened, runID)
-	return nil
+	return v, nil
 }
 
 func (s *fakeStore) ListMyFeedbackInSession(_ context.Context, arg db.ListMyFeedbackInSessionParams) ([]db.ListMyFeedbackInSessionRow, error) {
@@ -148,6 +129,7 @@ func TestFeedbackIsRefused(t *testing.T) {
 	child.ParentRunID = &r.ID
 	w.store.runs[child.ID] = child
 	theirs := w.run(w.session("direct", w.other), "succeeded")
+	running := w.run(group, "running")
 
 	for name, tc := range map[string]struct {
 		id   uuid.UUID
@@ -158,6 +140,7 @@ func TestFeedbackIsRefused(t *testing.T) {
 		"long note":          {r.ID, map[string]string{"value": "down", "note": strings.Repeat("é", 1001)}, http.StatusBadRequest},
 		"bad via":            {r.ID, map[string]string{"value": "up", "via": "slack"}, http.StatusBadRequest},
 		"a delegate's run":   {child.ID, map[string]string{"value": "up"}, http.StatusConflict},
+		"a run not finished": {running.ID, map[string]string{"value": "up"}, http.StatusConflict},
 		"a run I cannot see": {theirs.ID, map[string]string{"value": "up"}, http.StatusNotFound},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -193,6 +176,12 @@ func TestFeedbackCanBeRemoved(t *testing.T) {
 	}
 	if _, mine := w.store.feedback[[2]uuid.UUID{r.ID, w.me.ID}]; mine || len(w.store.feedback) != 1 {
 		t.Errorf("delete removed the wrong rows: %v", w.store.feedback)
+	}
+
+	// Turned off, a word that still counts can still be taken back.
+	w.store.settings.Improvement = false
+	if rec := w.call(t, w.other, http.MethodDelete, w.feedbackOf(r.ID), nil); rec.Code != http.StatusNoContent || len(w.store.feedback) != 0 {
+		t.Errorf("delete with improvement off = %d %s, %d left", rec.Code, rec.Body, len(w.store.feedback))
 	}
 }
 

@@ -40,7 +40,7 @@ const (
 	nextChars     = 1500  // one message after
 	requestChars  = 4000  // the request
 	errorChars    = 600   // a run's error
-	traceLineMins = 40    // the trace is never cut below this many lines
+	traceLineMins = 40    // the trace is cut to this many lines before any fewer
 )
 
 // evidence is one run tree as a model reads it, in parts so the whole can
@@ -249,13 +249,14 @@ func firstOf(a, b string) string {
 	return b
 }
 
-// render is the evidence as one text within budget characters. The oldest
-// context goes first, then the middle of the trace; the request, the answer
-// and how it ended are always kept.
-func (ev evidence) render(budget int) string {
+// render is the evidence as the model reads it, within budget characters,
+// with any extra sections after it. What goes first is the least needed:
+// the oldest context, then the middle of the trace, down to none of it.
+// The request, the answer, how it ended and what came next are kept.
+func (ev evidence) render(budget int, extra ...section) string {
 	ctxLines, keep := ev.context, len(ev.trace)
 	for {
-		text := ev.text(ctxLines, cut(ev.trace, keep))
+		text := ev.text(ctxLines, cut(ev.trace, keep), extra)
 		if utf8.RuneCountInString(text) <= budget {
 			return text
 		}
@@ -264,8 +265,10 @@ func (ev evidence) render(budget int) string {
 			ctxLines = ctxLines[1:]
 		case keep > traceLineMins:
 			keep = max(traceLineMins, keep*3/4)
+		case keep > 0:
+			keep = 0
 		default:
-			return clip(text, budget)
+			return clip(text, budget) // the kept parts are clipped each, so this is a backstop
 		}
 	}
 }
@@ -282,27 +285,44 @@ func cut(lines []string, keep int) []string {
 		lines[len(lines)-(keep-head):])
 }
 
-func (ev evidence) text(ctxLines, trace []string) string {
-	var b strings.Builder
-	section := func(title string, lines ...string) {
-		if len(lines) == 0 {
-			return
-		}
-		b.WriteString("## " + title + "\n")
-		for _, l := range lines {
-			b.WriteString(l + "\n")
-		}
-		b.WriteString("\n")
-	}
-	section("Conversation before", ctxLines...)
-	section("Request", ev.request)
-	section("What the agent did", trace...)
+// section is one part of what the model reads. Its title is ours; its
+// lines are evidence, written by people, agents and tools.
+type section struct {
+	title string
+	lines []string
+}
+
+// evidenceMark starts every line of evidence, so nothing in it can pass for
+// one of the section headings: the prompts say only an unmarked "## " line
+// is a heading.
+const evidenceMark = "| "
+
+func (ev evidence) text(ctxLines, trace []string, extra []section) string {
 	answer := ev.answer
 	if answer == "" {
 		answer = "(no answer)"
 	}
-	section("Answer", answer)
-	section("How it ended", ev.ending)
-	section("What people said next", ev.next...)
+	parts := append([]section{
+		{"Conversation before", ctxLines},
+		{"Request", []string{ev.request}},
+		{"What the agent did", trace},
+		{"Answer", []string{answer}},
+		{"How it ended", []string{ev.ending}},
+		{"What people said next", ev.next},
+	}, extra...)
+	var b strings.Builder
+	for _, p := range parts {
+		lines := slices.DeleteFunc(slices.Clone(p.lines), func(l string) bool { return l == "" })
+		if len(lines) == 0 {
+			continue
+		}
+		b.WriteString("## " + p.title + "\n")
+		for _, l := range lines {
+			for line := range strings.SplitSeq(l, "\n") {
+				b.WriteString(evidenceMark + line + "\n")
+			}
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
