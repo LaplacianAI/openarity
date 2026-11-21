@@ -155,9 +155,11 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	// A browser runs a page's scripts and acts on it, so it is a grant of its
 	// own. The builder is never the hub and has no agent, so it has none.
 	browse := (run.Hub || a.Browser) && settings.BrowserProvider != noBrowserProvider
-	// A workspace is the agent's own grant, never the hub's: the orchestrator
-	// hands work to agents that hold the tools.
-	work := a.Workspace && !run.Hub && !run.Builder && b.workspaces != nil &&
+	// A workspace is the agent's own grant. A hub the team chose from its
+	// agents holds it as any agent does, since a hub may act on its own as
+	// well as hand work on; the built-in hub and the builder are no agent,
+	// so neither has one.
+	work := a.Workspace && b.workspaces != nil &&
 		settings.SandboxProvider != string(sandbox.None)
 	var held catalogue
 	if a.ID != uuid.Nil {
@@ -276,7 +278,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			}
 			built.Spec.Tools = append(built.Spec.Tools, gated)
 		}
-	case a.Workspace && !run.Hub && !run.Builder:
+	case a.Workspace:
 		reason := "the team has no sandbox, so its agents have no workspace: choose one in Settings"
 		if b.workspaces == nil {
 			reason = "this brain's secret store is read-only, so it keeps no sandbox room's token and its agents have no workspace"

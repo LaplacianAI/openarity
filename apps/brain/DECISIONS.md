@@ -24,8 +24,11 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   - **`Bash` is a write; the other five read.** A command can send anything to
     any public host. The others change only the session's own room. A team
     that trusts its agents' commands adds one rule, `allow Bash`.
-  - **The hub never holds the tools**, even when the agent a team chose as its
-    hub is granted them: the orchestrator hands work to an agent that does.
+  - **A hub holds the tools when it is granted them.** A hub the team chose
+    from its agents may act on its own as well as hand work on, so the grant
+    works for it as for any agent (it first said never, 2026-11-21, and was
+    changed the same day). The built-in hub is no agent and has none; the
+    builder never has them.
   - **No improvement can grant it.** `workspace` is named in the proposal
     diff, so a snapshot from before the field compares equal, and is in no
     kind, so a proposal that changes it is refused.

@@ -176,18 +176,28 @@ func TestATeamWithNoSandboxSaysWhyItsAgentHasNoWorkspace(t *testing.T) {
 	}
 }
 
-// The orchestrator hands work to agents that hold the tools, even when the
-// agent a team chose as its hub is granted them.
-func TestTheHubHasNoWorkspaceEvenAsAnAgentGrantedOne(t *testing.T) {
+// A hub the team chose from its agents may act on its own, so granted the
+// workspace it has the six tools, as any agent does.
+func TestAChosenHubGrantedTheWorkspaceHasIt(t *testing.T) {
 	f, _ := newWorkspaceFixture(t, true)
 	f.asChosenHub()
 	f.store.settings.SandboxProvider = string(sandbox.Sandboxd)
+	got := f.build(t)
+	if names := workspaceToolsIn(got); !slices.Equal(names, allWorkspaceTools()) {
+		t.Errorf("the chosen hub has %v, want all six", names)
+	}
+}
+
+// A chosen hub not granted it has none, and is not told it lacks one.
+func TestAChosenHubNotGrantedTheWorkspaceHasNone(t *testing.T) {
+	f, _ := newWorkspaceFixture(t, false)
+	f.asChosenHub()
 	got := f.build(t)
 	if names := workspaceToolsIn(got); len(names) != 0 {
 		t.Errorf("the hub has %v", names)
 	}
 	if slices.ContainsFunc(got.Unavailable, func(u Unavailable) bool { return slices.Contains(WorkspaceToolNames, u.Name) }) {
-		t.Errorf("the hub is told it lacks a workspace: %+v", got.Unavailable)
+		t.Errorf("a hub without the grant is told it lacks a workspace: %+v", got.Unavailable)
 	}
 }
 
