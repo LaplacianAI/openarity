@@ -323,7 +323,7 @@ func globText(g workroom.Glob) string {
 	}
 	out := strings.Join(g.Paths, "\n")
 	if g.Truncated {
-		out += "\n(more match: these are the newest 1,000)"
+		out += fmt.Sprintf("\n(more match: these are the newest %d; narrow the pattern or the path)", len(g.Paths))
 	}
 	return out
 }
