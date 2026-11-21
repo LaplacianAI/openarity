@@ -23,8 +23,9 @@ const (
 
 	maxSampleShare = 100
 	maxDailyPasses = 200
-	// What one try at an improver pass may spend.
-	minPassTokens  = 20_000
+	// What an improver pass may spend: tokens across its tries, at least
+	// enough for a few calls on a long setup; minutes for each try.
+	minPassTokens  = 100_000
 	maxPassTokens  = 2_000_000
 	maxPassMinutes = 25
 

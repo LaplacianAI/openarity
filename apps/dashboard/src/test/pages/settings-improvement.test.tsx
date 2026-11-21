@@ -149,9 +149,9 @@ describe("the request", () => {
   });
 
   it.each([
-    [{ passTokens: "19,999" }, /20,000 to 2,000,000/],
-    [{ passTokens: "2,000,001" }, /20,000 to 2,000,000/],
-    [{ passTokens: "" }, /20,000 to 2,000,000/],
+    [{ passTokens: "99,999" }, /100,000 to 2,000,000/],
+    [{ passTokens: "2,000,001" }, /100,000 to 2,000,000/],
+    [{ passTokens: "" }, /100,000 to 2,000,000/],
     [{ passMinutes: "0" }, /1 to 25/],
     [{ passMinutes: "26" }, /1 to 25/],
     [{ passMinutes: "1.5" }, /1 to 25/],

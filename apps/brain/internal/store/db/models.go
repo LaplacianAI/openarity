@@ -219,6 +219,7 @@ type ImproverPass struct {
 	RunIds       []uuid.UUID
 	DrewOn       []uuid.UUID
 	Status       string
+	Stopped      bool
 	Report       string
 	Proposed     int32
 	ScreenedOut  int32

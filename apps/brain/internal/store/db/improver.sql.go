@@ -75,7 +75,7 @@ INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run
 VALUES ($1, $2, $3, $4,
         $5, $6, $7, $8)
 ON CONFLICT DO NOTHING
-RETURNING id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at
+RETURNING id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at
 `
 
 type BeginImproverPassParams struct {
@@ -113,6 +113,7 @@ func (q *Queries) BeginImproverPass(ctx context.Context, arg BeginImproverPassPa
 		&i.RunIds,
 		&i.DrewOn,
 		&i.Status,
+		&i.Stopped,
 		&i.Report,
 		&i.Proposed,
 		&i.ScreenedOut,
@@ -181,18 +182,18 @@ func (q *Queries) CountTeamPassesSince(ctx context.Context, arg CountTeamPassesS
 const failLostImproverPasses = `-- name: FailLostImproverPasses :execrows
 UPDATE improver_passes
 SET status = 'failed', error = $1, finished_at = now()
-WHERE status = 'running' AND alive_at < $2::timestamptz
+WHERE status = 'running' AND alive_at < now() - make_interval(mins => $2::int)
 `
 
 type FailLostImproverPassesParams struct {
-	Error  *string
-	Before time.Time
+	Error         *string
+	SilentMinutes int32
 }
 
 // Passes whose worker stopped answering, failed so the agent may have
 // another.
 func (q *Queries) FailLostImproverPasses(ctx context.Context, arg FailLostImproverPassesParams) (int64, error) {
-	result, err := q.db.Exec(ctx, failLostImproverPasses, arg.Error, arg.Before)
+	result, err := q.db.Exec(ctx, failLostImproverPasses, arg.Error, arg.SilentMinutes)
 	if err != nil {
 		return 0, err
 	}
@@ -202,16 +203,18 @@ func (q *Queries) FailLostImproverPasses(ctx context.Context, arg FailLostImprov
 const finishImproverPass = `-- name: FinishImproverPass :exec
 UPDATE improver_passes
 SET status = $1, report = $2, error = $3,
-    proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = $4::uuid),
+    stopped = $4,
+    proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = $5::uuid),
     finished_at = now()
-WHERE id = $4::uuid AND status = 'running'
+WHERE id = $5::uuid AND status = 'running'
 `
 
 type FinishImproverPassParams struct {
-	Status string
-	Report string
-	Error  *string
-	ID     uuid.UUID
+	Status  string
+	Report  string
+	Error   *string
+	Stopped bool
+	ID      uuid.UUID
 }
 
 func (q *Queries) FinishImproverPass(ctx context.Context, arg FinishImproverPassParams) error {
@@ -219,13 +222,14 @@ func (q *Queries) FinishImproverPass(ctx context.Context, arg FinishImproverPass
 		arg.Status,
 		arg.Report,
 		arg.Error,
+		arg.Stopped,
 		arg.ID,
 	)
 	return err
 }
 
 const getImproverPass = `-- name: GetImproverPass :one
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE id = $1
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE id = $1
 `
 
 func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPass, error) {
@@ -241,6 +245,7 @@ func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPa
 		&i.RunIds,
 		&i.DrewOn,
 		&i.Status,
+		&i.Stopped,
 		&i.Report,
 		&i.Proposed,
 		&i.ScreenedOut,
@@ -257,7 +262,7 @@ func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPa
 }
 
 const getImproverPassByWorkflow = `-- name: GetImproverPassByWorkflow :one
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE workflow_id = $1
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE workflow_id = $1
 `
 
 func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID string) (ImproverPass, error) {
@@ -273,6 +278,7 @@ func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID stri
 		&i.RunIds,
 		&i.DrewOn,
 		&i.Status,
+		&i.Stopped,
 		&i.Report,
 		&i.Proposed,
 		&i.ScreenedOut,
@@ -378,7 +384,7 @@ func (q *Queries) ListAgentRecentRuns(ctx context.Context, arg ListAgentRecentRu
 }
 
 const listImproverPasses = `-- name: ListImproverPasses :many
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, stopped, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes
 WHERE team_id = $1
   AND ($2::uuid IS NULL OR agent_id = $2::uuid)
   AND (NOT $3::bool
@@ -423,6 +429,7 @@ func (q *Queries) ListImproverPasses(ctx context.Context, arg ListImproverPasses
 			&i.RunIds,
 			&i.DrewOn,
 			&i.Status,
+			&i.Stopped,
 			&i.Report,
 			&i.Proposed,
 			&i.ScreenedOut,
@@ -450,7 +457,7 @@ SELECT a.id, a.team_id,
        EXISTS (SELECT 1 FROM run_digests d
                WHERE d.agent_id = a.id
                  AND d.created_at > COALESCE((SELECT max(x.started_at) FROM improver_passes x
-                                              WHERE x.agent_id = a.id AND x.status = 'done'),
+                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)),
                                              '-infinity'::timestamptz))::bool AS has_new
 FROM agents a
 JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
@@ -568,7 +575,7 @@ WHERE d.went = 'wrong' AND d.part <> 'none' AND d.cause <> 'external'
       '-infinity'::timestamptz)
   AND d.created_at > COALESCE((
         SELECT max(x.started_at) FROM improver_passes x
-        WHERE x.agent_id = d.agent_id AND x.status = 'done'
+        WHERE x.agent_id = d.agent_id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)
           AND (d.part || ':' || d.target || ':' || d.cause) = ANY (x.signatures)),
       '-infinity'::timestamptz)
 GROUP BY d.team_id, d.agent_id, d.part, d.target, d.cause
@@ -618,7 +625,7 @@ func (q *Queries) ListPatterns(ctx context.Context, minRuns int32) ([]ListPatter
 
 const listRecentPruneLooks = `-- name: ListRecentPruneLooks :many
 SELECT unnest(x.pruned)::text AS candidate FROM improver_passes x
-WHERE x.agent_id = $1::uuid AND x.status = 'done' AND x.started_at > $2::timestamptz
+WHERE x.agent_id = $1::uuid AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0) AND x.started_at > $2::timestamptz
 UNION
 SELECT substr(p.signature, 7)::text FROM improvement_proposals p
 WHERE p.agent_id = $1::uuid AND p.signature LIKE 'prune:%'
@@ -910,7 +917,7 @@ func (q *Queries) ListWentWrong(ctx context.Context, arg ListWentWrongParams) ([
 	return items, nil
 }
 
-const touchImproverPass = `-- name: TouchImproverPass :exec
+const touchImproverPass = `-- name: TouchImproverPass :execrows
 UPDATE improver_passes SET alive_at = now(), drew_on = $1
 WHERE id = $2 AND status = 'running'
 `
@@ -920,10 +927,14 @@ type TouchImproverPassParams struct {
 	ID     uuid.UUID
 }
 
-// An attempt beginning: the pass is alive, and draws on these runs.
-func (q *Queries) TouchImproverPass(ctx context.Context, arg TouchImproverPassParams) error {
-	_, err := q.db.Exec(ctx, touchImproverPass, arg.DrewOn, arg.ID)
-	return err
+// An attempt beginning: the pass is alive, and draws on these runs. No row
+// when it is no longer running: failed as lost meanwhile.
+func (q *Queries) TouchImproverPass(ctx context.Context, arg TouchImproverPassParams) (int64, error) {
+	result, err := q.db.Exec(ctx, touchImproverPass, arg.DrewOn, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const withdrawSupersededProposals = `-- name: WithdrawSupersededProposals :exec

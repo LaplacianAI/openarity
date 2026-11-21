@@ -1282,7 +1282,7 @@ func TestTheSampleShare(t *testing.T) {
 	}
 }
 
-// What one try at a pass may spend: 400,000 tokens and 20 minutes until
+// What a pass may spend: 400,000 tokens and 20 minutes a try until
 // set, kept when left out, and refused out of range without a save.
 func TestThePassBudget(t *testing.T) {
 	e := newEnv()
@@ -1290,16 +1290,16 @@ func TestThePassBudget(t *testing.T) {
 	if got.ImprovementPassTokens != 400_000 || got.ImprovementPassMinutes != 20 {
 		t.Errorf("a first save's budget = %d tokens, %d minutes", got.ImprovementPassTokens, got.ImprovementPassMinutes)
 	}
-	got = decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_pass_tokens":20000,"improvement_pass_minutes":25}`))
-	if got.ImprovementPassTokens != 20_000 || got.ImprovementPassMinutes != 25 {
-		t.Errorf("budget = %d tokens, %d minutes, want 20000 and 25", got.ImprovementPassTokens, got.ImprovementPassMinutes)
+	got = decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_pass_tokens":100000,"improvement_pass_minutes":25}`))
+	if got.ImprovementPassTokens != 100_000 || got.ImprovementPassMinutes != 25 {
+		t.Errorf("budget = %d tokens, %d minutes, want 100000 and 25", got.ImprovementPassTokens, got.ImprovementPassMinutes)
 	}
-	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementPassTokens != 20_000 || got.ImprovementPassMinutes != 25 {
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementPassTokens != 100_000 || got.ImprovementPassMinutes != 25 {
 		t.Errorf("left out, the budget became %d tokens, %d minutes", got.ImprovementPassTokens, got.ImprovementPassMinutes)
 	}
 	saved := len(e.store.upserts)
 	for field, bads := range map[string][]string{
-		"improvement_pass_tokens":  {"19999", "2000001", "0"},
+		"improvement_pass_tokens":  {"99999", "2000001", "0"},
 		"improvement_pass_minutes": {"0", "26", "-1"},
 	} {
 		for _, bad := range bads {

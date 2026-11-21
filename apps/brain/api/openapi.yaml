@@ -6892,12 +6892,12 @@ components:
         improvement_pass_tokens:
           type: integer
           format: int32
-          minimum: 20000
+          minimum: 100000
           maximum: 2000000
           description: >-
-            The tokens one try at an improver pass may spend, its screen's
-            included; past them it stops and reports what it has. 400,000
-            until set.
+            The tokens an improver pass may spend across its tries, its
+            screen's included; past them it stops and reports what it has.
+            400,000 until set.
         improvement_pass_minutes:
           type: integer
           format: int32
@@ -7081,7 +7081,7 @@ components:
         improvement_pass_tokens:
           type: integer
           format: int32
-          minimum: 20000
+          minimum: 100000
           maximum: 2000000
           description: Left out, the stored value stays.
         improvement_pass_minutes:

@@ -6,12 +6,13 @@ SET LOCAL lock_timeout = '3s';
 ALTER TABLE team_settings
     ADD COLUMN improvement_daily_passes smallint NOT NULL DEFAULT 20,
     ADD CONSTRAINT team_settings_daily_passes_range CHECK (improvement_daily_passes BETWEEN 1 AND 200),
-    -- What one try at a pass may spend, the screen's tokens included. The
-    -- minutes stay under the half hour after which a silent pass is taken
-    -- as lost, so a live one never is.
+    -- What a pass may spend: tokens across its tries, the screen's
+    -- included, and minutes for each try. The minutes stay under the half
+    -- hour after which a silent pass is taken as lost, so a live one never
+    -- is.
     ADD COLUMN improvement_pass_tokens integer NOT NULL DEFAULT 400000,
     ADD COLUMN improvement_pass_minutes smallint NOT NULL DEFAULT 20,
-    ADD CONSTRAINT team_settings_pass_tokens_range CHECK (improvement_pass_tokens BETWEEN 20000 AND 2000000),
+    ADD CONSTRAINT team_settings_pass_tokens_range CHECK (improvement_pass_tokens BETWEEN 100000 AND 2000000),
     ADD CONSTRAINT team_settings_pass_minutes_range CHECK (improvement_pass_minutes BETWEEN 1 AND 25);
 
 -- One run of the improver for one agent: why it ran, what it was given,
@@ -31,6 +32,9 @@ CREATE TABLE improver_passes (
     -- report is shown only to someone who may read them all.
     drew_on       uuid[] NOT NULL DEFAULT '{}',
     status        text NOT NULL DEFAULT 'running',
+    -- A pass that ran out of steps, tokens or time before it finished: with
+    -- nothing proposed, it has not looked at its patterns, which count on.
+    stopped       boolean NOT NULL DEFAULT false,
     report        text NOT NULL DEFAULT '',
     proposed      int NOT NULL DEFAULT 0,
     screened_out  int NOT NULL DEFAULT 0,

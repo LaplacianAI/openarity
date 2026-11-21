@@ -131,8 +131,8 @@ func TestAPassStopsAtItsLimits(t *testing.T) {
 	for name, limit := range map[string]func(*world, *Improver){
 		// The least a team may set, crossed in a fake model's few calls.
 		"tokens": func(w *world, _ *Improver) {
-			w.exec(t, `UPDATE team_settings SET improvement_pass_tokens = 20000 WHERE team_id = $1`, w.team)
-			w.model.usage = agent.Usage{InputTokens: 15_000, OutputTokens: 1_000}
+			w.exec(t, `UPDATE team_settings SET improvement_pass_tokens = 100000 WHERE team_id = $1`, w.team)
+			w.model.usage = agent.Usage{InputTokens: 80_000, OutputTokens: 5_000}
 		},
 		"time": func(w *world, im *Improver) {
 			w.exec(t, `UPDATE team_settings SET improvement_pass_minutes = 1 WHERE team_id = $1`, w.team)
@@ -294,5 +294,110 @@ func TestEveryKindIsBuilt(t *testing.T) {
 		if _, ok := agentEdits[improvements.Kind(k)]; !ok && k != "skill_edit" {
 			t.Errorf("kind %s has no builder", k)
 		}
+	}
+}
+
+// The tokens are the pass's across its tries: a try after one that spent
+// most of them stops as soon as it crosses what is left.
+func TestThePassBudgetSpansItsTries(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	w.exec(t, `UPDATE team_settings SET improvement_pass_tokens = 100000 WHERE team_id = $1`, w.team)
+	var runs []uuid.UUID
+	for range 3 {
+		runs = append(runs, w.digested(t, skipped, "wrong", false))
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	w.exec(t, `UPDATE improver_passes SET input_tokens = 99900 WHERE id = $1`, pass.ID)
+	read := reply{calls: []agent.ToolCall{call("read_run", map[string]string{"run": runs[0].String()})}}
+	w.model.replies = []reply{read, read, {text: "never reached"}}
+	if err := im.Run(t.Context(), pass.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := w.store.GetImproverPass(t.Context(), pass.ID)
+	if p.Status != passDone || !p.Stopped || !strings.Contains(p.Report, "spent its tokens") || len(w.model.asked) != 1 {
+		t.Errorf("pass = %+v after %d calls, want stopped after the first", p, len(w.model.asked))
+	}
+}
+
+// A pass over its tokens refuses a proposal before screening it: a screen
+// it cannot pay for is one it could not keep.
+func TestNoScreenPastTheBudget(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	var runs []uuid.UUID
+	for range 3 {
+		runs = append(runs, w.digested(t, skipped, "wrong", false))
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	m, err := im.material(t.Context(), pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := &passTools{im: im, pass: pass, material: m, tokens: 100_000, before: 100_001}
+	b, _ := json.Marshal(instructionsEdit(runs[0]))
+	asked := len(w.model.asked)
+	out, err := tools.propose(t.Context(), b)
+	if err != nil || !strings.Contains(out, "spent its tokens") || len(w.model.asked) != asked {
+		t.Errorf("propose = %q, %v; the screen was asked %d times", out, err, len(w.model.asked)-asked)
+	}
+}
+
+// lostOnTouch fails the pass as lost just as a try marks it alive: the
+// sweep ran between the try reading the pass and touching it.
+type lostOnTouch struct {
+	ImproverStore
+	w *world
+	t *testing.T
+}
+
+func (s lostOnTouch) TouchImproverPass(ctx context.Context, arg db.TouchImproverPassParams) (int64, error) {
+	s.w.exec(s.t, `UPDATE improver_passes SET status = 'failed', finished_at = now() WHERE id = $1`, arg.ID)
+	return s.ImproverStore.TouchImproverPass(ctx, arg)
+}
+
+// A pass failed as lost while its workflow lives stops at its next try,
+// proposing nothing under a failed pass.
+func TestALostPassDoesNotRunOn(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	for range 3 {
+		w.digested(t, skipped, "wrong", false)
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	im.store = lostOnTouch{ImproverStore: im.store, w: w, t: t}
+	w.model.replies = []reply{{text: "never reached"}}
+	if err := im.Run(t.Context(), pass.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.model.asked) != 0 {
+		t.Errorf("a lost pass asked its model %d times", len(w.model.asked))
+	}
+	if p, _ := w.store.GetImproverPass(t.Context(), pass.ID); p.Status != passFailed {
+		t.Errorf("status = %s, want it left failed", p.Status)
+	}
+}
+
+// A pass a limit stopped with nothing proposed has not looked at its
+// pattern: the pattern counts on, and the next sweep tries again.
+func TestAStoppedPassLeavesItsPatternOpen(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	for range 3 {
+		w.digested(t, skipped, "wrong", false)
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	if err := im.finishStopped(t.Context(), pass.ID, "The pass stopped.", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.patterns(t); len(got) != 1 {
+		t.Errorf("after a stopped pass with nothing proposed, patterns = %+v", got)
+	}
+	second := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	if err := im.finishStopped(t.Context(), second.ID, "Looked; nothing to change.", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.patterns(t); len(got) != 0 {
+		t.Errorf("after a pass that finished, patterns = %+v", got)
 	}
 }

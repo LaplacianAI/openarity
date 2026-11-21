@@ -197,6 +197,11 @@ func (t *passTools) guard(ctx context.Context, n improvements.Proposed) error {
 // that cannot be reached stops the pass, for its step to try again: no
 // proposal reaches a person unscreened, and an outage is not a refusal.
 func (t *passTools) screenIt(ctx context.Context, settings db.GetImprovementSettingsRow, n improvements.Proposed, in proposeArgs) error {
+	if t.overLocked() {
+		// A screen it cannot pay for would be a proposal it cannot keep.
+		t.halt(errPassTokens)
+		return refused("the pass has spent its tokens: finish with your report")
+	}
 	verdict, usage, err := t.im.screen(ctx, settings, n, in)
 	t.screen.InputTokens += usage.InputTokens
 	t.screen.OutputTokens += usage.OutputTokens
@@ -218,8 +223,10 @@ func (t *passTools) screenIt(ctx context.Context, settings db.GetImprovementSett
 }
 
 // store creates the proposal, replacing what an earlier pass left waiting
-// on the same pattern with the same kind of change to the same target.
+// on the same pattern with the same kind of change to the same target. It
+// is screened and paid for, so a limit reached meanwhile does not undo it.
 func (t *passTools) store(ctx context.Context, n improvements.Proposed) (uuid.UUID, error) {
+	ctx = context.WithoutCancel(ctx)
 	var stored db.ImprovementProposal
 	err := t.im.store.InTx(ctx, func(q *db.Queries) error {
 		var err error

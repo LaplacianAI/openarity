@@ -508,9 +508,9 @@ function modelRef(
 }
 
 /**
- * The judge model, the sample share and the daily passes, each only when it differs from what
- * the brain holds. A judge model of null sends the team back to judging on its
- * own model.
+ * The judge model, the sample share, the daily passes and a pass's tokens and
+ * minutes, each only when it differs from what the brain holds. A judge model
+ * of null sends the team back to judging on its own model.
  */
 function improvementRequest(
   d: SettingsDraft,
@@ -565,15 +565,15 @@ function improvementRequest(
   }
   if (parseWhole(d.passTokens) !== parseWhole(base.passTokens)) {
     const tokens = parseWhole(d.passTokens);
-    if (tokens === null || tokens < 20_000 || tokens > 2_000_000) {
-      return "Tokens a pass must be a whole number from 20,000 to 2,000,000.";
+    if (tokens === null || tokens < 100_000 || tokens > 2_000_000) {
+      return "Tokens a pass must be a whole number from 100,000 to 2,000,000.";
     }
     out.improvement_pass_tokens = tokens;
   }
   if (parseWhole(d.passMinutes) !== parseWhole(base.passMinutes)) {
     const minutes = wholeNumber(d.passMinutes);
     if (minutes === null || minutes < 1 || minutes > 25) {
-      return "Minutes a pass must be a whole number from 1 to 25.";
+      return "Minutes a try must be a whole number from 1 to 25.";
     }
     out.improvement_pass_minutes = minutes;
   }
@@ -1371,7 +1371,7 @@ function SettingsForm({
               <Field
                 label="Tokens a pass, at most"
                 htmlFor="settings-pass-tokens"
-                hint="What one try at a pass may spend, screening included, before it stops and reports what it found. From 20,000 to 2,000,000."
+                hint="What a pass may spend across its tries, screening included, before it stops and reports what it found. From 100,000 to 2,000,000."
               >
                 <Input
                   id="settings-pass-tokens"
@@ -1384,9 +1384,9 @@ function SettingsForm({
                 />
               </Field>
               <Field
-                label="Minutes a pass, at most"
+                label="Minutes a try, at most"
                 htmlFor="settings-pass-minutes"
-                hint="How long one try at a pass may run before it stops and reports what it found. From 1 to 25."
+                hint="How long one try at a pass may run before it stops and reports what it found. A pass that cannot reach its model is tried up to three times. From 1 to 25."
               >
                 <Input
                   id="settings-pass-minutes"

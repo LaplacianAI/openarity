@@ -199,7 +199,7 @@ describe("a pass", () => {
     at();
     await userEvent.click(await screen.findByRole("button", { name: /support-bot/ }));
     expect(
-      screen.getByText("The report draws on a conversation you can't read, so it isn't shown."),
+      screen.getByText(/The report draws on a conversation you can't read, so it isn't shown\./),
     ).toBeInTheDocument();
     expect(screen.queryByText("It left no report.")).toBeNull();
   });

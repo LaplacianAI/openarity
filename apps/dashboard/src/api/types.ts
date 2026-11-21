@@ -847,7 +847,7 @@ export type TeamSettings = {
   improvement_sample_share: number;
   /** The most passes the improver makes for the team in a day; 1 to 200. */
   improvement_daily_passes: number;
-  /** The tokens one try at a pass may spend, its screen's included; 20,000 to 2,000,000. */
+  /** The tokens a pass may spend across its tries, its screen's included; 100,000 to 2,000,000. */
   improvement_pass_tokens: number;
   /** The minutes one try at a pass may run; 1 to 25. */
   improvement_pass_minutes: number;
@@ -887,7 +887,7 @@ export type TeamSettingsRequest = {
   improvement_sample_share?: number;
   /** 1 to 200. Left out, the stored limit stays. */
   improvement_daily_passes?: number;
-  /** 20,000 to 2,000,000. Left out, the stored value stays. */
+  /** 100,000 to 2,000,000. Left out, the stored value stays. */
   improvement_pass_tokens?: number;
   /** 1 to 25. Left out, the stored value stays. */
   improvement_pass_minutes?: number;

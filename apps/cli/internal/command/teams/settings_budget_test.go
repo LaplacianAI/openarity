@@ -21,7 +21,7 @@ func TestSettingsShowDisplaysThePassBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
-	if !strings.Contains(out, "pass budget") || !strings.Contains(out, "250000 tokens, 15 minutes a try") {
+	if !strings.Contains(out, "pass budget") || !strings.Contains(out, "250000 tokens a pass, 15 minutes a try") {
 		t.Errorf("output:\n%s", out)
 	}
 }
@@ -36,19 +36,19 @@ func TestThePassBudgetIsSentOnlyWhenGiven(t *testing.T) {
 			t.Errorf("%s = %v sent without a flag", k, v)
 		}
 	}
-	body, _, err = set(t, budgetSaved, "--pass-tokens", "20000", "--pass-minutes", "25")
+	body, _, err = set(t, budgetSaved, "--pass-tokens", "100000", "--pass-minutes", "25")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body["improvement_pass_tokens"] != float64(20000) || body["improvement_pass_minutes"] != float64(25) {
+	if body["improvement_pass_tokens"] != float64(100000) || body["improvement_pass_minutes"] != float64(25) {
 		t.Errorf("sent %v and %v", body["improvement_pass_tokens"], body["improvement_pass_minutes"])
 	}
 }
 
 func TestThePassBudgetOutOfRangeRefusesBeforeSending(t *testing.T) {
 	for _, tc := range []struct{ flag, n, says string }{
-		{"--pass-tokens", "19999", "20000 to 2000000"},
-		{"--pass-tokens", "2000001", "20000 to 2000000"},
+		{"--pass-tokens", "99999", "100000 to 2000000"},
+		{"--pass-tokens", "2000001", "100000 to 2000000"},
 		{"--pass-minutes", "0", "1 to 25"},
 		{"--pass-minutes", "26", "1 to 25"},
 	} {

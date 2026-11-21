@@ -91,7 +91,7 @@ func (j *ImproverJob) pass(ctx dbos.Context, input string) (string, error) {
 	}
 	passID, err := uuid.Parse(id)
 	if err != nil {
-		return id, err
+		return id, fmt.Errorf("reading the begun pass's id %q: %w", id, err)
 	}
 	_, failed := dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
 		return id, j.improver.Run(sctx, passID)

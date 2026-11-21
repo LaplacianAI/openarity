@@ -50,8 +50,8 @@ type settings struct {
 	JudgeModel             *modelRef `json:"judge_model"`
 	ImprovementSampleShare int16     `json:"improvement_sample_share"`
 	ImprovementDailyPasses int16     `json:"improvement_daily_passes"`
-	// What one try at a pass may spend: tokens, screen's included, and
-	// minutes.
+	// What a pass may spend: tokens across its tries, the screen's
+	// included, and minutes for each try.
 	ImprovementPassTokens  int32 `json:"improvement_pass_tokens"`
 	ImprovementPassMinutes int16 `json:"improvement_pass_minutes"`
 	// When the switch last went on; runs before it are never judged.
@@ -98,7 +98,7 @@ type settingsRequest struct {
 	ImprovementSampleShare *int16 `json:"improvement_sample_share"`
 	// The improver passes a day at most; left out keeps what is stored.
 	ImprovementDailyPasses *int16 `json:"improvement_daily_passes"`
-	// What one try at a pass may spend; left out keeps what is stored.
+	// What a pass may spend; left out keeps what is stored.
 	ImprovementPassTokens  *int32 `json:"improvement_pass_tokens"`
 	ImprovementPassMinutes *int16 `json:"improvement_pass_minutes"`
 	CompactionMessages     int32  `json:"compaction_messages"`

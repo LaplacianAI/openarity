@@ -242,7 +242,7 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().Int32Var(&f.dailyPasses, "daily-passes", 0,
 		"the most improver passes the team may run in a day (UTC), 1 to 200; 20 until set")
 	cmd.Flags().Int32Var(&f.passTokens, "pass-tokens", 0,
-		"the tokens one try at an improver pass may spend, 20000 to 2000000; 400000 until set")
+		"the tokens an improver pass may spend across its tries, 100000 to 2000000; 400000 until set")
 	cmd.Flags().Int32Var(&f.passMinutes, "pass-minutes", 0,
 		"the minutes one try at an improver pass may run, 1 to 25; 20 until set")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
@@ -285,8 +285,8 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return fmt.Errorf("--sample-share is a percentage, 0 to 100, not %d", f.sampleShare)
 	case changed("daily-passes") && (f.dailyPasses < 1 || f.dailyPasses > 200):
 		return fmt.Errorf("--daily-passes is a count of passes a day, 1 to 200, not %d", f.dailyPasses)
-	case changed("pass-tokens") && (f.passTokens < 20_000 || f.passTokens > 2_000_000):
-		return fmt.Errorf("--pass-tokens is a count of tokens, 20000 to 2000000, not %d", f.passTokens)
+	case changed("pass-tokens") && (f.passTokens < 100_000 || f.passTokens > 2_000_000):
+		return fmt.Errorf("--pass-tokens is a count of tokens, 100000 to 2000000, not %d", f.passTokens)
 	case changed("pass-minutes") && (f.passMinutes < 1 || f.passMinutes > 25):
 		return fmt.Errorf("--pass-minutes is a count of minutes, 1 to 25, not %d", f.passMinutes)
 	case changed("hub") && f.noHub:
@@ -574,7 +574,7 @@ func printJudge(table *printer.Table, opts *cli.Options, s *client.TeamSettings)
 		table.Row(label("daily passes"), value(strconv.Itoa(int(*s.ImprovementDailyPasses))+" at most"))
 	}
 	if s.ImprovementPassTokens != nil && s.ImprovementPassMinutes != nil {
-		table.Row(label("pass budget"), value(strconv.Itoa(int(*s.ImprovementPassTokens))+" tokens, "+
+		table.Row(label("pass budget"), value(strconv.Itoa(int(*s.ImprovementPassTokens))+" tokens a pass, "+
 			strconv.Itoa(int(*s.ImprovementPassMinutes))+" minutes a try"))
 	}
 }

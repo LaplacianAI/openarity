@@ -59,9 +59,11 @@ func (im *Improver) screen(ctx context.Context, settings db.GetImprovementSettin
 	}
 	writeSection(&b, section{"The runs it rests on", summaries})
 
-	var answer screenAnswer
 	var err error
 	for range 2 {
+		// A reply of its own each time: one that leaves a field out keeps
+		// nothing of the last.
+		var answer screenAnswer
 		var usage agent.Usage
 		usage, err = im.judge.do(ctx, ask{model: model, system: screenPrompt, user: b.String(), schema: screenSchema}, &answer)
 		spent.InputTokens += usage.InputTokens

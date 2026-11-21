@@ -39,7 +39,7 @@ func TestImproverPassesMigrateAndRollBack(t *testing.T) {
 		scalar[int16](t, s, `SELECT improvement_pass_minutes FROM team_settings WHERE team_id = $1`, team) != 20 {
 		t.Error("a saved team's pass budget does not default to 400,000 tokens and 20 minutes")
 	}
-	for _, bad := range []string{`improvement_pass_tokens = 19999`, `improvement_pass_minutes = 26`} {
+	for _, bad := range []string{`improvement_pass_tokens = 99999`, `improvement_pass_minutes = 26`} {
 		if _, err := s.pool.Exec(t.Context(), `UPDATE team_settings SET `+bad+` WHERE team_id = $1`, team); err == nil {
 			t.Errorf("%s was stored", bad)
 		}

@@ -129,7 +129,8 @@ export function ImproverPassRow({ pass }: { pass: ImproverPass }) {
           ) : null}
           {pass.report_withheld ? (
             <p className="text-sm text-muted-foreground">
-              The report draws on a conversation you can't read, so it isn't shown.
+              The report draws on a conversation you can't read, so it isn't shown. Someone who can
+              read every conversation sees it.
             </p>
           ) : pass.report.trim() === "" ? (
             <p className="text-sm text-muted-foreground">

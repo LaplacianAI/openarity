@@ -22,8 +22,9 @@ type passTools struct {
 	// stop ends the pass's run with a cause: the screen could not be
 	// reached, or the pass has spent its tokens.
 	stop context.CancelCauseFunc
-	// tokens is what the try may spend, the screen's included.
-	tokens int
+	// tokens is what the pass may spend across its tries, the screen's
+	// included; before is what its earlier tries spent.
+	tokens, before int
 
 	mu sync.Mutex
 	// proposed starts at what earlier attempts stored.
@@ -64,7 +65,7 @@ func (t *passTools) watch(events <-chan agent.Event) {
 }
 
 func (t *passTools) overLocked() bool {
-	spent := t.run.InputTokens + t.run.OutputTokens + t.screen.InputTokens + t.screen.OutputTokens
+	spent := t.before + t.run.InputTokens + t.run.OutputTokens + t.screen.InputTokens + t.screen.OutputTokens
 	return t.tokens > 0 && spent > t.tokens
 }
 
@@ -110,7 +111,7 @@ func (t *passTools) readRun(ctx context.Context, args json.RawMessage) (string, 
 		Run string `json:"run"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
-		return "", err
+		return "", fmt.Errorf("reading read_run's arguments: %w", err)
 	}
 	id, parsed := uuid.Parse(strings.TrimSpace(in.Run))
 	if parsed != nil || !t.material.runs[id] {
@@ -129,7 +130,7 @@ func (t *passTools) readSkill(ctx context.Context, args json.RawMessage) (string
 		Path  string `json:"path"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
-		return "", err
+		return "", fmt.Errorf("reading read_skill's arguments: %w", err)
 	}
 	s, ok := t.material.skills[strings.TrimSpace(in.Skill)]
 	if !ok || s.Source != "upload" {

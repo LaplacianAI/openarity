@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -21,24 +22,31 @@ import (
 
 // agentEdit applies one kind's edit to a copy of the agent's state; a new
 // skill it creates is returned with it.
-type agentEdit func(t *passTools, ctx context.Context, raw json.RawMessage, after *improvements.AgentState) (*improvements.SkillState, error)
+type agentEdit func(ctx context.Context, t *passTools, raw json.RawMessage, after *improvements.AgentState) (*improvements.SkillState, error)
+
+// pure is an edit that needs nothing but the edit and the state.
+func pure(f func(raw json.RawMessage, st *improvements.AgentState) error) agentEdit {
+	return func(_ context.Context, _ *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+		return nil, f(raw, st)
+	}
+}
 
 // agentEdits are the kinds that change the agent. skill_edit changes a
 // skill, and is built by buildSkillEdit.
 var agentEdits = map[improvements.Kind]agentEdit{
-	improvements.KindInstructions: editInstructions,
-	improvements.KindDescription:  editDescription,
+	improvements.KindInstructions: pure(editInstructions),
+	improvements.KindDescription:  pure(editDescription),
 	improvements.KindSkillGrant:   editSkillGrant,
 	improvements.KindSkillDrop:    editSkillDrop,
 	improvements.KindSkillNew:     editSkillNew,
 	improvements.KindServerGrant:  editServerGrant,
 	improvements.KindServerDrop:   editServerDrop,
 	improvements.KindToolsNarrow:  editToolsNarrow,
-	improvements.KindBuiltinTool:  editBuiltinTool,
+	improvements.KindBuiltinTool:  pure(editBuiltinTool),
 	improvements.KindToolNote:     editNote,
-	improvements.KindLimits:       editLimits,
+	improvements.KindLimits:       pure(editLimits),
 	improvements.KindDelegation:   editDelegation,
-	improvements.KindPattern:      editPattern,
+	improvements.KindPattern:      pure(editPattern),
 }
 
 // build turns an edit into the proposal's before and after, the agent's
@@ -56,9 +64,9 @@ func (t *passTools) build(ctx context.Context, in proposeArgs) (improvements.Pro
 	before := t.material.state
 	after, err := cloneState(before)
 	if err != nil {
-		return n, err
+		return n, fmt.Errorf("copying agent %s's setup: %w", t.pass.AgentID, err)
 	}
-	skill, err := edit(t, ctx, in.Edit, &after)
+	skill, err := edit(ctx, t, in.Edit, &after)
 	if err != nil {
 		return n, err
 	}
@@ -86,25 +94,25 @@ func cloneState(s improvements.AgentState) (improvements.AgentState, error) {
 	return out, json.Unmarshal(b, &out)
 }
 
-func editInstructions(_ *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editInstructions(raw json.RawMessage, st *improvements.AgentState) error {
 	var e replaceEdit
 	if err := decodeEdit(raw, &e); err != nil {
-		return nil, err
+		return err
 	}
 	text, err := e.apply(st.Agent.Instructions, "the instructions")
 	st.Agent.Instructions = text
-	return nil, err
+	return err
 }
 
-func editDescription(_ *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editDescription(raw json.RawMessage, st *improvements.AgentState) error {
 	var e struct {
 		Text string `json:"text"`
 	}
 	if err := decodeEdit(raw, &e); err != nil {
-		return nil, err
+		return err
 	}
 	st.Agent.Description = strings.TrimSpace(e.Text)
-	return nil, nil
+	return nil
 }
 
 // skillNamed is the team's skill an edit names, and whether the agent
@@ -123,7 +131,7 @@ func (t *passTools) skillNamed(raw json.RawMessage) (db.Skill, bool, error) {
 	return s, slices.Contains(t.material.state.Agent.Skills, s.ID), nil
 }
 
-func editSkillGrant(t *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editSkillGrant(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
 	s, held, err := t.skillNamed(raw)
 	switch {
 	case err != nil:
@@ -135,7 +143,7 @@ func editSkillGrant(t *passTools, _ context.Context, raw json.RawMessage, st *im
 	return nil, nil
 }
 
-func editSkillDrop(t *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editSkillDrop(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
 	s, held, err := t.skillNamed(raw)
 	switch {
 	case err != nil:
@@ -147,7 +155,7 @@ func editSkillDrop(t *passTools, _ context.Context, raw json.RawMessage, st *imp
 	return nil, nil
 }
 
-func editSkillNew(t *passTools, _ context.Context, raw json.RawMessage, _ *improvements.AgentState) (*improvements.SkillState, error) {
+func editSkillNew(_ context.Context, t *passTools, raw json.RawMessage, _ *improvements.AgentState) (*improvements.SkillState, error) {
 	sk, err := newSkill(raw, t.material.skills)
 	if err != nil {
 		return nil, err
@@ -155,13 +163,13 @@ func editSkillNew(t *passTools, _ context.Context, raw json.RawMessage, _ *impro
 	return &sk, nil
 }
 
-func editBuiltinTool(_ *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editBuiltinTool(raw json.RawMessage, st *improvements.AgentState) error {
 	var e struct {
 		Tool string `json:"tool"`
 		On   bool   `json:"on"`
 	}
 	if err := decodeEdit(raw, &e); err != nil {
-		return nil, err
+		return err
 	}
 	on := e.On
 	switch e.Tool {
@@ -170,12 +178,12 @@ func editBuiltinTool(_ *passTools, _ context.Context, raw json.RawMessage, st *i
 	case "browser":
 		st.Agent.Browser = &on
 	default:
-		return nil, refused("tool is web or browser")
+		return refused("tool is web or browser")
 	}
-	return nil, nil
+	return nil
 }
 
-func editLimits(_ *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editLimits(raw json.RawMessage, st *improvements.AgentState) error {
 	var e struct {
 		MaxTokens          *int32 `json:"max_tokens"`
 		MaxSteps           *int32 `json:"max_steps"`
@@ -183,7 +191,7 @@ func editLimits(_ *passTools, _ context.Context, raw json.RawMessage, st *improv
 		TokenBudget        *int64 `json:"token_budget"`
 	}
 	if err := decodeEdit(raw, &e); err != nil {
-		return nil, err
+		return err
 	}
 	a := &st.Agent
 	if e.MaxTokens != nil {
@@ -198,18 +206,18 @@ func editLimits(_ *passTools, _ context.Context, raw json.RawMessage, st *improv
 	if e.TokenBudget != nil {
 		a.TokenBudget = e.TokenBudget
 	}
-	return nil, nil
+	return nil
 }
 
-func editPattern(_ *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editPattern(raw json.RawMessage, st *improvements.AgentState) error {
 	var e struct {
 		Pattern string `json:"pattern"`
 	}
 	if err := decodeEdit(raw, &e); err != nil {
-		return nil, err
+		return err
 	}
 	st.Agent.Pattern = strings.TrimSpace(e.Pattern)
-	return nil, nil
+	return nil
 }
 
 // replaceEdit swaps one passage of a text, or appends to it.
@@ -301,7 +309,7 @@ func (t *passTools) buildSkillEdit(ctx context.Context, in proposeArgs, n improv
 		before, err = improvements.SkillNow(ctx, q, row)
 		return err
 	}); err != nil {
-		return n, err
+		return n, fmt.Errorf("reading skill %s: %w", row.Name, err)
 	}
 	after := before
 	after.Files = slices.Clone(before.Files)
@@ -360,7 +368,7 @@ func (t *passTools) serverNamed(raw json.RawMessage, st *improvements.AgentState
 	return e, s, i, nil
 }
 
-func editServerGrant(t *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editServerGrant(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
 	e, s, i, err := t.serverNamed(raw, st)
 	switch {
 	case err != nil:
@@ -376,7 +384,7 @@ func editServerGrant(t *passTools, _ context.Context, raw json.RawMessage, st *i
 	return nil, nil
 }
 
-func editServerDrop(t *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editServerDrop(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
 	_, s, i, err := t.serverNamed(raw, st)
 	switch {
 	case err != nil:
@@ -389,7 +397,7 @@ func editServerDrop(t *passTools, _ context.Context, raw json.RawMessage, st *im
 	return nil, nil
 }
 
-func editToolsNarrow(t *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editToolsNarrow(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
 	e, s, i, err := t.serverNamed(raw, st)
 	switch {
 	case err != nil:
@@ -406,7 +414,7 @@ func editToolsNarrow(t *passTools, _ context.Context, raw json.RawMessage, st *i
 	return nil, nil
 }
 
-func editNote(t *passTools, _ context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editNote(_ context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
 	var e struct {
 		Server string `json:"server"`
 		Tool   string `json:"tool"`
@@ -426,7 +434,7 @@ func editNote(t *passTools, _ context.Context, raw json.RawMessage, st *improvem
 	return nil, nil
 }
 
-func editDelegation(t *passTools, ctx context.Context, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
+func editDelegation(ctx context.Context, t *passTools, raw json.RawMessage, st *improvements.AgentState) (*improvements.SkillState, error) {
 	var e struct {
 		Mode   *string  `json:"mode"`
 		Add    []string `json:"add"`
@@ -445,7 +453,7 @@ func editDelegation(t *passTools, ctx context.Context, raw json.RawMessage, st *
 			return nil, refused("the team has no agent %q", name)
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading agent %s: %w", name, err)
 		}
 		if !slices.Contains(st.Agent.Delegates, a.ID) {
 			st.Agent.Delegates = append(st.Agent.Delegates, a.ID)

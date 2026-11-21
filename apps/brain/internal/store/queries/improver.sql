@@ -14,7 +14,7 @@ WHERE d.went = 'wrong' AND d.part <> 'none' AND d.cause <> 'external'
       '-infinity'::timestamptz)
   AND d.created_at > COALESCE((
         SELECT max(x.started_at) FROM improver_passes x
-        WHERE x.agent_id = d.agent_id AND x.status = 'done'
+        WHERE x.agent_id = d.agent_id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)
           AND (d.part || ':' || d.target || ':' || d.cause) = ANY (x.signatures)),
       '-infinity'::timestamptz)
 GROUP BY d.team_id, d.agent_id, d.part, d.target, d.cause
@@ -28,7 +28,7 @@ SELECT a.id, a.team_id,
        EXISTS (SELECT 1 FROM run_digests d
                WHERE d.agent_id = a.id
                  AND d.created_at > COALESCE((SELECT max(x.started_at) FROM improver_passes x
-                                              WHERE x.agent_id = a.id AND x.status = 'done'),
+                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0)),
                                              '-infinity'::timestamptz))::bool AS has_new
 FROM agents a
 JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
@@ -62,7 +62,7 @@ ORDER BY run_id, seq;
 -- offered again for a while.
 -- name: ListRecentPruneLooks :many
 SELECT unnest(x.pruned)::text AS candidate FROM improver_passes x
-WHERE x.agent_id = sqlc.arg(agent_id)::uuid AND x.status = 'done' AND x.started_at > sqlc.arg(since)::timestamptz
+WHERE x.agent_id = sqlc.arg(agent_id)::uuid AND x.status = 'done' AND (NOT x.stopped OR x.proposed > 0) AND x.started_at > sqlc.arg(since)::timestamptz
 UNION
 SELECT substr(p.signature, 7)::text FROM improvement_proposals p
 WHERE p.agent_id = sqlc.arg(agent_id)::uuid AND p.signature LIKE 'prune:%'
@@ -89,8 +89,9 @@ RETURNING *;
 -- name: GetImproverPassByWorkflow :one
 SELECT * FROM improver_passes WHERE workflow_id = $1;
 
--- An attempt beginning: the pass is alive, and draws on these runs.
--- name: TouchImproverPass :exec
+-- An attempt beginning: the pass is alive, and draws on these runs. No row
+-- when it is no longer running: failed as lost meanwhile.
+-- name: TouchImproverPass :execrows
 UPDATE improver_passes SET alive_at = now(), drew_on = sqlc.arg(drew_on)
 WHERE id = sqlc.arg(id) AND status = 'running';
 
@@ -99,7 +100,7 @@ WHERE id = sqlc.arg(id) AND status = 'running';
 -- name: FailLostImproverPasses :execrows
 UPDATE improver_passes
 SET status = 'failed', error = sqlc.arg(error), finished_at = now()
-WHERE status = 'running' AND alive_at < sqlc.arg(before)::timestamptz;
+WHERE status = 'running' AND alive_at < now() - make_interval(mins => sqlc.arg(silent_minutes)::int);
 
 -- What an attempt spent, added whether or not it finished.
 -- name: AddImproverPassUsage :exec
@@ -112,6 +113,7 @@ WHERE id = sqlc.arg(id);
 -- name: FinishImproverPass :exec
 UPDATE improver_passes
 SET status = sqlc.arg(status), report = sqlc.arg(report), error = sqlc.narg(error),
+    stopped = sqlc.arg(stopped),
     proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = sqlc.arg(id)::uuid),
     finished_at = now()
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';

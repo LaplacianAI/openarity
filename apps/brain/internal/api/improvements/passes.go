@@ -117,7 +117,9 @@ func (h *handler) passes(w http.ResponseWriter, r *http.Request) {
 }
 
 // readableRuns says, for a pass's runs, whether the caller may read them
-// all: one read for the page. A moderator reads every conversation.
+// all: one read for the page. A moderator reads every conversation. A run
+// since deleted is one nobody else can read, so its pass's report stays
+// withheld from them: it fails closed.
 func (h *handler) readableRuns(r *http.Request, u *auth.User, teamID uuid.UUID, passes []db.ImproverPass) (func([]uuid.UUID) bool, error) {
 	if h.can(r, u, teamID, readEveryConvo) {
 		return func([]uuid.UUID) bool { return true }, nil

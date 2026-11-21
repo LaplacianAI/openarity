@@ -3844,7 +3844,7 @@ type TeamSettings struct {
 	// ImprovementPassMinutes The minutes one try at an improver pass may run; past them it stops and reports what it has. 20 until set.
 	ImprovementPassMinutes *int32 `json:"improvement_pass_minutes,omitempty" yaml:"improvement_pass_minutes,omitempty"`
 
-	// ImprovementPassTokens The tokens one try at an improver pass may spend, its screen's included; past them it stops and reports what it has. 400,000 until set.
+	// ImprovementPassTokens The tokens an improver pass may spend across its tries, its screen's included; past them it stops and reports what it has. 400,000 until set.
 	ImprovementPassTokens *int32 `json:"improvement_pass_tokens,omitempty" yaml:"improvement_pass_tokens,omitempty"`
 
 	// ImprovementSampleShare The percentage of runs judged done that are digested anyway, for contrast. 10 until set.

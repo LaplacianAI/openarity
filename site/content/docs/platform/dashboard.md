@@ -83,9 +83,10 @@ widens the agent. An approver's **Passes** tab lists every pass: why it ran,
 what came of it, its tokens, and its report, including why it left a pattern
 alone; a report drawn on a conversation the approver cannot read is withheld.
 A pass runs on the judge model, else the team's. Team settings cap what it
-costs: the passes a day (20 until changed), and the tokens and minutes one try
-at a pass may spend (400,000 and 20 until changed), past which it stops and
-reports what it found.
+costs: the passes a day (20 until changed), the tokens a pass may spend across
+its tries (400,000), and the minutes for each try (20); past either it stops
+and reports what it found. A pass stopped this way with nothing proposed leaves
+its pattern open for the next sweep.
 
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to
