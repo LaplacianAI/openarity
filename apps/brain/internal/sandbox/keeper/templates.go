@@ -216,6 +216,8 @@ func (t *Templates) check(ctx context.Context, row db.E2BTemplate) {
 		err = t.finish(ctx, row, TemplateReady, nil)
 	case sandbox.BuildFailed:
 		err = t.finish(ctx, row, TemplateFailed, &reason)
+	case sandbox.BuildRunning:
+		err = t.store.TouchE2BTemplate(ctx, row.ID)
 	default:
 		err = t.store.TouchE2BTemplate(ctx, row.ID)
 	}

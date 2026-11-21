@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -39,7 +40,7 @@ func (e *e2bBuilds) BuildTemplate(_ context.Context, name, image string) (sandbo
 		return sandbox.Build{}, e.refuse
 	}
 	n := e.n.Add(1)
-	return sandbox.Build{TemplateID: "tpl", BuildID: "b" + string(rune('0'+n))}, nil
+	return sandbox.Build{TemplateID: "tpl", BuildID: fmt.Sprintf("b%d", n)}, nil
 }
 
 func (e *e2bBuilds) BuildStatus(context.Context, sandbox.Build) (sandbox.BuildState, string, error) {

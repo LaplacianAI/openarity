@@ -584,6 +584,8 @@ func templateBuild(opts *cli.Options, b *client.SandboxTemplateBuild) string {
 		return name + opts.Styles.Muted.Render(" (built)")
 	case client.SandboxTemplateBuildStatusFailed:
 		return name + opts.Styles.Muted.Render(" (failed: "+cli.Safe(b.Error)+"; retried in ten minutes, or on a save)")
+	case client.SandboxTemplateBuildStatusBuilding:
+		return name + opts.Styles.Muted.Render(" (building, a few minutes)")
 	default:
 		return name + opts.Styles.Muted.Render(" (building, a few minutes)")
 	}
