@@ -37,6 +37,7 @@ const (
 type TemplateStore interface {
 	WithE2BTemplateLock(ctx context.Context, team, key uuid.UUID, name string, fn func(context.Context) error) error
 	GetE2BTemplate(ctx context.Context, arg db.GetE2BTemplateParams) (db.E2BTemplate, error)
+	GetReadyE2BTemplate(ctx context.Context, arg db.GetReadyE2BTemplateParams) (db.E2BTemplate, error)
 	SaveE2BTemplate(ctx context.Context, arg db.SaveE2BTemplateParams) (db.E2BTemplate, error)
 	ListBuildingE2BTemplates(ctx context.Context, maxRows int32) ([]db.E2BTemplate, error)
 	FinishE2BTemplate(ctx context.Context, arg db.FinishE2BTemplateParams) (int64, error)
@@ -81,8 +82,10 @@ func (t *Templates) At(now func() time.Time) *Templates {
 }
 
 // E2BName is the template the brain's room image is built as: named for the
-// release's commit, so an upgrade builds a new one and a room made before it
-// keeps the one it was made from until it is replaced.
+// release's commit, so an upgrade builds a new one, which rooms move to once
+// it is built. A brain that does not know its commit builds -latest once, and
+// an override is named for its reference: neither notices when a mutable tag
+// moves, so a new image under the same tag needs the row deleted to rebuild.
 func (i Images) E2BName() string {
 	if i.Override == "" && i.Commit != "" {
 		c := i.Commit
@@ -134,8 +137,10 @@ func (t *Templates) Current(ctx context.Context, team, key uuid.UUID) (db.E2BTem
 }
 
 // Image is the template a room of the team's starts from under key, once it
-// is built. While it is building the answer is sandbox.ErrPreparing; a build
-// that failed is sandbox.ErrRefused with E2B's reason, until it is retried.
+// is built. While it is building, or after it failed, rooms start from the
+// newest template already built under the key, so an upgrade does not stop
+// a team's rooms; a team with none built yet gets sandbox.ErrPreparing while
+// it builds and sandbox.ErrRefused, with E2B's reason, when it failed.
 func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, error) {
 	name := t.images.E2BName()
 	cached := key.String() + ":" + name
@@ -146,10 +151,18 @@ func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, err
 	if err != nil {
 		return "", err
 	}
-	switch row.Status {
-	case TemplateReady:
+	if row.Status == TemplateReady {
 		t.ready.Store(cached, struct{}{})
 		return name, nil
+	}
+	prev, err := t.store.GetReadyE2BTemplate(ctx, db.GetReadyE2BTemplateParams{TeamID: team, SandboxSecretID: key})
+	switch {
+	case err == nil:
+		return prev.Name, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return "", fmt.Errorf("reading the team's built room templates: %w", err)
+	}
+	switch row.Status {
 	case TemplateBuilding:
 		return "", sandbox.ErrPreparing
 	default:

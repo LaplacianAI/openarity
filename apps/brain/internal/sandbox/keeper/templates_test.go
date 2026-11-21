@@ -321,3 +321,55 @@ func TestAFinishedBuildDoesNotFinishTheOneThatReplacedIt(t *testing.T) {
 		t.Fatalf("row = %+v", row)
 	}
 }
+
+// An upgrade names a new template; rooms keep starting from the one already
+// built while it builds, and move to it once it is.
+func TestAnUpgradeKeepsRoomsOnTheLastBuiltTemplateWhileItBuilds(t *testing.T) {
+	t.Parallel()
+	w, e, old, _ := e2bWorld(t)
+	if _, err := old.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+		t.Fatal(err)
+	}
+	e.state = sandbox.BuildReady
+	if err := old.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.state = sandbox.BuildRunning
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upgraded := keeper.NewTemplates(w.store, w.secrets, func(string) keeper.TemplateClient { return e },
+		keeper.Images{Commit: "def5678"}, logger)
+
+	got, err := upgraded.Image(t.Context(), w.team, w.keyID)
+	if err != nil || got != builtName {
+		t.Fatalf("during the upgrade's build: %q, %v; want the last built, %q", got, err, builtName)
+	}
+	if e.builds() != 2 || !strings.HasPrefix(e.asked[1], "openarity-sandbox-def5678 ") {
+		t.Fatalf("builds asked = %v, want the upgrade's", e.asked)
+	}
+
+	e.state = sandbox.BuildReady
+	if err := upgraded.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := upgraded.Image(t.Context(), w.team, w.keyID); err != nil || got != "openarity-sandbox-def5678" {
+		t.Fatalf("after the upgrade's build: %q, %v", got, err)
+	}
+}
+
+// A failed upgrade leaves rooms on what was built before, and says nothing.
+func TestAFailedUpgradeKeepsTheLastBuiltTemplate(t *testing.T) {
+	t.Parallel()
+	w, e, old, _ := e2bWorld(t)
+	_, _ = old.Want(t.Context(), w.team, w.keyID, 0)
+	e.state = sandbox.BuildReady
+	_ = old.Sweep(t.Context())
+
+	e.refuse = errors.New("e2b: 500")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upgraded := keeper.NewTemplates(w.store, w.secrets, func(string) keeper.TemplateClient { return e },
+		keeper.Images{Commit: "def5678"}, logger)
+	if got, err := upgraded.Image(t.Context(), w.team, w.keyID); err != nil || got != builtName {
+		t.Fatalf("%q, %v; want the last built", got, err)
+	}
+}

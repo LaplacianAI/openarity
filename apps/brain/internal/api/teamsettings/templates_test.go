@@ -126,3 +126,20 @@ func TestABrainThatCannotKeepRoomsShowsNoBuild(t *testing.T) {
 		t.Fatalf("template_build = %+v", got.Sandbox.TemplateBuild)
 	}
 }
+
+// Saving the model asks E2B for nothing: only a save of the sandbox does.
+func TestASaveOfAnythingElseOnlyReadsTheBuild(t *testing.T) {
+	e := newEnv()
+	id := uuid.New()
+	e.storedSandbox("e2b", &id, nil)
+	tpl := &fakeTemplates{row: &db.E2BTemplate{Name: "n", Status: "building"}}
+	e.templates = tpl
+
+	got := decode(t, e.save(t, withSandbox("")))
+	if len(tpl.wants) != 0 || tpl.reads != 1 {
+		t.Fatalf("%d asks, %d reads: a save without the sandbox asked for a build", len(tpl.wants), tpl.reads)
+	}
+	if got.Sandbox.TemplateBuild == nil || got.Sandbox.TemplateBuild.Status != "building" {
+		t.Fatalf("template_build = %+v", got.Sandbox.TemplateBuild)
+	}
+}

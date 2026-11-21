@@ -70,6 +70,40 @@ func (q *Queries) GetE2BTemplate(ctx context.Context, arg GetE2BTemplateParams) 
 	return i, err
 }
 
+const getReadyE2BTemplate = `-- name: GetReadyE2BTemplate :one
+SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at FROM e2b_templates
+WHERE team_id = $1
+  AND sandbox_secret_id = $2
+  AND status = 'ready'
+ORDER BY updated_at DESC
+LIMIT 1
+`
+
+type GetReadyE2BTemplateParams struct {
+	TeamID          uuid.UUID
+	SandboxSecretID uuid.UUID
+}
+
+// The newest template already built under the key, of any name: what rooms
+// start from while a newer release's is still being built.
+func (q *Queries) GetReadyE2BTemplate(ctx context.Context, arg GetReadyE2BTemplateParams) (E2BTemplate, error) {
+	row := q.db.QueryRow(ctx, getReadyE2BTemplate, arg.TeamID, arg.SandboxSecretID)
+	var i E2BTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SandboxSecretID,
+		&i.Name,
+		&i.TemplateID,
+		&i.BuildID,
+		&i.Status,
+		&i.Error,
+		&i.StartedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listBuildingE2BTemplates = `-- name: ListBuildingE2BTemplates :many
 SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at FROM e2b_templates
 WHERE status = 'building'

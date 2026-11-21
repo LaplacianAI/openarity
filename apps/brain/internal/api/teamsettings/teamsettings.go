@@ -180,13 +180,14 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := view(saved, hub)
-	out.Sandbox.TemplateBuild = h.build(r.Context(), saved, true)
+	out.Sandbox.TemplateBuild = h.build(r.Context(), saved, req.Sandbox != nil)
 	api.WriteJSON(w, h.logger, http.StatusOK, out)
 }
 
 // build is the room template's build for an E2B team that names no template
-// of its own. A save asks for one when there is none or the last failed, so
-// the team's first room does not wait for it; a read only reads. Trouble is
+// of its own. A save of the sandbox asks for one when there is none or the
+// last failed, so the team's first room does not wait for it; a read, and a
+// save of anything else, only reads. Trouble is
 // logged and shown as no build: the settings were saved, and the next room
 // asks again.
 func (h *handler) build(ctx context.Context, row db.TeamSetting, save bool) *templateBuild {

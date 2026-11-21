@@ -614,7 +614,12 @@ func templateBuild(opts *cli.Options, b *client.SandboxTemplateBuild) string {
 	case client.SandboxTemplateBuildStatusReady:
 		return name + opts.Styles.Muted.Render(" (built)")
 	case client.SandboxTemplateBuildStatusFailed:
-		return name + opts.Styles.Muted.Render(" (failed: "+cli.Safe(b.Error)+"; retried in ten minutes, or on a save)")
+		// A null reason is generated as "", so it is said rather than left blank.
+		reason := "no reason given"
+		if b.Error != "" {
+			reason = cli.Safe(b.Error)
+		}
+		return name + opts.Styles.Muted.Render(" (failed: "+reason+"; retried in ten minutes, or on a save)")
 	case client.SandboxTemplateBuildStatusBuilding:
 		return name + opts.Styles.Muted.Render(" (building, a few minutes)")
 	default:

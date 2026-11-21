@@ -57,3 +57,14 @@ WHERE id = sqlc.arg('id') AND build_id = sqlc.arg('build_id') AND status = 'buil
 -- name: TouchE2BTemplate :exec
 UPDATE e2b_templates SET updated_at = now()
 WHERE id = sqlc.arg('id') AND status = 'building';
+
+-- The newest template already built under the key, of any name: what rooms
+-- start from while a newer release's is still being built.
+--
+-- name: GetReadyE2BTemplate :one
+SELECT * FROM e2b_templates
+WHERE team_id = sqlc.arg('team_id')
+  AND sandbox_secret_id = sqlc.arg('sandbox_secret_id')
+  AND status = 'ready'
+ORDER BY updated_at DESC
+LIMIT 1;

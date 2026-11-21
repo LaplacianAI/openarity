@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"runtime/debug"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamsettings"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
@@ -124,6 +125,15 @@ func newKeeper(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, se
 	client := discovery.PlainClient(discovery.Policy{Allow: reachable(cfg.MCPPrivateNetworks)})
 	return keeper.New(dbStore, roomSecrets{secretStore, w}, newSandboxConnect(client), client, roomImages(cfg), logger).
 		Building(newTemplates(cfg, logger, dbStore, secretStore))
+}
+
+// settingsTemplates is the builder a save in Settings asks, or none when the
+// brain cannot keep rooms: no E2B room could start from what it built.
+func settingsTemplates(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) teamsettings.Templates {
+	if _, ok := secretStore.(secrets.Writer); !ok || dbStore == nil {
+		return nil
+	}
+	return newTemplates(cfg, logger, dbStore, secretStore)
 }
 
 // newTemplates builds the room image into each E2B team's account. E2B is

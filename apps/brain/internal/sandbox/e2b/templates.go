@@ -22,7 +22,7 @@ import (
 //   - GET /templates/{templateID}/builds/{buildID}/status: building,
 //     waiting, ready or error, with the reason for an error.
 
-// Room is the size every room's template is built at.
+// RoomCPUs and RoomMemoryMB are the size every room's template is built at.
 const (
 	RoomCPUs     = 2
 	RoomMemoryMB = 2048

@@ -156,6 +156,8 @@ func TestSettingsShowNamesTheE2BTemplateOrItsDefault(t *testing.T) {
 			`"template":null,"template_build":{"name":"openarity-sandbox-abc","status":"ready","error":null,"updated_at":"2026-11-21T09:00:00Z"},`, 1): "openarity-sandbox-abc (built)",
 		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`,
 			`"template":null,"template_build":{"name":"openarity-sandbox-abc","status":"failed","error":"pull \u001b[31mfailed","updated_at":"2026-11-21T09:00:00Z"},`, 1): `(failed: "pull \x1b[31mfailed"`,
+		strings.Replace(e2bSaved, `"template":"acme/openarity-sandbox",`,
+			`"template":null,"template_build":{"name":"openarity-sandbox-abc","status":"failed","error":null,"updated_at":"2026-11-21T09:00:00Z"},`, 1): "(failed: no reason given",
 	} {
 		settingsRoutes(t, stored, http.StatusOK)
 		out, err := clitest.Execute(t, commands, "teams", "settings", "show", teamID)
