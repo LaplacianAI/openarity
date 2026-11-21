@@ -882,8 +882,16 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   Daytona start from `openarity-sandbox:sha-<the brain's commit>` (the image
   build passes it as `REVISION`, since its context has no `.git`), or `:latest`
   when the commit is unknown; `OPENARITY_SANDBOX_IMAGE` overrides it. E2B alone
-  starts from a template in the team's account, so it takes the team's
-  template or `openarity-sandbox`.
+  starts from a template in the team's account, so the brain builds the same
+  image there as `openarity-sandbox-<commit12>` (the keeper's `Templates`),
+  and a team names a template only to replace it. A row per (team, sandbox
+  key, name): a template lives in the account the key belongs to. A room's
+  start waits for no build: while one runs the caller gets
+  `sandbox.ErrPreparing` and tries again; the worker reads builds back every
+  thirty seconds, fails one past thirty minutes, and a failed one is retried
+  after ten minutes or at once on a save. The poll is a job of its own, not a
+  reaper effect: the reaper's backlog means erasures owed, and a build is not
+  one.
 - **The scheduler is a seam because scheduling has no specification.** Auth is a
   port over OIDC, so authentik is swappable for Dex or Okta by changing one
   variable. River, Temporal, DBOS and Restate agree on no model at all, and an

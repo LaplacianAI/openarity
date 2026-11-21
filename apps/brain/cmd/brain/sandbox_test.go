@@ -103,6 +103,17 @@ func TestCommandServersRunOnlyWhereTheSecretStoreWrites(t *testing.T) {
 		t.Error("no keeper over a store that writes")
 	}
 
+	// Settings asks for an E2B template only where a room could start from it.
+	if settingsTemplates(cfg, quietLogger(), dbStore, readOnly{}) != nil {
+		t.Error("Settings builds E2B templates for a brain that cannot keep rooms")
+	}
+	if settingsTemplates(cfg, quietLogger(), nil, static.New()) != nil {
+		t.Error("Settings builds E2B templates with no database")
+	}
+	if settingsTemplates(cfg, quietLogger(), dbStore, static.New()) == nil {
+		t.Error("Settings builds no E2B template over a store that writes")
+	}
+
 	row := db.McpServer{Name: "mail", Command: []string{"npx", "mail"}, Env: []byte(`{}`)}
 	refusing := newDiscoverer(cfg, readOnly{}, nil)
 	runCommandsInRooms(refusing, cfg, quietLogger(), dbStore, readOnly{})

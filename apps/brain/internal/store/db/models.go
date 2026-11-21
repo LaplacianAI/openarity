@@ -175,6 +175,19 @@ type DeletedSecret struct {
 	LastAttemptAt *time.Time
 }
 
+type E2BTemplate struct {
+	ID              uuid.UUID
+	TeamID          uuid.UUID
+	SandboxSecretID uuid.UUID
+	Name            string
+	TemplateID      *string
+	BuildID         *string
+	Status          string
+	Error           *string
+	StartedAt       time.Time
+	UpdatedAt       time.Time
+}
+
 type GraphOutbox struct {
 	ID            int64
 	TeamID        uuid.UUID

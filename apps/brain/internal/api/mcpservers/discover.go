@@ -119,6 +119,9 @@ func (rf *Refresher) failure(row db.McpServer, err error) (f *Failure, ours bool
 		if errors.Is(err, sandbox.ErrNotReady) {
 			return &Failure{"the server's sandbox room did not start in time", http.StatusGatewayTimeout}, false
 		}
+		if errors.Is(err, sandbox.ErrPreparing) {
+			return &Failure{sandbox.ErrPreparing.Error(), http.StatusServiceUnavailable}, false
+		}
 		return &Failure{"the team's sandbox could not run the server: check the sandbox in Settings", http.StatusBadGateway}, false
 	case errors.Is(err, secrets.ErrNotFound):
 		return &Failure{"auth_secret_ref names a secret that is not in the secret store, or is empty", http.StatusUnprocessableEntity}, false

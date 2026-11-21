@@ -200,6 +200,9 @@ type env struct {
 	secrets *fakeSecrets
 	authz   *fakeAuthz
 	allow   func(netip.Addr) bool
+	// templates is nil unless a test gives it one, as in a brain that cannot
+	// keep rooms.
+	templates Templates
 }
 
 func newEnv() *env {
@@ -216,7 +219,7 @@ func (e *env) call(t *testing.T, u *auth.User, method, body string) *httptest.Re
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), e.store, e.secrets, e.allow).
+	New(discardLogger(), e.store, e.secrets, e.allow, e.templates).
 		Register(mux, api.NewGuard(settingsRoutes(t), e.authz, liveTeams{}, discardLogger()))
 
 	var reader io.Reader
@@ -283,6 +286,13 @@ type wire struct {
 		URL      *string `json:"url"`
 		Template *string `json:"template"`
 		KeySet   bool    `json:"key_set"`
+		// A pointer, so a null is told from an object.
+		TemplateBuild *struct {
+			Name      string    `json:"name"`
+			Status    string    `json:"status"`
+			Error     *string   `json:"error"`
+			UpdatedAt time.Time `json:"updated_at"`
+		} `json:"template_build"`
 	} `json:"sandbox"`
 	Browser struct {
 		Provider string  `json:"provider"`
