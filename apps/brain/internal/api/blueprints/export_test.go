@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 )
 
 func (w *world) export(t *testing.T, query string) *httptest.ResponseRecorder {
@@ -44,9 +44,9 @@ func richTeam() Blueprint {
 	triage.SteerContinuations = 2
 	triage.TokenBudget = &budget
 	triage.Web = &web
-	triage.OutputSchema = &agents.OutputSchema{Name: "verdict", JSON: json.RawMessage(`{"type":"object"}`), Strict: true}
+	triage.OutputSchema = &harness.OutputSchema{Name: "verdict", JSON: json.RawMessage(`{"type":"object"}`), Strict: true}
 	triage.Parser = true
-	triage.ParserModel = &agents.ParserModel{Name: "claude-haiku-5-5", MaxTokens: &parserTokens}
+	triage.ParserModel = &harness.ParserModel{Name: "claude-haiku-5-5", MaxTokens: &parserTokens}
 	triage.MCPServers = append(triage.MCPServers, serverRef{Name: "local"})
 
 	team := "team"

@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -194,7 +194,7 @@ func TestAPassProposesAnEdit(t *testing.T) {
 	if p.PassID == nil || *p.PassID != pass.ID || p.Signature == nil || *p.Signature != skipped.String() || len(p.RunIds) != 2 || p.Outsider {
 		t.Errorf("proposal = %+v", p)
 	}
-	var after improvements.Snapshot
+	var after proposals.Snapshot
 	if err := json.Unmarshal(p.After, &after); err != nil || !strings.Contains(after.Agent.Agent.Instructions, "Confirm the order id") ||
 		strings.Contains(after.Agent.Agent.Instructions, "When the customer is satisfied") {
 		t.Errorf("after = %+v, %v", after.Agent, err)

@@ -1,35 +1,21 @@
-package improvements
+package proposals
 
 import (
-	"encoding/hex"
-	"errors"
 	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 )
-
-func errorsAs(err error, target any) bool { return err != nil && errors.As(err, target) }
-
-func slicesContain(s []string, v string) bool { return slices.Contains(s, v) }
-
-func mustHex(s string) []byte {
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
 
 func ptr[T any](v T) *T { return &v }
 
 func base() AgentState {
-	return AgentState{Agent: agents.Request{
-		Name: "support-bot", Kind: agents.KindCustom, Instructions: "i", Description: "d",
-		Model: agents.ModelRef{Name: "m", MaxTokens: 4000}, Pattern: "react", MaxSteps: 10,
+	return AgentState{Agent: harness.Request{
+		Name: "support-bot", Kind: harness.KindCustom, Instructions: "i", Description: "d",
+		Model: harness.ModelRef{Name: "m", MaxTokens: 4000}, Pattern: "react", MaxSteps: 10,
 		Delegation: ptr("none"), Web: ptr(false), Browser: ptr(false),
 	}}
 }
@@ -57,7 +43,7 @@ func TestCheckPerKind(t *testing.T) {
 		{"limits touching the model", KindLimits, func(s *AgentState) { s.Agent.Model.Name = "big" }, false},
 		{"skill grant", KindSkillGrant, func(s *AgentState) { s.Agent.Skills = []uuid.UUID{skillID} }, true},
 		{"skill grant of two", KindSkillGrant, func(s *AgentState) { s.Agent.Skills = []uuid.UUID{skillID, uuid.New()} }, false},
-		{"server grant", KindServerGrant, func(s *AgentState) { s.Agent.MCPServers = []agents.ServerGrant{{ID: server}} }, true},
+		{"server grant", KindServerGrant, func(s *AgentState) { s.Agent.MCPServers = []harness.ServerGrant{{ID: server}} }, true},
 		{"builtin web", KindBuiltinTool, func(s *AgentState) { s.Agent.Web = ptr(true) }, true},
 		{"builtin both", KindBuiltinTool, func(s *AgentState) { s.Agent.Web = ptr(true); s.Agent.Browser = ptr(true) }, false},
 		// A shell is a person's to grant: no kind of proposal turns it on.
@@ -85,11 +71,11 @@ func TestCheckNarrow(t *testing.T) {
 	server := uuid.New()
 	grant := func(allow ...string) func(*AgentState) {
 		return func(s *AgentState) {
-			g := agents.ServerGrant{ID: server}
+			g := harness.ServerGrant{ID: server}
 			if allow != nil {
 				g.Allow = allow
 			}
-			s.Agent.MCPServers = []agents.ServerGrant{g}
+			s.Agent.MCPServers = []harness.ServerGrant{g}
 		}
 	}
 	for name, tc := range map[string]struct {
@@ -130,7 +116,7 @@ func TestMarks(t *testing.T) {
 		change func(*AgentState)
 		want   []string
 	}{
-		{"server grant widens access", KindServerGrant, func(s *AgentState) { s.Agent.MCPServers = []agents.ServerGrant{{ID: uuid.New()}} }, []string{MarkWidensAccess}},
+		{"server grant widens access", KindServerGrant, func(s *AgentState) { s.Agent.MCPServers = []harness.ServerGrant{{ID: uuid.New()}} }, []string{MarkWidensAccess}},
 		{"web on widens access", KindBuiltinTool, func(s *AgentState) { s.Agent.Web = ptr(true) }, []string{MarkWidensAccess}},
 		{"web off does not", KindBuiltinTool, func(s *AgentState) {}, nil},
 		{"team delegation widens reach", KindDelegation, func(s *AgentState) { s.Agent.Delegation = ptr("team") }, []string{MarkWidensReach}},
@@ -182,17 +168,17 @@ func TestMarks(t *testing.T) {
 // and keeps the old text of what it edits or removes.
 func TestCheckSkillEditFiles(t *testing.T) {
 	text := func(s string) *string { return &s }
-	old := FileState{Path: "references/a.md", SHA256: hashText("old"), Text: text("old")}
+	old := FileState{Path: "references/a.md", SHA256: HashText("old"), Text: text("old")}
 	b := SkillState{Name: "x", Description: "d", Body: "b", Source: "upload", Files: []FileState{old}}
 
 	for name, tc := range map[string]struct {
 		files []FileState
 		ok    bool
 	}{
-		"edit a reference": {[]FileState{{Path: "references/a.md", SHA256: hashText("new"), Text: text("new")}}, true},
+		"edit a reference": {[]FileState{{Path: "references/a.md", SHA256: HashText("new"), Text: text("new")}}, true},
 		"remove it":        {nil, true},
-		"add a root file":  {[]FileState{old, {Path: "README.md", SHA256: hashText("r"), Text: text("r")}}, false},
-		"add without text": {[]FileState{old, {Path: "scripts/x.py", SHA256: hashText("p")}}, false},
+		"add a root file":  {[]FileState{old, {Path: "README.md", SHA256: HashText("r"), Text: text("r")}}, false},
+		"add without text": {[]FileState{old, {Path: "scripts/x.py", SHA256: HashText("p")}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			a := b
@@ -206,9 +192,9 @@ func TestCheckSkillEditFiles(t *testing.T) {
 
 	t.Run("edit without the old text", func(t *testing.T) {
 		bb := b
-		bb.Files = []FileState{{Path: "references/a.md", SHA256: hashText("old")}}
+		bb.Files = []FileState{{Path: "references/a.md", SHA256: HashText("old")}}
 		a := b
-		a.Files = []FileState{{Path: "references/a.md", SHA256: hashText("new"), Text: text("new")}}
+		a.Files = []FileState{{Path: "references/a.md", SHA256: HashText("new"), Text: text("new")}}
 		if err := Check(KindSkillEdit, Snapshot{Skill: &bb}, Snapshot{Skill: &a}); err == nil {
 			t.Error("an edit without the old text, which a revert needs, was allowed")
 		}
@@ -221,7 +207,7 @@ func TestCheckNoteLeavesAnOrphanAlone(t *testing.T) {
 	server := uuid.New()
 	withNotes := func(notes ...ToolNote) AgentState {
 		s := base()
-		s.Agent.MCPServers = []agents.ServerGrant{{ID: server, Allow: []string{"search", "fetch"}}}
+		s.Agent.MCPServers = []harness.ServerGrant{{ID: server, Allow: []string{"search", "fetch"}}}
 		s.Notes = notes
 		return s
 	}
@@ -258,11 +244,11 @@ func TestCheckNoteLeavesAnOrphanAlone(t *testing.T) {
 func TestServerDropKeepsTheOtherNotes(t *testing.T) {
 	s1, s2 := uuid.New(), uuid.New()
 	b := base()
-	b.Agent.MCPServers = []agents.ServerGrant{{ID: s1}, {ID: s2}}
+	b.Agent.MCPServers = []harness.ServerGrant{{ID: s1}, {ID: s2}}
 	b.Notes = []ToolNote{{Server: s2, Tool: "b", Note: "two"}, {Server: s1, Tool: "a", Note: "one"}}
 
 	clean := base()
-	clean.Agent.MCPServers = []agents.ServerGrant{{ID: s2}}
+	clean.Agent.MCPServers = []harness.ServerGrant{{ID: s2}}
 	clean.Notes = []ToolNote{{Server: s2, Tool: "b", Note: "two"}}
 	if err := Check(KindServerDrop, Snapshot{Agent: &b}, Snapshot{Agent: &clean}); err != nil {
 		t.Errorf("a clean drop was refused: %v", err)
@@ -280,7 +266,7 @@ func TestComparingDoesNotReorderTheCallersState(t *testing.T) {
 	x, y := uuid.MustParse("ffffffff-0000-0000-0000-000000000000"), uuid.MustParse("00000000-0000-0000-0000-00000000000f")
 	s := base()
 	s.Agent.Skills = []uuid.UUID{x, y}
-	s.Agent.MCPServers = []agents.ServerGrant{{ID: x, Allow: []string{"b", "a"}}, {ID: y}}
+	s.Agent.MCPServers = []harness.ServerGrant{{ID: x, Allow: []string{"b", "a"}}, {ID: y}}
 	s.Notes = []ToolNote{{Server: x, Tool: "z", Note: "n"}, {Server: y, Tool: "a", Note: "n"}}
 	other := base()
 
@@ -293,13 +279,13 @@ func TestComparingDoesNotReorderTheCallersState(t *testing.T) {
 }
 
 // Every field of an agent is either named by the kind rules or caught by
-// the catch-all. A field added to agents.Request that this test does not
+// the catch-all. A field added to harness.Request that this test does not
 // see cleared makes it fail, so the rules are told about it.
 func TestEveryAgentFieldIsChecked(t *testing.T) {
-	var r agents.Request
+	var r harness.Request
 	v := reflect.ValueOf(&r).Elem()
 	fill(v)
-	if got := unnamed(r); !reflect.DeepEqual(got, agents.Request{}) {
+	if got := unnamed(r); !reflect.DeepEqual(got, harness.Request{}) {
 		t.Errorf("unnamed leaves fields the kinds never name: %+v", got)
 	}
 

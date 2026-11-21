@@ -23,6 +23,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -96,7 +97,7 @@ func (s *fakeStore) skill(team uuid.UUID) uuid.UUID {
 	return id
 }
 
-func (s *fakeStore) InTx(_ context.Context, fn func(Queries) error) error {
+func (s *fakeStore) InTx(_ context.Context, fn func(harness.AgentQueries) error) error {
 	s.txs++
 	s.mu.Lock()
 	agents, servers, skills, delegates := maps.Clone(s.agents), maps.Clone(s.servers), maps.Clone(s.skills), maps.Clone(s.delegates)
@@ -714,14 +715,14 @@ func TestCreateStoresEveryField(t *testing.T) {
 		p.ParserMaxTokens == nil || *p.ParserMaxTokens != 256 || p.ParserTemperature == nil || *p.ParserTemperature != 0 {
 		t.Errorf("created %+v", p)
 	}
-	var o OutputSchema
+	var o harness.OutputSchema
 	if err := json.Unmarshal(p.OutputSchema, &o); err != nil || o.Name != "verdict" || o.Description != "d" || !o.Strict ||
 		string(o.JSON) != `{"type":"object"}` {
 		t.Errorf("output_schema stored as %s", p.OutputSchema)
 	}
 
 	got := decode(t, rec)
-	if got.Kind != KindCustom || got.OutputSchema == nil || got.OutputSchema.Name != "verdict" ||
+	if got.Kind != harness.KindCustom || got.OutputSchema == nil || got.OutputSchema.Name != "verdict" ||
 		got.ParserModel == nil || got.ParserModel.Name != "small" || got.Model.Temperature == nil {
 		t.Errorf("response = %+v", got)
 	}
@@ -861,7 +862,7 @@ func TestTheResponseCarriesTheGrants(t *testing.T) {
 
 	// And GET answers in the same shape.
 	got := decode(t, call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, one(team, created.ID), nil))
-	if !slices.EqualFunc(got.MCPServers, created.MCPServers, func(x, y ServerGrant) bool {
+	if !slices.EqualFunc(got.MCPServers, created.MCPServers, func(x, y harness.ServerGrant) bool {
 		return x.ID == y.ID && slices.Equal(x.Allow, y.Allow)
 	}) || !slices.Equal(got.Skills, created.Skills) {
 		t.Errorf("GET grants %+v %v differ from POST's %+v %v", got.MCPServers, got.Skills, created.MCPServers, created.Skills)
@@ -1432,3 +1433,6 @@ func TestListRefusesASearchItCannotUse(t *testing.T) {
 type liveTeams struct{}
 
 func (liveTeams) TeamDeleted(context.Context, uuid.UUID) (bool, error) { return false, nil }
+
+// testLoops is a brain that runs two built-in loops and one of its own.
+var testLoops = []string{"react", "plan", "critic-pass"}

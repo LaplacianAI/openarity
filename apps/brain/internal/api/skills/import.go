@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 )
@@ -156,6 +157,6 @@ func assemble(w http.ResponseWriter, imp hub.Import) (skill.Directory, bool) {
 	return dir, true
 }
 
-func origin(imp hub.Import) Origin {
-	return Origin{Source: imp.Kind, Ref: &imp.Ref, SHA: &imp.SHA}
+func origin(imp hub.Import) harness.SkillOrigin {
+	return harness.SkillOrigin{Source: imp.Kind, Ref: &imp.Ref, SHA: &imp.SHA}
 }

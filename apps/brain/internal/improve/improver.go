@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/improvements"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
@@ -103,7 +103,7 @@ type ImproverStore interface {
 // Improver runs passes: an agent's patterns read, and proposals written.
 type Improver struct {
 	store   ImproverStore
-	objects improvements.Getter
+	objects proposals.Getter
 	judge   Judge
 	runner  *agent.Runner
 	loops   []string
@@ -116,7 +116,7 @@ type Improver struct {
 
 // NewImprover runs passes through the judge's model endpoint. loops are the
 // patterns the brain runs, which a pattern proposal must name.
-func NewImprover(s ImproverStore, objects improvements.Getter, j Judge, loops []string, logger *slog.Logger) (*Improver, error) {
+func NewImprover(s ImproverStore, objects proposals.Getter, j Judge, loops []string, logger *slog.Logger) (*Improver, error) {
 	runner, err := agent.New(j.clients, patterns.ReAct())
 	if err != nil {
 		return nil, fmt.Errorf("building the improver's runner: %w", err)

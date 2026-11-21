@@ -1,8 +1,7 @@
-package agents
+package harness
 
 import (
 	"encoding/json"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -43,50 +42,6 @@ type ToolNote struct {
 	Note   string    `json:"note"`
 }
 
-type summary struct {
-	ID          uuid.UUID `json:"id"`
-	TeamID      uuid.UUID `json:"team_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Kind        Kind      `json:"kind"`
-	Model       ModelRef  `json:"model"`
-	Pattern     string    `json:"pattern"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// listed is a row of the agents list: the summary, and what the agent may
-// reach, as counts. The grants themselves are the detail's.
-type listed struct {
-	summary
-	Delegation    string `json:"delegation"`
-	Web           bool   `json:"web"`
-	Browser       bool   `json:"browser"`
-	Workspace     bool   `json:"workspace"`
-	ServerCount   int64  `json:"mcp_server_count"`
-	SkillCount    int64  `json:"skill_count"`
-	DelegateCount int64  `json:"delegate_count"`
-}
-
-type detail struct {
-	summary
-	Instructions       string        `json:"instructions"`
-	MaxSteps           int32         `json:"max_steps"`
-	SteerContinuations int32         `json:"steer_continuations"`
-	OutputSchema       *OutputSchema `json:"output_schema,omitempty"`
-	Parser             bool          `json:"parser"`
-	ParserModel        *ParserModel  `json:"parser_model,omitempty"`
-	MCPServers         []ServerGrant `json:"mcp_servers"`
-	Skills             []uuid.UUID   `json:"skills"`
-	TokenBudget        *int64        `json:"token_budget,omitempty"`
-	Delegation         string        `json:"delegation"`
-	Delegates          []uuid.UUID   `json:"delegates"`
-	Web                bool          `json:"web"`
-	Browser            bool          `json:"browser"`
-	Workspace          bool          `json:"workspace"`
-	ToolNotes          []ToolNote    `json:"tool_notes"`
-}
-
 type Request struct {
 	Name               string        `json:"name"`
 	Description        string        `json:"description"`
@@ -109,9 +64,4 @@ type Request struct {
 	// Workspace is Bash, Read, Write, Edit, Glob and Grep in a room of the
 	// session's, offered when the team has a sandbox.
 	Workspace *bool `json:"workspace"`
-}
-
-type agentCursor struct {
-	CreatedAt time.Time `json:"c"`
-	ID        uuid.UUID `json:"i"`
 }

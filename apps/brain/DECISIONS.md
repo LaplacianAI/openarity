@@ -1150,11 +1150,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   Postgres advisory locks are scoped per database, not per schema. Ours is
   crc32 of `"openarity"`. Locking is also off unless `WithSessionLocker` is
   passed — the default is no lock at all.
+- **The rules a harness is held to live below `internal/api`.** An agent's
+  spec and validation, its row and grants, and a skill's write are in
+  `internal/harness`; a proposed change to them (its kinds, checks, apply and
+  revert) is in `internal/proposals`. The agent, skill, blueprint and
+  improvement routes are handlers over them, and the improver, a background
+  job, imports them without importing a route (#277). Before, the improver
+  reached the rules through three handler packages, so a handler change
+  could break a job that serves no request.
 - **A blueprint writes through the domain packages' own code, in one
   transaction.** `internal/api/blueprints` turns each item into the request
-  its own API takes and runs `agents.Validate`, `mcpservers.Parse` and
-  `skill.Assemble` on it, then writes with `agents.Regrant` and
-  `skills.Create`/`Replace`, so a rule changed in one place holds for both.
+  its own API takes and runs `harness.Validate`, `mcpservers.Parse` and
+  `skill.Assemble` on it, then writes with `harness.Regrant` and
+  `harness.Create`/`Replace`, so a rule changed in one place holds for both.
   Its routes are member-wide and the apply handler checks `tool:write`,
   `skill:write` and `agent:write` for what the plan writes: one permission on
   the route would either let a blueprint write what its holder could not, or

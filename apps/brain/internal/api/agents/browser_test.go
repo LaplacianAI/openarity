@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 )
 
 // Leaving the grant out is no browser, and the answer says so rather than
@@ -80,14 +82,14 @@ func TestTheRequestOfAnAgentKeepsItsBrowser(t *testing.T) {
 
 	a := anAgent(uuid.New(), "clicker")
 	a.Browser = true
-	req, err := RequestOf(a)
+	req, err := harness.RequestOf(a)
 	if err != nil {
 		t.Fatalf("RequestOf: %v", err)
 	}
 	if req.Browser == nil || !*req.Browser {
 		t.Errorf("RequestOf browser = %v, want true", req.Browser)
 	}
-	cols, err := Columns(req)
+	cols, err := harness.Columns(req)
 	if err != nil || !cols.Browser {
 		t.Errorf("Columns browser = %v, %v; want true", cols.Browser, err)
 	}

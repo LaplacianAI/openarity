@@ -1,4 +1,4 @@
-package improvements
+package proposals
 
 import (
 	"slices"
@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/api/agents"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 )
 
 // Change is one field a proposal changes, said with names rather than ids,
@@ -19,21 +19,26 @@ type Change struct {
 	After  any    `json:"after"`
 }
 
-// names resolves the ids a change mentions; an id it cannot name is shown as
+// Names resolves the ids a change mentions; an id it cannot name is shown as
 // itself.
-type names struct {
-	agents, skills, servers map[uuid.UUID]string
+type Names struct {
+	Agents, Skills, Servers map[uuid.UUID]string
 }
 
-func (n names) of(m map[uuid.UUID]string, id uuid.UUID) string {
+// Agent, Skill and Server name an id, or show it as itself.
+func (n Names) Agent(id uuid.UUID) string  { return n.of(n.Agents, id) }
+func (n Names) Skill(id uuid.UUID) string  { return n.of(n.Skills, id) }
+func (n Names) Server(id uuid.UUID) string { return n.of(n.Servers, id) }
+
+func (n Names) of(m map[uuid.UUID]string, id uuid.UUID) string {
 	if s, ok := m[id]; ok {
 		return s
 	}
 	return id.String()
 }
 
-// ids is every id the two sides mention, for names to resolve.
-func ids(p Proposal) (agentIDs, skillIDs, serverIDs []uuid.UUID) {
+// IDs is every id the two sides mention, for names to resolve.
+func IDs(p Proposal) (agentIDs, skillIDs, serverIDs []uuid.UUID) {
 	for _, s := range []Snapshot{p.Before, p.After} {
 		if s.Agent == nil {
 			continue
@@ -50,7 +55,7 @@ func ids(p Proposal) (agentIDs, skillIDs, serverIDs []uuid.UUID) {
 	return agentIDs, skillIDs, serverIDs
 }
 
-func changesOf(p Proposal, n names) []Change {
+func Changes(p Proposal, n Names) []Change {
 	if Kind(p.Row.Kind) == KindSkillEdit {
 		return skillChanges(*p.Before.Skill, *p.After.Skill)
 	}
@@ -69,7 +74,7 @@ func changesOf(p Proposal, n names) []Change {
 	return out
 }
 
-func agentChanges(b, a AgentState, n names) []Change {
+func agentChanges(b, a AgentState, n Names) []Change {
 	var out []Change
 	text := func(field, x, y string) { out = append(out, Change{Field: field, Type: "text", Before: x, After: y}) }
 	value := func(field, x, y string) { out = append(out, Change{Field: field, Type: "value", Before: x, After: y}) }
@@ -101,9 +106,9 @@ func agentChanges(b, a AgentState, n names) []Change {
 		case fBrowser:
 			value(f, onOff(x.Browser), onOff(y.Browser))
 		case fSkills:
-			list(f, named(x.Skills, n.skills, n), named(y.Skills, n.skills, n))
+			list(f, named(x.Skills, n.Skills, n), named(y.Skills, n.Skills, n))
 		case fDelegates:
-			list(f, named(x.Delegates, n.agents, n), named(y.Delegates, n.agents, n))
+			list(f, named(x.Delegates, n.Agents, n), named(y.Delegates, n.Agents, n))
 		case fServers:
 			list(f, grants(x.MCPServers, n), grants(y.MCPServers, n))
 		case fNotes:
@@ -157,7 +162,7 @@ func textOf(f FileState) any {
 	return *f.Text
 }
 
-func named(ids []uuid.UUID, m map[uuid.UUID]string, n names) []string {
+func named(ids []uuid.UUID, m map[uuid.UUID]string, n Names) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
 		out[i] = n.of(m, id)
@@ -166,10 +171,10 @@ func named(ids []uuid.UUID, m map[uuid.UUID]string, n names) []string {
 	return out
 }
 
-func grants(gs []agents.ServerGrant, n names) []string {
+func grants(gs []harness.ServerGrant, n Names) []string {
 	out := make([]string, len(gs))
 	for i, g := range gs {
-		s := n.of(n.servers, g.ID)
+		s := n.Server(g.ID)
 		if g.Allow != nil {
 			allow := slices.Clone(g.Allow)
 			slices.Sort(allow)
@@ -181,10 +186,10 @@ func grants(gs []agents.ServerGrant, n names) []string {
 	return out
 }
 
-func notes(ns []ToolNote, n names) []string {
+func notes(ns []ToolNote, n Names) []string {
 	out := make([]string, len(ns))
 	for i, note := range ns {
-		out[i] = n.of(n.servers, note.Server) + " / " + note.Tool + ": " + note.Note
+		out[i] = n.Server(note.Server) + " / " + note.Tool + ": " + note.Note
 	}
 	slices.Sort(out)
 	return out
