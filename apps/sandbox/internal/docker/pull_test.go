@@ -33,10 +33,14 @@ func TestHasImageAsksTheDaemonAboutTheNameAndReadsA404AsAbsent(t *testing.T) {
 		}
 		return 404, `{"message":"No such image: x"}`
 	})
-	for ref, want := range map[string]bool{"ghcr.io/o/present:1": true, "ghcr.io/o/absent:1": false} {
-		got, err := c.HasImage(t.Context(), ref)
-		if err != nil || got != want {
-			t.Errorf("HasImage(%q) = %v, %v; want %v", ref, got, err, want)
+	// In order: the request checked below is the first one made.
+	for _, tc := range []struct {
+		ref  string
+		want bool
+	}{{"ghcr.io/o/present:1", true}, {"ghcr.io/o/absent:1", false}} {
+		got, err := c.HasImage(t.Context(), tc.ref)
+		if err != nil || got != tc.want {
+			t.Errorf("HasImage(%q) = %v, %v; want %v", tc.ref, got, err, tc.want)
 		}
 	}
 	got := calls()

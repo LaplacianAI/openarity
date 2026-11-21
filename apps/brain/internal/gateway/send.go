@@ -174,14 +174,28 @@ type outgoing struct {
 	giveUp    func(ctx context.Context, msg string) (int64, error)
 }
 
+// replyID is the id a reply is sent under, for a receiver to drop a repeat,
+// and how many times it is tried. A run's final reply, its answer or the
+// apology in its place, carries the run's id: replies_one_per_run allows one
+// of the two. A run event's reply carries its event. Any other reply, such as
+// the notice that an answer in the chat was taken, carries its own row: under
+// the run's id it would be taken for the answer, and the answer after it
+// dropped as its repeat.
+func replyID(row db.ClaimDueRepliesRow) (string, int32) {
+	run := row.RunID.String()
+	switch {
+	case row.EventSeq != nil:
+		return run + ":" + strconv.Itoa(int(*row.EventSeq)), eventAttempts
+	case row.Kind == "answer" || row.Kind == "apology":
+		return run, replyAttempts
+	default:
+		return run + ":" + row.Kind + ":" + strconv.FormatInt(row.ID, 10), replyAttempts
+	}
+}
+
 func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 	at := db.ReplySentParams{ID: row.ID, Attempts: row.Attempts}
-	// A run has one answer, which carries the run's id; each event carries the
-	// run event it came from, so a receiver drops a repeat of either.
-	id, tries := row.RunID.String(), int32(replyAttempts)
-	if row.EventSeq != nil {
-		id, tries = id+":"+strconv.Itoa(int(*row.EventSeq)), eventAttempts
-	}
+	id, tries := replyID(row)
 	return outgoing{
 		what: "reply", id: row.ID, attempts: row.Attempts, tries: tries, partsSent: row.PartsSent,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,

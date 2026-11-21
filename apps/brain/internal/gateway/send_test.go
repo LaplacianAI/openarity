@@ -691,6 +691,75 @@ func TestAStepIsSentWithAnIDOfItsOwn(t *testing.T) {
 	}
 }
 
+// Only a run's answer, or the apology in its place, carries the run's id. On
+// staging the notice that an answer in the chat was taken went out under it
+// first, and WhatsApp's holder dropped the answer as its repeat.
+func TestOnlyARunsAnswerCarriesItsID(t *testing.T) {
+	t.Parallel()
+
+	run, seq := uuid.New(), int32(13)
+	row := func(id int64, kind string, event *int32) db.ClaimDueRepliesRow {
+		return db.ClaimDueRepliesRow{ID: id, RunID: run, Kind: kind, EventSeq: event}
+	}
+	for _, c := range []struct {
+		name  string
+		row   db.ClaimDueRepliesRow
+		id    string
+		tries int32
+	}{
+		{"answer", row(113, "answer", nil), run.String(), replyAttempts},
+		{"apology", row(114, "apology", nil), run.String(), replyAttempts},
+		{"notice", row(112, "notice", nil), run.String() + ":notice:112", replyAttempts},
+		{"another notice", row(120, "notice", nil), run.String() + ":notice:120", replyAttempts},
+		{"approval of an event", row(111, "approval", &seq), run.String() + ":13", eventAttempts},
+		{"event", row(115, "event", &seq), run.String() + ":13", eventAttempts},
+		{"approval of no event", row(116, "approval", nil), run.String() + ":approval:116", replyAttempts},
+		{"no kind", row(117, "", nil), run.String() + "::117", replyAttempts},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if id, tries := replyID(c.row); id != c.id || tries != c.tries {
+				t.Errorf("replyID = %q, %d; want %q, %d", id, tries, c.id, c.tries)
+			}
+		})
+	}
+}
+
+// Drained together, a run's notice and answer go out under different ids, and
+// a retry of the notice is the same notice.
+func TestANoticeOfARunIsNotTakenForItsAnswer(t *testing.T) {
+	t.Parallel()
+
+	rcv := newReceiver(t, http.StatusOK)
+	notice := due(rcv.URL, 1)
+	notice.ID, notice.Kind, notice.Text = 112, "notice", "Approved: get_file_contents on github."
+	answer := due(rcv.URL, 1)
+	answer.ID, answer.RunID, answer.Kind = 113, notice.RunID, "answer"
+
+	s := newSending(t)
+	s.store.due = []db.ClaimDueRepliesRow{notice, answer}
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 2 {
+		t.Fatalf("Drain = %d, %v", n, err)
+	}
+	if len(s.relay.outs) != 2 {
+		t.Fatalf("%d sent, want the notice and the answer", len(s.relay.outs))
+	}
+	sentNotice, sentAnswer := s.relay.outs[0].ID, s.relay.outs[1].ID
+	if sentNotice == sentAnswer || sentAnswer != notice.RunID.String() {
+		t.Errorf("notice %q, answer %q: the answer carries the run's id, the notice its own", sentNotice, sentAnswer)
+	}
+
+	again := newSending(t)
+	notice.Attempts = 2
+	again.store.due = []db.ClaimDueRepliesRow{notice}
+	if _, err := again.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := again.relay.outs[0].ID; got != sentNotice {
+		t.Errorf("a retry of the notice is %q, want %q", got, sentNotice)
+	}
+}
+
 // A broken step is tried twice, not six times: its answer waits behind it.
 // The answer keeps its own schedule.
 func TestAStepThatFailsTwiceIsGivenUp(t *testing.T) {
