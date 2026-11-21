@@ -814,6 +814,9 @@ export type SearchProvider =
  */
 export type SandboxProvider = "none" | "e2b" | "daytona" | "sandboxd";
 
+/** A workspace room's memory, CPUs and disk, as the brain takes them. */
+export type WorkspaceSize = { memory_mb: number; cpus: number; disk_mb: number };
+
 /**
  * What a team's runs drive pages in. Browserless, Steel and Lightpanda are
  * hosted, or self-hosted at a URL; cdp is any CDP browser at a URL; the rest
@@ -846,6 +849,12 @@ export type TeamSettings = {
     /** E2B only: the template its rooms start from; null for openarity-sandbox. */
     template?: string | null;
     key_set: boolean;
+    /** Hours a stopped workspace keeps its files. Absent from a brain that predates stopping. */
+    keep_hours?: number;
+    /** Minutes a running workspace may sit unused; null is the deployment's. */
+    idle_minutes?: number | null;
+    /** The team's workspace size; null is the provider's own. */
+    workspace_size?: WorkspaceSize | null;
   };
   /** The key is never returned. Absent from a brain that predates browsers. */
   browser?: { provider: BrowserProvider; url: string | null; key_set: boolean };
@@ -882,7 +891,18 @@ export type TeamSettingsRequest = {
    * Left out, the stored sandbox stays. `api_key` left out keeps the stored
    * key while the provider and its URL are unchanged.
    */
-  sandbox?: { provider: SandboxProvider; url?: string; template?: string; api_key?: string };
+  sandbox?: {
+    provider: SandboxProvider;
+    url?: string;
+    template?: string;
+    api_key?: string;
+    /** 1 to 720. Left out, the stored value stays. */
+    keep_hours?: number;
+    /** 1 to 1440. Left out, the stored value stays; null is the deployment's. */
+    idle_minutes?: number | null;
+    /** Left out, the stored size stays; null is the provider's. Not for E2B yet. */
+    workspace_size?: WorkspaceSize | null;
+  };
   /**
    * Left out, the stored browser stays. `api_key` left out keeps the stored
    * key while the provider and its URL are unchanged; for a self-hosted
