@@ -4,6 +4,31 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
 
 ## Decisions worth not relitigating
 
+- **A workspace is a room running the workspace role, so it works on every
+  sandbox provider.** The brain never asks a provider for a shell or a
+  filesystem API: it starts `sandbox workspace` in a room through the same
+  `Rooms` port a command MCP server's shim uses, and speaks HTTP to it. A
+  provider needs nothing workspace-specific, and `sandbox/contract` holds
+  each to what a workspace needs, through the port alone. What follows:
+  - **Public egress is in the port.** `sandbox.Spec.Network` is `listed` or
+    `public`, and a provider that cannot keep a public room off private
+    addresses refuses it with `ErrRefused` rather than make one that reaches
+    them. Self-hosted Daytona is the one that refuses: it can only allow up to
+    ten ranges, never deny.
+  - **One room per session**, owner kind `session`, shared by every run on it.
+    `runs.session_id` is never null, so there is no room per run.
+  - **A room found gone is never retried.** An `Edit` or a `Bash` sent twice
+    could act twice; the model is told and its next call starts a fresh room.
+    Later calls only touch the row (`TouchSandboxRoomByOwner`), because
+    `Ensure` takes the owner's lock and probes the room on every call.
+  - **`Bash` is a write; the other five read.** A command can send anything to
+    any public host. The others change only the session's own room. A team
+    that trusts its agents' commands adds one rule, `allow Bash`.
+  - **The hub never holds the tools**, even when the agent a team chose as its
+    hub is granted them: the orchestrator hands work to an agent that does.
+  - **No improvement can grant it.** `workspace` is named in the proposal
+    diff, so a snapshot from before the field compares equal, and is in no
+    kind, so a proposal that changes it is refused.
 - **A cached token counts as a tenth, in the budget and on the dashboard.**
   The provider bills a token it reads from its cache at about a tenth of a
   fresh one, and on staging 84% of the review team's input was cached:

@@ -327,3 +327,13 @@ func execOf(stdout, stderr string, code int, timedOut bool) workroom.Exec {
 func readOf(content string, lines int) workroom.Read {
 	return workroom.Read{Content: content, Lines: lines}
 }
+
+// A team that trusts its agents' commands says so with one rule.
+func TestARuleAllowingBashLetsItRunUnasked(t *testing.T) {
+	t.Parallel()
+	p := gatedBy(&desk{}, approval.Writes, approval.Actor{CanSelf: true})
+	p.rules = []approval.Rule{{Kind: "tool", Target: BashToolName, Verdict: approval.Allow}}
+	if got := p.decide(target{name: BashToolName, class: workspaceClass(BashToolName)}); got.Verdict != approval.Allow {
+		t.Errorf("Bash with a rule allowing it: %v, want allow", got.Verdict)
+	}
+}

@@ -152,6 +152,7 @@ apps/brain/
     websearch.go       web_search(query, limit) and webTools, from the settings Build read
     webfetch.go        web_fetch(url), the page in an envelope, kept whole and previewed like any result
     browser.go         browser_open, _snapshot, _click, _type, _screenshot: one page a run, opened by its first call
+    workspace.go       Bash, Read, Write, Edit, Glob, Grep in the session's room: started by the first call, never retried when gone
   internal/websearch/  the port: Provider, Hit, Searcher, and the one guarded client
     <provider>/        searxng, brave, tavily, firecrawl: each exports New
   internal/webfetch/   the port: Page, Fetcher, and a client that dials public addresses only
@@ -163,10 +164,12 @@ apps/brain/
                        conn.go: the websocket, dialed over the guarded client; guard.go: every request judged
                        page.go: open, read, click, type, screenshot; snapshot.js: the page as numbered text
                        proxy.go: the worker's forward proxy, a self-hosted browser's one way out, to public addresses on web ports only
-  internal/sandbox/    the port: Rooms, Spec, Endpoint; where a team's command MCP servers run
+  internal/sandbox/    the port: Rooms, Spec (a listed or a public network), Endpoint; where command MCP servers and workspaces run
     <provider>/        e2b, daytona, sandboxd: each exports New
     keeper/            a team's rooms, for any owner: the lock, the spec hash, the health wait, the token; Ensure
     mcproom/           a command MCP server's Want for the keeper: the shim, npx's settings
+    workroom/          a session's workspace: the room running the workspace role, public and sized for work, and a client for its API
+    contract/          what every provider must do for a workspace, as a test each provider's integration test runs
     sandboxtest/       a provider for tests whose rooms are HTTP servers that answer as the shim does
   internal/worker/     the background process: a registry of Jobs, and Run
   internal/store/      Postgres: pool, migrations, queries
