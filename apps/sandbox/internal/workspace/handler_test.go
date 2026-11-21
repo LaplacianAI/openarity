@@ -445,3 +445,45 @@ func TestAReadReturnsAtMostSoManyLines(t *testing.T) {
 		t.Fatalf("%d lines of %d, want %d of %d", n, got.Lines, DefaultLines, DefaultLines+500)
 	}
 }
+
+// A file of one enormous line, or of many long ones, is read in bounded
+// memory and returned cut: the workspace is the room's main process, and a
+// read that ran it out of memory would lose the room.
+func TestAReadOfHugeLinesIsBounded(t *testing.T) {
+	r := newRoom(t)
+	r.put(t, "one.txt", strings.Repeat("x", 64<<20))
+	var got ReadResult
+	if code := r.call(t, "/read", map[string]any{"path": "one.txt"}, &got); code != 200 {
+		t.Fatalf("read: %d", code)
+	}
+	want := "     1\t" + strings.Repeat("x", maxLine) + "… (line cut)\n"
+	if got.Content != want || got.Lines != 1 {
+		t.Fatalf("%d bytes over %d lines, want the line cut to %d", len(got.Content), got.Lines, maxLine)
+	}
+
+	r.put(t, "wide.txt", strings.Repeat(strings.Repeat("y", maxLine)+"\n", DefaultLines))
+	if code := r.call(t, "/read", map[string]any{"path": "wide.txt"}, &got); code != 200 {
+		t.Fatalf("read: %d", code)
+	}
+	if len(got.Content) > maxRead || got.Lines != DefaultLines || !strings.HasSuffix(got.Content, "\n") {
+		t.Fatalf("%d bytes, %d lines: want at most %d bytes, whole lines, and every line counted", len(got.Content), got.Lines, maxRead)
+	}
+	if exact := strings.Repeat("y", maxLine); !strings.Contains(got.Content, "\t"+exact+"\n") || strings.Contains(got.Content, "line cut") {
+		t.Fatal("a line exactly maxLine long was cut")
+	}
+}
+
+// A search of a directory reached by a link finds what is in it.
+func TestASearchOfALinkedDirectoryFindsItsFiles(t *testing.T) {
+	r := newRoom(t)
+	r.put(t, "real/a.go", "package a\n")
+	if err := os.Symlink(filepath.Join(r.root, "real"), filepath.Join(r.root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Paths []string `json:"paths"`
+	}
+	if code := r.call(t, "/glob", map[string]any{"pattern": "*.go", "path": "linked"}, &got); code != 200 || len(got.Paths) != 1 {
+		t.Fatalf("%d %v, want a.go found through the link", code, got.Paths)
+	}
+}

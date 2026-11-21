@@ -223,6 +223,22 @@ func TestAMailPortIsRefused(t *testing.T) {
 			t.Errorf("CONNECT %s: %q, want 403", target, status)
 		}
 	}
+	// The dialer takes these for 25 and 465, so none may pass as written.
+	for _, target := range []string{"smtp.example.com:025", "smtp.example.com:0025", "smtp.example.com:smtp", "smtp.example.com:submissions"} {
+		if _, _, status := connectThrough(t, proxy, target); !strings.HasPrefix(status, "400") {
+			t.Errorf("CONNECT %s: %q, want it refused as no port number", target, status)
+		}
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: proxy})}}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://smtp.example.com:25/", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a forwarded request to port 25: %d, want 403", resp.StatusCode)
+	}
 	if d := up.dialed(); len(d) != 0 {
 		t.Fatalf("dialed %v", d)
 	}
@@ -240,6 +256,16 @@ func TestARoomHoldsSoManyTunnelsAtOnce(t *testing.T) {
 	}
 	if _, _, status := connectThrough(t, proxy, "a.example.com:443"); !strings.HasPrefix(status, "429") {
 		t.Fatalf("one tunnel past the cap: %q, want 429", status)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: proxy})}}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://a.example.com/", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("a forwarded request past the cap: %d, want 429", resp.StatusCode)
 	}
 }
 

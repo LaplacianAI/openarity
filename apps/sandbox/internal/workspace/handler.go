@@ -13,6 +13,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -225,8 +226,9 @@ func realPath(p string) (string, error) {
 func inProc(p string) bool { return p == "/proc" || strings.HasPrefix(p, "/proc/") }
 
 // base is where a search starts: the workspace when no path is given. It is
-// the path as given, so what is found is named as the caller named it; the
-// walk follows no link, and skips /proc.
+// the path as given, so what is found is named as the caller named it, but
+// for a base that is itself a link; the walk follows no link, and skips
+// /proc.
 func (h *Handler) base(p string) (string, error) {
 	if p == "" {
 		return h.root, nil
@@ -237,7 +239,12 @@ func (h *Handler) base(p string) (string, error) {
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(h.root, p)
 	}
-	return filepath.Clean(p), nil
+	p = filepath.Clean(p)
+	// The walk follows no link, so a base that is one starts at its target.
+	if info, err := os.Lstat(p); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return h.resolve(p)
+	}
+	return p, nil
 }
 
 func (h *Handler) authorized(r *http.Request) bool {

@@ -21,6 +21,9 @@ const (
 	maxLine = 2000
 	// sniff is how much of a file is looked at to tell text from binary.
 	sniff = 8000
+	// maxRead is the most a read returns of a file's text, so 2,000 long
+	// lines stay well inside what the brain reads of an answer.
+	maxRead = 1 << 20
 	// maxEdit is the largest file Edit takes: it holds the file twice in
 	// memory, in a room of a fixed size.
 	maxEdit = 8 << 20
@@ -44,14 +47,17 @@ type ReadResult struct {
 	Lines int `json:"lines"`
 }
 
-// read returns limit lines of the file from line offset, counting from one.
+// read returns limit lines of the file from line offset, counting from one,
+// and counts the file's lines to its end. It holds at most a line's first
+// maxLine bytes and maxRead bytes of output, however the file is shaped: one
+// that has no newline is one line, cut.
 func read(path string, offset, limit int) (ReadResult, error) {
 	f, err := open(path)
 	if err != nil {
 		return ReadResult{}, err
 	}
 	defer f.Close()
-	br := bufio.NewReader(f)
+	br := bufio.NewReaderSize(f, sniff)
 	head, _ := br.Peek(sniff)
 	if binary(head) {
 		info, _ := f.Stat()
@@ -65,35 +71,73 @@ func read(path string, offset, limit int) (ReadResult, error) {
 		limit = DefaultLines
 	}
 	var out strings.Builder
-	n := 0
+	n, full := 0, false
 	for {
-		line, err := br.ReadString('\n')
-		if line != "" {
+		line, more, err := readLine(br)
+		if more {
 			n++
-			if n >= offset && n < offset+limit {
-				line = strings.TrimRight(line, "\r\n")
-				if len(line) > maxLine {
-					line = line[:maxLine] + "… (line cut)"
+			if !full && n >= offset && n < offset+limit {
+				if out.Len()+len(line) > maxRead {
+					// The rest is counted, not shown: the note says where to
+					// read on from.
+					full = true
+				} else {
+					fmt.Fprintf(&out, "%6d\t%s\n", n, line)
 				}
-				fmt.Fprintf(&out, "%6d\t%s\n", n, line)
 			}
 		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			return ReadResult{}, err
 		}
 	}
 	return ReadResult{Content: out.String(), Lines: n}, nil
 }
 
-// write makes the file hold content, making its directories first.
+// readLine is the next line without its line ending, cut to maxLine bytes;
+// the rest of a longer line is read past and dropped, so a line of any
+// length costs maxLine. more is whether there was a line at all.
+func readLine(br *bufio.Reader) (line string, more bool, err error) {
+	var b []byte
+	length := 0 // the whole line's, with its newline
+	var part []byte
+	for {
+		part, err = br.ReadSlice('\n')
+		length += len(part)
+		if room := maxLine + 2 - len(b); room > 0 {
+			b = append(b, part[:min(len(part), room)]...)
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			break
+		}
+	}
+	if length == 0 {
+		return "", false, err
+	}
+	if len(part) > 0 && part[len(part)-1] == '\n' {
+		length--
+	}
+	line = strings.TrimRight(string(b), "\r\n")
+	if length > maxLine && len(line) > maxLine {
+		line = line[:maxLine] + "… (line cut)"
+	}
+	return line, true, err
+}
+
+// write makes the file hold content, making its directories first. The
+// file is replaced by rename, as an edit's is, so a write that fails leaves
+// it whole and a write never goes through a link into /proc.
 func write(path, content string) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // the room is the boundary: its files are the agent's
 		return 0, asProblem(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil { //nolint:gosec // as above
+	perm := fs.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
+	}
+	if err := replaceFile(path, []byte(content), perm); err != nil {
 		return 0, asProblem(err)
 	}
 	return len(content), nil
@@ -109,14 +153,19 @@ func edit(path, old, new string, all bool) (int, error) {
 	if old == new {
 		return 0, problem("old_string and new_string are the same; nothing would change")
 	}
-	info, err := os.Stat(path)
+	f, err := open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return 0, asProblem(err)
 	}
 	if info.Size() > maxEdit {
 		return 0, problem("%s is %d bytes, over the %d MiB Edit takes; change it with Bash (sed, a script)", path, info.Size(), maxEdit>>20)
 	}
-	body, err := os.ReadFile(path) //nolint:gosec // any path in the room is the agent's to read
+	body, err := io.ReadAll(io.LimitReader(f, maxEdit+1))
 	if err != nil {
 		return 0, asProblem(err)
 	}
@@ -171,9 +220,13 @@ func open(path string) (*os.File, error) {
 	if info.IsDir() {
 		return nil, problem("%s is a directory; use Glob or Bash ls to list it", path)
 	}
-	f, err := os.Open(path) //nolint:gosec // as above
+	f, err := os.Open(path) //nolint:gosec // any path in the room is the agent's to read
 	if err != nil {
 		return nil, asProblem(err)
+	}
+	if onProc(f) {
+		_ = f.Close()
+		return nil, problem("%s is under /proc, which these tools do not read; use Bash", path)
 	}
 	return f, nil
 }

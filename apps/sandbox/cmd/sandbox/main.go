@@ -112,6 +112,12 @@ func runWorkspace(ctx context.Context, cmd command, logger *slog.Logger) error {
 	if err := workspace.Harden(); err != nil {
 		return fmt.Errorf("making the workspace undumpable: %w", err)
 	}
+	if os.Geteuid() == 0 {
+		// Root holds CAP_SYS_PTRACE unless the room drops it, and reads any
+		// process's environ: the token is kept only from a room that runs
+		// commands as another user, as sandboxd's do.
+		logger.Warn("workspace: running as root, so commands may read the room's token")
+	}
 	if err := os.Unsetenv(WorkspaceTokenEnv); err != nil {
 		return err
 	}

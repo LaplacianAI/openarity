@@ -15,7 +15,8 @@ import (
 const ProxyPort = 3128
 
 const (
-	// MaxTunnels is how many tunnels one public room holds open at once:
+	// MaxTunnels is how many connections one public room holds out at once,
+	// its tunnels and its forwarded requests together:
 	// enough for a package manager's parallel downloads, and a bound on what
 	// one room takes of sandboxd's sockets.
 	MaxTunnels = 64
@@ -25,8 +26,32 @@ const (
 )
 
 // mailPorts are SMTP's: a room that sent mail would send it from sandboxd's
-// address, whose reputation is the operator's.
-var mailPorts = map[string]bool{"25": true, "465": true, "587": true}
+// address, whose reputation is the operator's. Mail can still leave on any
+// other port a server listens on; this keeps it off the ones it goes by.
+var mailPorts = map[int]bool{25: true, 465: true, 587: true}
+
+// destinationPort is the port a request is for, as a number: the dialer
+// takes "025" and a service name such as "smtp" as well, so a port compared
+// as written is no check at all. A request with neither a port nor a number
+// for one is refused.
+func destinationPort(req *http.Request) (int, error) {
+	hostport := req.Host
+	if req.Method != http.MethodConnect {
+		if req.URL.Port() == "" {
+			return 80, nil
+		}
+		hostport = req.URL.Host
+	}
+	_, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return 0, errors.New("the request names no host and port")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 || strconv.Itoa(n) != port {
+		return 0, errors.New("the port is not a number from 1 to 65535: " + port)
+	}
+	return n, nil
+}
 
 // A public room reaches the internet, and nothing private, through a forward
 // proxy: CONNECT for TLS and every other protocol that tunnels, and an
@@ -60,19 +85,32 @@ func (g *Guard) serveProxy(r *room, l net.Listener) (stop func()) {
 	srv := &http.Server{
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if _, port, err := net.SplitHostPort(req.Host); err == nil && mailPorts[port] {
-				g.refused(r, req.Host, errors.New("a mail port"))
-				http.Error(w, "the sandbox does not send mail: port "+port+" is refused", http.StatusForbidden)
+			if req.Method != http.MethodConnect && !(req.URL.IsAbs() && req.URL.Scheme == "http") {
+				http.Error(w, "this is the sandbox's proxy: send an absolute http:// URL, or CONNECT for anything else", http.StatusBadRequest)
 				return
 			}
-			switch {
-			case req.Method == http.MethodConnect:
-				g.tunnel(r, w, req)
-			case req.URL.IsAbs() && req.URL.Scheme == "http":
-				forward.ServeHTTP(w, req)
-			default:
-				http.Error(w, "this is the sandbox's proxy: send an absolute http:// URL, or CONNECT for anything else", http.StatusBadRequest)
+			port, err := destinationPort(req)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
 			}
+			if mailPorts[port] {
+				g.refused(r, req.Host, errors.New("a mail port"))
+				http.Error(w, "the sandbox does not send mail: port "+strconv.Itoa(port)+" is refused", http.StatusForbidden)
+				return
+			}
+			// A tunnel and a forwarded request alike hold a connection out,
+			// so both count against the room's.
+			if !r.openTunnel() {
+				http.Error(w, "the sandbox has "+strconv.Itoa(MaxTunnels)+" connections open; close some first", http.StatusTooManyRequests)
+				return
+			}
+			defer r.closeTunnel()
+			if req.Method == http.MethodConnect {
+				g.tunnel(r, w, req)
+				return
+			}
+			forward.ServeHTTP(w, req)
 		}),
 	}
 	go func() { _ = srv.Serve(l) }()
@@ -84,15 +122,6 @@ func (g *Guard) serveProxy(r *room, l net.Listener) (stop func()) {
 
 // tunnel dials the CONNECT's host and relays both ways.
 func (g *Guard) tunnel(r *room, w http.ResponseWriter, req *http.Request) {
-	if _, _, err := net.SplitHostPort(req.Host); err != nil {
-		http.Error(w, "CONNECT needs a host and a port", http.StatusBadRequest)
-		return
-	}
-	if !r.openTunnel() {
-		http.Error(w, "the sandbox has "+strconv.Itoa(MaxTunnels)+" connections open; close some first", http.StatusTooManyRequests)
-		return
-	}
-	defer r.closeTunnel()
 	ctx, cancel := context.WithTimeout(req.Context(), 15*time.Second)
 	up, err := g.dialFor(r)(ctx, "tcp", req.Host)
 	cancel()

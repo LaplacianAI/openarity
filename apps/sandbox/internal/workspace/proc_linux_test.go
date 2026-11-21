@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
@@ -26,5 +27,26 @@ func TestASearchFromTheRootPassesProcBy(t *testing.T) {
 	}
 	if len(inProc) != 0 {
 		t.Fatalf("the walk read %d files under /proc, such as %s", len(inProc), inProc[0])
+	}
+}
+
+// The open file is asked, not its path: a file on procfs is known for one
+// however it was reached.
+func TestAFileOpenedOnProcIsKnownForOne(t *testing.T) {
+	f, err := os.Open("/proc/self/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if !onProc(f) {
+		t.Error("/proc/self/status is not known to be on procfs")
+	}
+	g, err := os.CreateTemp(t.TempDir(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	if onProc(g) {
+		t.Error("a temporary file is taken for procfs")
 	}
 }

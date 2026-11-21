@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -124,7 +125,7 @@ func grep(q GrepQuery) (GrepResult, error) {
 		if err != nil || info.Size() > maxGrepFile {
 			return nil //nolint:nilerr // a file gone mid-walk, or a data dump, is left out
 		}
-		body, err := os.ReadFile(p) //nolint:gosec // any path in the room is the agent's to search
+		body, err := readWhole(p)
 		if err != nil || binary(body[:min(len(body), sniff)]) {
 			return nil //nolint:nilerr // an unreadable file, or a binary one, is left out
 		}
@@ -245,6 +246,17 @@ func walk(base string, fn func(p, rel string, d fs.DirEntry) error) error {
 		}
 		return fn(p, filepath.ToSlash(rel), d)
 	}))
+}
+
+// readWhole is a file searched: opened as Read opens one, so not on /proc,
+// and no more than maxGrepFile of it.
+func readWhole(p string) ([]byte, error) {
+	f, err := open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, maxGrepFile+1))
 }
 
 func ignoreSkipAll(err error) error {
