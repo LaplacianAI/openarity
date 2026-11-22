@@ -55,7 +55,11 @@ stopped too.
 A room that cannot be brought back as it was (the provider lost it, it does
 not answer after a resume, or it is over its disk) is replaced by a fresh
 one. The call that found it does not run: the agent is told its earlier
-files are gone, and its next call uses the fresh room. A [hub](hub.md) the team chose
+files are gone, and its next call uses the fresh room. Calls made at the same
+moment by other agents of the conversation reach the fresh room without the
+notice. The old room is deleted before the new one is made, since a sandbox
+with room for only one would refuse the new one otherwise; if the new one is
+refused too, the conversation has none until a later call. A [hub](hub.md) the team chose
 from its agents has one when it is granted one, like any agent, and can work
 in it as well as hand work on; the built-in hub has none.
 
@@ -120,13 +124,27 @@ files of the old one. With none set, the provider's size is used:
 sandboxd's disk is a soft cap: it measures every 30 seconds and stops a room
 past its size. A stopped room keeps its disk until its keep hours end, and
 every room's disk together is held to `SANDBOXD_DISK_BUDGET` (8 GiB by
-default). When stopped rooms fill it, a new room is refused as busy until one
-is deleted: size the budget for the teams' keep hours, or lower them.
+default). A new room is let in while what the rooms hold now, plus its own disk
+(512 MiB unless the team set a size), fits: at the defaults, about sixteen workspaces that filled their
+disk. When stopped rooms fill it, a new room is refused as busy, and the
+error says the disk is held by stopped workspaces, until one is deleted: size
+the budget for the teams' keep hours, or lower them. Making room by deleting
+the longest-stopped workspace is
+[#281](https://github.com/LaplacianAI/openarity/issues/281).
 
 Upgrading sandboxd: a workspace room made before stopping existed has no
 volume for `/workspace`, so its files would not survive a stop. Delete such
-rooms (`docker rm -f` the `oa-sb-*` containers) when upgrading; the next call
-makes each conversation a new one.
+rooms when upgrading; the next call makes each conversation a new one:
+
+```sh
+docker ps -aq --filter name=oa-sb- | xargs -r docker rm -f
+```
+
+Upgrading the brain: a room is made from the image of the brain's release,
+so a deploy of a new commit gives each conversation a new workspace on its
+next call, without the old one's files, and the agent is told so. Keep
+anything that must outlive a release somewhere else: a repository it
+pushes to, or an attachment.
 
 On E2B the first room waits for that template to be built, a few minutes after
 the sandbox is saved, and again after an upgrade. Until it is, a call says the
