@@ -125,8 +125,8 @@ SET input_tokens = input_tokens + sqlc.arg(input_tokens),
     screened_out = screened_out + sqlc.arg(screened_out)
 WHERE id = sqlc.arg(id);
 
--- No row when the pass was no longer running: failed as lost meanwhile.
 -- name: FinishImproverPass :one
+-- No row when the pass was no longer running: failed as lost meanwhile.
 UPDATE improver_passes
 SET status = sqlc.arg(status), report = sqlc.arg(report), error = sqlc.narg(error),
     cut_short = sqlc.arg(cut_short),

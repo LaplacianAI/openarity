@@ -218,10 +218,15 @@ func (c *Checker) finishDigest(ctx context.Context, runID uuid.UUID, round int32
 		written = true
 		return q.SetRunDigest(ctx, db.SetRunDigestParams{RunID: runID, Digest: state})
 	})
-	if err == nil && written {
-		c.logger.InfoContext(ctx, "A run was digested", "run", runID, "digest", state, "agents", len(rows))
+	if err != nil || !written {
+		return err
 	}
-	return err
+	if state == digestSkipped {
+		c.logger.InfoContext(ctx, "A run's digest was skipped", "run", runID)
+		return nil
+	}
+	c.logger.InfoContext(ctx, "A run was digested", "run", runID, "agents", len(rows))
+	return nil
 }
 
 // study asks the model about the run's tree and returns the rows to write.

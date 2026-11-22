@@ -96,7 +96,7 @@ func TestAJudgedAndDigestedRunIsLoggedOnce(t *testing.T) {
 	}
 	digested := book.said(t, "A run was digested")
 	if len(digested) != 1 || field(digested[0], "run") != run.String() ||
-		field(digested[0], "digest") != digestDone || field(digested[0], "agents") != "1" {
+		field(digested[0], "agents") != "1" {
 		t.Errorf("digested = %v", digested)
 	}
 }
@@ -137,5 +137,26 @@ func TestAPassIsLoggedFromBeginToFinish(t *testing.T) {
 		if field(f, "pass") == lost.ID.String() {
 			t.Errorf("a pass failed as lost logged a finish: %v", f)
 		}
+	}
+}
+
+// A digest the model could not study is logged as skipped, not as digested.
+func TestASkippedDigestSaysSo(t *testing.T) {
+	w := newWorld(t)
+	var book logbook
+	w.checker.logger = book.logger()
+	run := w.finished(t, w.session(t), "11 minutes")
+	w.model.replies = []reply{{text: partlyAnswer}}
+	if err := w.checker.Check(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.checker.finishDigest(t.Context(), run, 0, nil, digestSkipped); err != nil {
+		t.Fatal(err)
+	}
+	if got := book.said(t, "A run's digest was skipped"); len(got) != 1 || field(got[0], "run") != run.String() {
+		t.Errorf("skipped = %v", got)
+	}
+	if got := book.said(t, "A run was digested"); len(got) != 0 {
+		t.Errorf("a skipped digest was logged as digested: %v", got)
 	}
 }

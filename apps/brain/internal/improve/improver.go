@@ -461,7 +461,6 @@ func (im *Improver) record(ctx context.Context, id uuid.UUID, p db.FinishImprove
 	case failed != nil:
 		m := failedEveryTry
 		msg = &m
-		im.logger.WarnContext(ctx, "An improver pass failed", "pass", id, "err", failed)
 	}
 	p.ID, p.Report, p.Error = id, clip(p.Report, reportChars), msg
 	row, err := im.store.FinishImproverPass(ctx, p)
@@ -470,6 +469,9 @@ func (im *Improver) record(ctx context.Context, id uuid.UUID, p db.FinishImprove
 	}
 	if err != nil {
 		return fmt.Errorf("recording pass %s %s: %w", id, p.Status, err)
+	}
+	if failed != nil && !errors.Is(failed, errNoModel) {
+		im.logger.WarnContext(ctx, "An improver pass failed", "pass", id, "err", failed)
 	}
 	im.logger.InfoContext(ctx, "An improver pass finished", "pass", id, "team", row.TeamID, "agent", row.AgentID,
 		"trigger", row.Trigger, "status", p.Status, "proposed", row.Proposed, "screened_out", row.ScreenedOut,

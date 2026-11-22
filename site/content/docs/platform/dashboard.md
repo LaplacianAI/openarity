@@ -146,9 +146,10 @@ Only runs that finish while improvement is on are judged: turning it off
 and on again starts from that moment.
 To see it working without opening the dashboard, read the worker's log. Each
 judged run logs `A run was judged` with its verdict, and each digested run
-logs `A run was digested`. Each pass logs `An improver pass began` and then
+logs `A run was digested` (or `A run's digest was skipped` when the model
+could not study it). Each pass logs `An improver pass began` and then
 `An improver pass finished`, with how many changes it proposed and how many
-the screen held back. These lines carry ids and counts, never what a run or a
+the screen held back; a failed pass also logs a warning with its cause. These lines carry ids and counts, never what a run or a
 report said.
 Compaction says when a run folds its earlier turns into a summary: past a
 number of messages, and when its next request would read a tenth of its
