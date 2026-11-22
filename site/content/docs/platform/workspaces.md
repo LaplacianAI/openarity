@@ -115,7 +115,7 @@ files of the old one. With none set, the provider's size is used:
 | --- | --- | --- |
 | sandboxd | 1.5 GiB of memory, one CPU and 512 MiB of disk | Up to what its operator gives a workspace, `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS` and `SANDBOXD_WORKSPACE_BYTES`; past that the room is refused |
 | Daytona | Its snapshot's | Memory and disk rounded up to whole GB |
-| E2B | Its template's, 2 CPUs and 2 GB | Not yet: refused until a template is built per size |
+| E2B | Its template's, 2 CPUs and 2 GB | A template built at it in the team's account; new workspaces wait a few minutes for it, and a size the team's E2B plan refuses shows as a failed build in Settings. Disk is the free space E2B makes room for, best effort |
 
 sandboxd's disk is a soft cap: it measures every 30 seconds and stops a room
 past its size. A stopped room keeps its disk until its keep hours end, and

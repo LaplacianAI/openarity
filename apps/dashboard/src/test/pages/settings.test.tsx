@@ -761,8 +761,11 @@ describe("a team's workspaces", () => {
     });
   });
 
-  it("refuses a size of E2B's own, which is its template's", () => {
-    expect(ask({ sandbox: "e2b", sandboxKey: "k", sizeCustom: true })).toMatch(/E2B workspace/);
+  it("sends an E2B team's own size, which its template is built at", () => {
+    expect(sandboxOf(ask({ sandbox: "e2b", sandboxKey: "k", sizeCustom: true }))).toMatchObject({
+      provider: "e2b",
+      workspace_size: { memory_mb: 2048, cpus: 2, disk_mb: 10240 },
+    });
   });
 
   it("sends nothing about workspaces when the sandbox is off", () => {
@@ -771,7 +774,7 @@ describe("a team's workspaces", () => {
     });
   });
 
-  it("puts a team moving to E2B back on the provider's size", async () => {
+  it("keeps a team's size when it moves to E2B, and says the template is built first", async () => {
     const seen = brain({
       ...team(["team:settings"]),
       "GET /teams/{id}/settings": { body: SIZED },
@@ -780,16 +783,15 @@ describe("a team's workspaces", () => {
     at();
 
     const sandbox = await screen.findByRole("region", { name: "Sandbox" });
-    expect(within(sandbox).getByLabelText("Memory")).toHaveValue("8");
     await choose(within(sandbox).getByLabelText("Sandbox provider"), /^E2B/);
-    expect(within(sandbox).queryByLabelText("Memory")).toBeNull();
-    expect(within(sandbox).getByRole("radio", { name: "Custom" })).toBeDisabled();
-    expect(within(sandbox).getByText(/2 CPUs and 2 GB/)).toBeInTheDocument();
+    expect(within(sandbox).getByLabelText("Memory")).toHaveValue("8");
+    expect(within(sandbox).getByRole("radio", { name: "Custom" })).toBeEnabled();
+    expect(within(sandbox).getByText(/builds a template at this size/)).toBeInTheDocument();
 
     await userEvent.type(within(sandbox).getByLabelText("API key"), "k");
     await saveIn("Sandbox");
     await waitFor(() => expect(put(seen)).toBeDefined());
-    expect(put(seen).sandbox).toMatchObject({ provider: "e2b", workspace_size: null });
+    expect(put(seen).sandbox).toEqual({ provider: "e2b", api_key: "k" });
   });
 
   // Either way a size changes, every conversation gets a new workspace.

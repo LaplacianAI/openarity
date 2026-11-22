@@ -684,8 +684,6 @@ function lifeRequest(d: SettingsDraft, stored: TeamSettings): Life | string {
   if (JSON.stringify(now.size) !== JSON.stringify(was.size)) {
     if (!d.sizeCustom) {
       out.workspace_size = null;
-    } else if (d.sandbox === "e2b") {
-      return "An E2B workspace is its template's size, 2 CPUs and 2 GB, for now.";
     } else {
       const memory = mbOf(d.sizeMemory);
       const cpus = parseWhole(d.sizeCPUs);
@@ -825,10 +823,9 @@ function Workspaces({
           label="Size"
           value={draft.sizeCustom ? "custom" : "provider"}
           options={SIZES}
-          disabled={e2b}
           onChange={(v) => onChange({ sizeCustom: v === "custom" })}
         />
-        {draft.sizeCustom && !e2b ? (
+        {draft.sizeCustom ? (
           <div className="grid gap-3 pt-1 sm:grid-cols-3">
             <Field label="Memory" htmlFor="settings-size-memory">
               <Unit
@@ -859,11 +856,13 @@ function Workspaces({
           </div>
         ) : null}
         <p id="settings-size-hint" className="text-xs text-muted-foreground">
-          {e2b
-            ? "2 CPUs and 2 GB, the size its template is built at. A size of your own is not offered for E2B yet."
-            : draft.sizeCustom
-              ? `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : ""}`
-              : "Each conversation's workspace gets the size your sandbox gives one."}
+          {!draft.sizeCustom
+            ? e2b
+              ? "Each conversation's workspace gets 2 CPUs and 2 GB, the size the default template is built at."
+              : "Each conversation's workspace gets the size your sandbox gives one."
+            : e2b
+              ? "E2B builds a template at this size in your account first, and new workspaces wait a few minutes for it. A size your E2B plan does not allow shows as a failed build. Disk is the free space E2B makes room for."
+              : `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : ""}`}
         </p>
         {sizeChanged ? (
           <p className="flex items-start gap-1.5 text-xs text-foreground">
@@ -1476,15 +1475,8 @@ function SettingsForm({
             value={draft.sandbox}
             options={SANDBOXES}
             onChange={(sandbox) =>
-              // The address and key are the old provider's, and an E2B
-              // workspace is its template's size.
-              set("sandbox", {
-                sandbox,
-                sandboxURL: "",
-                sandboxTemplate: "",
-                sandboxKey: "",
-                ...(sandbox === "e2b" ? { sizeCustom: false } : {}),
-              })
+              // The address and key are the old provider's.
+              set("sandbox", { sandbox, sandboxURL: "", sandboxTemplate: "", sandboxKey: "" })
             }
           />
         </Field>
