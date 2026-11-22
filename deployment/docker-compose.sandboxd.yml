@@ -24,9 +24,13 @@
 #   sudo apt-get install -y docker-ce-rootless-extras uidmap
 #   sudo loginctl enable-linger sandboxd      # keep its daemon running after logout
 #   sudo -iu sandboxd
+#   # sudo -iu sets no XDG_RUNTIME_DIR, which systemctl --user and the
+#   # socket's path both need; set it before either, in every login.
+#   echo 'export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}' >> ~/.bashrc
+#   echo 'export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock' >> ~/.bashrc
+#   source ~/.bashrc
 #   dockerd-rootless-setuptool.sh install
 #   systemctl --user enable --now docker
-#   export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
 #
 # THEN, AS THAT USER, IN ITS OWN CHECKOUT
 #
@@ -46,6 +50,12 @@
 #   SANDBOXD_MEMORY_BUDGET=2415919104        # bytes, across every room; default 3 GiB
 #   SANDBOXD_ROOM_MEMORY=805306368           # bytes per room; default 768 MiB
 #   SANDBOXD_ROOM_HOME=536870912             # bytes, the room's home; default 512 MiB
+#   SANDBOXD_ROOM_CPUS=0.5                   # CPUs per room; default half of one
+#   SANDBOXD_ROOM_PIDS=256                   # processes per room; default 256
+#   SANDBOXD_WORKSPACE_MEMORY=1610612736     # bytes, the most a workspace may have; default 1.5 GiB
+#   SANDBOXD_WORKSPACE_CPUS=1                # CPUs, the most a workspace may have; default one
+#   SANDBOXD_WORKSPACE_BYTES=536870912       # bytes, the most disk a workspace may have; default 512 MiB
+#   SANDBOXD_DISK_BUDGET=8589934592          # bytes, every workspace's disk, stopped ones too; default 8 GiB
 #   SANDBOXD_IMAGES=ghcr.io/laplacianai/openarity-sandbox   # optional, the default
 #   SANDBOXD_PULL=ghcr.io/laplacianai/openarity-sandbox:latest   # optional
 #
@@ -107,6 +117,13 @@ services:
       SANDBOXD_MEMORY_BUDGET: ${SANDBOXD_MEMORY_BUDGET:-3221225472}
       SANDBOXD_ROOM_MEMORY: ${SANDBOXD_ROOM_MEMORY:-}
       SANDBOXD_ROOM_HOME: ${SANDBOXD_ROOM_HOME:-}
+      # Empty is sandboxd's own default for each.
+      SANDBOXD_ROOM_CPUS: ${SANDBOXD_ROOM_CPUS:-}
+      SANDBOXD_ROOM_PIDS: ${SANDBOXD_ROOM_PIDS:-}
+      SANDBOXD_WORKSPACE_MEMORY: ${SANDBOXD_WORKSPACE_MEMORY:-}
+      SANDBOXD_WORKSPACE_CPUS: ${SANDBOXD_WORKSPACE_CPUS:-}
+      SANDBOXD_WORKSPACE_BYTES: ${SANDBOXD_WORKSPACE_BYTES:-}
+      SANDBOXD_DISK_BUDGET: ${SANDBOXD_DISK_BUDGET:-}
       SANDBOXD_IMAGES: ${SANDBOXD_IMAGES:-ghcr.io/laplacianai/openarity-sandbox}
       SANDBOXD_PULL: ${SANDBOXD_PULL:-}
       # sandboxd joins every room's network as this container.

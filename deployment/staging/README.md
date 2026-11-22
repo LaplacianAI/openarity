@@ -199,10 +199,15 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
    sudo apt-get install -y docker-ce-rootless-extras uidmap
    sudo loginctl enable-linger sandboxd
    sudo -iu sandboxd
+   echo 'export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}' >> ~/.bashrc
+   echo 'export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock' >> ~/.bashrc
+   source ~/.bashrc
    dockerd-rootless-setuptool.sh install
    systemctl --user enable --now docker
-   echo 'export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock' >> ~/.bashrc
    ```
+
+   `sudo -iu` sets no `XDG_RUNTIME_DIR`, so without the first line
+   `systemctl --user` fails and Docker looks for `unix:///docker.sock`.
 
 2. As `sandboxd`, in a checkout of its own, set `deployment/.env`:
 
@@ -216,7 +221,11 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
    Only running rooms count against the memory budget: a conversation's
    workspace stops when its last run ends, keeping its files in a volume.
    Every volume together is held to `SANDBOXD_DISK_BUDGET` (default 8 GiB);
-   set it to what the disk can spare.
+   set it to what the disk can spare. A workspace's own most is
+   `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS` and
+   `SANDBOXD_WORKSPACE_BYTES` (1.5 GiB, one CPU and 512 MiB by default); the
+   compose file passes each of these through, and every other setting it
+   lists.
 
    and start it:
 
