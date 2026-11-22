@@ -3449,8 +3449,9 @@ type SandboxSettings struct {
 	Template *string `json:"template,omitempty" yaml:"template,omitempty"`
 
 	// TemplateBuild E2B with no template of the team's own: the brain's build of its
-	// room image in the team's account, asked for when the sandbox is
-	// saved. Null for every other sandbox, and before one is asked for.
+	// room image in the team's account, at the team's workspace size when
+	// it has one, asked for when the sandbox is saved. Null for every
+	// other sandbox, and before one is asked for.
 	TemplateBuild *SandboxTemplateBuild `json:"template_build,omitempty" yaml:"template_build,omitempty"`
 
 	// URL A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
@@ -4139,7 +4140,10 @@ type WhoamiKind string
 
 // WorkspaceSize A workspace room's memory, CPUs and disk. sandboxd refuses a size
 // past what its operator gives a workspace; Daytona takes it in whole
-// GB, rounded up; E2B's is its template's and cannot be set yet.
+// GB, rounded up; E2B builds a template at it in the team's account,
+// which new workspaces wait for, its disk as the free space E2B grows
+// the filesystem to, and a size the team's E2B plan refuses is a
+// failed build in `template_build`.
 // Changing it gives the team's sessions new rooms on their next call,
 // without the files of the old ones.
 type WorkspaceSize struct {
