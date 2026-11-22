@@ -813,6 +813,34 @@ describe("a team's workspaces", () => {
     expect(within(sandbox).getByText(warning)).toBeInTheDocument();
   });
 
+  // A new sandbox is new rooms too; lowering the keep hours reaches back to
+  // rooms already stopped. Both are said before the save, to screen readers
+  // as well.
+  it("warns before a provider switch or a lower keep time costs files", async () => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: SANDBOXD } });
+    at();
+    const sandbox = await screen.findByRole("region", { name: "Sandbox" });
+    expect(within(sandbox).queryAllByRole("status")).toHaveLength(0);
+
+    const keep = within(sandbox).getByLabelText("Keep stopped");
+    await userEvent.clear(keep);
+    await userEvent.type(keep, "6");
+    expect(within(sandbox).getByRole("status")).toHaveTextContent(
+      "Lowering it from 24 hours deletes workspaces already stopped longer than 6",
+    );
+    await userEvent.clear(keep);
+    await userEvent.type(keep, "48");
+    expect(within(sandbox).queryAllByRole("status")).toHaveLength(0);
+
+    await choose(within(sandbox).getByLabelText("Sandbox provider"), /^Daytona/);
+    expect(within(sandbox).getByRole("status")).toHaveTextContent(
+      "a new workspace in this sandbox",
+    );
+    // The size warning would say the same: one notice, not two.
+    await userEvent.click(within(sandbox).getByRole("radio", { name: "Custom" }));
+    expect(within(sandbox).getAllByRole("status")).toHaveLength(1);
+  });
+
   it("saves a custom size typed into the page", async () => {
     const seen = brain({
       ...team(["team:settings"]),

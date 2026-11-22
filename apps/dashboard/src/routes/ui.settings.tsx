@@ -661,6 +661,19 @@ function sizeChanged(d: SettingsDraft, stored: TeamSettings): boolean {
   return JSON.stringify(lifeKey(d).size) !== JSON.stringify(lifeKey(draftOf(stored)).size);
 }
 
+/** Whether saving would move the team's workspaces to another sandbox. */
+function providerChanged(d: SettingsDraft, stored: TeamSettings): boolean {
+  const was = stored.sandbox?.provider ?? "none";
+  return was !== "none" && d.sandbox !== was;
+}
+
+/** The stored keep hours when the draft lowers them, else null. */
+function keepLowered(d: SettingsDraft, stored: TeamSettings): number | null {
+  const was = stored.sandbox?.keep_hours ?? KEEP_HOURS;
+  const now = parseWhole(d.keepHours);
+  return now !== null && now >= 1 && now < was ? was : null;
+}
+
 function sameLife(a: SettingsDraft, b: SettingsDraft): boolean {
   return JSON.stringify(lifeKey(a)) === JSON.stringify(lifeKey(b));
 }
@@ -806,17 +819,29 @@ const IDLE = [
 function Workspaces({
   draft,
   sizeChanged,
+  providerChanged,
+  keepLowered,
   onChange,
 }: {
   draft: SettingsDraft;
   /** Whether saving would change the size, which gives every conversation a new workspace. */
   sizeChanged: boolean;
+  /** Whether saving would move to another sandbox, which does the same. */
+  providerChanged: boolean;
+  /** The stored keep hours, when the draft lowers them. */
+  keepLowered: number | null;
   onChange: (patch: Partial<SettingsDraft>) => void;
 }) {
   const e2b = draft.sandbox === "e2b";
   return (
     <div className="space-y-4 border-t border-rule pt-4">
       <h3 className="text-sm font-medium">Workspaces</h3>
+      {providerChanged ? (
+        <Notice>
+          Saving gives each conversation a new workspace in this sandbox, without the files in its
+          old one.
+        </Notice>
+      ) : null}
       <fieldset className="space-y-2" aria-describedby="settings-size-hint">
         <legend className="mb-1.5 text-sm font-medium">Size</legend>
         <Segments
@@ -864,12 +889,11 @@ function Workspaces({
               ? "E2B builds a template at this size in your account first, and new workspaces wait a few minutes for it. A size your E2B plan does not allow shows as a failed build. Disk is the free space E2B makes room for."
               : `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : ""}`}
         </p>
-        {sizeChanged ? (
-          <p className="flex items-start gap-1.5 text-xs text-foreground">
-            <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+        {sizeChanged && !providerChanged ? (
+          <Notice>
             Saving gives each conversation a new workspace at this size, without the files in its
             old one.
-          </p>
+          </Notice>
         ) : null}
       </fieldset>
       <fieldset className="space-y-2" aria-describedby="settings-idle-hint">
@@ -909,7 +933,23 @@ function Workspaces({
           onChange={(keepHours) => onChange({ keepHours })}
         />
       </Field>
+      {keepLowered !== null ? (
+        <Notice>
+          Lowering it from {keepLowered} hours deletes workspaces already stopped longer than{" "}
+          {draft.keepHours.trim()}, with their files, at the next sweep.
+        </Notice>
+      ) : null}
     </div>
+  );
+}
+
+/** What a save would cost that is not undone, said before it is made. */
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <p role="status" className="flex items-start gap-1.5 text-xs text-foreground">
+      <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+      <span>{children}</span>
+    </p>
   );
 }
 
@@ -1542,6 +1582,8 @@ function SettingsForm({
           <Workspaces
             draft={draft}
             sizeChanged={sizeChanged(draft, stored)}
+            providerChanged={providerChanged(draft, stored)}
+            keepLowered={keepLowered(draft, stored)}
             onChange={(patch) => set("sandbox", patch)}
           />
         ) : null}
