@@ -98,6 +98,8 @@ func (t *passTools) propose(ctx context.Context, raw json.RawMessage) (string, e
 	// Said as a refusal, so the improver knows nothing was stored and can
 	// say so in its report.
 	switch {
+	case t.closed:
+		return "Not stored: improvement was turned off, so this pass is done proposing; finish with your report.", nil
 	case t.proposed >= proposalsPerPass:
 		return fmt.Sprintf("Not stored: this pass has made its %d proposals and is done proposing; finish with your report.", proposalsPerPass), nil
 	case t.refused >= refusalsPerPass:
@@ -128,7 +130,7 @@ func (t *passTools) proposeOnce(ctx context.Context, raw json.RawMessage) (uuid.
 		return uuid.UUID{}, err
 	}
 	if !on {
-		t.refused = refusalsPerPass
+		t.closed = true
 		return uuid.UUID{}, refused("improvement was turned off: stop proposing")
 	}
 	n, err := t.build(ctx, in)

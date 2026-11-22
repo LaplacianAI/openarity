@@ -155,6 +155,7 @@ func (j *ImproverJob) sweepDaily(ctx context.Context, now time.Time) error {
 		if !a.HasNew && len(prune) == 0 {
 			continue
 		}
+		// The runs judged when the pass was planned; more may come before it begins.
 		seen := a.RunsSince
 		p := plannedPass{TeamID: a.TeamID, AgentID: a.ID, Trigger: triggerDaily, Prune: prune, RunsSeen: &seen}
 		if err := j.enqueue(p, "improver:"+a.ID.String()+":daily:"+now.UTC().Format(idDay)); err != nil {

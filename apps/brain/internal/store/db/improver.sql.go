@@ -500,25 +500,31 @@ func (q *Queries) ListImproverPasses(ctx context.Context, arg ListImproverPasses
 
 const listImprovingAgents = `-- name: ListImprovingAgents :many
 WITH last AS (
-    SELECT a.id, a.team_id, ts.improvement_daily_runs AS bar,
-           COALESCE((SELECT max(x.started_at) FROM improver_passes x
-                     WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
-                    '-infinity'::timestamptz) AS since
+    SELECT a.id, a.team_id, ts.improvement_daily_runs::bigint AS bar,
+           greatest(COALESCE((SELECT max(x.started_at) FROM improver_passes x
+                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
+                             '-infinity'::timestamptz),
+                    COALESCE(ts.improvement_since, '-infinity'::timestamptz)) AS since
     FROM agents a
     JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
     WHERE a.kind = 'custom'
-), counted AS (
-    SELECT l.id, l.team_id, l.bar, l.since,
-           (SELECT count(*) FROM runs r JOIN run_outcomes o ON o.run_id = r.id
-            WHERE r.team_id = l.team_id AND r.parent_run_id IS NULL AND r.created_at > l.since
-              AND EXISTS (SELECT 1 FROM runs t WHERE t.root_run_id = r.id AND t.agent_id = l.id))::int AS runs_since
-    FROM last l
+), reached AS (
+    SELECT l.id, l.team_id, l.bar, l.since FROM last l
+    WHERE (SELECT count(*) FROM (
+               SELECT 1 FROM runs r
+               WHERE r.team_id = l.team_id AND r.parent_run_id IS NULL AND r.created_at > l.since
+                 AND EXISTS (SELECT 1 FROM run_outcomes o WHERE o.run_id = r.id)
+                 AND EXISTS (SELECT 1 FROM runs t WHERE t.root_run_id = r.id AND t.agent_id = l.id)
+               LIMIT l.bar) capped) >= l.bar
 )
-SELECT c.id, c.team_id, c.runs_since,
-       EXISTS (SELECT 1 FROM run_digests d WHERE d.agent_id = c.id AND d.created_at > c.since)::bool AS has_new
-FROM counted c
-WHERE c.runs_since >= c.bar
-ORDER BY c.team_id, c.id
+SELECT x.id, x.team_id,
+       (SELECT count(*) FROM runs r
+        WHERE r.team_id = x.team_id AND r.parent_run_id IS NULL AND r.created_at > x.since
+          AND EXISTS (SELECT 1 FROM run_outcomes o WHERE o.run_id = r.id)
+          AND EXISTS (SELECT 1 FROM runs t WHERE t.root_run_id = r.id AND t.agent_id = x.id))::int AS runs_since,
+       EXISTS (SELECT 1 FROM run_digests d WHERE d.agent_id = x.id AND d.created_at > x.since)::bool AS has_new
+FROM reached x
+ORDER BY x.team_id, x.id
 `
 
 type ListImprovingAgentsRow struct {
@@ -530,10 +536,15 @@ type ListImprovingAgentsRow struct {
 
 // Every custom agent of a team with improvement on, with whether it has a
 // digest newer than its newest finished pass: what the daily sweep reads.
-// Each custom agent in a team with improvement on that has had at least the
-// team's daily runs judged since its last pass: top-level runs whose tree
-// reaches it, created after that pass began (or ever, before its first).
-// has_new says whether any of them was digested.
+// The custom agents of teams with improvement on that have reached their
+// team's improvement_daily_runs since their last useful pass (the newest done
+// pass not cut short, or one that proposed something; none means since
+// improvement went on). A run counts when it is a judged top-level run whose
+// tree reaches the agent and was created after that pass began: a run already
+// going when the pass began is left out, as the pass may not have read it.
+// The bar is checked with a count that stops at it, so an agent with a long
+// history costs no more than the bar; runs_since is then the exact count,
+// kept on the pass as runs_seen. has_new says whether a digest is newer.
 func (q *Queries) ListImprovingAgents(ctx context.Context) ([]ListImprovingAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listImprovingAgents)
 	if err != nil {
@@ -560,9 +571,9 @@ func (q *Queries) ListImprovingAgents(ctx context.Context) ([]ListImprovingAgent
 }
 
 const listPassPruneProposals = `-- name: ListPassPruneProposals :many
-SELECT p.pass_id::uuid AS pass_id, substr(p.signature, 7)::text AS candidate
+SELECT p.pass_id::uuid AS pass_id, substring(p.signature FROM '^prune:(.*)$')::text AS candidate
 FROM improvement_proposals p
-WHERE p.pass_id = ANY ($1::uuid[]) AND p.signature LIKE 'prune:%'
+WHERE p.pass_id = ANY ($1::uuid[]) AND starts_with(p.signature, 'prune:')
 ORDER BY p.created_at
 `
 

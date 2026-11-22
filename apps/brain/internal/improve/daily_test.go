@@ -90,11 +90,17 @@ func TestADailyPassWaitsForEnoughRuns(t *testing.T) {
 	if !ok || got.RunsSince != 5 || !got.HasNew {
 		t.Fatalf("with 5 judged runs: %+v, %v", got, ok)
 	}
+	// Past the bar the count is exact, not stopped at it.
+	w.judged(t, w.agent, "20 minutes", verdictDone, 100)
+	w.judged(t, w.agent, "10 minutes", verdictDone, 100)
+	if got = w.improving(t)[w.agent]; got.RunsSince != 7 {
+		t.Fatalf("with 7 judged runs: %+v", got)
+	}
 
 	seen := got.RunsSince
 	pass := w.begin(t, im, plannedPass{TeamID: w.team, AgentID: w.agent, Trigger: triggerDaily, RunsSeen: &seen})
-	if pass.RunsSeen == nil || *pass.RunsSeen != 5 {
-		t.Errorf("the pass kept runs seen %v, want 5", pass.RunsSeen)
+	if pass.RunsSeen == nil || *pass.RunsSeen != 7 {
+		t.Errorf("the pass kept runs seen %v, want 7", pass.RunsSeen)
 	}
 	if err := im.done(t.Context(), pass.ID, outcome{}); err != nil {
 		t.Fatal(err)
@@ -107,5 +113,31 @@ func TestADailyPassWaitsForEnoughRuns(t *testing.T) {
 	w.judged(t, w.agent, "0 seconds", verdictDone, 100)
 	if got, ok := w.improving(t)[w.agent]; !ok || got.RunsSince != 1 {
 		t.Errorf("with the bar at 1 and one new run: %+v, %v", got, ok)
+	}
+}
+
+// A pass whose team turned improvement off says so, not that its proposals
+// were refused.
+func TestAPassStoppedByTheOffSwitchSaysWhy(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	runs := []uuid.UUID{w.digested(t, skipped, "wrong", false)}
+	pass := w.begin(t, im, plannedPass{TeamID: w.team, AgentID: w.agent, Trigger: triggerDaily})
+	m, err := im.material(t.Context(), pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := &passTools{im: im, pass: pass, material: m, tokens: 1 << 30}
+	w.exec(t, `UPDATE team_settings SET improvement = false WHERE team_id = $1`, w.team)
+	b, _ := json.Marshal(instructionsEdit(runs[0]))
+	if _, err := tools.propose(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tools.propose(t.Context(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "Not stored: improvement was turned off") || strings.Contains(out, "refused") {
+		t.Errorf("after the off switch: %q", out)
 	}
 }

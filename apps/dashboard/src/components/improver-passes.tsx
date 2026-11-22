@@ -25,7 +25,7 @@ function Why({ pass }: { pass: ImproverPass }) {
   return (
     <>
       {pass.trigger === "daily" ? (
-        pass.runs_seen ? (
+        pass.runs_seen != null ? (
           `The daily pass, after ${count(pass.runs_seen, "judged run")}`
         ) : (
           "The daily pass"
