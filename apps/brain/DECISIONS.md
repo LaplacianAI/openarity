@@ -19,6 +19,8 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     `runs.session_id` is never null, so there is no room per run.
   - **A room found gone is never retried.** An `Edit` or a `Bash` sent twice
     could act twice; the model is told and its next call starts a fresh room.
+    A room the keeper replaces before a call reaches it is said the same way,
+    as `sandbox.ErrReplaced` (see the workspace stop decision below).
     Later calls only touch the row (`TouchSandboxRoomByOwner`), because
     `Ensure` takes the owner's lock and probes the room on every call.
   - **`Bash` is a write; the other five read.** A command can send anything to
@@ -892,6 +894,65 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   after ten minutes or at once on a save. The poll is a job of its own, not a
   reaper effect: the reaper's backlog means erasures owed, and a build is not
   one.
+- **A session's workspace is stopped, not deleted, when its last run ends.**
+  A room that sat idle for thirty minutes held its memory the whole time, and
+  on a small sandboxd that refused the next conversation's room ("sandbox is
+  busy"). So `Executor.finish` stops the room when no other run of the session
+  is queued or running, the reaper stops one left running past the team's
+  idle minutes (or `OPENARITY_SANDBOX_IDLE`), and a stopped room is deleted
+  after the team's keep hours (24 by default). The next call resumes it with
+  its files: `/workspace` is a volume on sandboxd, E2B pauses, Daytona stops.
+  What follows:
+  - **A waiting run does not hold the room.** A run waiting for a person may
+    wait hours; its room is stopped meanwhile and resumed when it calls again.
+    `IdleSessionOf` and `SessionIsIdle` leave `waiting` out on purpose.
+  - **A stop re-checks idleness under the owner's locks**, so a run that
+    starts between the check and the stop is never left without its room.
+  - **A resume refused for room (`ErrFull`) leaves the room stopped** and
+    says so. A workspace found gone, refused, over its disk, or not answering
+    after a resume is replaced, without its files, and the call that found it
+    returns `sandbox.ErrReplaced`, so the model is told and does not work on
+    as if the files were there. Failing every call until the keep hours end
+    was the other choice; it keeps files nobody can reach and leaves the
+    conversation without a workspace for up to 30 days.
+  - **A deploy replaces every workspace.** The image is part of a room's
+    spec hash and is named for the release's commit, so a new commit gives
+    each conversation a new room, without its files, and the model is told.
+    Leaving the image out of a workspace's hash would keep files across a
+    deploy, at the price of rooms that run an old workspace server for as
+    long as they are used; carrying `/workspace` across an upgrade is a
+    follow-up, not this.
+  - **A running workspace that does not answer is resumed once before it is
+    replaced:** the provider may have stopped it without the row hearing (a
+    mark that failed, a run's end cut short, sandboxd's disk watcher).
+  - **The idle sweep lists rooms in no fixed order and skips busy sessions**,
+    so rooms that cannot be stopped now never take every place in a sweep.
+  - **Size is a team setting, and part of the room's hash.** A team chooses
+    memory, CPUs and disk, all three or none; a change gives its sessions new
+    rooms. sandboxd refuses a size past what its operator gives a workspace;
+    Daytona takes whole GB, rounded up.
+  - **E2B builds a template per size.** E2B fixes a sandbox's CPUs, memory
+    and disk in its template, so a team with a size gets
+    `openarity-sandbox-<commit12>-<c>c-<m>m-<d>d` built in its account
+    beside the default, which its command servers keep using. The row
+    carries the size (`e2b_templates.size`), so a room waiting for its
+    release's template falls back only to an older one of the same size:
+    never another size, which would hand a workspace the wrong memory. Disk
+    is `minFreeDiskMb`, the free space E2B grows the filesystem to, best
+    effort. Whether a size is allowed is the team's E2B plan's to say; a
+    refusal is a failed build with E2B's reason, not a check here. The
+    template's name and the row's size are both derived by one function,
+    `sizeKey`, and the table checks the size's shape. A team that names
+    its own template keeps that template's size: the team's is not used,
+    so changing it replaces no room. Two teams that saved the same E2B key
+    share an account, so they share a name per release and size; E2B adds
+    the second team's build to the template of that name, from the same
+    image at the same size, and each team's row follows its own build.
+    Nothing deletes an older release's templates yet: each release adds one
+    per size to the account, which a follow-up is to prune.
+  - **sandboxd's disk is a soft cap.** Docker cannot cap a volume on every
+    storage driver, so sandboxd measures volumes every 30 seconds and stops a
+    room past its disk, and counts disk against `SANDBOXD_DISK_BUDGET`.
 - **The scheduler is a seam because scheduling has no specification.** Auth is a
   port over OIDC, so authentik is swappable for Dex or Okta by changing one
   variable. River, Temporal, DBOS and Restate agree on no model at all, and an

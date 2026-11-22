@@ -3596,6 +3596,15 @@ type SandboxProvider string
 // SandboxSettings Where the team's command MCP servers run. What a room starts from is
 // the brain's choice, but for an E2B team's template.
 type SandboxSettings struct {
+	// IdleMinutes How long a running workspace may go unused before it is stopped;
+	// null is the deployment's OPENARITY_SANDBOX_IDLE.
+	IdleMinutes *int32 `json:"idle_minutes,omitempty" yaml:"idle_minutes,omitempty"`
+
+	// KeepHours How long a stopped workspace keeps its files before it is deleted.
+	// A session's workspace stops when its last run ends, and the next
+	// call resumes it.
+	KeepHours *int32 `json:"keep_hours,omitempty" yaml:"keep_hours,omitempty"`
+
 	// KeySet Whether a key is stored. The key itself is never returned.
 	KeySet bool `json:"key_set" yaml:"key_set"`
 
@@ -3611,14 +3620,18 @@ type SandboxSettings struct {
 	Template *string `json:"template,omitempty" yaml:"template,omitempty"`
 
 	// TemplateBuild E2B with no template of the team's own: the brain's build of its
-	// room image in the team's account, asked for when the sandbox is
-	// saved. Null for every other sandbox, and before one is asked for.
+	// room image in the team's account, at the team's workspace size when
+	// it has one, asked for when the sandbox is saved. Null for every
+	// other sandbox, and before one is asked for.
 	TemplateBuild *SandboxTemplateBuild `json:"template_build,omitempty" yaml:"template_build,omitempty"`
 
 	// URL A self-hosted provider's API address, for sandboxd and a self-hosted Daytona; null otherwise
 	//
 	// Examples: http://sandboxd:8090
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+
+	// WorkspaceSize The size of the team's workspace rooms; null is the provider's own.
+	WorkspaceSize *WorkspaceSize `json:"workspace_size,omitempty" yaml:"workspace_size,omitempty"`
 }
 
 // SandboxSettingsRequest Absent from a request, the stored sandbox is kept.
@@ -3627,6 +3640,12 @@ type SandboxSettingsRequest struct {
 	// provider but none. Omit it to keep the stored one while the
 	// provider and its url are unchanged.
 	APIKey *string `json:"api_key,omitempty" yaml:"api_key,omitempty"`
+
+	// IdleMinutes Omit it to keep the stored value; null is the deployment's.
+	IdleMinutes *int32 `json:"idle_minutes,omitempty" yaml:"idle_minutes,omitempty"`
+
+	// KeepHours Omit it to keep the stored value.
+	KeepHours *int32 `json:"keep_hours,omitempty" yaml:"keep_hours,omitempty"`
 
 	// Provider `none` runs no command servers. `e2b` is hosted and takes a key and no
 	// url; `daytona` takes a key, and a url when self-hosted; `sandboxd` is
@@ -3640,6 +3659,9 @@ type SandboxSettingsRequest struct {
 
 	// URL Required for sandboxd, optional for daytona, refused for e2b and none
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+
+	// WorkspaceSize Omit it to keep the stored size; null is the provider's.
+	WorkspaceSize *WorkspaceSize `json:"workspace_size,omitempty" yaml:"workspace_size,omitempty"`
 }
 
 // SandboxTemplateBuild The room template the brain builds in an E2B team's account, named for
@@ -4286,6 +4308,20 @@ type Whoami struct {
 
 // WhoamiKind How the caller authenticated
 type WhoamiKind string
+
+// WorkspaceSize A workspace room's memory, CPUs and disk. sandboxd refuses a size
+// past what its operator gives a workspace; Daytona takes it in whole
+// GB, rounded up; E2B builds a template at it in the team's account,
+// which new workspaces wait for, its disk as the free space E2B grows
+// the filesystem to, and a size the team's E2B plan refuses is a
+// failed build in `template_build`.
+// Changing it gives the team's sessions new rooms on their next call,
+// without the files of the old ones.
+type WorkspaceSize struct {
+	Cpus     int32 `json:"cpus" yaml:"cpus"`
+	DiskMb   int32 `json:"disk_mb" yaml:"disk_mb"`
+	MemoryMb int32 `json:"memory_mb" yaml:"memory_mb"`
+}
 
 // AgentID defines model for AgentID.
 type AgentID = openapi_types.UUID

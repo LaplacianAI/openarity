@@ -20,7 +20,7 @@ func TestBuildTemplateAsksForABuildThenStartsItFromTheImage(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}}
-	b, err := newClient(f).BuildTemplate(t.Context(), "openarity-sandbox-abc", "ghcr.io/x/room:sha-abc")
+	b, err := newClient(f).BuildTemplate(t.Context(), "openarity-sandbox-abc", "ghcr.io/x/room:sha-abc", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +36,9 @@ func TestBuildTemplateAsksForABuildThenStartsItFromTheImage(t *testing.T) {
 	if f.calls[0].Method != http.MethodPost || req["name"] != "openarity-sandbox-abc" ||
 		req["cpuCount"] != float64(RoomCPUs) || req["memoryMB"] != float64(RoomMemoryMB) {
 		t.Fatalf("request = %s %s", f.calls[0].Method, f.calls[0].Body)
+	}
+	if _, sent := req["minFreeDiskMb"]; sent {
+		t.Fatalf("the default size sent a disk: %s", f.calls[0].Body)
 	}
 	if got := f.calls[0].Header.Get("X-API-Key"); got != apiKey {
 		t.Fatalf("X-API-Key = %q", got)
@@ -59,7 +62,7 @@ func TestBuildTemplateKeepsTheIdsOfABuildItCouldNotStart(t *testing.T) {
 		}
 		writeJSON(w, 400, map[string]any{"message": "image not found " + apiKey})
 	}}
-	b, err := newClient(f).BuildTemplate(t.Context(), "n", "img")
+	b, err := newClient(f).BuildTemplate(t.Context(), "n", "img", nil)
 	if err == nil || b.BuildID != "b1" {
 		t.Fatalf("build = %+v, err = %v", b, err)
 	}
@@ -75,7 +78,7 @@ func TestBuildTemplateRefusedOrUnnamedIsAnError(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := &fake{api: h}
-			if _, err := newClient(f).BuildTemplate(t.Context(), "n", "img"); err == nil {
+			if _, err := newClient(f).BuildTemplate(t.Context(), "n", "img", nil); err == nil {
 				t.Fatal("no error")
 			}
 			if len(f.calls) != 1 {
@@ -134,5 +137,26 @@ func TestAFailedBuildsReasonCarriesNoKey(t *testing.T) {
 	_, reason, err := newClient(f).BuildStatus(t.Context(), sandbox.Build{TemplateID: "t", BuildID: "b"})
 	if err != nil || strings.Contains(reason, apiKey) || !strings.Contains(reason, "failed") {
 		t.Fatalf("reason %q, err %v", reason, err)
+	}
+}
+
+// A team's own size is what the template is built at, its disk as the free
+// space E2B grows the filesystem to.
+func TestBuildTemplateAtATeamsSize(t *testing.T) {
+	f := &fake{api: func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v3/templates" {
+			writeJSON(w, 202, map[string]any{"templateID": "tpl1", "buildID": "b1"})
+			return
+		}
+		w.WriteHeader(202)
+	}}
+	size := &sandbox.Size{MemoryMB: 8192, CPUs: 4, DiskMB: 20480}
+	if _, err := newClient(f).BuildTemplate(t.Context(), "n", "img", size); err != nil {
+		t.Fatal(err)
+	}
+	var req map[string]any
+	_ = json.Unmarshal(f.calls[0].Body, &req)
+	if req["cpuCount"] != float64(4) || req["memoryMB"] != float64(8192) || req["minFreeDiskMb"] != float64(20480) {
+		t.Fatalf("request = %s", f.calls[0].Body)
 	}
 }

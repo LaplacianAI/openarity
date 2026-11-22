@@ -26,6 +26,13 @@ type sandbox struct {
 	URL      *string `json:"url"`
 	Template *string `json:"template"`
 	KeySet   bool    `json:"key_set"`
+	// How long a stopped workspace keeps its files, and how long one may go
+	// unused before it is stopped; null idle minutes is the deployment's.
+	KeepHours   int32  `json:"keep_hours"`
+	IdleMinutes *int32 `json:"idle_minutes"`
+	// WorkspaceSize is the team's size for its workspace rooms; null is the
+	// provider's own.
+	WorkspaceSize *size `json:"workspace_size"`
 	// TemplateBuild is the room template the brain builds in an E2B team's
 	// account, when the team names none of its own; null otherwise, or when
 	// none has been asked for yet.
@@ -89,6 +96,30 @@ type sandboxRequest struct {
 	URL      *string `json:"url"`
 	Template *string `json:"template"`
 	APIKey   *string `json:"api_key"`
+	// Left out, the stored value stays; for idle minutes and the size, null
+	// is the provider's own.
+	KeepHours     *int32       `json:"keep_hours"`
+	IdleMinutes   maybe[int32] `json:"idle_minutes"`
+	WorkspaceSize maybe[size]  `json:"workspace_size"`
+}
+
+// size is a workspace room's memory, CPUs and disk.
+type size struct {
+	MemoryMB int32 `json:"memory_mb"`
+	CPUs     int32 `json:"cpus"`
+	DiskMB   int32 `json:"disk_mb"`
+}
+
+// maybe tells a value left out of a request from one sent as null: its
+// UnmarshalJSON runs only for a key that is present.
+type maybe[T any] struct {
+	Set   bool
+	Value *T
+}
+
+func (m *maybe[T]) UnmarshalJSON(b []byte) error {
+	m.Set = true
+	return json.Unmarshal(b, &m.Value)
 }
 
 // browserRequest is the browser to save. Left out of a request, the stored one

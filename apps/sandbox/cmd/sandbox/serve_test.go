@@ -73,13 +73,17 @@ func TestServeRefusesAHomeLargerThanTheRoom(t *testing.T) {
 	}
 }
 
-// /workspace and the home are both tmpfs in a workspace room, both charged to
-// its memory; and a workspace must fit the budget for one to be made at all.
+// The home is a tmpfs in a workspace room, charged to its memory, and
+// /workspace is disk, within the disk budget; a workspace must fit both
+// budgets for one to be made at all.
 func TestServeRefusesAWorkspaceThatCannotFit(t *testing.T) {
 	t.Parallel()
 	for want, extra := range map[string]map[string]string{
-		"SANDBOXD_WORKSPACE_BYTES and SANDBOXD_ROOM_HOME are more than SANDBOXD_WORKSPACE_MEMORY": {
-			"SANDBOXD_WORKSPACE_MEMORY": "805306368", "SANDBOXD_WORKSPACE_BYTES": "536870912",
+		"SANDBOXD_ROOM_HOME is more than SANDBOXD_WORKSPACE_MEMORY": {
+			"SANDBOXD_WORKSPACE_MEMORY": "268435456", "SANDBOXD_ROOM_HOME": "536870912", "SANDBOXD_ROOM_MEMORY": "805306368",
+		},
+		"SANDBOXD_WORKSPACE_BYTES is more than SANDBOXD_DISK_BUDGET": {
+			"SANDBOXD_DISK_BUDGET": "536870912", "SANDBOXD_WORKSPACE_BYTES": "1073741824",
 		},
 		"SANDBOXD_WORKSPACE_MEMORY is more than SANDBOXD_MEMORY_BUDGET": {
 			"SANDBOXD_MEMORY_BUDGET": "1073741824", "SANDBOXD_WORKSPACE_MEMORY": "2147483648",
@@ -145,5 +149,16 @@ func TestASocketThatRefusesTheUserSaysToRunAsZero(t *testing.T) {
 	err = runServe(t.Context(), c, slog.New(slog.DiscardHandler))
 	if err == nil || !strings.Contains(err.Error(), "run sandboxd as uid 0") || !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("err = %v, want a refusal that says to run as uid 0", err)
+	}
+}
+
+// A workspace of 1 GiB in a room of 768 MiB is fine now: it is disk.
+func TestServeTakesAWorkspaceLargerThanItsMemory(t *testing.T) {
+	t.Parallel()
+	_, err := parse([]string{"serve"}, envOf(serveEnv(map[string]string{
+		"SANDBOXD_WORKSPACE_MEMORY": "805306368", "SANDBOXD_WORKSPACE_BYTES": "1073741824",
+	})))
+	if err != nil {
+		t.Fatal(err)
 	}
 }

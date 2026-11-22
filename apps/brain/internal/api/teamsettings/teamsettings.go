@@ -32,6 +32,9 @@ const (
 	// The brain's line before teams could set it, kept for a team that
 	// never saved its settings.
 	defaultCompactionTokensMin = 50_000
+	// defaultKeepHours is how long a stopped workspace keeps its files, as
+	// the table's default has it.
+	defaultKeepHours           = 24
 	defaultCompactionTokensMax = 60_000
 )
 
@@ -49,8 +52,8 @@ type Secrets interface {
 
 // Templates builds the room template in an E2B team's account.
 type Templates interface {
-	Want(ctx context.Context, team, key uuid.UUID, retry time.Duration) (db.E2BTemplate, error)
-	Current(ctx context.Context, team, key uuid.UUID) (db.E2BTemplate, bool, error)
+	Want(ctx context.Context, team, key uuid.UUID, size *sandboxpkg.Size, retry time.Duration) (db.E2BTemplate, error)
+	Current(ctx context.Context, team, key uuid.UUID, size *sandboxpkg.Size) (db.E2BTemplate, bool, error)
 }
 
 type handler struct {
@@ -164,6 +167,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	p.ImprovementDailyPasses = req.ImprovementDailyPasses
 	p.ImprovementPassTokens, p.ImprovementPassMinutes = req.ImprovementPassTokens, req.ImprovementPassMinutes
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
+	lifecycle(&p, req.Sandbox, stored)
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
 	saved, err := h.store.UpsertTeamSettings(r.Context(), p)
 	if err != nil {
@@ -198,22 +202,30 @@ const (
 )
 
 // build is the room template's build for an E2B team that names no template
-// of its own. A save of the sandbox asks for one when there is none or the
-// last failed, so the team's first room does not wait for it; a read, and a
-// save of anything else, only reads. Trouble is logged and shown as no
+// of its own: the one at the team's workspace size when it has one, else the
+// default. A save of the sandbox asks for one when there is none or the last
+// failed, so the team's first room does not wait for it; with a size it asks
+// for the default too, which the team's command servers start from. A read,
+// and a save of anything else, only reads. Trouble is logged and shown as no
 // build: the settings were saved, and the next room asks again.
 func (h *handler) build(ctx context.Context, row db.TeamSetting, req buildRequest) *templateBuild {
 	if h.templates == nil || row.SandboxProvider != string(sandboxpkg.E2B) ||
 		row.SandboxTemplate != nil || row.SandboxSecretID == nil {
 		return nil
 	}
+	size := roomSize(row)
 	var b db.E2BTemplate
 	var err error
 	found := true
 	if req == askForBuild {
-		b, err = h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, 0)
+		if size != nil {
+			if _, err := h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, nil, 0); err != nil {
+				h.logger.WarnContext(ctx, "the team's default room template was not asked for", "team_id", row.TeamID, "error", err)
+			}
+		}
+		b, err = h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, size, 0)
 	} else {
-		b, found, err = h.templates.Current(ctx, row.TeamID, *row.SandboxSecretID)
+		b, found, err = h.templates.Current(ctx, row.TeamID, *row.SandboxSecretID, size)
 	}
 	if err != nil {
 		h.logger.WarnContext(ctx, "the team's room template was not read or asked for", "team_id", row.TeamID, "error", err)
@@ -376,6 +388,10 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 			URL:      row.SandboxUrl,
 			Template: row.SandboxTemplate,
 			KeySet:   row.SandboxSecretID != nil,
+
+			KeepHours:     row.SandboxKeepHours,
+			IdleMinutes:   row.SandboxIdleMinutes,
+			WorkspaceSize: sizeOf(row),
 		},
 		Browser:                browserView(row),
 		Improvement:            row.Improvement,
@@ -402,7 +418,7 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 func defaults() settings {
 	return settings{
 		Search:                 search{Provider: providerNone},
-		Sandbox:                sandbox{Provider: string(sandboxpkg.None)},
+		Sandbox:                sandbox{Provider: string(sandboxpkg.None), KeepHours: defaultKeepHours},
 		Browser:                browser{Provider: string(browserpkg.None)},
 		ImprovementSampleShare: defaultSampleShare,
 		ImprovementDailyPasses: defaultDailyPasses,
@@ -412,4 +428,47 @@ func defaults() settings {
 		CompactionTokensMin:    defaultCompactionTokensMin,
 		CompactionTokensMax:    defaultCompactionTokensMax,
 	}
+}
+
+// lifecycle is the stop and keep times and the size to save: what the
+// request sends, and what is stored for what it leaves out. A save of the
+// model or anything else that sends no sandbox keeps all of them.
+func lifecycle(p *db.UpsertTeamSettingsParams, s *sandboxRequest, stored *db.TeamSetting) {
+	if stored != nil {
+		p.SandboxKeepHours = &stored.SandboxKeepHours
+		p.SandboxIdleMinutes = stored.SandboxIdleMinutes
+		p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb =
+			stored.SandboxWorkspaceMemoryMb, stored.SandboxWorkspaceCpus, stored.SandboxWorkspaceDiskMb
+	}
+	if s == nil {
+		return
+	}
+	if s.KeepHours != nil {
+		p.SandboxKeepHours = s.KeepHours
+	}
+	if s.IdleMinutes.Set {
+		p.SandboxIdleMinutes = s.IdleMinutes.Value
+	}
+	if s.WorkspaceSize.Set {
+		p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = nil, nil, nil
+		if z := s.WorkspaceSize.Value; z != nil {
+			p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = &z.MemoryMB, &z.CPUs, &z.DiskMB
+		}
+	}
+}
+
+// roomSize is the team's workspace size as the sandbox port takes it.
+func roomSize(row db.TeamSetting) *sandboxpkg.Size {
+	z := sizeOf(row)
+	if z == nil {
+		return nil
+	}
+	return &sandboxpkg.Size{MemoryMB: int(z.MemoryMB), CPUs: int(z.CPUs), DiskMB: int(z.DiskMB)}
+}
+
+func sizeOf(row db.TeamSetting) *size {
+	if row.SandboxWorkspaceMemoryMb == nil || row.SandboxWorkspaceCpus == nil || row.SandboxWorkspaceDiskMb == nil {
+		return nil
+	}
+	return &size{MemoryMB: *row.SandboxWorkspaceMemoryMb, CPUs: *row.SandboxWorkspaceCpus, DiskMB: *row.SandboxWorkspaceDiskMb}
 }

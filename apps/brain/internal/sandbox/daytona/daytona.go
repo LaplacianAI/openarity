@@ -88,7 +88,14 @@ type createRequest struct {
 	NetworkAllowList string            `json:"networkAllowList,omitempty"`
 	DomainAllowList  string            `json:"domainAllowList,omitempty"`
 	AutoStopInterval *int              `json:"autoStopInterval,omitempty"`
+	// Daytona sizes in whole cores and GB; a team's size is rounded up.
+	CPU    int `json:"cpu,omitempty"`
+	Memory int `json:"memory,omitempty"`
+	Disk   int `json:"disk,omitempty"`
 }
+
+// gb is mb rounded up to whole GB, as Daytona takes sizes.
+func gb(mb int) int { return (mb + 1023) / 1024 }
 
 type buildInfo struct {
 	DockerfileContent string `json:"dockerfileContent"`
@@ -102,7 +109,9 @@ type sandboxView struct {
 }
 
 // Create makes a room, from the spec's image, and waits until it is started.
-// The room never auto-stops: a stopped room has lost the shim in it.
+// Daytona's auto-stop is off, so the room stops only when the brain stops
+// it. A stopped one Daytona archives after its own interval (7 days by
+// default); Resume starts it either way, and runs its command again.
 func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 	n, err := c.network(ctx, s)
 	if err != nil {
@@ -118,6 +127,9 @@ func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 	}
 	if n.blockAll {
 		req.NetworkBlockAll = &n.blockAll
+	}
+	if z := s.Size; z != nil {
+		req.CPU, req.Memory, req.Disk = z.CPUs, gb(z.MemoryMB), gb(z.DiskMB)
 	}
 	switch {
 	case strings.HasPrefix(s.Image, ImagePrefix):
@@ -155,11 +167,11 @@ func (c *Client) waitStarted(ctx context.Context, v sandboxView) error {
 	ctx, cancel := context.WithTimeout(ctx, c.StartTimeout)
 	defer cancel()
 	for {
-		switch v.State {
-		case "started":
+		switch {
+		case v.State == "started":
 			return nil
-		case "error", "build_failed", "destroyed", "destroying":
-			return fmt.Errorf("daytona: sandbox %s is %s: %s", v.ID, v.State, truncate(v.ErrorReason))
+		case gone(v.State):
+			return fmt.Errorf("%w: daytona: sandbox %s is %s: %s", sandbox.ErrNotFound, v.ID, v.State, truncate(v.ErrorReason))
 		}
 		select {
 		case <-ctx.Done():
@@ -222,6 +234,85 @@ func (c *Client) Delete(ctx context.Context, room string) error {
 		return nil
 	}
 	return err
+}
+
+// Stop stops the sandbox; Daytona keeps its files. One already stopped is
+// not an error.
+func (c *Client) Stop(ctx context.Context, room string) error {
+	err := c.do(ctx, http.MethodPost, c.apiURL+"/sandbox/"+url.PathEscape(room)+"/stop", nil, nil, nil)
+	if isStatus(err, http.StatusConflict) {
+		return nil
+	}
+	return err
+}
+
+// Resume starts the sandbox again and, once it has started, argv in it: a
+// stopped Daytona sandbox has lost its process. One that is running is left
+// as it is, so its command is never run twice; one whose command could not
+// be started is stopped again, so the next Resume starts it from the top.
+// An archived sandbox is started as a stopped one is: Daytona restores its
+// files first. One in a state it cannot come back from is ErrNotFound.
+func (c *Client) Resume(ctx context.Context, room string, argv []string) error {
+	v, err := c.settle(ctx, room)
+	if err != nil {
+		return err
+	}
+	if v.State == "started" {
+		return nil
+	}
+	if err := c.do(ctx, http.MethodPost, c.apiURL+"/sandbox/"+url.PathEscape(room)+"/start", nil, &v, nil); err != nil {
+		return err
+	}
+	if v.ID == "" {
+		v.ID = room
+	}
+	if err := c.waitStarted(ctx, v); err != nil {
+		return err
+	}
+	if err := c.Start(ctx, room, argv); err != nil {
+		stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		if serr := c.Stop(stop, room); serr != nil {
+			// Left started without its command: the next Resume finds it so,
+			// runs nothing, and the keeper replaces it, without its files.
+			return fmt.Errorf("%w; stopping it again failed too: %w", err, serr)
+		}
+		return err
+	}
+	return nil
+}
+
+// gone is a state a sandbox does not come back from: the keeper replaces it.
+func gone(state string) bool {
+	switch state {
+	case "error", "build_failed", "destroyed", "destroying", "deleted", "deleting":
+		return true
+	}
+	return false
+}
+
+// settle waits out a sandbox on its way between states, and returns it
+// started, stopped or archived.
+func (c *Client) settle(ctx context.Context, room string) (sandboxView, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.StartTimeout)
+	defer cancel()
+	for {
+		var v sandboxView
+		if err := c.do(ctx, http.MethodGet, c.apiURL+"/sandbox/"+url.PathEscape(room), nil, &v, nil); err != nil {
+			return v, err
+		}
+		switch {
+		case v.State == "started" || v.State == "stopped" || v.State == "archived":
+			return v, nil
+		case gone(v.State):
+			return v, fmt.Errorf("%w: daytona: sandbox %s is %s: %s", sandbox.ErrNotFound, room, v.State, truncate(v.ErrorReason))
+		}
+		select {
+		case <-ctx.Done():
+			return v, fmt.Errorf("daytona: sandbox %s was still %q: %w", room, v.State, ctx.Err())
+		case <-time.After(c.PollEvery):
+		}
+	}
 }
 
 // A statusError is Daytona's own answer to a call.

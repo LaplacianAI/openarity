@@ -20,9 +20,9 @@ WHERE team_id = sqlc.arg('team_id')
 --
 -- name: SaveE2BTemplate :one
 INSERT INTO e2b_templates (
-    team_id, sandbox_secret_id, name, template_id, build_id, status, error
+    team_id, sandbox_secret_id, name, size, template_id, build_id, status, error
 ) VALUES (
-    sqlc.arg('team_id'), sqlc.arg('sandbox_secret_id'), sqlc.arg('name'),
+    sqlc.arg('team_id'), sqlc.arg('sandbox_secret_id'), sqlc.arg('name'), sqlc.arg('size'),
     sqlc.narg('template_id'), sqlc.narg('build_id'), sqlc.arg('status'), sqlc.narg('error')
 )
 ON CONFLICT (team_id, sandbox_secret_id, name) DO UPDATE SET
@@ -58,13 +58,15 @@ WHERE id = sqlc.arg('id') AND build_id = sqlc.arg('build_id') AND status = 'buil
 UPDATE e2b_templates SET updated_at = now()
 WHERE id = sqlc.arg('id') AND status = 'building';
 
--- The newest template already built under the key, of any name: what rooms
--- start from while a newer release's is still being built.
+-- The newest template already built under the key at a size, of any
+-- release: what rooms of that size start from while a newer release's is
+-- still being built. A room is never handed another size than its own.
 --
 -- name: GetReadyE2BTemplate :one
 SELECT * FROM e2b_templates
 WHERE team_id = sqlc.arg('team_id')
   AND sandbox_secret_id = sqlc.arg('sandbox_secret_id')
+  AND size = sqlc.arg('size')
   AND status = 'ready'
 ORDER BY updated_at DESC, id DESC
 LIMIT 1;

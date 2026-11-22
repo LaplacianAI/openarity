@@ -36,6 +36,8 @@ type Store interface {
 	RunShowsEvents(ctx context.Context, runID uuid.UUID) (bool, error)
 	RunTriggerWord(ctx context.Context, runID uuid.UUID) (string, error)
 	InsertEventReply(ctx context.Context, arg db.InsertEventReplyParams) (int64, error)
+	IdleSessionOf(ctx context.Context, runID uuid.UUID) (db.IdleSessionOfRow, error)
+	SessionIsIdle(ctx context.Context, sessionID uuid.UUID) (bool, error)
 	TxStore
 	ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
 	AdoptChild(ctx context.Context, arg db.AdoptChildParams) (db.Run, error)
@@ -214,7 +216,8 @@ func (e *Executor) Delegate(ctx context.Context, d Delegation) (db.Run, error) {
 		CallID: d.CallID, Agent: child.AgentName, RunID: child.ID, Depth: child.Depth,
 	})
 	if err != nil {
-		failed := e.finish(ctx, child.ID, d.Lineage.Worker, "failed", "", "its parent could not record it: "+err.Error())
+		// Its parent runs, so the session is not idle: nothing to stop.
+		_, failed := e.finish(ctx, child.ID, d.Lineage.Worker, "failed", "", "its parent could not record it: "+err.Error())
 		return db.Run{}, errors.Join(err, failed)
 	}
 
@@ -287,13 +290,19 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 	default:
 		output = ""
 	}
-	if err := e.finish(ctx, row.ID, l.Worker, status, output, failure); err != nil {
+	ended, err := e.finish(ctx, row.ID, l.Worker, status, output, failure)
+	if err != nil {
 		return err
 	}
 	if row.ReplyToChannel && status != "cancelled" && e.kickReply != nil {
 		if err := e.kickReply(row.ID); err != nil {
 			e.logger.WarnContext(ctx, "reply not kicked; the sweep will send it", "run", row.ID, "err", err)
 		}
+	}
+	// After the reply is on its way: a provider's pause can take a while,
+	// and the person waiting for the answer should not wait for it too.
+	if ended {
+		e.stopWorkspace(ctx, row.ID)
 	}
 	return nil
 }
@@ -474,7 +483,10 @@ func outcome(runErr, cause error) (string, string) {
 	}
 }
 
-func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, output, failure string) error {
+// finish records the run's end. ended is whether it finished here, so its
+// session may now be idle; stopWorkspace asks whether it is, a follow-up
+// queued included.
+func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, output, failure string) (ended bool, err error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
 
@@ -493,28 +505,60 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 	said, _ := clip(failure)
 	raw, err := json.Marshal(finishedPayload{Status: status, Error: said})
 	if err != nil {
-		return fmt.Errorf("encoding the finished event: %w", err)
+		return false, fmt.Errorf("encoding the finished event: %w", err)
 	}
 
 	n, followUp, err := e.store.FinishRunWithEvent(ctx, p, db.AppendRunEventParams{
 		RunID: runID, Kind: "finished", Payload: raw, Worker: worker,
 	})
 	if err != nil {
-		return fmt.Errorf("finishing run %s as %s: %w", runID, status, err)
+		return false, fmt.Errorf("finishing run %s as %s: %w", runID, status, err)
 	}
 	if n == 0 {
-		return nil
+		return false, nil
 	}
 
 	if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: runID, Reason: endedReason, IncludeWaiting: true}); err != nil {
-		return fmt.Errorf("ending what run %s left running: %w", runID, err)
+		return false, fmt.Errorf("ending what run %s left running: %w", runID, err)
 	}
 	if followUp != uuid.Nil && e.enqueue != nil {
 		if err := e.enqueue(followUp, 0); err != nil {
 			e.logger.WarnContext(ctx, "run not enqueued; the sweep will start it", "run", followUp, "err", err)
 		}
 	}
-	return nil
+	return true, nil
+}
+
+// stopTimeout bounds the stop of a session's workspace at its run's end.
+const stopTimeout = time.Minute
+
+// stopWorkspace stops the session's workspace room once its last run ends,
+// so it gives its memory back while nobody is using it; its files stay, and
+// the next call resumes it. The keeper asks again, under the room's lock,
+// whether the session is still idle. Trouble is logged and never fails the
+// run: the reaper stops a room left idle.
+func (e *Executor) stopWorkspace(ctx context.Context, runID uuid.UUID) {
+	ws := e.builder.workspaces
+	if ws == nil {
+		return
+	}
+	// A time of its own, not what is left of the run's finish: a provider's
+	// pause takes seconds, and one cut off half way leaves the room stopped
+	// with its row saying it runs.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+	defer cancel()
+	s, err := e.store.IdleSessionOf(ctx, runID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		e.logger.WarnContext(ctx, "the session's workspace was not stopped", "run", runID, "err", err)
+		return
+	}
+	idle := func(ctx context.Context) (bool, error) { return e.store.SessionIsIdle(ctx, s.SessionID) }
+	if err := ws.Rooms.Stop(ctx, s.TeamID, s.SessionID, idle); err != nil {
+		e.logger.WarnContext(ctx, "the session's workspace was not stopped", "run", runID, "session", s.SessionID, "err", err)
+	}
 }
 
 func startedOf(agentName string, spec agent.Spec) startedPayload {
