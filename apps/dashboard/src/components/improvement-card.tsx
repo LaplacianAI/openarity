@@ -6,25 +6,34 @@
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, TriangleAlert, UserRoundX } from "lucide-react";
+import { ArrowRight, Eye, TriangleAlert, UserRoundX } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { decideImprovement } from "@/api";
 import { ApiError } from "@/api/client";
 import { usePermissions } from "@/api/permissions";
-import type { Improvement, ImprovementChange, ImprovementDecision } from "@/api/types";
+import type {
+  Improvement,
+  ImprovementChange,
+  ImprovementDecision,
+  ImprovementWatch,
+} from "@/api/types";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Mono } from "@/components/ui-bits";
 import { absoluteTime } from "@/lib/format";
 import {
   APPROVE,
+  costWords,
   fieldWords,
   isScript,
   kindWords,
   listNames,
   MARK_WORDS,
   missingWrites,
+  patternWords,
   scopeWords,
+  usualWords,
+  watchHeadline,
 } from "@/lib/improvements";
 import { type DiffLine, type Folded, lineDiff, withContext } from "@/lib/line-diff";
 import { count } from "@/lib/runs";
@@ -164,6 +173,57 @@ function Change({ change }: { change: ImprovementChange }) {
   );
 }
 
+/**
+ * How an applied change went: the headline in words, then the agent's usual
+ * rate, cost, the pattern it targeted, votes and what was applied beside it.
+ * A flag is said in words and marked with an icon, never by colour alone.
+ */
+function Watch({ watch }: { watch: ImprovementWatch }) {
+  const flagged = watch.status === "flagged";
+  const cost = costWords(watch);
+  const pattern = patternWords(watch);
+  const votes = watch.before.up + watch.before.down + watch.after.up + watch.after.down;
+  return (
+    <section
+      aria-label="How it went"
+      data-watch={watch.status}
+      className="space-y-1 rounded-md bg-sheet px-3 py-2 text-xs"
+    >
+      <p
+        className={cn(
+          "flex items-start gap-1.5 text-sm",
+          flagged ? "text-warning" : "text-foreground",
+        )}
+      >
+        {flagged ? (
+          <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+        ) : (
+          <Eye aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <span>{watchHeadline(watch)}</span>
+      </p>
+      {watch.status !== "watching" || watch.after.runs > 0 ? (
+        <ul className="space-y-0.5 pl-5 text-muted-foreground">
+          <li>{usualWords(watch)}</li>
+          {cost ? <li>{cost}</li> : null}
+          {pattern ? <li>{pattern}</li> : null}
+          {votes > 0 ? (
+            <li>
+              Votes before 👍 {watch.before.up} 👎 {watch.before.down}, after 👍 {watch.after.up} 👎{" "}
+              {watch.after.down}
+            </li>
+          ) : null}
+          {watch.overlapping.length > 0 ? (
+            <li>
+              {count(watch.overlapping.length, "other change")} applied to the same agents meanwhile
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 export function ImprovementCard({ teamId, item }: { teamId: string; item: Improvement }) {
   const qc = useQueryClient();
   const perms = usePermissions(teamId);
@@ -223,14 +283,19 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
               primary: false,
               ask: "Put the old version back?",
             },
+            // A flag asks a person to look; keeping the change is a choice too.
+            ...(item.watch?.status === "flagged"
+              ? [{ label: "Clear flag", do: "clear" as const, primary: true }]
+              : []),
           ]
         : [];
   const asking = action.find((a) => a.do === confirming && a.ask);
   const canDecide = !perms.isPending && perms.can(APPROVE);
   const lacking = canDecide ? missingWrites(item.kind, perms.can) : [];
-  // Rejecting writes nothing, so it needs only the approve permission; the
-  // rest need the write the change makes.
-  const offered = lacking.length > 0 ? action.filter((a) => a.do === "reject") : action;
+  // Rejecting and clearing a flag write nothing, so they need only the
+  // approve permission; the rest need the write the change makes.
+  const offered =
+    lacking.length > 0 ? action.filter((a) => a.do === "reject" || a.do === "clear") : action;
   const withheld = action.find((a) => !offered.includes(a));
   const readable = item.runs.filter((r) => r.readable);
   const hidden = item.runs.length - readable.length;
@@ -301,6 +366,8 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
           <Change key={c.field} change={c} />
         ))}
       </div>
+
+      {item.watch ? <Watch watch={item.watch} /> : null}
 
       {item.runs.length > 0 ? (
         <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">

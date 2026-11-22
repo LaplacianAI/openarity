@@ -30,7 +30,7 @@ import type {
   CreatedChannel,
   Improvement,
   ImprovementDecision,
-  ImprovementStatus,
+  ImprovementFilter,
   ImproverPass,
   ListedAgent,
   ListedChannel,
@@ -986,7 +986,7 @@ export function setServerTrustHints(
  */
 export function listImprovements(
   teamId: string,
-  filter: { status?: ImprovementStatus[]; agent?: string; q?: string; limit?: number } = {},
+  filter: { status?: ImprovementFilter[]; agent?: string; q?: string; limit?: number } = {},
   cursor?: string | null,
   signal?: AbortSignal,
 ): Promise<Page<Improvement>> {

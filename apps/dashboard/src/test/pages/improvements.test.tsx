@@ -66,18 +66,24 @@ const agents = {
   },
 };
 
+/** A tab's name without the flagged count beside it. */
+function tabName(tab: HTMLElement): string {
+  return (tab.textContent ?? "").replace(/\d+\+? flagged$/, "");
+}
+
 function lists(items: Improvement[]) {
   return { ...agents, [LIST]: { body: { items } } };
 }
 
 describe("the tabs", () => {
-  it("offers an approver all three, opening on Waiting, and asks for what each holds", async () => {
+  it("offers an approver every tab, opening on Waiting, and asks for what each holds", async () => {
     const seen = brain({ ...team(APPROVER), ...lists([proposal("p1")]) });
     const router = at();
     await screen.findByText(/Closed the ticket/);
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+    expect(screen.getAllByRole("tab").map(tabName)).toEqual([
       "Waiting",
       "Applied",
+      "Flagged",
       "Closed",
       "Passes",
     ]);
@@ -100,7 +106,7 @@ describe("the tabs", () => {
     );
   });
 
-  it("shows a member Applied only, and never asks for what waits", async () => {
+  it("shows a member Applied and Flagged, and never asks for what waits", async () => {
     const seen = brain({
       ...team([]),
       ...lists([proposal("p1", { status: "applied" })]),
@@ -108,10 +114,12 @@ describe("the tabs", () => {
     // The address names a tab a member may not open.
     at("/ui/improvements?tab=waiting");
     await screen.findByText(/Closed the ticket/);
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Applied"]);
+    expect(screen.getAllByRole("tab").map(tabName)).toEqual(["Applied", "Flagged"]);
     const asked = seen.filter((s) => s.path.includes("/improvements"));
     expect(asked.length).toBeGreaterThan(0);
-    expect(asked.every((s) => s.path.includes("status=applied"))).toBe(true);
+    expect(
+      asked.every((s) => s.path.includes("status=applied") || s.path.includes("status=flagged")),
+    ).toBe(true);
     expect(screen.queryByText(/wait for approval/)).toBeNull();
   });
 
@@ -479,5 +487,96 @@ describe("deciding", () => {
     });
     at();
     expect(await screen.findByRole("button", { name: "Approve" })).toBeEnabled();
+  });
+});
+
+describe("watching", () => {
+  const flagged = (extra: Partial<Improvement> = {}) =>
+    proposal("p1", {
+      status: "applied",
+      watch: {
+        status: "flagged",
+        flag: "worse",
+        needed: 10,
+        baseline_runs: 20,
+        baseline_bad: 2,
+        bar: 5,
+        before: { runs: 10, bad: 2, up: 0, down: 0, tokens: 1000, steps: 4, signature: 3 },
+        after: { runs: 10, bad: 7, up: 0, down: 1, tokens: 1200, steps: 5, signature: 0 },
+        overlapping: ["p2"],
+        started_at: "2026-11-01T00:00:00Z",
+      },
+      ...extra,
+    });
+
+  it("says how a flagged change went, in words, and counts the tab", async () => {
+    const seen = brain({ ...team(APPROVER), ...lists([flagged()]) });
+    at("/ui/improvements?tab=flagged");
+    expect(await screen.findByRole("tab", { name: /Flagged/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await waitFor(() =>
+      expect(
+        seen.some((s) => s.path.includes("status=flagged") && !s.path.includes("limit=100")),
+      ).toBe(true),
+    );
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    const watch = within(card).getByRole("region", { name: "How it went" });
+    expect(watch).toHaveTextContent(
+      "Flagged, its runs went worse: 7 of 10 went wrong after, 2 of 10 before",
+    );
+    expect(watch).toHaveTextContent("Usually 2 of 20 went wrong; flagged at 5 of 10.");
+    expect(watch).toHaveTextContent("Tokens a run 1,000 → 1,200 · steps 4 → 5");
+    expect(watch).toHaveTextContent("1 other change applied to the same agents meanwhile");
+    expect(await screen.findByRole("tab", { name: /Flagged/ })).toHaveTextContent("1 flagged");
+  });
+
+  it("offers Clear flag beside Revert, and sends clear", async () => {
+    const item = flagged();
+    const seen = brain({ ...team(APPROVER), ...lists([item]), [DECIDE]: { body: item } });
+    at("/ui/improvements?tab=flagged");
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Revert" })).toBeEnabled();
+    await userEvent.click(within(card).getByRole("button", { name: "Clear flag" }));
+    await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+    expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toEqual({
+      action: "clear",
+    });
+  });
+
+  it("offers Clear flag with the approve permission alone, but not Revert", async () => {
+    brain({ ...team(["improvement:approve"]), ...lists([flagged()]) });
+    at("/ui/improvements?tab=flagged");
+    expect(await screen.findByRole("button", { name: "Clear flag" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Revert" })).toBeNull();
+  });
+
+  it("offers no Clear flag on a change that is only being watched", async () => {
+    brain({
+      ...team(APPROVER),
+      ...lists([
+        proposal("p1", {
+          status: "applied",
+          watch: {
+            status: "watching",
+            needed: 10,
+            baseline_runs: 0,
+            baseline_bad: 0,
+            before: { runs: 0, bad: 0, up: 0, down: 0 },
+            after: { runs: 3, bad: 1, up: 0, down: 0 },
+            overlapping: [],
+            started_at: "2026-11-01T00:00:00Z",
+          },
+        }),
+      ]),
+    });
+    at("/ui/improvements?tab=applied");
+    expect(await screen.findByText("Watching: 3 of 10 runs so far")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear flag" })).toBeNull();
   });
 });

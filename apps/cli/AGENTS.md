@@ -89,7 +89,7 @@ apps/cli/
     users/             oa users list — who has logged in, and their id
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
     agents/            oa agents list|get|create|replace|delete — a file, grants by name
-    improvements/      oa improvements list|show|passes|approve|reject|revert — the changes agents propose to themselves, with a line diff per change
+    improvements/      oa improvements list|show|passes|approve|reject|revert|clear — the changes agents propose to themselves, with a line diff per change and how each applied one went
     mcpservers/        oa mcp-servers list|get|create|replace|delete|tools|discover|connect|disconnect
     blueprints/        oa export, oa plan, oa apply — a team in one file; skills read from their folders;
                        oa build and oa proposals — the team's builder

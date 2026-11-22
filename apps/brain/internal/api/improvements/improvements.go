@@ -27,7 +27,11 @@ const (
 	readEveryConvo = authz.Action("session:read_all")
 )
 
-var statuses = []string{"waiting", "applied", "rejected", "reverted", "withdrawn"}
+var statuses = []string{"waiting", "applied", "rejected", "reverted", "withdrawn", flagged}
+
+// flagged asks for the applied changes whose watch flagged them. It is not a
+// stored status, so it stands alone.
+const flagged = "flagged"
 
 // hidden are the statuses only someone who may approve sees: they quote runs
 // that may be in conversations other members cannot read.
@@ -43,6 +47,8 @@ type Reads interface {
 	ListTeamServerNames(ctx context.Context, arg db.ListTeamServerNamesParams) ([]db.ListTeamServerNamesRow, error)
 	ListVisibleRuns(ctx context.Context, arg db.ListVisibleRunsParams) ([]db.ListVisibleRunsRow, error)
 	ListImproverPasses(ctx context.Context, arg db.ListImproverPassesParams) ([]db.ImproverPass, error)
+	GetImprovementWatch(ctx context.Context, proposalID uuid.UUID) (db.ImprovementWatch, error)
+	ListImprovementWatches(ctx context.Context, ids []uuid.UUID) ([]db.ImprovementWatch, error)
 }
 
 type handler struct {
@@ -97,6 +103,8 @@ type view struct {
 	DecidedAt  *time.Time `json:"decided_at"`
 	RevertedBy *uuid.UUID `json:"reverted_by"`
 	RevertedAt *time.Time `json:"reverted_at"`
+	// How the change went once applied; null until it is.
+	Watch *watchView `json:"watch"`
 }
 
 type cursor struct {
@@ -136,6 +144,13 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := db.ListImprovementProposalsParams{TeamID: teamID, Statuses: asked, Q: q, PageSize: limit + 1}
+	if slices.Contains(asked, flagged) {
+		if len(asked) > 1 {
+			http.Error(w, "status flagged cannot be combined with another status", http.StatusBadRequest)
+			return
+		}
+		params.Statuses, params.Flagged = []string{"applied"}, true
+	}
 	if raw := r.URL.Query().Get("agent"); raw != "" {
 		id, err := uuid.Parse(raw)
 		if err != nil {
@@ -165,12 +180,30 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The page's watches in one read, rather than one a proposal.
+	ids := make([]uuid.UUID, len(page.Items))
+	for i, row := range page.Items {
+		ids[i] = row.ID
+	}
+	watches, err := h.reads.ListImprovementWatches(r.Context(), ids)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the improvements' watches", err)
+		return
+	}
+	byID := make(map[uuid.UUID]db.ImprovementWatch, len(watches))
+	for _, w := range watches {
+		byID[w.ProposalID] = w
+	}
+
 	out := api.Page[view]{Items: make([]view, 0, len(page.Items)), NextCursor: page.NextCursor}
 	for _, row := range page.Items {
 		v, err := h.view(r, u, row)
 		if err != nil {
 			api.Fail(w, h.logger, u, "failed to read an improvement", err)
 			return
+		}
+		if watch, ok := byID[row.ID]; ok {
+			v.Watch = watchViewOf(watch)
 		}
 		out.Items = append(out.Items, v)
 	}
@@ -186,6 +219,10 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	v, err := h.view(r, u, row)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to read the improvement", err)
+		return
+	}
+	if err := h.withWatch(r, &v); err != nil {
+		api.Fail(w, h.logger, u, "failed to read the improvement's watch", err)
 		return
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, v)
@@ -205,8 +242,8 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Action != proposals.ActionApprove && req.Action != proposals.ActionReject && req.Action != proposals.ActionRevert {
-		http.Error(w, "action must be approve, reject or revert", http.StatusBadRequest)
+	if !slices.Contains([]string{proposals.ActionApprove, proposals.ActionReject, proposals.ActionRevert, proposals.ActionClear}, req.Action) {
+		http.Error(w, "action must be approve, reject, revert or clear", http.StatusBadRequest)
 		return
 	}
 
@@ -216,9 +253,10 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	}
 	// Making or undoing a change needs what making it by hand needs, beside
 	// the approve permission the route already checked. Rejecting writes
-	// nothing to the agent or skill, so approve alone decides it.
+	// nothing to the agent or skill, so approve alone decides it, as it does
+	// clearing a flag.
 	var needs []authz.Action
-	if req.Action != proposals.ActionReject {
+	if req.Action != proposals.ActionReject && req.Action != proposals.ActionClear {
 		needs = writesFor(proposals.Kind(row.Kind))
 	}
 	for _, need := range needs {
@@ -253,6 +291,10 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 			"improvement_id", out.ID, "error", err)
 		api.WriteJSON(w, h.logger, http.StatusOK, map[string]any{"id": out.ID, "status": out.Status})
 		return
+	}
+	// Committed either way: a watch that cannot be read is left out, not failed.
+	if err := h.withWatch(r, &v); err != nil {
+		h.logger.ErrorContext(r.Context(), "Failed to read the decided improvement's watch", "improvement_id", out.ID, "error", err)
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, v)
 }
@@ -312,6 +354,20 @@ func (h *handler) find(w http.ResponseWriter, r *http.Request, u *auth.User) (db
 	return row, true
 }
 
+// withWatch adds a proposal's watch to its view; none until it is applied.
+func (h *handler) withWatch(r *http.Request, v *view) error {
+	watch, err := h.reads.GetImprovementWatch(r.Context(), v.ID)
+	switch {
+	case err == nil:
+		v.Watch = watchViewOf(watch)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return err
+	}
+	return nil
+}
+
+// view is a proposal as the API shows it, without its watch: a page reads
+// its watches at once, and get reads the one.
 func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal) (view, error) {
 	ctx := r.Context()
 	p, err := proposals.Decode(row)

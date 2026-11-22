@@ -3091,18 +3091,19 @@ paths:
         cannot read, so asking for them needs `improvement:approve`; without
         it that is a 403, so "none" and "not yours to see" stay apart. With
         no status, an approver sees what is waiting and anyone else what is
-        applied. Newest first.
+        applied. `flagged` asks for the applied changes whose watch flagged
+        them, and stands alone. Newest first.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Query"
         - name: status
           in: query
-          description: Only proposals in one of these states. Repeat it for more than one.
+          description: Only proposals in one of these states, or only the flagged ones. Repeat it for more than one state.
           schema:
             type: array
             items:
-              $ref: "#/components/schemas/ImprovementStatus"
+              $ref: "#/components/schemas/ImprovementFilter"
         - name: agent
           in: query
           description: Only proposals about this agent.
@@ -3196,17 +3197,21 @@ paths:
     post:
       operationId: decideImprovement
       tags: [improvements]
-      summary: Approve, reject or revert a proposed improvement
+      summary: Approve, reject, revert or clear a proposed improvement
       description: |
-        Requires `improvement:approve`, and the write permission the change
-        would need by hand: `agent:write` for a change to an agent,
-        `skill:write` for a skill edit, both for a new skill.
+        Requires `improvement:approve`, and for approve and revert the write
+        permission the change would need by hand: `agent:write` for a change
+        to an agent, `skill:write` for a skill edit, both for a new skill.
+        Reject and clear write nothing to an agent or a skill, so they need
+        `improvement:approve` alone.
 
         Approve writes the change with the same rules a person's edit of the
         agent or skill meets, and withdraws the other proposals waiting on the
         same target. It is refused when the target changed since the proposal
         was made. Revert puts the old version back, and is refused when the
-        target changed since the change was applied.
+        target changed since the change was applied. Approving starts the
+        change's watch; reverting ends it. Clear keeps a change its watch
+        flagged, and is refused unless the watch flagged it.
       requestBody:
         required: true
         content:
@@ -7450,6 +7455,11 @@ components:
       type: string
       enum: [waiting, applied, rejected, reverted, withdrawn]
 
+    ImprovementFilter:
+      type: string
+      description: A proposal's state, or flagged for the applied changes whose watch flagged them
+      enum: [waiting, applied, rejected, reverted, withdrawn, flagged]
+
     ImprovementKind:
       type: string
       enum: [instructions, description, skill_grant, skill_drop, skill_new, skill_edit,
@@ -7584,6 +7594,104 @@ components:
           type: string
           format: date-time
           nullable: true
+        watch:
+          description: How the change went once applied; null until it is
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ImprovementWatch"
+
+    ImprovementWatchSide:
+      type: object
+      description: What one window of judged runs came to
+      required: [runs, bad, up, down]
+      properties:
+        runs:
+          type: integer
+        bad:
+          type: integer
+        up:
+          type: integer
+          description: Runs a member gave 👍
+        down:
+          type: integer
+          description: Runs a member gave 👎
+        tokens:
+          type: integer
+          format: int64
+          nullable: true
+          description: The median tokens a run's tree spent, a cached token as a tenth; null with no runs
+        steps:
+          type: integer
+          nullable: true
+          description: The median steps a run's tree took
+        signature:
+          type: integer
+          nullable: true
+          description: Runs carrying the signature the change targeted; null for a removal
+
+    ImprovementWatch:
+      type: object
+      description: |
+        The agent's judged runs after the change against the ones before it,
+        measured against how much its runs usually vary. Flagged worse when
+        the bad runs after reach the bar; flagged costlier when the median
+        cost after passes the baseline's 90th percentile with no fewer bad
+        runs than before. A flag asks a person to look; nothing is reverted.
+      required: [status, needed, baseline_runs, baseline_bad, before, after, overlapping, started_at]
+      properties:
+        status:
+          type: string
+          enum: [watching, clear, flagged, cleared, ended]
+        flag:
+          type: string
+          enum: [worse, costlier, both]
+          nullable: true
+        ended_why:
+          type: string
+          enum: [reverted, too_few_runs]
+          nullable: true
+        needed:
+          type: integer
+          description: The judged runs after the change that decide it
+        baseline_runs:
+          type: integer
+          description: The judged runs before the change the bar is estimated from, up to 50
+        baseline_bad:
+          type: integer
+        bar:
+          type: integer
+          nullable: true
+          description: The bad runs out of `needed` that flag the change; null with fewer than 10 baseline runs
+        baseline_p90:
+          type: integer
+          format: int64
+          nullable: true
+          description: The baseline's 90th percentile of tokens a run
+        before:
+          $ref: "#/components/schemas/ImprovementWatchSide"
+        after:
+          $ref: "#/components/schemas/ImprovementWatchSide"
+        overlapping:
+          type: array
+          description: Other changes applied to the same agents within the windows, newest first
+          items:
+            type: string
+            format: uuid
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        cleared_by:
+          type: string
+          format: uuid
+          nullable: true
+        cleared_at:
+          type: string
+          format: date-time
+          nullable: true
 
     ImprovementPage:
       type: object
@@ -7682,7 +7790,7 @@ components:
       properties:
         action:
           type: string
-          enum: [approve, reject, revert]
+          enum: [approve, reject, revert, clear]
 
     ApprovalPage:
       type: object

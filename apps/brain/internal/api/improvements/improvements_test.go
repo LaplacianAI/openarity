@@ -560,8 +560,19 @@ func TestSkillEditAppliesAndReverts(t *testing.T) {
 		t.Errorf("marks = %v, want changes_code for a new script", p.Marks)
 	}
 
+	// The skill reaches two agents, and the watch is on both.
+	b := w.agent(t, "billing-bot")
+	for _, holder := range []uuid.UUID{a.ID, b.ID} {
+		if _, err := w.raw.Exec(t.Context(), `INSERT INTO agent_skills (agent_id, skill_id, team_id) VALUES ($1, $2, $3)`, holder, made.ID, w.team); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if rec := w.decide(t, p.ID, "approve"); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+	}
+	if watch, err := w.store.GetImprovementWatch(t.Context(), p.ID); err != nil || len(watch.AgentIds) != 2 ||
+		!slices.Contains(watch.AgentIds, a.ID) || !slices.Contains(watch.AgentIds, b.ID) {
+		t.Errorf("watch = %+v, %v; want it on both holders", watch, err)
 	}
 	got := w.skillNow(t, made)
 	if got.Body != after.Body || len(got.Files) != 2 {

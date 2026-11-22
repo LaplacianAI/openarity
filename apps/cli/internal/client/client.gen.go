@@ -587,19 +587,52 @@ func (e ImprovementChangeType) Valid() bool {
 
 // Defines values for ImprovementDecisionAction.
 const (
-	Approve ImprovementDecisionAction = "approve"
-	Reject  ImprovementDecisionAction = "reject"
-	Revert  ImprovementDecisionAction = "revert"
+	ImprovementDecisionActionApprove ImprovementDecisionAction = "approve"
+	ImprovementDecisionActionClear   ImprovementDecisionAction = "clear"
+	ImprovementDecisionActionReject  ImprovementDecisionAction = "reject"
+	ImprovementDecisionActionRevert  ImprovementDecisionAction = "revert"
 )
 
 // Valid indicates whether the value is a known member of the ImprovementDecisionAction enum.
 func (e ImprovementDecisionAction) Valid() bool {
 	switch e {
-	case Approve:
+	case ImprovementDecisionActionApprove:
 		return true
-	case Reject:
+	case ImprovementDecisionActionClear:
 		return true
-	case Revert:
+	case ImprovementDecisionActionReject:
+		return true
+	case ImprovementDecisionActionRevert:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementFilter.
+const (
+	ImprovementFilterApplied   ImprovementFilter = "applied"
+	ImprovementFilterFlagged   ImprovementFilter = "flagged"
+	ImprovementFilterRejected  ImprovementFilter = "rejected"
+	ImprovementFilterReverted  ImprovementFilter = "reverted"
+	ImprovementFilterWaiting   ImprovementFilter = "waiting"
+	ImprovementFilterWithdrawn ImprovementFilter = "withdrawn"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementFilter enum.
+func (e ImprovementFilter) Valid() bool {
+	switch e {
+	case ImprovementFilterApplied:
+		return true
+	case ImprovementFilterFlagged:
+		return true
+	case ImprovementFilterRejected:
+		return true
+	case ImprovementFilterReverted:
+		return true
+	case ImprovementFilterWaiting:
+		return true
+	case ImprovementFilterWithdrawn:
 		return true
 	default:
 		return false
@@ -711,6 +744,72 @@ func (e ImprovementStatus) Valid() bool {
 	case ImprovementStatusWaiting:
 		return true
 	case ImprovementStatusWithdrawn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementWatchEndedWhy.
+const (
+	ImprovementWatchEndedWhyReverted   ImprovementWatchEndedWhy = "reverted"
+	ImprovementWatchEndedWhyTooFewRuns ImprovementWatchEndedWhy = "too_few_runs"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementWatchEndedWhy enum.
+func (e ImprovementWatchEndedWhy) Valid() bool {
+	switch e {
+	case ImprovementWatchEndedWhyReverted:
+		return true
+	case ImprovementWatchEndedWhyTooFewRuns:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementWatchFlag.
+const (
+	Both     ImprovementWatchFlag = "both"
+	Costlier ImprovementWatchFlag = "costlier"
+	Worse    ImprovementWatchFlag = "worse"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementWatchFlag enum.
+func (e ImprovementWatchFlag) Valid() bool {
+	switch e {
+	case Both:
+		return true
+	case Costlier:
+		return true
+	case Worse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementWatchStatus.
+const (
+	ImprovementWatchStatusClear    ImprovementWatchStatus = "clear"
+	ImprovementWatchStatusCleared  ImprovementWatchStatus = "cleared"
+	ImprovementWatchStatusEnded    ImprovementWatchStatus = "ended"
+	ImprovementWatchStatusFlagged  ImprovementWatchStatus = "flagged"
+	ImprovementWatchStatusWatching ImprovementWatchStatus = "watching"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementWatchStatus enum.
+func (e ImprovementWatchStatus) Valid() bool {
+	switch e {
+	case ImprovementWatchStatusClear:
+		return true
+	case ImprovementWatchStatusCleared:
+		return true
+	case ImprovementWatchStatusEnded:
+		return true
+	case ImprovementWatchStatusFlagged:
+		return true
+	case ImprovementWatchStatusWatching:
 		return true
 	default:
 		return false
@@ -2435,6 +2534,9 @@ type Improvement struct {
 	Skill  *NamedRef         `json:"skill,omitempty" yaml:"skill,omitempty"`
 	Status ImprovementStatus `json:"status" yaml:"status"`
 
+	// Watch How the change went once applied; null until it is
+	Watch *ImprovementWatch `json:"watch,omitempty" yaml:"watch,omitempty"`
+
 	// Why The pattern and the evidence for it, in words
 	Why string `json:"why" yaml:"why"`
 }
@@ -2471,6 +2573,9 @@ type ImprovementDecision struct {
 // ImprovementDecisionAction defines model for ImprovementDecision.Action.
 type ImprovementDecisionAction string
 
+// ImprovementFilter A proposal's state, or flagged for the applied changes whose watch flagged them
+type ImprovementFilter string
+
 // ImprovementKind defines model for ImprovementKind.
 type ImprovementKind string
 
@@ -2491,6 +2596,72 @@ type ImprovementPage struct {
 
 // ImprovementStatus defines model for ImprovementStatus.
 type ImprovementStatus string
+
+// ImprovementWatch The agent's judged runs after the change against the ones before it,
+// measured against how much its runs usually vary. Flagged worse when
+// the bad runs after reach the bar; flagged costlier when the median
+// cost after passes the baseline's 90th percentile with no fewer bad
+// runs than before. A flag asks a person to look; nothing is reverted.
+type ImprovementWatch struct {
+	// After What one window of judged runs came to
+	After ImprovementWatchSide `json:"after" yaml:"after"`
+
+	// Bar The bad runs out of `needed` that flag the change; null with fewer than 10 baseline runs
+	Bar         *int `json:"bar,omitempty" yaml:"bar,omitempty"`
+	BaselineBad int  `json:"baseline_bad" yaml:"baseline_bad"`
+
+	// BaselineP90 The baseline's 90th percentile of tokens a run
+	BaselineP90 *int64 `json:"baseline_p90,omitempty" yaml:"baseline_p90,omitempty"`
+
+	// BaselineRuns The judged runs before the change the bar is estimated from, up to 50
+	BaselineRuns int `json:"baseline_runs" yaml:"baseline_runs"`
+
+	// Before What one window of judged runs came to
+	Before     ImprovementWatchSide      `json:"before" yaml:"before"`
+	ClearedAt  *time.Time                `json:"cleared_at,omitempty" yaml:"cleared_at,omitempty"`
+	ClearedBy  *openapi_types.UUID       `json:"cleared_by,omitempty" yaml:"cleared_by,omitempty"`
+	EndedWhy   *ImprovementWatchEndedWhy `json:"ended_why,omitempty" yaml:"ended_why,omitempty"`
+	FinishedAt *time.Time                `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+	Flag       *ImprovementWatchFlag     `json:"flag,omitempty" yaml:"flag,omitempty"`
+
+	// Needed The judged runs after the change that decide it
+	Needed int `json:"needed" yaml:"needed"`
+
+	// Overlapping Other changes applied to the same agents within the windows, newest first
+	Overlapping []openapi_types.UUID   `json:"overlapping" yaml:"overlapping"`
+	StartedAt   time.Time              `json:"started_at" yaml:"started_at"`
+	Status      ImprovementWatchStatus `json:"status" yaml:"status"`
+}
+
+// ImprovementWatchEndedWhy defines model for ImprovementWatch.EndedWhy.
+type ImprovementWatchEndedWhy string
+
+// ImprovementWatchFlag defines model for ImprovementWatch.Flag.
+type ImprovementWatchFlag string
+
+// ImprovementWatchStatus defines model for ImprovementWatch.Status.
+type ImprovementWatchStatus string
+
+// ImprovementWatchSide What one window of judged runs came to
+type ImprovementWatchSide struct {
+	Bad int `json:"bad" yaml:"bad"`
+
+	// Down Runs a member gave 👎
+	Down int `json:"down" yaml:"down"`
+	Runs int `json:"runs" yaml:"runs"`
+
+	// Signature Runs carrying the signature the change targeted; null for a removal
+	Signature *int `json:"signature,omitempty" yaml:"signature,omitempty"`
+
+	// Steps The median steps a run's tree took
+	Steps *int `json:"steps,omitempty" yaml:"steps,omitempty"`
+
+	// Tokens The median tokens a run's tree spent, a cached token as a tenth; null with no runs
+	Tokens *int64 `json:"tokens,omitempty" yaml:"tokens,omitempty"`
+
+	// Up Runs a member gave 👍
+	Up int `json:"up" yaml:"up"`
+}
 
 // ImproverPass defines model for ImproverPass.
 type ImproverPass struct {
@@ -4329,8 +4500,8 @@ type ListImprovementsParams struct {
 	// search goes on within the same search.
 	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 
-	// Status Only proposals in one of these states. Repeat it for more than one.
-	Status *[]ImprovementStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
+	// Status Only proposals in one of these states, or only the flagged ones. Repeat it for more than one state.
+	Status *[]ImprovementFilter `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
 
 	// Agent Only proposals about this agent.
 	Agent *openapi_types.UUID `form:"agent,omitempty" json:"agent,omitempty" yaml:"agent,omitempty"`
@@ -5480,7 +5651,8 @@ type ClientInterface interface {
 	// cannot read, so asking for them needs `improvement:approve`; without
 	// it that is a 403, so "none" and "not yours to see" stay apart. With
 	// no status, an approver sees what is waiting and anyone else what is
-	// applied. Newest first.
+	// applied. `flagged` asks for the applied changes whose watch flagged
+	// them, and stands alone. Newest first.
 	//
 	// Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
 	ListImprovements(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5503,34 +5675,42 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/improvements/{proposalID} (the `GetImprovement` operationId).
 	GetImprovement(ctx context.Context, id TeamID, proposalID ImprovementID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DecideImprovementWithBody Approve, reject or revert a proposed improvement
+	// DecideImprovementWithBody Approve, reject, revert or clear a proposed improvement
 	//
-	// Requires `improvement:approve`, and the write permission the change
-	// would need by hand: `agent:write` for a change to an agent,
-	// `skill:write` for a skill edit, both for a new skill.
+	// Requires `improvement:approve`, and for approve and revert the write
+	// permission the change would need by hand: `agent:write` for a change
+	// to an agent, `skill:write` for a skill edit, both for a new skill.
+	// Reject and clear write nothing to an agent or a skill, so they need
+	// `improvement:approve` alone.
 	//
 	// Approve writes the change with the same rules a person's edit of the
 	// agent or skill meets, and withdraws the other proposals waiting on the
 	// same target. It is refused when the target changed since the proposal
 	// was made. Revert puts the old version back, and is refused when the
-	// target changed since the change was applied.
+	// target changed since the change was applied. Approving starts the
+	// change's watch; reverting ends it. Clear keeps a change its watch
+	// flagged, and is refused unless the watch flagged it.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
 	DecideImprovementWithBody(ctx context.Context, id TeamID, proposalID ImprovementID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DecideImprovement Approve, reject or revert a proposed improvement
+	// DecideImprovement Approve, reject, revert or clear a proposed improvement
 	//
-	// Requires `improvement:approve`, and the write permission the change
-	// would need by hand: `agent:write` for a change to an agent,
-	// `skill:write` for a skill edit, both for a new skill.
+	// Requires `improvement:approve`, and for approve and revert the write
+	// permission the change would need by hand: `agent:write` for a change
+	// to an agent, `skill:write` for a skill edit, both for a new skill.
+	// Reject and clear write nothing to an agent or a skill, so they need
+	// `improvement:approve` alone.
 	//
 	// Approve writes the change with the same rules a person's edit of the
 	// agent or skill meets, and withdraws the other proposals waiting on the
 	// same target. It is refused when the target changed since the proposal
 	// was made. Revert puts the old version back, and is refused when the
-	// target changed since the change was applied.
+	// target changed since the change was applied. Approving starts the
+	// change's watch; reverting ends it. Clear keeps a change its watch
+	// flagged, and is refused unless the watch flagged it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7847,7 +8027,8 @@ func (c *Client) GetTeamGraph(ctx context.Context, id TeamID, params *GetTeamGra
 // cannot read, so asking for them needs `improvement:approve`; without
 // it that is a 403, so "none" and "not yours to see" stay apart. With
 // no status, an approver sees what is waiting and anyone else what is
-// applied. Newest first.
+// applied. `flagged` asks for the applied changes whose watch flagged
+// them, and stands alone. Newest first.
 //
 // Corresponds with GET /teams/{id}/improvements (the `ListImprovements` operationId).
 func (c *Client) ListImprovements(ctx context.Context, id TeamID, params *ListImprovementsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7900,17 +8081,21 @@ func (c *Client) GetImprovement(ctx context.Context, id TeamID, proposalID Impro
 	return c.Client.Do(req)
 }
 
-// DecideImprovementWithBody Approve, reject or revert a proposed improvement
+// DecideImprovementWithBody Approve, reject, revert or clear a proposed improvement
 //
-// Requires `improvement:approve`, and the write permission the change
-// would need by hand: `agent:write` for a change to an agent,
-// `skill:write` for a skill edit, both for a new skill.
+// Requires `improvement:approve`, and for approve and revert the write
+// permission the change would need by hand: `agent:write` for a change
+// to an agent, `skill:write` for a skill edit, both for a new skill.
+// Reject and clear write nothing to an agent or a skill, so they need
+// `improvement:approve` alone.
 //
 // Approve writes the change with the same rules a person's edit of the
 // agent or skill meets, and withdraws the other proposals waiting on the
 // same target. It is refused when the target changed since the proposal
 // was made. Revert puts the old version back, and is refused when the
-// target changed since the change was applied.
+// target changed since the change was applied. Approving starts the
+// change's watch; reverting ends it. Clear keeps a change its watch
+// flagged, and is refused unless the watch flagged it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7927,17 +8112,21 @@ func (c *Client) DecideImprovementWithBody(ctx context.Context, id TeamID, propo
 	return c.Client.Do(req)
 }
 
-// DecideImprovement Approve, reject or revert a proposed improvement
+// DecideImprovement Approve, reject, revert or clear a proposed improvement
 //
-// Requires `improvement:approve`, and the write permission the change
-// would need by hand: `agent:write` for a change to an agent,
-// `skill:write` for a skill edit, both for a new skill.
+// Requires `improvement:approve`, and for approve and revert the write
+// permission the change would need by hand: `agent:write` for a change
+// to an agent, `skill:write` for a skill edit, both for a new skill.
+// Reject and clear write nothing to an agent or a skill, so they need
+// `improvement:approve` alone.
 //
 // Approve writes the change with the same rules a person's edit of the
 // agent or skill meets, and withdraws the other proposals waiting on the
 // same target. It is refused when the target changed since the proposal
 // was made. Revert puts the old version back, and is refused when the
-// target changed since the change was applied.
+// target changed since the change was applied. Approving starts the
+// change's watch; reverting ends it. Clear keeps a change its watch
+// flagged, and is refused unless the watch flagged it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -15570,7 +15759,8 @@ type ClientWithResponsesInterface interface {
 	// cannot read, so asking for them needs `improvement:approve`; without
 	// it that is a 403, so "none" and "not yours to see" stay apart. With
 	// no status, an approver sees what is waiting and anyone else what is
-	// applied. Newest first.
+	// applied. `flagged` asks for the applied changes whose watch flagged
+	// them, and stands alone. Newest first.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -15599,34 +15789,42 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/improvements/{proposalID} (the `GetImprovement` operationId).
 	GetImprovementWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, reqEditors ...RequestEditorFn) (*GetImprovementResponse, error)
 
-	// DecideImprovementWithBodyWithResponse Approve, reject or revert a proposed improvement
+	// DecideImprovementWithBodyWithResponse Approve, reject, revert or clear a proposed improvement
 	//
-	// Requires `improvement:approve`, and the write permission the change
-	// would need by hand: `agent:write` for a change to an agent,
-	// `skill:write` for a skill edit, both for a new skill.
+	// Requires `improvement:approve`, and for approve and revert the write
+	// permission the change would need by hand: `agent:write` for a change
+	// to an agent, `skill:write` for a skill edit, both for a new skill.
+	// Reject and clear write nothing to an agent or a skill, so they need
+	// `improvement:approve` alone.
 	//
 	// Approve writes the change with the same rules a person's edit of the
 	// agent or skill meets, and withdraws the other proposals waiting on the
 	// same target. It is refused when the target changed since the proposal
 	// was made. Revert puts the old version back, and is refused when the
-	// target changed since the change was applied.
+	// target changed since the change was applied. Approving starts the
+	// change's watch; reverting ends it. Clear keeps a change its watch
+	// flagged, and is refused unless the watch flagged it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
 	DecideImprovementWithBodyWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideImprovementResponse, error)
 
-	// DecideImprovementWithResponse Approve, reject or revert a proposed improvement
+	// DecideImprovementWithResponse Approve, reject, revert or clear a proposed improvement
 	//
-	// Requires `improvement:approve`, and the write permission the change
-	// would need by hand: `agent:write` for a change to an agent,
-	// `skill:write` for a skill edit, both for a new skill.
+	// Requires `improvement:approve`, and for approve and revert the write
+	// permission the change would need by hand: `agent:write` for a change
+	// to an agent, `skill:write` for a skill edit, both for a new skill.
+	// Reject and clear write nothing to an agent or a skill, so they need
+	// `improvement:approve` alone.
 	//
 	// Approve writes the change with the same rules a person's edit of the
 	// agent or skill meets, and withdraws the other proposals waiting on the
 	// same target. It is refused when the target changed since the proposal
 	// was made. Revert puts the old version back, and is refused when the
-	// target changed since the change was applied.
+	// target changed since the change was applied. Approving starts the
+	// change's watch; reverting ends it. Clear keeps a change its watch
+	// flagged, and is refused unless the watch flagged it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -22237,7 +22435,8 @@ func (c *ClientWithResponses) GetTeamGraphWithResponse(ctx context.Context, id T
 // cannot read, so asking for them needs `improvement:approve`; without
 // it that is a 403, so "none" and "not yours to see" stay apart. With
 // no status, an approver sees what is waiting and anyone else what is
-// applied. Newest first.
+// applied. `flagged` asks for the applied changes whose watch flagged
+// them, and stands alone. Newest first.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -22284,17 +22483,21 @@ func (c *ClientWithResponses) GetImprovementWithResponse(ctx context.Context, id
 	return ParseGetImprovementResponse(rsp)
 }
 
-// DecideImprovementWithBodyWithResponse Approve, reject or revert a proposed improvement
+// DecideImprovementWithBodyWithResponse Approve, reject, revert or clear a proposed improvement
 //
-// Requires `improvement:approve`, and the write permission the change
-// would need by hand: `agent:write` for a change to an agent,
-// `skill:write` for a skill edit, both for a new skill.
+// Requires `improvement:approve`, and for approve and revert the write
+// permission the change would need by hand: `agent:write` for a change
+// to an agent, `skill:write` for a skill edit, both for a new skill.
+// Reject and clear write nothing to an agent or a skill, so they need
+// `improvement:approve` alone.
 //
 // Approve writes the change with the same rules a person's edit of the
 // agent or skill meets, and withdraws the other proposals waiting on the
 // same target. It is refused when the target changed since the proposal
 // was made. Revert puts the old version back, and is refused when the
-// target changed since the change was applied.
+// target changed since the change was applied. Approving starts the
+// change's watch; reverting ends it. Clear keeps a change its watch
+// flagged, and is refused unless the watch flagged it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -22307,17 +22510,21 @@ func (c *ClientWithResponses) DecideImprovementWithBodyWithResponse(ctx context.
 	return ParseDecideImprovementResponse(rsp)
 }
 
-// DecideImprovementWithResponse Approve, reject or revert a proposed improvement
+// DecideImprovementWithResponse Approve, reject, revert or clear a proposed improvement
 //
-// Requires `improvement:approve`, and the write permission the change
-// would need by hand: `agent:write` for a change to an agent,
-// `skill:write` for a skill edit, both for a new skill.
+// Requires `improvement:approve`, and for approve and revert the write
+// permission the change would need by hand: `agent:write` for a change
+// to an agent, `skill:write` for a skill edit, both for a new skill.
+// Reject and clear write nothing to an agent or a skill, so they need
+// `improvement:approve` alone.
 //
 // Approve writes the change with the same rules a person's edit of the
 // agent or skill meets, and withdraws the other proposals waiting on the
 // same target. It is refused when the target changed since the proposal
 // was made. Revert puts the old version back, and is refused when the
-// target changed since the change was applied.
+// target changed since the change was applied. Approving starts the
+// change's watch; reverting ends it. Clear keeps a change its watch
+// flagged, and is refused unless the watch flagged it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

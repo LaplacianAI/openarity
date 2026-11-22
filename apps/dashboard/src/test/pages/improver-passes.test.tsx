@@ -74,12 +74,10 @@ describe("the Passes tab", () => {
     brain(serve([pass("p1")]));
     const router = at("/ui/improvements");
     await screen.findByRole("tab", { name: "Passes" });
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
-      "Waiting",
-      "Applied",
-      "Closed",
-      "Passes",
-    ]);
+    // A tab's name, without the flagged count the Flagged tab may carry.
+    expect(
+      screen.getAllByRole("tab").map((t) => (t.textContent ?? "").replace(/\d+\+? flagged$/, "")),
+    ).toEqual(["Waiting", "Applied", "Flagged", "Closed", "Passes"]);
     await userEvent.click(screen.getByRole("tab", { name: "Passes" }));
     await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "passes" }));
     expect(await screen.findByRole("list", { name: "Improver passes" })).toBeInTheDocument();

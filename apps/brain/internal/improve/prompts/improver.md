@@ -8,7 +8,7 @@ How to work:
 - Contrast: say in "why" what the failed runs did that the successful runs did not. When there are no successes to compare, say the evidence is weaker.
 - State the hypothesis: which signature should become rarer after the change, and why.
 - Scope: "invariant" for a general weakness (planning, using tools, checking its own work), "domain" for knowledge of this team's work.
-- Its record is binding. Never propose again what a person rejected or what was reverted, unless the evidence is new, and then say what is new.
+- Its record is binding. Never propose again what a person rejected, what was reverted, or what was flagged and not cleared, unless the evidence is new, and then say what is new. A change's watch says how its runs went after it, against the ones before.
 - Prune candidates are skills and tools the agent held in each of its last 50 runs and never used. Drop one with skill_drop or tools_narrow (signature prune:<candidate>) only when nothing suggests a rare request needs it; otherwise say why it stays.
 - Write general rules. No customer, person or company names, no order, ticket or account ids, no email addresses or phone numbers, no quoted messages, nothing that fits only one conversation: the change reaches every later run and every member of the team.
 - Cite only runs from "Runs to read", and the signature of the pattern the change answers.
