@@ -197,6 +197,8 @@ func (c *Checker) record(ctx context.Context, row db.RecordRunOutcomeParams, fai
 	if err != nil {
 		return fmt.Errorf("reading run %s's tool failures: %w", row.RunID, err)
 	}
+	var effect Effect
+	var recorded int64
 	err = c.store.InTx(ctx, func(q *db.Queries) error {
 		if err := q.LockRunVotes(ctx, row.RunID); err != nil {
 			return err
@@ -205,12 +207,17 @@ func (c *Checker) record(ctx context.Context, row db.RecordRunOutcomeParams, fai
 		if err != nil {
 			return err
 		}
-		row.Digest = digestFor(Effective(row.Verdict, row.Implicit, counts.Up, counts.Down), row.Sampled, trouble)
-		_, err = q.RecordRunOutcome(ctx, row)
+		effect = Effective(row.Verdict, row.Implicit, counts.Up, counts.Down)
+		row.Digest = digestFor(effect, row.Sampled, trouble)
+		recorded, err = q.RecordRunOutcome(ctx, row)
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("recording run %s's outcome: %w", row.RunID, err)
+	}
+	if recorded > 0 {
+		c.logger.InfoContext(ctx, "A run was judged", "run", row.RunID, "team", row.TeamID, "verdict", row.Verdict,
+			"effect", effect, "digest", row.Digest, "input_tokens", row.InputTokens, "output_tokens", row.OutputTokens)
 	}
 	return nil
 }
