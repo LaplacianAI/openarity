@@ -74,6 +74,8 @@ type settings struct {
 	// included, and minutes for each try.
 	ImprovementPassTokens  int32 `json:"improvement_pass_tokens"`
 	ImprovementPassMinutes int16 `json:"improvement_pass_minutes"`
+	// The judged runs an agent needs since its last pass for a daily pass.
+	ImprovementDailyRuns int16 `json:"improvement_daily_runs"`
 	// When the switch last went on; runs before it are never judged.
 	ImprovementSince    *time.Time `json:"improvement_since"`
 	CompactionMessages  int32      `json:"compaction_messages"`
@@ -145,7 +147,9 @@ type settingsRequest struct {
 	// What a pass may spend; left out keeps what is stored.
 	ImprovementPassTokens  *int32 `json:"improvement_pass_tokens"`
 	ImprovementPassMinutes *int16 `json:"improvement_pass_minutes"`
-	CompactionMessages     int32  `json:"compaction_messages"`
+	// The judged runs a daily pass waits for; left out keeps what is stored.
+	ImprovementDailyRuns *int16 `json:"improvement_daily_runs"`
+	CompactionMessages   int32  `json:"compaction_messages"`
 	// Left out, the stored value stays, as a sandbox does.
 	CompactionTokensMin *int32  `json:"compaction_tokens_min"`
 	CompactionTokensMax *int32  `json:"compaction_tokens_max"`

@@ -29,6 +29,8 @@ const (
 	defaultDailyPasses = 20
 	defaultPassTokens  = 400_000
 	defaultPassMinutes = 20
+	// A daily pass waits for five judged runs since the agent's last pass.
+	defaultDailyRuns = 5
 	// The brain's line before teams could set it, kept for a team that
 	// never saved its settings.
 	defaultCompactionTokensMin = 50_000
@@ -166,6 +168,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	p.ImprovementSampleShare = sampleShare(req, stored)
 	p.ImprovementDailyPasses = req.ImprovementDailyPasses
 	p.ImprovementPassTokens, p.ImprovementPassMinutes = req.ImprovementPassTokens, req.ImprovementPassMinutes
+	p.ImprovementDailyRuns = req.ImprovementDailyRuns
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	lifecycle(&p, req.Sandbox, stored)
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
@@ -399,6 +402,7 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 		ImprovementDailyPasses: row.ImprovementDailyPasses,
 		ImprovementPassTokens:  row.ImprovementPassTokens,
 		ImprovementPassMinutes: row.ImprovementPassMinutes,
+		ImprovementDailyRuns:   row.ImprovementDailyRuns,
 		ImprovementSince:       row.ImprovementSince,
 		CompactionMessages:     row.CompactionMessages,
 		CompactionTokensMin:    row.CompactionTokensMin,
@@ -424,6 +428,7 @@ func defaults() settings {
 		ImprovementDailyPasses: defaultDailyPasses,
 		ImprovementPassTokens:  defaultPassTokens,
 		ImprovementPassMinutes: defaultPassMinutes,
+		ImprovementDailyRuns:   defaultDailyRuns,
 		CompactionMessages:     defaultCompaction,
 		CompactionTokensMin:    defaultCompactionTokensMin,
 		CompactionTokensMax:    defaultCompactionTokensMax,

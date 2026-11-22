@@ -98,6 +98,7 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		ImprovementDailyPasses: kept(p.ImprovementDailyPasses, f.row, func(s db.TeamSetting) int16 { return s.ImprovementDailyPasses }, 20),
 		ImprovementPassTokens:  kept(p.ImprovementPassTokens, f.row, func(s db.TeamSetting) int32 { return s.ImprovementPassTokens }, 400_000),
 		ImprovementPassMinutes: kept(p.ImprovementPassMinutes, f.row, func(s db.TeamSetting) int16 { return s.ImprovementPassMinutes }, 20),
+		ImprovementDailyRuns:   kept(p.ImprovementDailyRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementDailyRuns }, 5),
 		UpdatedAt:              time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 
 		SandboxIdleMinutes:       p.SandboxIdleMinutes,
@@ -1244,6 +1245,7 @@ type improveWire struct {
 	ImprovementDailyPasses int16      `json:"improvement_daily_passes"`
 	ImprovementPassTokens  int32      `json:"improvement_pass_tokens"`
 	ImprovementPassMinutes int16      `json:"improvement_pass_minutes"`
+	ImprovementDailyRuns   int16      `json:"improvement_daily_runs"`
 	ImprovementSince       *time.Time `json:"improvement_since"`
 }
 
@@ -1338,6 +1340,31 @@ func TestThePassBudget(t *testing.T) {
 	}
 	if len(e.store.upserts) != saved {
 		t.Error("a refused budget was saved")
+	}
+}
+
+// The judged runs a daily pass waits for: five on a first save, kept when
+// left out, and held between 1 and 100.
+func TestTheDailyRuns(t *testing.T) {
+	e := newEnv()
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementDailyRuns != 5 {
+		t.Errorf("a first save's daily runs = %d, want 5", got.ImprovementDailyRuns)
+	}
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_daily_runs":12}`)); got.ImprovementDailyRuns != 12 {
+		t.Errorf("daily runs = %d, want 12", got.ImprovementDailyRuns)
+	}
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`}`)); got.ImprovementDailyRuns != 12 {
+		t.Errorf("left out, the daily runs became %d", got.ImprovementDailyRuns)
+	}
+	saved := len(e.store.upserts)
+	for _, bad := range []string{"0", "101", "-1"} {
+		if rec := e.save(t, `{`+improveBase+`,"improvement_daily_runs":`+bad+`}`); rec.Code != http.StatusBadRequest ||
+			!strings.Contains(rec.Body.String(), "improvement_daily_runs") {
+			t.Errorf("improvement_daily_runs %s = %d %q, want 400 naming it", bad, rec.Code, rec.Body)
+		}
+	}
+	if len(e.store.upserts) != saved {
+		t.Error("refused daily runs were saved")
 	}
 }
 

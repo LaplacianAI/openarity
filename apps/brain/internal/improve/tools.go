@@ -28,8 +28,11 @@ type passTools struct {
 
 	mu sync.Mutex
 	// proposed starts at what earlier attempts stored.
-	proposed    int32
-	refused     int32
+	proposed int32
+	refused  int32
+	// closed is a pass whose team turned improvement off while it ran: it
+	// proposes nothing more.
+	closed      bool
 	screenedOut int32
 	// What the screen spent, and what the run has: the run's from its
 	// events, so a pass is stopped as it crosses its tokens.

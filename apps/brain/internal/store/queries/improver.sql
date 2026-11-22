@@ -31,16 +31,41 @@ ORDER BY d.agent_id, runs DESC, d.part, d.target, d.cause;
 -- Every custom agent of a team with improvement on, with whether it has a
 -- digest newer than its newest finished pass: what the daily sweep reads.
 -- name: ListImprovingAgents :many
-SELECT a.id, a.team_id,
-       EXISTS (SELECT 1 FROM run_digests d
-               WHERE d.agent_id = a.id
-                 AND d.created_at > COALESCE((SELECT max(x.started_at) FROM improver_passes x
-                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
-                                             '-infinity'::timestamptz))::bool AS has_new
-FROM agents a
-JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
-WHERE a.kind = 'custom'
-ORDER BY a.team_id, a.id;
+-- The custom agents of teams with improvement on that have reached their
+-- team's improvement_daily_runs since their last useful pass (the newest done
+-- pass not cut short, or one that proposed something; none means since
+-- improvement went on). A run counts when it is a judged top-level run whose
+-- tree reaches the agent and was created after that pass began: a run already
+-- going when the pass began is left out, as the pass may not have read it.
+-- The bar is checked with a count that stops at it, so an agent with a long
+-- history costs no more than the bar; runs_since is then the exact count,
+-- kept on the pass as runs_seen. has_new says whether a digest is newer.
+WITH last AS (
+    SELECT a.id, a.team_id, ts.improvement_daily_runs::bigint AS bar,
+           greatest(COALESCE((SELECT max(x.started_at) FROM improver_passes x
+                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
+                             '-infinity'::timestamptz),
+                    COALESCE(ts.improvement_since, '-infinity'::timestamptz)) AS since
+    FROM agents a
+    JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
+    WHERE a.kind = 'custom'
+), reached AS (
+    SELECT l.* FROM last l
+    WHERE (SELECT count(*) FROM (
+               SELECT 1 FROM runs r
+               WHERE r.team_id = l.team_id AND r.parent_run_id IS NULL AND r.created_at > l.since
+                 AND EXISTS (SELECT 1 FROM run_outcomes o WHERE o.run_id = r.id)
+                 AND EXISTS (SELECT 1 FROM runs t WHERE t.root_run_id = r.id AND t.agent_id = l.id)
+               LIMIT l.bar) capped) >= l.bar
+)
+SELECT x.id, x.team_id,
+       (SELECT count(*) FROM runs r
+        WHERE r.team_id = x.team_id AND r.parent_run_id IS NULL AND r.created_at > x.since
+          AND EXISTS (SELECT 1 FROM run_outcomes o WHERE o.run_id = r.id)
+          AND EXISTS (SELECT 1 FROM runs t WHERE t.root_run_id = r.id AND t.agent_id = x.id))::int AS runs_since,
+       EXISTS (SELECT 1 FROM run_digests d WHERE d.agent_id = x.id AND d.created_at > x.since)::bool AS has_new
+FROM reached x
+ORDER BY x.team_id, x.id;
 
 -- An agent's newest finished runs, top-level or handed work, for pruning.
 -- name: ListAgentRecentRuns :many
@@ -87,9 +112,9 @@ WHERE team_id = sqlc.arg(team_id) AND started_at >= sqlc.arg(since)::timestamptz
 -- No row when the agent already has a pass running, or the workflow has
 -- begun its pass: the caller reads which.
 -- name: BeginImproverPass :one
-INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run_ids, model, workflow_id)
+INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run_ids, model, workflow_id, runs_seen)
 VALUES (sqlc.arg(team_id), sqlc.arg(agent_id), sqlc.arg(trigger), sqlc.arg(signatures),
-        sqlc.arg(pruned), sqlc.arg(run_ids), sqlc.arg(model), sqlc.arg(workflow_id))
+        sqlc.arg(pruned), sqlc.arg(run_ids), sqlc.arg(model), sqlc.arg(workflow_id), sqlc.narg(runs_seen))
 ON CONFLICT DO NOTHING
 RETURNING *;
 
@@ -235,3 +260,11 @@ FROM mcp_servers s LEFT JOIN mcp_tools t ON t.mcp_server_id = s.id
 WHERE s.team_id = $1
 GROUP BY s.id, s.name, s.bare
 ORDER BY s.name;
+
+-- The prune candidates each of these passes proposed removing: the rest of
+-- what it was given, it kept.
+-- name: ListPassPruneProposals :many
+SELECT p.pass_id::uuid AS pass_id, substring(p.signature FROM '^prune:(.*)$')::text AS candidate
+FROM improvement_proposals p
+WHERE p.pass_id = ANY (sqlc.arg(pass_ids)::uuid[]) AND starts_with(p.signature, 'prune:')
+ORDER BY p.created_at;

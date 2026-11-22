@@ -67,7 +67,7 @@ func (im *Improver) material(ctx context.Context, pass db.ImproverPass) (materia
 	if err != nil {
 		return m, err
 	}
-	m.runs, m.keys, m.prune, m.drewOn = map[uuid.UUID]bool{}, pass.Signatures, pass.Pruned, []uuid.UUID{}
+	m.runs, m.keys, m.prune, m.drewOn = map[uuid.UUID]bool{}, slices.Clone(pass.Signatures), pass.Pruned, []uuid.UUID{}
 	for _, id := range pass.RunIds {
 		m.runs[id] = true
 		m.drew(id)
@@ -155,7 +155,13 @@ func (im *Improver) writeContrast(ctx context.Context, pass db.ImproverPass, m *
 	var lines []string
 	for _, w := range wrong {
 		m.drew(w.RunID)
-		lines = append(lines, fmt.Sprintf("%s: %s", Key{Part: w.Part, Target: w.Target, Cause: w.Cause}, w.Summary))
+		k := Key{Part: w.Part, Target: w.Target, Cause: w.Cause}.String()
+		lines = append(lines, fmt.Sprintf("%s: %s", k, w.Summary))
+		// A daily pass has no pattern of its own: what it was shown going
+		// wrong is what its proposals may answer.
+		if !slices.Contains(m.keys, k) {
+			m.keys = append(m.keys, k)
+		}
 	}
 	write("What went wrong lately", lines...)
 	return nil

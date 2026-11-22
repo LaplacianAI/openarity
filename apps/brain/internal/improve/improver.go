@@ -184,7 +184,7 @@ func (im *Improver) Begin(ctx context.Context, plan plannedPass, workflowID stri
 	pass, err := im.store.BeginImproverPass(ctx, db.BeginImproverPassParams{
 		TeamID: plan.TeamID, AgentID: plan.AgentID, Trigger: plan.Trigger,
 		Signatures: orEmpty(plan.Keys), Pruned: orEmpty(plan.Prune), RunIds: ids, Model: model.Name,
-		WorkflowID: workflowID,
+		WorkflowID: workflowID, RunsSeen: plan.RunsSeen,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Another worker began this workflow's pass, or another pass for

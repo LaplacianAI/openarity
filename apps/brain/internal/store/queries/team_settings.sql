@@ -15,7 +15,7 @@ INSERT INTO team_settings (
     browser_provider, browser_url, browser_secret_id,
     judge_model_name, judge_model_max_tokens, judge_model_temperature,
     improvement_sample_share, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes,
-    improvement_since,
+    improvement_daily_runs, improvement_since,
     sandbox_keep_hours, sandbox_idle_minutes,
     sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 ) VALUES (
@@ -31,6 +31,7 @@ INSERT INTO team_settings (
     sqlc.arg(improvement_sample_share), COALESCE(sqlc.narg(improvement_daily_passes)::smallint, 20),
     COALESCE(sqlc.narg(improvement_pass_tokens)::integer, 400000),
     COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, 20),
+    COALESCE(sqlc.narg(improvement_daily_runs)::smallint, 5),
     CASE WHEN sqlc.arg(improvement)::bool THEN now() END,
     -- The caller sends what is stored for these when a save leaves them out:
     -- a null idle or size is the provider's, not "keep".
@@ -68,6 +69,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     improvement_daily_passes = COALESCE(sqlc.narg(improvement_daily_passes)::smallint, team_settings.improvement_daily_passes),
     improvement_pass_tokens  = COALESCE(sqlc.narg(improvement_pass_tokens)::integer, team_settings.improvement_pass_tokens),
     improvement_pass_minutes = COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, team_settings.improvement_pass_minutes),
+    improvement_daily_runs   = COALESCE(sqlc.narg(improvement_daily_runs)::smallint, team_settings.improvement_daily_runs),
     -- Set each time the switch goes on, kept while it stays on: runs from
     -- before it went on are never judged.
     improvement_since   = CASE

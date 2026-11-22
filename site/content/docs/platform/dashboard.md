@@ -69,11 +69,15 @@ waiting on the same target.
 
 The changes come from the **improver**. When one signature (the part of an
 agent's setup involved and the cause) recurs in three of its runs, or once a
-day when there is something new, a pass reads the agent's setup, the digests
+day for an agent with enough judged runs since its last pass (five until the
+team changes it) and something new to read, a pass reads the agent's setup, the digests
 behind the pattern, up to ten of its runs in full and its record of earlier
 proposals, and proposes zero or more changes; proposing nothing is the usual
-answer. It also offers to drop a skill the agent held in each of its last 50
-runs and never opened, or a tool it never called. Each proposal is held to its
+answer. A daily pass has no pattern of its own, so it may answer any failure it
+was shown. It also offers to drop a skill the agent held in each of its last 50
+runs and never opened, or a tool it never called; a candidate it looked at is
+not offered again for 30 days, and the Passes tab marks each one kept or
+proposed for removal. Each proposal is held to its
 kind's rules and screened by the judge model for one conversation's details (a
 name, an id, a quoted message) before it is stored. A newer pass's proposal replaces one an earlier pass left
 waiting on the same pattern, with the same kind of change to the same target; a
@@ -84,7 +88,9 @@ what came of it, its tokens, and its report, including why it left a pattern
 alone; a report drawn on a conversation the approver cannot read is withheld.
 A pass runs on the judge model, else the team's. Team settings cap what it
 costs: the passes a day (20 until changed), the tokens a pass may spend across
-its tries (400,000), and the minutes for each try (20); past either it stops
+its tries (400,000), the minutes for each try (20), and the judged runs an
+agent needs since its last pass before the daily pass looks at it (5); past
+the tokens or the minutes it stops
 and reports what it found. A pass cut short this way (or by improvement being
 turned off) with nothing proposed leaves its pattern open, offered again after
 six hours, and the Passes tab says it was cut short.
