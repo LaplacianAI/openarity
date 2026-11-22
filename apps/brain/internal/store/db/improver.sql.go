@@ -71,11 +71,11 @@ func (q *Queries) AnyDigestOutsider(ctx context.Context, arg AnyDigestOutsiderPa
 }
 
 const beginImproverPass = `-- name: BeginImproverPass :one
-INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run_ids, model, workflow_id)
+INSERT INTO improver_passes (team_id, agent_id, trigger, signatures, pruned, run_ids, model, workflow_id, runs_seen)
 VALUES ($1, $2, $3, $4,
-        $5, $6, $7, $8)
+        $5, $6, $7, $8, $9)
 ON CONFLICT DO NOTHING
-RETURNING id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at
+RETURNING id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at, runs_seen
 `
 
 type BeginImproverPassParams struct {
@@ -87,6 +87,7 @@ type BeginImproverPassParams struct {
 	RunIds     []uuid.UUID
 	Model      string
 	WorkflowID string
+	RunsSeen   *int32
 }
 
 // No row when the agent already has a pass running, or the workflow has
@@ -101,6 +102,7 @@ func (q *Queries) BeginImproverPass(ctx context.Context, arg BeginImproverPassPa
 		arg.RunIds,
 		arg.Model,
 		arg.WorkflowID,
+		arg.RunsSeen,
 	)
 	var i ImproverPass
 	err := row.Scan(
@@ -125,6 +127,7 @@ func (q *Queries) BeginImproverPass(ctx context.Context, arg BeginImproverPassPa
 		&i.StartedAt,
 		&i.AliveAt,
 		&i.FinishedAt,
+		&i.RunsSeen,
 	)
 	return i, err
 }
@@ -251,7 +254,7 @@ func (q *Queries) FinishImproverPass(ctx context.Context, arg FinishImproverPass
 }
 
 const getImproverPass = `-- name: GetImproverPass :one
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE id = $1
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at, runs_seen FROM improver_passes WHERE id = $1
 `
 
 func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPass, error) {
@@ -279,12 +282,13 @@ func (q *Queries) GetImproverPass(ctx context.Context, id uuid.UUID) (ImproverPa
 		&i.StartedAt,
 		&i.AliveAt,
 		&i.FinishedAt,
+		&i.RunsSeen,
 	)
 	return i, err
 }
 
 const getImproverPassByWorkflow = `-- name: GetImproverPassByWorkflow :one
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes WHERE workflow_id = $1
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at, runs_seen FROM improver_passes WHERE workflow_id = $1
 `
 
 func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID string) (ImproverPass, error) {
@@ -312,6 +316,7 @@ func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID stri
 		&i.StartedAt,
 		&i.AliveAt,
 		&i.FinishedAt,
+		&i.RunsSeen,
 	)
 	return i, err
 }
@@ -424,7 +429,7 @@ func (q *Queries) ListAgentRecentRuns(ctx context.Context, arg ListAgentRecentRu
 }
 
 const listImproverPasses = `-- name: ListImproverPasses :many
-SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at FROM improver_passes
+SELECT id, team_id, agent_id, trigger, signatures, pruned, run_ids, drew_on, status, cut_short, report, proposed, screened_out, model, input_tokens, output_tokens, error, workflow_id, started_at, alive_at, finished_at, runs_seen FROM improver_passes
 WHERE team_id = $1
   AND ($2::uuid IS NULL OR agent_id = $2::uuid)
   AND (NOT $3::bool
@@ -481,6 +486,7 @@ func (q *Queries) ListImproverPasses(ctx context.Context, arg ListImproverPasses
 			&i.StartedAt,
 			&i.AliveAt,
 			&i.FinishedAt,
+			&i.RunsSeen,
 		); err != nil {
 			return nil, err
 		}
@@ -493,26 +499,41 @@ func (q *Queries) ListImproverPasses(ctx context.Context, arg ListImproverPasses
 }
 
 const listImprovingAgents = `-- name: ListImprovingAgents :many
-SELECT a.id, a.team_id,
-       EXISTS (SELECT 1 FROM run_digests d
-               WHERE d.agent_id = a.id
-                 AND d.created_at > COALESCE((SELECT max(x.started_at) FROM improver_passes x
-                                              WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
-                                             '-infinity'::timestamptz))::bool AS has_new
-FROM agents a
-JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
-WHERE a.kind = 'custom'
-ORDER BY a.team_id, a.id
+WITH last AS (
+    SELECT a.id, a.team_id, ts.improvement_daily_runs AS bar,
+           COALESCE((SELECT max(x.started_at) FROM improver_passes x
+                     WHERE x.agent_id = a.id AND x.status = 'done' AND (NOT x.cut_short OR x.proposed > 0)),
+                    '-infinity'::timestamptz) AS since
+    FROM agents a
+    JOIN team_settings ts ON ts.team_id = a.team_id AND ts.improvement
+    WHERE a.kind = 'custom'
+), counted AS (
+    SELECT l.id, l.team_id, l.bar, l.since,
+           (SELECT count(*) FROM runs r JOIN run_outcomes o ON o.run_id = r.id
+            WHERE r.team_id = l.team_id AND r.parent_run_id IS NULL AND r.created_at > l.since
+              AND EXISTS (SELECT 1 FROM runs t WHERE t.root_run_id = r.id AND t.agent_id = l.id))::int AS runs_since
+    FROM last l
+)
+SELECT c.id, c.team_id, c.runs_since,
+       EXISTS (SELECT 1 FROM run_digests d WHERE d.agent_id = c.id AND d.created_at > c.since)::bool AS has_new
+FROM counted c
+WHERE c.runs_since >= c.bar
+ORDER BY c.team_id, c.id
 `
 
 type ListImprovingAgentsRow struct {
-	ID     uuid.UUID
-	TeamID uuid.UUID
-	HasNew bool
+	ID        uuid.UUID
+	TeamID    uuid.UUID
+	RunsSince int32
+	HasNew    bool
 }
 
 // Every custom agent of a team with improvement on, with whether it has a
 // digest newer than its newest finished pass: what the daily sweep reads.
+// Each custom agent in a team with improvement on that has had at least the
+// team's daily runs judged since its last pass: top-level runs whose tree
+// reaches it, created after that pass began (or ever, before its first).
+// has_new says whether any of them was digested.
 func (q *Queries) ListImprovingAgents(ctx context.Context) ([]ListImprovingAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listImprovingAgents)
 	if err != nil {
@@ -522,7 +543,46 @@ func (q *Queries) ListImprovingAgents(ctx context.Context) ([]ListImprovingAgent
 	var items []ListImprovingAgentsRow
 	for rows.Next() {
 		var i ListImprovingAgentsRow
-		if err := rows.Scan(&i.ID, &i.TeamID, &i.HasNew); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.RunsSince,
+			&i.HasNew,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPassPruneProposals = `-- name: ListPassPruneProposals :many
+SELECT p.pass_id::uuid AS pass_id, substr(p.signature, 7)::text AS candidate
+FROM improvement_proposals p
+WHERE p.pass_id = ANY ($1::uuid[]) AND p.signature LIKE 'prune:%'
+ORDER BY p.created_at
+`
+
+type ListPassPruneProposalsRow struct {
+	PassID    uuid.UUID
+	Candidate string
+}
+
+// The prune candidates each of these passes proposed removing: the rest of
+// what it was given, it kept.
+func (q *Queries) ListPassPruneProposals(ctx context.Context, passIds []uuid.UUID) ([]ListPassPruneProposalsRow, error) {
+	rows, err := q.db.Query(ctx, listPassPruneProposals, passIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPassPruneProposalsRow
+	for rows.Next() {
+		var i ListPassPruneProposalsRow
+		if err := rows.Scan(&i.PassID, &i.Candidate); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

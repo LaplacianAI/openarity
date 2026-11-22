@@ -27,6 +27,7 @@ const OFF: TeamSettings = {
   improvement_daily_passes: 20,
   improvement_pass_tokens: 400_000,
   improvement_pass_minutes: 20,
+  improvement_daily_runs: 5,
   improvement_since: null,
   compaction_messages: 100,
   compaction_tokens_min: 50_000,
@@ -42,6 +43,7 @@ const JUDGED: TeamSettings = {
   improvement_daily_passes: 20,
   improvement_pass_tokens: 400_000,
   improvement_pass_minutes: 20,
+  improvement_daily_runs: 5,
 };
 
 const SETTINGS = "/teams/{id}/settings";

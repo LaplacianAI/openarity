@@ -282,6 +282,8 @@ export type SettingsDraft = {
   /** What one try at a pass may spend, as typed. */
   passTokens: string;
   passMinutes: string;
+  /** The judged runs a daily pass waits for, as typed. */
+  dailyRuns: string;
   /** Messages, and the token lines, as typed: compared by value. */
   compaction: string;
   tokensMin: string;
@@ -321,6 +323,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     dailyPasses: String(s.improvement_daily_passes ?? 20),
     passTokens: grouped(s.improvement_pass_tokens ?? 400_000),
     passMinutes: String(s.improvement_pass_minutes ?? 20),
+    dailyRuns: String(s.improvement_daily_runs ?? 5),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -368,6 +371,7 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
     "dailyPasses",
     "passTokens",
     "passMinutes",
+    "dailyRuns",
   ],
 };
 
@@ -388,6 +392,7 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
   "dailyPasses",
   "passTokens",
   "passMinutes",
+  "dailyRuns",
 ]);
 
 /** Whether a group's fields differ from what the brain holds. */
@@ -553,6 +558,7 @@ function improvementRequest(
       | "improvement_daily_passes"
       | "improvement_pass_tokens"
       | "improvement_pass_minutes"
+      | "improvement_daily_runs"
     >
   | string {
   const base = draftOf(stored);
@@ -563,6 +569,7 @@ function improvementRequest(
     | "improvement_daily_passes"
     | "improvement_pass_tokens"
     | "improvement_pass_minutes"
+    | "improvement_daily_runs"
   > = {};
   const judgeChanged = (
     ["judgeOn", "judgeName", "judgeMaxTokens", "judgeTemperature"] as const
@@ -606,6 +613,13 @@ function improvementRequest(
       return "Minutes a try must be a whole number from 1 to 25.";
     }
     out.improvement_pass_minutes = minutes;
+  }
+  if (parseWhole(d.dailyRuns) !== parseWhole(base.dailyRuns)) {
+    const runs = wholeNumber(d.dailyRuns);
+    if (runs === null || runs < 1 || runs > 100) {
+      return "Runs before a daily pass must be a whole number from 1 to 100.";
+    }
+    out.improvement_daily_runs = runs;
   }
   return out;
 }
@@ -1793,6 +1807,20 @@ function SettingsForm({
                   className="max-w-40 tabular-nums"
                   value={draft.passMinutes}
                   onChange={(e) => set("improvement", { passMinutes: e.target.value })}
+                />
+              </Field>
+              <Field
+                label="Runs before a daily pass, at least"
+                htmlFor="settings-daily-runs"
+                hint="The daily pass looks at an agent once it has had this many judged runs since its last pass; one with fewer waits for more. From 1 to 100."
+              >
+                <Input
+                  id="settings-daily-runs"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="max-w-40 tabular-nums"
+                  value={draft.dailyRuns}
+                  onChange={(e) => set("improvement", { dailyRuns: e.target.value })}
                 />
               </Field>
             </div>

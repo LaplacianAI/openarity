@@ -280,6 +280,7 @@ type ImproverPass struct {
 	StartedAt    time.Time
 	AliveAt      time.Time
 	FinishedAt   *time.Time
+	RunsSeen     *int32
 }
 
 type McpOauthClient struct {
@@ -663,6 +664,7 @@ type TeamSetting struct {
 	SandboxWorkspaceMemoryMb *int32
 	SandboxWorkspaceCpus     *int32
 	SandboxWorkspaceDiskMb   *int32
+	ImprovementDailyRuns     int16
 }
 
 type User struct {

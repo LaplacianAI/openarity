@@ -31,7 +31,7 @@ func TestThePassBudgetIsSentOnlyWhenGiven(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"improvement_pass_tokens", "improvement_pass_minutes"} {
+	for _, k := range []string{"improvement_pass_tokens", "improvement_pass_minutes", "improvement_daily_runs"} {
 		if v, has := body[k]; has {
 			t.Errorf("%s = %v sent without a flag", k, v)
 		}
@@ -43,6 +43,13 @@ func TestThePassBudgetIsSentOnlyWhenGiven(t *testing.T) {
 	if body["improvement_pass_tokens"] != float64(100000) || body["improvement_pass_minutes"] != float64(25) {
 		t.Errorf("sent %v and %v", body["improvement_pass_tokens"], body["improvement_pass_minutes"])
 	}
+	body, _, err = set(t, budgetSaved, "--daily-runs", "8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body["improvement_daily_runs"] != float64(8) {
+		t.Errorf("sent daily runs %v, want 8", body["improvement_daily_runs"])
+	}
 }
 
 func TestThePassBudgetOutOfRangeRefusesBeforeSending(t *testing.T) {
@@ -51,6 +58,8 @@ func TestThePassBudgetOutOfRangeRefusesBeforeSending(t *testing.T) {
 		{"--pass-tokens", "2000001", "100000 to 2000000"},
 		{"--pass-minutes", "0", "1 to 25"},
 		{"--pass-minutes", "26", "1 to 25"},
+		{"--daily-runs", "0", "1 to 100"},
+		{"--daily-runs", "101", "1 to 100"},
 	} {
 		t.Run(tc.flag+tc.n, func(t *testing.T) {
 			script := settingsRoutes(t, budgetSaved, http.StatusOK)

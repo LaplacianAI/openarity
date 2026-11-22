@@ -6933,6 +6933,15 @@ components:
           description: >-
             The minutes one try at an improver pass may run; past them it
             stops and reports what it has. 20 until set.
+        improvement_daily_runs:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+          description: >-
+            The judged runs an agent needs since its last pass before the
+            daily pass looks at it; one with fewer waits for more. 5 until
+            set.
         improvement_since:
           type: string
           format: date-time
@@ -7201,6 +7210,12 @@ components:
           format: int32
           minimum: 1
           maximum: 25
+          description: Left out, the stored value stays.
+        improvement_daily_runs:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
           description: Left out, the stored value stays.
         compaction_messages:
           type: integer
@@ -7707,7 +7722,7 @@ components:
 
     ImproverPass:
       type: object
-      required: [id, agent, trigger, signatures, pruned, status, cut_short, report, report_withheld, proposed, screened_out, model, input_tokens, output_tokens, started_at]
+      required: [id, agent, trigger, signatures, pruned, prune_proposed, status, cut_short, report, report_withheld, proposed, screened_out, model, input_tokens, output_tokens, started_at]
       properties:
         id:
           type: string
@@ -7725,9 +7740,19 @@ components:
             type: string
         pruned:
           type: array
-          description: The prune candidates it was given, skill:<name> or tool:<server>/<tool>
+          description: The prune candidates it was given to look at, skill:<name> or tool:<server>/<tool>
           items:
             type: string
+        prune_proposed:
+          type: array
+          description: The candidates it proposed removing; it kept the rest of `pruned`
+          items:
+            type: string
+        runs_seen:
+          type: integer
+          format: int32
+          nullable: true
+          description: The judged runs a daily pass had since the agent's last pass; null for one a pattern started
         status:
           type: string
           enum: [running, done, failed]

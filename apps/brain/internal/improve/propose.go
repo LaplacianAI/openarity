@@ -95,8 +95,13 @@ var widening = []string{
 func (t *passTools) propose(ctx context.Context, raw json.RawMessage) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.proposed >= proposalsPerPass || t.refused >= refusalsPerPass {
-		return "This pass is done proposing: finish with your report.", nil
+	// Said as a refusal, so the improver knows nothing was stored and can
+	// say so in its report.
+	switch {
+	case t.proposed >= proposalsPerPass:
+		return fmt.Sprintf("Not stored: this pass has made its %d proposals and is done proposing; finish with your report.", proposalsPerPass), nil
+	case t.refused >= refusalsPerPass:
+		return fmt.Sprintf("Not stored: this pass had %d proposals refused and is done proposing; finish with your report, saying what you would have proposed.", refusalsPerPass), nil
 	}
 	stored, err := t.proposeOnce(ctx, raw)
 	if r, ok := asRefusal(err); ok {

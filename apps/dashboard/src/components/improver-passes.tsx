@@ -19,13 +19,17 @@ import { anyPassRunning, passOutcome, prunedWords, signatureWords } from "@/lib/
 import { count } from "@/lib/runs";
 import { cn } from "@/lib/utils";
 
-/** "A pattern: tool · crm__close_ticket · misused tool", or "The daily pass", and what it pruned. */
+/** "A pattern: tool · crm__close_ticket · misused tool", or "The daily pass, after 5 runs", and how many prune candidates it looked at. */
 function Why({ pass }: { pass: ImproverPass }) {
   const sigs = pass.signatures.map(signatureWords);
   return (
     <>
       {pass.trigger === "daily" ? (
-        "The daily pass"
+        pass.runs_seen ? (
+          `The daily pass, after ${count(pass.runs_seen, "judged run")}`
+        ) : (
+          "The daily pass"
+        )
       ) : sigs.length === 0 ? (
         "A pattern"
       ) : (
@@ -48,9 +52,32 @@ function Why({ pass }: { pass: ImproverPass }) {
         </>
       )}
       {pass.pruned.length > 0
-        ? ` and ${pass.pruned.length.toLocaleString("en-US")} to prune`
+        ? `, ${count(pass.pruned.length, "prune candidate")} looked at`
         : null}
     </>
+  );
+}
+
+/**
+ * The prune candidates a pass looked at: unused in the agent's last 50 runs.
+ * Each says whether the pass proposed removing it or kept it.
+ */
+function PruneLooks({ pass }: { pass: ImproverPass }) {
+  const proposed = new Set(pass.prune_proposed ?? []);
+  return (
+    <div className="space-y-1 text-xs text-muted-foreground">
+      <p>Prune candidates it looked at, unused in the agent's last 50 runs:</p>
+      <ul aria-label="Prune candidates" className="flex flex-wrap gap-x-3 gap-y-1">
+        {pass.pruned.map((c) => (
+          <li key={c} data-prune={proposed.has(c) ? "proposed" : "kept"}>
+            {prunedWords(c)}{" "}
+            <span className={proposed.has(c) ? "text-foreground" : undefined}>
+              ({proposed.has(c) ? "proposed removing" : "kept"})
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -122,11 +149,7 @@ export function ImproverPassRow({ pass }: { pass: ImproverPass }) {
       </div>
       {open ? (
         <div id={reportId} className="space-y-2 pl-[1.375rem]">
-          {pass.pruned.length > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              To prune: {pass.pruned.map(prunedWords).join(", ")}
-            </p>
-          ) : null}
+          {pass.pruned.length > 0 ? <PruneLooks pass={pass} /> : null}
           {pass.report_withheld ? (
             <p className="text-sm text-muted-foreground">
               The report draws on a conversation you can't read, so it isn't shown. Someone who can

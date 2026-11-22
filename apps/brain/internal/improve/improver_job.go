@@ -137,8 +137,9 @@ func (j *ImproverJob) sweepPatterns(ctx context.Context, now time.Time) error {
 	return errors.Join(failed...)
 }
 
-// sweepDaily queues a pass for each agent with new digests or a prune
-// candidate, once a day.
+// sweepDaily queues a pass, once a day, for each agent with the team's
+// daily runs judged since its last pass and something to read: a new digest
+// or a prune candidate. One with fewer runs waits for more.
 func (j *ImproverJob) sweepDaily(ctx context.Context, now time.Time) error {
 	agents, err := j.sweeps.ListImprovingAgents(ctx)
 	if err != nil {
@@ -154,7 +155,8 @@ func (j *ImproverJob) sweepDaily(ctx context.Context, now time.Time) error {
 		if !a.HasNew && len(prune) == 0 {
 			continue
 		}
-		p := plannedPass{TeamID: a.TeamID, AgentID: a.ID, Trigger: triggerDaily, Prune: prune}
+		seen := a.RunsSince
+		p := plannedPass{TeamID: a.TeamID, AgentID: a.ID, Trigger: triggerDaily, Prune: prune, RunsSeen: &seen}
 		if err := j.enqueue(p, "improver:"+a.ID.String()+":daily:"+now.UTC().Format(idDay)); err != nil {
 			failed = append(failed, err)
 		}

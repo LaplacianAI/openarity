@@ -26,7 +26,7 @@ const defaultJudgeMaxTokens = 4096
 var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
-	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share", "daily-passes", "pass-tokens", "pass-minutes",
+	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share", "daily-passes", "pass-tokens", "pass-minutes", "daily-runs",
 	"compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 	"keep-stopped-hours", "stop-idle-minutes", "no-stop-idle-minutes", "workspace-memory-mb", "workspace-cpus", "workspace-disk-mb", "no-workspace-size",
@@ -100,6 +100,7 @@ type settingsFlags struct {
 	dailyPasses      int32
 	passTokens       int32
 	passMinutes      int32
+	dailyRuns        int32
 
 	compaction int32
 	tokensMin  int32
@@ -266,6 +267,8 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		"the tokens an improver pass may spend across its tries, 100000 to 2000000; 400000 until set")
 	cmd.Flags().Int32Var(&f.passMinutes, "pass-minutes", 0,
 		"the minutes one try at an improver pass may run, 1 to 25; 20 until set")
+	cmd.Flags().Int32Var(&f.dailyRuns, "daily-runs", 0,
+		"the judged runs an agent needs since its last pass before the daily pass looks at it, 1 to 100; 5 until set")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().Int32Var(&f.tokensMin, "compaction-tokens-min", 0,
 		"the least a run's next request may read before it compacts, 30000 to 1000000")
@@ -310,6 +313,8 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return fmt.Errorf("--pass-tokens is a count of tokens, 100000 to 2000000, not %d", f.passTokens)
 	case changed("pass-minutes") && (f.passMinutes < 1 || f.passMinutes > 25):
 		return fmt.Errorf("--pass-minutes is a count of minutes, 1 to 25, not %d", f.passMinutes)
+	case changed("daily-runs") && (f.dailyRuns < 1 || f.dailyRuns > 100):
+		return fmt.Errorf("--daily-runs is a count of runs, 1 to 100, not %d", f.dailyRuns)
 	case changed("keep-stopped-hours") && (f.keepHours < 1 || f.keepHours > 720):
 		return fmt.Errorf("--keep-stopped-hours is a count of hours, 1 to 720, not %d", f.keepHours)
 	case changed("stop-idle-minutes") && (f.idleMinutes < 1 || f.idleMinutes > 1440):
@@ -430,6 +435,9 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 	}
 	if changed("pass-tokens") {
 		req.ImprovementPassTokens = &f.passTokens
+	}
+	if changed("daily-runs") {
+		req.ImprovementDailyRuns = &f.dailyRuns
 	}
 	if changed("pass-minutes") {
 		req.ImprovementPassMinutes = &f.passMinutes
@@ -665,6 +673,9 @@ func printJudge(table *printer.Table, opts *cli.Options, s *client.TeamSettings)
 	if s.ImprovementPassTokens != nil && s.ImprovementPassMinutes != nil {
 		table.Row(label("pass budget"), value(strconv.Itoa(int(*s.ImprovementPassTokens))+" tokens a pass, "+
 			strconv.Itoa(int(*s.ImprovementPassMinutes))+" minutes a try"))
+	}
+	if s.ImprovementDailyRuns != nil {
+		table.Row(label("daily pass"), value("after "+strconv.Itoa(int(*s.ImprovementDailyRuns))+" judged runs since an agent's last pass"))
 	}
 }
 

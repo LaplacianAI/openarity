@@ -884,6 +884,8 @@ export type TeamSettings = {
   improvement_pass_tokens: number;
   /** The minutes one try at a pass may run; 1 to 25. */
   improvement_pass_minutes: number;
+  /** The judged runs an agent needs since its last pass before the daily pass looks at it. */
+  improvement_daily_runs: number;
   /** When improvement was last turned on; runs that finished before it are never judged. Read only. */
   improvement_since: string | null;
   compaction_messages: number;
@@ -935,6 +937,7 @@ export type TeamSettingsRequest = {
   improvement_pass_tokens?: number;
   /** 1 to 25. Left out, the stored value stays. */
   improvement_pass_minutes?: number;
+  improvement_daily_runs?: number;
   compaction_messages: number;
   /** Left out, the stored value stays. */
   compaction_tokens_min?: number;
@@ -1201,8 +1204,12 @@ export type ImproverPass = {
   trigger: ImproverTrigger;
   /** "part:target:cause", as "tool:crm__close_ticket:misused_tool"; the target may be empty. */
   signatures: string[];
-  /** What it proposed to drop: "skill:<name>" or "tool:<server>/<tool>". */
+  /** The prune candidates it was given to look at: "skill:<name>" or "tool:<server>/<tool>". */
   pruned: string[];
+  /** The candidates it proposed removing; it kept the rest of pruned. */
+  prune_proposed: string[];
+  /** The judged runs a daily pass had since the agent's last pass; null for one a pattern started. */
+  runs_seen?: number | null;
   status: ImproverPassStatus;
   /** Done before it finished: out of steps, tokens or time, improvement turned off, or its agent gone. */
   cut_short: boolean;

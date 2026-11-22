@@ -28,6 +28,7 @@ const (
 	minPassTokens  = 100_000
 	maxPassTokens  = 2_000_000
 	maxPassMinutes = 25
+	maxDailyRuns   = 100
 
 	minCompaction = 10
 	maxCompaction = 10000
@@ -60,6 +61,9 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 	}
 	if n := req.ImprovementPassMinutes; n != nil && (*n < 1 || *n > maxPassMinutes) {
 		return fmt.Errorf("improvement_pass_minutes must be between 1 and %d", maxPassMinutes)
+	}
+	if n := req.ImprovementDailyRuns; n != nil && (*n < 1 || *n > maxDailyRuns) {
+		return fmt.Errorf("improvement_daily_runs must be between 1 and %d", maxDailyRuns)
 	}
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
 		return fmt.Errorf("compaction_messages must be between %d and %d", minCompaction, maxCompaction)
