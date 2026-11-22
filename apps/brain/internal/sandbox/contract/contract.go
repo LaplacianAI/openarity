@@ -139,9 +139,14 @@ func Workspace(t *testing.T, rooms sandbox.Rooms, image string, hc *http.Client)
 		if err := rooms.Stop(ctx, room); err != nil {
 			t.Fatalf("Stop of a stopped room: %v", err)
 		}
-		// Stopped is not running: what it held is given back.
-		if healthy(ctx, ep) {
-			t.Fatal("the workspace still answers after Stop")
+		// Stopped is not running: what it held is given back. A provider
+		// may finish a stop after answering, so it has a little while.
+		deadline := time.Now().Add(30 * time.Second)
+		for healthy(ctx, ep) {
+			if time.Now().After(deadline) {
+				t.Fatal("the workspace still answers 30s after Stop")
+			}
+			time.Sleep(time.Second)
 		}
 		if err := rooms.Resume(ctx, room, want.Argv); err != nil {
 			t.Fatalf("Resume: %v", err)

@@ -200,7 +200,11 @@ func statusError(status int, raw []byte) error {
 	case http.StatusNotFound:
 		return sandbox.ErrNotFound
 	case http.StatusServiceUnavailable:
-		if e.Error == "the sandbox is busy" {
+		// sandboxd says why after its prefix; an older one says only that.
+		if strings.HasPrefix(e.Error, "the sandbox is busy") {
+			if reason := strings.TrimPrefix(e.Error, "the sandbox is busy"); reason != "" {
+				return fmt.Errorf("%w%s", sandbox.ErrFull, reason)
+			}
 			return sandbox.ErrFull
 		}
 	case http.StatusConflict:

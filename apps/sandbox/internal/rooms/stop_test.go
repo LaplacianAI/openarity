@@ -2,6 +2,7 @@ package rooms
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -127,8 +128,9 @@ func TestANewWorkspacePastTheDiskBudgetIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Start(t.Context(), id, []string{"sandbox", "workspace"}); !errors.Is(err, ErrBusy) {
-		t.Fatalf("err = %v, want ErrBusy", err)
+	err = s.Start(t.Context(), id, []string{"sandbox", "workspace"})
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "stopped workspaces keep theirs") {
+		t.Fatalf("err = %v, want ErrBusy saying stopped workspaces hold the disk", err)
 	}
 	if _, ok := e.containers[containerName(id)]; ok {
 		t.Fatal("a container was made past the disk budget")

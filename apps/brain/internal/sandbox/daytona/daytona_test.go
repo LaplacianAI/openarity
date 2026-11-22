@@ -40,8 +40,9 @@ type fake struct {
 	calls  []call
 	states []string // GET /sandbox/{id} answers these in turn, then the last
 	create func(w http.ResponseWriter)
-	// failExec makes the toolbox refuse to run a command.
-	failExec bool
+	// failExec makes the toolbox refuse to run a command, and failStop
+	// Daytona refuse a stop.
+	failExec, failStop bool
 	// shown is the state the last GET answered; a start is refused while
 	// it is on its way somewhere else, as Daytona refuses one.
 	shown string
@@ -125,6 +126,11 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"cmdId":"c1"}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/stop":
+		if f.failStop {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"runner unavailable"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"stopping"}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/start":
 		f.mu.Lock()
@@ -747,5 +753,27 @@ func TestAResumeWhoseCommandFailsStopsTheSandboxAgain(t *testing.T) {
 	}
 	if p := f.paths(); p[len(p)-1] != "POST /api/sandbox/sb-1/stop" {
 		t.Fatalf("calls = %s, want a stop last", strings.Join(p, ","))
+	}
+}
+
+// A sandbox that fails while it starts is gone too, not a plain error: the
+// keeper replaces it on this call rather than the next.
+func TestAResumeThatFailsWhileStartingIsErrNotFound(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "error"}
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"x"}); !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// A cleanup stop that fails is said, so the room left started without its
+// command is not a mystery when the keeper replaces it.
+func TestAFailedCleanupStopIsSaid(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "started"}
+	f.failExec, f.failStop = true, true
+	err := f.client().Resume(t.Context(), "sb-1", []string{"x"})
+	if err == nil || !strings.Contains(err.Error(), "stopping it again failed") {
+		t.Fatalf("err = %v", err)
 	}
 }

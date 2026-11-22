@@ -167,11 +167,11 @@ func (c *Client) waitStarted(ctx context.Context, v sandboxView) error {
 	ctx, cancel := context.WithTimeout(ctx, c.StartTimeout)
 	defer cancel()
 	for {
-		switch v.State {
-		case "started":
+		switch {
+		case v.State == "started":
 			return nil
-		case "error", "build_failed", "destroyed", "destroying", "deleted", "deleting":
-			return fmt.Errorf("daytona: sandbox %s is %s: %s", v.ID, v.State, truncate(v.ErrorReason))
+		case gone(v.State):
+			return fmt.Errorf("%w: daytona: sandbox %s is %s: %s", sandbox.ErrNotFound, v.ID, v.State, truncate(v.ErrorReason))
 		}
 		select {
 		case <-ctx.Done():
@@ -272,10 +272,23 @@ func (c *Client) Resume(ctx context.Context, room string, argv []string) error {
 	if err := c.Start(ctx, room, argv); err != nil {
 		stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
-		_ = c.Stop(stop, room)
+		if serr := c.Stop(stop, room); serr != nil {
+			// Left started without its command: the next Resume finds it so,
+			// runs nothing, and the keeper replaces it, without its files.
+			return fmt.Errorf("%w; stopping it again failed too: %w", err, serr)
+		}
 		return err
 	}
 	return nil
+}
+
+// gone is a state a sandbox does not come back from: the keeper replaces it.
+func gone(state string) bool {
+	switch state {
+	case "error", "build_failed", "destroyed", "destroying", "deleted", "deleting":
+		return true
+	}
+	return false
 }
 
 // settle waits out a sandbox on its way between states, and returns it
@@ -288,10 +301,10 @@ func (c *Client) settle(ctx context.Context, room string) (sandboxView, error) {
 		if err := c.do(ctx, http.MethodGet, c.apiURL+"/sandbox/"+url.PathEscape(room), nil, &v, nil); err != nil {
 			return v, err
 		}
-		switch v.State {
-		case "started", "stopped", "archived":
+		switch {
+		case v.State == "started" || v.State == "stopped" || v.State == "archived":
 			return v, nil
-		case "error", "build_failed", "destroyed", "destroying", "deleted", "deleting":
+		case gone(v.State):
 			return v, fmt.Errorf("%w: daytona: sandbox %s is %s: %s", sandbox.ErrNotFound, room, v.State, truncate(v.ErrorReason))
 		}
 		select {

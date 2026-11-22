@@ -115,7 +115,9 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, rooms.ErrNotFound):
 		writeError(w, http.StatusNotFound, "no such room")
 	case errors.Is(err, rooms.ErrBusy):
-		writeError(w, http.StatusServiceUnavailable, "the sandbox is busy")
+		// It starts "the sandbox is busy", which a client reads as full, and
+		// may say why.
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, rooms.ErrUnavailable):
 		// the message names the image, and the daemon's reason
 		writeError(w, http.StatusServiceUnavailable, err.Error())

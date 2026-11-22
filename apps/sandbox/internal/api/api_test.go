@@ -184,6 +184,7 @@ func TestServiceErrorsMapToStatuses(t *testing.T) {
 		body   string
 	}{
 		{rooms.ErrBusy, 503, `{"error":"the sandbox is busy"}`},
+		{fmt.Errorf("%w: the workspaces' disk is spent", rooms.ErrBusy), 503, `{"error":"the sandbox is busy: the workspaces' disk is spent"}`},
 		{fmt.Errorf("%w: two hosts", rooms.ErrRefused), 422, "two hosts"},
 		{fmt.Errorf("%w: pulling the image \"ghcr.io/o/r:1\" failed: docker answered 404: not found", rooms.ErrUnavailable), 503, "ghcr.io/o/r:1"},
 		{rooms.ErrNotFound, 404, "no such room"},

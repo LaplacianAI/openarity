@@ -45,8 +45,11 @@ type roomEffect struct {
 // for the next.
 const stopsPerSweep = 50
 
-// stopTimeout bounds one provider stop within a sweep.
+// stopTimeout bounds one provider stop within a sweep, and sweepStopTimeout
+// all of them: shorter than a run's own stop, which has one room to stop.
 const stopTimeout = 30 * time.Second
+
+var sweepStopTimeout = 2 * time.Minute // a var so a test can shorten it
 
 // Rooms deletes the sandbox rooms nothing owns any longer: those of a deleted
 // owner, of a team that changed its provider or key, or replaced by a newer
@@ -105,14 +108,22 @@ func (e roomEffect) stopIdle(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	stopped := 0
+	// A time for the whole pass, so a provider that is down costs the
+	// tombstones behind it minutes at most; the rest wait for the next sweep.
+	pass, cancel := context.WithTimeout(ctx, sweepStopTimeout)
+	defer cancel()
+	failed, asked := 0, 0
 	for _, row := range rows {
-		if e.stopOne(ctx, row) {
-			stopped++
+		if pass.Err() != nil {
+			break
+		}
+		asked++
+		if !e.stopOne(pass, row) {
+			failed++
 		}
 	}
-	if len(rows) > 0 {
-		e.logger.InfoContext(ctx, "idle workspaces stopped", "stopped", stopped, "listed", len(rows))
+	if asked > 0 {
+		e.logger.InfoContext(ctx, "idle workspaces asked to stop", "asked", asked, "failed", failed, "listed", len(rows))
 	}
 	return nil
 }

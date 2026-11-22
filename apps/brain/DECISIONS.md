@@ -19,6 +19,8 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     `runs.session_id` is never null, so there is no room per run.
   - **A room found gone is never retried.** An `Edit` or a `Bash` sent twice
     could act twice; the model is told and its next call starts a fresh room.
+    A room the keeper replaces before a call reaches it is said the same way,
+    as `sandbox.ErrReplaced` (see the workspace stop decision below).
     Later calls only touch the row (`TouchSandboxRoomByOwner`), because
     `Ensure` takes the owner's lock and probes the room on every call.
   - **`Bash` is a write; the other five read.** A command can send anything to
@@ -913,6 +915,13 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     as if the files were there. Failing every call until the keep hours end
     was the other choice; it keeps files nobody can reach and leaves the
     conversation without a workspace for up to 30 days.
+  - **A deploy replaces every workspace.** The image is part of a room's
+    spec hash and is named for the release's commit, so a new commit gives
+    each conversation a new room, without its files, and the model is told.
+    Leaving the image out of a workspace's hash would keep files across a
+    deploy, at the price of rooms that run an old workspace server for as
+    long as they are used; carrying `/workspace` across an upgrade is a
+    follow-up, not this.
   - **A running workspace that does not answer is resumed once before it is
     replaced:** the provider may have stopped it without the row hearing (a
     mark that failed, a run's end cut short, sandboxd's disk watcher).

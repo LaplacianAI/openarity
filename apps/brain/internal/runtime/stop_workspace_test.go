@@ -79,3 +79,26 @@ func TestTheStopOutlivesTheRunsFinish(t *testing.T) {
 		t.Fatalf("stops = %+v, want the room stopped though the finish's context was spent", got)
 	}
 }
+
+// The reply goes first: a provider's pause can take a while, and the person
+// waiting for the answer should not wait for it too.
+func TestTheReplyIsSentBeforeTheWorkspaceStops(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("42", 100, 20)))
+	ws := &fakeWorkspaces{room: newFakeRoom(t)}
+	f.exec.builder.WithWorkspaces(&WorkspaceDeps{Rooms: ws})
+	f.mustExec(t, `UPDATE runs SET reply_to_channel = true WHERE id = $1`, f.run)
+	stopsAtKick := -1
+	f.exec.kickReply = func(uuid.UUID) error {
+		stopsAtKick = len(ws.stopped())
+		return nil
+	}
+
+	f.mustExecute(t)
+
+	if stopsAtKick != 0 {
+		t.Fatalf("the workspace was stopped before the reply was kicked (%d stops then)", stopsAtKick)
+	}
+	if got := ws.stopped(); len(got) != 1 || !got[0].idle {
+		t.Fatalf("stops = %+v", got)
+	}
+}

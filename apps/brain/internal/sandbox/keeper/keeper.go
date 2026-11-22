@@ -309,15 +309,15 @@ func (k *Keeper) reuse(
 		return sandbox.Endpoint{}, false, fmt.Errorf("finding the room: %w", err)
 	}
 
-	if answers := k.healthy(ctx, base, w, token) == nil; !answers {
+	if err := k.healthy(ctx, base, w, token); err != nil {
+		k.logger.InfoContext(ctx, "keeper: a room does not answer",
+			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "room", row.RoomID, "error", err)
 		if w.Workspace {
 			// It may have been stopped without the row hearing of it (the
 			// mark failed, the run's end timed out, sandboxd stopped it over
 			// its disk): a resume brings it back with its files.
 			return k.resume(ctx, rooms, row, w, token)
 		}
-		k.logger.InfoContext(ctx, "keeper: a room does not answer, replacing it",
-			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "room", row.RoomID)
 		return sandbox.Endpoint{}, false, nil
 	}
 

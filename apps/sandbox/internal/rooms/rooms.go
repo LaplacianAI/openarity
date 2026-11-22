@@ -625,7 +625,10 @@ func (s *Service) workspaceVolume(ctx context.Context, id string, sp Spec) error
 		used += n
 	}
 	if used > s.limits.DiskBudget {
-		return ErrBusy
+		s.logger.Warn("a workspace was refused: the workspaces' disk is spent",
+			"room", id, "volumes", len(sizes), "used_bytes", used, "budget_bytes", s.limits.DiskBudget)
+		return fmt.Errorf("%w: the workspaces' disk is spent (%d MiB with this one, of %d MiB); "+
+			"stopped workspaces keep theirs until their keep hours end", ErrBusy, used>>20, s.limits.DiskBudget>>20)
 	}
 	return s.engine.CreateVolume(ctx, volumeName(id), map[string]string{roomLabel: id})
 }
