@@ -6,6 +6,10 @@ SET LOCAL lock_timeout = '3s';
 -- null is a room that runs.
 ALTER TABLE sandbox_rooms ADD COLUMN stopped_at timestamptz;
 
+-- The reaper's sweep for stopped rooms past their keep hours reads only
+-- these; a running room has none.
+CREATE INDEX sandbox_rooms_stopped_idx ON sandbox_rooms (stopped_at) WHERE stopped_at IS NOT NULL;
+
 -- How long a team's stopped workspace keeps its files before it is deleted,
 -- and how long a running one may go unused before it is stopped. Null idle
 -- minutes is the deployment's OPENARITY_SANDBOX_IDLE.
@@ -53,4 +57,5 @@ ALTER TABLE team_settings
     DROP COLUMN sandbox_idle_minutes,
     DROP COLUMN sandbox_keep_hours;
 
+DROP INDEX sandbox_rooms_stopped_idx;
 ALTER TABLE sandbox_rooms DROP COLUMN stopped_at;

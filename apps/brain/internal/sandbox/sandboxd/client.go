@@ -131,7 +131,13 @@ func (c *Client) Stop(ctx context.Context, room string) error {
 // Resume starts the room again. Docker starts the room's container with its
 // own command, so argv is not sent.
 func (c *Client) Resume(ctx context.Context, room string, _ []string) error {
-	return c.do(ctx, http.MethodPost, roomPath(room)+"/resume", nil, http.StatusNoContent, nil)
+	err := c.do(ctx, http.MethodPost, roomPath(room)+"/resume", nil, http.StatusNoContent, nil)
+	if isNotStarted(err) {
+		// Its container is gone (pruned, or never made): there is nothing
+		// to resume, and the keeper replaces it.
+		return fmt.Errorf("%w: %w", sandbox.ErrNotFound, err)
+	}
+	return err
 }
 
 func roomPath(room string) string { return "/v1/rooms/" + url.PathEscape(room) }

@@ -68,7 +68,12 @@ LEFT JOIN team_settings ts ON ts.team_id = r.team_id
 WHERE r.owner_kind = 'session'
   AND r.stopped_at IS NULL
   AND r.last_used_at < now() - make_interval(mins => coalesce(ts.sandbox_idle_minutes, sqlc.arg('default_minutes')::int))
-ORDER BY r.last_used_at
+  AND NOT EXISTS (
+      SELECT 1 FROM runs o WHERE o.session_id = r.owner_id AND o.status IN ('queued', 'running'))
+-- In no fixed order: a room that cannot be stopped now (a provider that is
+-- down, a key since replaced) is listed again, and must not keep the head of
+-- every sweep from the others.
+ORDER BY random()
 LIMIT sqlc.arg('max');
 
 -- Stopped rooms past their team's keep hours (a running room's NULL

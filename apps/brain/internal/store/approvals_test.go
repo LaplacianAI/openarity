@@ -544,8 +544,9 @@ func TestEveryUnfinishedClauseNamesWaiting(t *testing.T) {
 		// A run waiting for a person may wait hours: its workspace is stopped
 		// meanwhile, freeing the memory, and resumed with its files when the
 		// run calls it again.
-		"IdleSessionOf": "a waiting run does not hold its session's workspace running",
-		"SessionIsIdle": "a waiting run does not hold its session's workspace running",
+		"IdleSessionOf":          "a waiting run does not hold its session's workspace running",
+		"SessionIsIdle":          "a waiting run does not hold its session's workspace running",
+		"ListIdleWorkspaceRooms": "a waiting run does not hold its session's workspace running",
 	}
 	seen := map[string]bool{}
 

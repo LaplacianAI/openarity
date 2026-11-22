@@ -290,6 +290,16 @@ func TestStopOfARoomNeverStartedIsNotAnError(t *testing.T) {
 	}
 }
 
+// A room whose container is gone has nothing to resume: ErrNotFound, so the
+// keeper replaces it rather than failing every call until it expires.
+func TestAResumeOfARoomNeverStartedIsErrNotFound(t *testing.T) {
+	s := newServer(t, http.StatusConflict, `{"error":"the room has not started"}`)
+	err := sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil)
+	if !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestAResumeSandboxdHasNoRoomForIsErrFull(t *testing.T) {
 	s := newServer(t, http.StatusServiceUnavailable, `{"error":"the sandbox is busy"}`)
 	err := sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil)

@@ -263,6 +263,11 @@ func checkURL(field, raw string, allow func(netip.Addr) bool, schemes ...string)
 // is sent again when the provider or its URL changes, so a key is never sent
 // somewhere it was not saved for.
 func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Addr) bool) error {
+	// Before the provider: the times are stored whatever it is, and a bad one
+	// is the caller's to hear, not the table's CHECK.
+	if err := checkLifecycle(s); err != nil {
+		return err
+	}
 	switch s.Provider {
 	case string(sandboxpkg.None):
 		if s.URL != nil || s.APIKey != nil || s.Template != nil {
@@ -275,9 +280,6 @@ func checkSandbox(s sandboxRequest, stored *db.TeamSetting, allow func(netip.Add
 	}
 
 	if err := checkTemplate(s); err != nil {
-		return err
-	}
-	if err := checkLifecycle(s); err != nil {
 		return err
 	}
 	switch {

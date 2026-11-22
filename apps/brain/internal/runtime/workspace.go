@@ -90,6 +90,9 @@ func (w *runWorkspace) open(ctx context.Context) (*workroom.Client, error) {
 	}
 	defer w.mu.Unlock()
 	ep, err := w.deps.Rooms.Ensure(ctx, w.team, w.session)
+	if errors.Is(err, sandbox.ErrReplaced) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("the workspace could not be started: %w", err)
 	}

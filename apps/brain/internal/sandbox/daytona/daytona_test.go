@@ -40,6 +40,11 @@ type fake struct {
 	calls  []call
 	states []string // GET /sandbox/{id} answers these in turn, then the last
 	create func(w http.ResponseWriter)
+	// failExec makes the toolbox refuse to run a command.
+	failExec bool
+	// shown is the state the last GET answered; a start is refused while
+	// it is on its way somewhere else, as Daytona refuses one.
+	shown string
 }
 
 func newFake(t *testing.T) *fake {
@@ -104,6 +109,7 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		if len(f.states) > 1 {
 			f.states = f.states[1:]
 		}
+		f.shown = st
 		f.mu.Unlock()
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"` + st + `","errorReason":"disk full","toolboxProxyUrl":"` + f.srv.URL + `/toolbox/"}`))
 	case r.Method == http.MethodGet && r.URL.Path == "/api/sandbox/sb-1/ports/8080/preview-url":
@@ -111,11 +117,24 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/toolbox/sb-1/process/session":
 		w.WriteHeader(http.StatusCreated)
 	case r.Method == http.MethodPost && r.URL.Path == "/toolbox/sb-1/process/session/openarity/exec":
+		if f.failExec {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"toolbox unavailable"}`))
+			return
+		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"cmdId":"c1"}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/stop":
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"stopping"}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/start":
+		f.mu.Lock()
+		busy := f.shown == "stopping"
+		f.mu.Unlock()
+		if busy {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"statusCode":409,"message":"Sandbox is stopping"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"starting"}`))
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/sandbox/sb-1":
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"destroying"}`))
@@ -670,5 +689,63 @@ func TestCreateWithNoSizeLeavesItToDaytona(t *testing.T) {
 		if _, ok := b[k]; ok {
 			t.Errorf("%s sent with no size", k)
 		}
+	}
+}
+
+// A sandbox still stopping is waited out, then started; an archived one is
+// started as a stopped one is, Daytona restoring its files first.
+func TestResumeWaitsOutAStopAndStartsAnArchivedSandbox(t *testing.T) {
+	for name, states := range map[string][]string{
+		"stopping": {"stopping", "stopping", "stopped", "starting", "started"},
+		"archived": {"archived", "starting", "started"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			f.states = states
+			if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err != nil {
+				t.Fatal(err)
+			}
+			starts := 0
+			for _, p := range f.paths() {
+				if p == "POST /api/sandbox/sb-1/start" {
+					starts++
+				}
+			}
+			if starts != 1 {
+				t.Fatalf("calls = %s, want one start", strings.Join(f.paths(), ","))
+			}
+		})
+	}
+}
+
+// One Daytona cannot bring back is gone, so the keeper replaces it.
+func TestResumeOfASandboxInErrorIsErrNotFound(t *testing.T) {
+	for _, st := range []string{"error", "build_failed", "destroyed", "deleted"} {
+		f := newFake(t)
+		f.states = []string{st}
+		err := f.client().Resume(t.Context(), "sb-1", []string{"x"})
+		if !errors.Is(err, sandbox.ErrNotFound) {
+			t.Fatalf("%s: err = %v, want ErrNotFound", st, err)
+		}
+		for _, p := range f.paths() {
+			if p == "POST /api/sandbox/sb-1/start" {
+				t.Fatalf("%s: a start was sent", st)
+			}
+		}
+	}
+}
+
+// Started, but its command not: it is stopped again, so the next Resume
+// starts it and runs the command rather than finding it started and running
+// nothing.
+func TestAResumeWhoseCommandFailsStopsTheSandboxAgain(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "started"}
+	f.failExec = true
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err == nil {
+		t.Fatal("Resume succeeded with its command refused")
+	}
+	if p := f.paths(); p[len(p)-1] != "POST /api/sandbox/sb-1/stop" {
+		t.Fatalf("calls = %s, want a stop last", strings.Join(p, ","))
 	}
 }

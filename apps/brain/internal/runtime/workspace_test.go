@@ -337,6 +337,26 @@ func TestAProblemIsSaidToTheModelInTheWorkspacesWords(t *testing.T) {
 	}
 }
 
+// A workspace the keeper had to replace is said as it is: the call did not
+// run, the files are gone, and the next call uses the fresh room.
+func TestAReplacedWorkspaceIsSaidAndTheNextCallUsesIt(t *testing.T) {
+	f, ws := newWorkspaceFixture(t, true)
+	got := f.build(t)
+	ws.ensureErr = sandbox.ErrReplaced
+	_, err := invoke(t, got, BashToolName, `{"command":"ls"}`)
+	if err == nil || err.Error() != sandbox.ErrReplaced.Error() {
+		t.Fatalf("Bash = %v, want the model told its files are gone, in those words", err)
+	}
+	if n := ws.room.calls("/exec"); n != 0 {
+		t.Fatalf("the command was sent %d times after the room was replaced", n)
+	}
+	ws.ensureErr = nil
+	ws.room.answer("/exec", 200, `{"stdout":"","stderr":"","exit_code":0}`)
+	if _, err := invoke(t, got, BashToolName, `{"command":"ls"}`); err != nil {
+		t.Fatalf("Bash after = %v", err)
+	}
+}
+
 func TestARoomThatCannotStartSaysWhy(t *testing.T) {
 	f, ws := newWorkspaceFixture(t, true)
 	ws.ensureErr = sandbox.ErrRefused

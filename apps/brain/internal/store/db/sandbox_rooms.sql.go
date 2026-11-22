@@ -265,7 +265,9 @@ LEFT JOIN team_settings ts ON ts.team_id = r.team_id
 WHERE r.owner_kind = 'session'
   AND r.stopped_at IS NULL
   AND r.last_used_at < now() - make_interval(mins => coalesce(ts.sandbox_idle_minutes, $1::int))
-ORDER BY r.last_used_at
+  AND NOT EXISTS (
+      SELECT 1 FROM runs o WHERE o.session_id = r.owner_id AND o.status IN ('queued', 'running'))
+ORDER BY random()
 LIMIT $2
 `
 
@@ -277,6 +279,10 @@ type ListIdleWorkspaceRoomsParams struct {
 // Sessions' rooms that run and have been unused for longer than their
 // team's idle minutes, or the deployment's when the team set none, for the
 // reaper to stop.
+//
+// In no fixed order: a room that cannot be stopped now (a provider that is
+// down, a key since replaced) is listed again, and must not keep the head of
+// every sweep from the others.
 func (q *Queries) ListIdleWorkspaceRooms(ctx context.Context, arg ListIdleWorkspaceRoomsParams) ([]SandboxRoom, error) {
 	rows, err := q.db.Query(ctx, listIdleWorkspaceRooms, arg.DefaultMinutes, arg.Max)
 	if err != nil {

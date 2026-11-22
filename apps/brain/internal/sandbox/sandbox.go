@@ -130,6 +130,13 @@ var (
 	// ErrNotReady is a room that was made and did not answer in time. The
 	// room is deleted, and the next call starts another.
 	ErrNotReady = errors.New("the sandbox room did not start in time")
+	// ErrReplaced is a workspace room that could not be used as it was (it
+	// was lost, did not come back from a stop, or was made at another size)
+	// and was replaced by a fresh one, without its files. The call that found
+	// it did not run, so the model hears its earlier files are gone; the next
+	// call uses the fresh room.
+	ErrReplaced = errors.New("the workspace could not be brought back as it was, so a fresh one was " +
+		"started; what was in it before is not there. Nothing ran: call again")
 	// ErrFull is a room the provider has no room for now: every share of its
 	// memory or disk is in use. A later call may find one.
 	ErrFull = errors.New("the team's sandbox is full: every room's share is in use. Nothing ran; " +

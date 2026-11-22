@@ -441,7 +441,9 @@ func lifecycle(p *db.UpsertTeamSettingsParams, s *sandboxRequest, stored *db.Tea
 	if s.IdleMinutes.Set {
 		p.SandboxIdleMinutes = s.IdleMinutes.Value
 	}
-	if s.WorkspaceSize.Set {
+	if s.WorkspaceSize.Set || s.Provider == string(sandboxpkg.E2B) {
+		// E2B's size is its template's, so a team moving to it goes back to
+		// the provider's; a size sent with it was refused above.
 		p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = nil, nil, nil
 		if z := s.WorkspaceSize.Value; z != nil {
 			p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = &z.MemoryMB, &z.CPUs, &z.DiskMB

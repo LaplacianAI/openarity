@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -57,4 +58,24 @@ func TestARunWithNoWorkspacesStopsNothing(t *testing.T) {
 	f := newExecFixture(t, newScripted(answer("42", 100, 20)))
 	f.mustExecute(t) // no WorkspaceDeps: nothing to stop, and no panic
 	wantStatus(t, f.row(t), "succeeded", "")
+}
+
+// The stop has a time of its own: a run's finish whose context is spent
+// still stops the room, rather than leaving a provider's pause cut off half
+// way with its row saying the room runs.
+func TestTheStopOutlivesTheRunsFinish(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("42", 100, 20)))
+	ws := &fakeWorkspaces{room: newFakeRoom(t)}
+	f.exec.builder.WithWorkspaces(&WorkspaceDeps{Rooms: ws})
+	if _, err := f.raw.Exec(t.Context(), `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, f.run); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	f.exec.stopWorkspace(ctx, f.run)
+
+	if got := ws.stopped(); len(got) != 1 || !got[0].idle {
+		t.Fatalf("stops = %+v, want the room stopped though the finish's context was spent", got)
+	}
 }

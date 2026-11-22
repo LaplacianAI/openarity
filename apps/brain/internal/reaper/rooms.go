@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +44,9 @@ type roomEffect struct {
 // stopsPerSweep is how many idle workspaces one sweep stops; the rest wait
 // for the next.
 const stopsPerSweep = 50
+
+// stopTimeout bounds one provider stop within a sweep.
+const stopTimeout = 30 * time.Second
 
 // Rooms deletes the sandbox rooms nothing owns any longer: those of a deleted
 // owner, of a team that changed its provider or key, or replaced by a newer
@@ -97,21 +99,51 @@ func (e roomEffect) Claim(ctx context.Context, retryBefore time.Time, batch int3
 // cannot be stopped now is logged and tried at the next sweep; it does not
 // hold back the tombstones.
 func (e roomEffect) stopIdle(ctx context.Context) error {
-	minutes := int32(min(e.idle/time.Minute, math.MaxInt32)) //nolint:gosec // held to MaxInt32 by min; past that is never, in practice
 	rows, err := e.rows.ListIdleWorkspaceRooms(ctx, db.ListIdleWorkspaceRoomsParams{
-		DefaultMinutes: minutes, Max: stopsPerSweep,
+		DefaultMinutes: idleMinutes(e.idle), Max: stopsPerSweep,
 	})
 	if err != nil {
 		return err
 	}
+	stopped := 0
 	for _, row := range rows {
-		session := row.OwnerID
-		idle := func(ctx context.Context) (bool, error) { return e.rows.SessionIsIdle(ctx, session) }
-		if err := e.rooms.Stop(ctx, keeper.Owner{Kind: row.OwnerKind, ID: row.OwnerID}, row.TeamID, idle); err != nil {
-			e.logger.WarnContext(ctx, "an idle workspace was not stopped", "session", session, "err", err)
+		if e.stopOne(ctx, row) {
+			stopped++
 		}
 	}
+	if len(rows) > 0 {
+		e.logger.InfoContext(ctx, "idle workspaces stopped", "stopped", stopped, "listed", len(rows))
+	}
 	return nil
+}
+
+// stopOne stops one idle workspace, within a time of its own so one slow
+// provider does not hold up the rest of the sweep.
+func (e roomEffect) stopOne(ctx context.Context, row db.SandboxRoom) bool {
+	ctx, cancel := context.WithTimeout(ctx, stopTimeout)
+	defer cancel()
+	session := row.OwnerID
+	idle := func(ctx context.Context) (bool, error) { return e.rows.SessionIsIdle(ctx, session) }
+	if err := e.rooms.Stop(ctx, keeper.Owner{Kind: row.OwnerKind, ID: row.OwnerID}, row.TeamID, idle); err != nil {
+		e.logger.WarnContext(ctx, "an idle workspace was not stopped", "session", session, "err", err)
+		return false
+	}
+	return true
+}
+
+// idleMinutes is the deployment's idle time in whole minutes, rounded up and
+// at least one: a time under a minute is not a reason to stop every room at
+// once.
+func idleMinutes(d time.Duration) int32 {
+	m := d / time.Minute
+	if d%time.Minute != 0 {
+		m++
+	}
+	if m < 1 {
+		return 1
+	}
+	// The longest Duration is 153,722,868 minutes, well inside an int32.
+	return int32(m) //nolint:gosec // see above
 }
 
 func (e roomEffect) Do(ctx context.Context, item Item) (Outcome, error) {

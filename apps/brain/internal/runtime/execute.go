@@ -522,6 +522,9 @@ func (e *Executor) finish(ctx context.Context, runID uuid.UUID, worker, status, 
 	return nil
 }
 
+// stopTimeout bounds the stop of a session's workspace at its run's end.
+const stopTimeout = time.Minute
+
 // stopWorkspace stops the session's workspace room once its last run ends,
 // so it gives its memory back while nobody is using it; its files stay, and
 // the next call resumes it. The keeper asks again, under the room's lock,
@@ -532,6 +535,11 @@ func (e *Executor) stopWorkspace(ctx context.Context, runID uuid.UUID) {
 	if ws == nil {
 		return
 	}
+	// A time of its own, not what is left of the run's finish: a provider's
+	// pause takes seconds, and one cut off half way leaves the room stopped
+	// with its row saying it runs.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+	defer cancel()
 	s, err := e.store.IdleSessionOf(ctx, runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return

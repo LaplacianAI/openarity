@@ -266,7 +266,13 @@ func (k *Keeper) ensure(ctx context.Context, o Owner, team uuid.UUID, w Want) (s
 		}
 		k.discard(ctx, rooms, row, cfg)
 	}
-	return k.start(ctx, rooms, row, o, team, cfg, w)
+	ep, err := k.start(ctx, rooms, row, o, team, cfg, w)
+	if err == nil && row != nil && w.Workspace {
+		// A workspace holds files the model wrote; one replaced is said, so
+		// the model never works on as if they were there.
+		return sandbox.Endpoint{}, sandbox.ErrReplaced
+	}
+	return ep, err
 }
 
 // reuse is the owner's room as it is, when it is the one wanted and it
@@ -304,6 +310,12 @@ func (k *Keeper) reuse(
 	}
 
 	if answers := k.healthy(ctx, base, w, token) == nil; !answers {
+		if w.Workspace {
+			// It may have been stopped without the row hearing of it (the
+			// mark failed, the run's end timed out, sandboxd stopped it over
+			// its disk): a resume brings it back with its files.
+			return k.resume(ctx, rooms, row, w, token)
+		}
 		k.logger.InfoContext(ctx, "keeper: a room does not answer, replacing it",
 			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "room", row.RoomID)
 		return sandbox.Endpoint{}, false, nil

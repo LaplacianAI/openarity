@@ -1,12 +1,14 @@
 // Package e2b makes rooms in E2B (e2b.dev), one sandbox per room.
 //
-// Four calls are used, each from E2B's own sources:
+// Six calls are used, each from E2B's own sources:
 //
 //   - POST /v2/sandboxes on the control plane (api.<domain>), authenticated
 //     with X-API-Key: create a sandbox from a template.
 //     (infra repo, spec/openapi.yml)
 //   - GET /sandboxes/{id}: read the sandbox's envd access token again.
 //   - DELETE /sandboxes/{id}: kill it.
+//   - POST /sandboxes/{id}/pause: stop it, keeping its files.
+//   - POST /v2/sandboxes/{id}/connect: resume a paused one.
 //   - process.Process/Start on envd, the daemon inside the sandbox at
 //     https://49983-<id>.<domain>, over the Connect protocol with JSON
 //     messages. (E2B repo, spec/envd/process/process.proto)

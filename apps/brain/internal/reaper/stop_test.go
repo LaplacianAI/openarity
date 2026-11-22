@@ -1,6 +1,7 @@
 package reaper
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -150,6 +151,46 @@ func TestAStoppedWorkspaceIsNotListedAsIdle(t *testing.T) {
 	for _, r := range rows {
 		if r.ID == room.ID {
 			t.Fatal("a stopped workspace was listed as idle")
+		}
+	}
+}
+
+// A session with a run going is not listed, so rooms that cannot be stopped
+// yet never fill the sweep's places ahead of those that can.
+func TestABusySessionsWorkspaceIsNotListedAsIdle(t *testing.T) {
+	t.Parallel()
+	w := newRoomsWorld(t)
+	room, session := w.workspace()
+	w.idleSince(room, time.Now().Add(-2*idleFor))
+	var agent uuid.UUID
+	if err := w.store.Pool().QueryRow(t.Context(), `
+		INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'a', 'm', 1024, 'react', 10) RETURNING id`, w.team).Scan(&agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.store.CreateRun(t.Context(), db.CreateRunParams{ID: uuid.New(), TeamID: w.team, SessionID: session, AgentID: agent, Input: "x"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := w.store.ListIdleWorkspaceRooms(t.Context(), db.ListIdleWorkspaceRoomsParams{DefaultMinutes: 1, Max: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.ID == room.ID {
+			t.Fatal("a busy session's workspace was listed as idle")
+		}
+	}
+}
+
+func TestTheDeploymentsIdleTimeIsWholeMinutesAndAtLeastOne(t *testing.T) {
+	t.Parallel()
+	for d, want := range map[time.Duration]int32{
+		0: 1, 30 * time.Second: 1, time.Minute: 1, 90 * time.Second: 2, 30 * time.Minute: 30,
+		time.Duration(math.MaxInt64): 153_722_868,
+	} {
+		if got := idleMinutes(d); got != want {
+			t.Errorf("idleMinutes(%v) = %d, want %d", d, got, want)
 		}
 	}
 }

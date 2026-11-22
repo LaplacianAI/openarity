@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/google/uuid"
 )
 
 const sbx = `"provider":"sandboxd","url":"https://sbx.example","api_key":"k"`
@@ -83,5 +81,47 @@ func TestASizeForE2BIsRefusedForNow(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "e2b") {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	_ = uuid.Nil
+}
+
+// With no sandbox the times are still checked: a bad one is the caller's
+// 400, never the table's CHECK as a 500.
+func TestBadStopTimesAreRefusedWithNoSandboxToo(t *testing.T) {
+	for _, body := range []string{
+		`{"provider":"none","keep_hours":0}`,
+		`{"provider":"none","idle_minutes":0}`,
+		`{"provider":"none","workspace_size":{"memory_mb":1024,"cpus":99,"disk_mb":512}}`,
+	} {
+		e := newEnv()
+		if rec := e.save(t, withSandbox(body)); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if rec := newEnv().save(t, withSandbox(`{"provider":"none"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("none with no times: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A team moving to E2B goes back to the provider's size, whatever sent it:
+// the CLI and a raw PUT, not only the dashboard.
+func TestMovingToE2BClearsTheSize(t *testing.T) {
+	e := newEnv()
+	e.save(t, withSandbox(`{`+sbx+`,"workspace_size":{"memory_mb":8192,"cpus":4,"disk_mb":20480}}`))
+	got := decode(t, e.save(t, withSandbox(`{"provider":"e2b","api_key":"k"}`)))
+	if got.Sandbox.WorkspaceSize != nil {
+		t.Fatalf("size = %+v after moving to e2b", got.Sandbox.WorkspaceSize)
+	}
+	p := e.store.upserts[len(e.store.upserts)-1]
+	if p.SandboxWorkspaceMemoryMb != nil || p.SandboxWorkspaceCpus != nil || p.SandboxWorkspaceDiskMb != nil {
+		t.Fatalf("saved a size for e2b: %+v", p)
+	}
+}
+
+// keep_hours cannot be unset: null is read as left out, and keeps it.
+func TestANullKeepHoursKeepsIt(t *testing.T) {
+	e := newEnv()
+	e.save(t, withSandbox(`{`+sbx+`,"keep_hours":72}`))
+	rec := e.save(t, withSandbox(`{"provider":"sandboxd","url":"https://sbx.example","keep_hours":null}`))
+	if got := decode(t, rec); rec.Code != http.StatusOK || got.Sandbox.KeepHours != 72 {
+		t.Fatalf("%d, keep_hours %d", rec.Code, got.Sandbox.KeepHours)
+	}
 }

@@ -907,8 +907,17 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   - **A stop re-checks idleness under the owner's locks**, so a run that
     starts between the check and the stop is never left without its room.
   - **A resume refused for room (`ErrFull`) leaves the room stopped** and
-    says so; a room found gone, refused or unhealthy is replaced, without its
-    files.
+    says so. A workspace found gone, refused, over its disk, or not answering
+    after a resume is replaced, without its files, and the call that found it
+    returns `sandbox.ErrReplaced`, so the model is told and does not work on
+    as if the files were there. Failing every call until the keep hours end
+    was the other choice; it keeps files nobody can reach and leaves the
+    conversation without a workspace for up to 30 days.
+  - **A running workspace that does not answer is resumed once before it is
+    replaced:** the provider may have stopped it without the row hearing (a
+    mark that failed, a run's end cut short, sandboxd's disk watcher).
+  - **The idle sweep lists rooms in no fixed order and skips busy sessions**,
+    so rooms that cannot be stopped now never take every place in a sweep.
   - **Size is a team setting, and part of the room's hash.** A team chooses
     memory, CPUs and disk, all three or none; a change gives its sessions new
     rooms. sandboxd refuses a size past what its operator gives a workspace;
