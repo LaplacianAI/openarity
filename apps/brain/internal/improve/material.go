@@ -174,7 +174,7 @@ func (im *Improver) writeRecord(ctx context.Context, pass db.ImproverPass, write
 		if r.Signature != nil {
 			sig = *r.Signature
 		}
-		rec = append(rec, fmt.Sprintf("%s %s (%s, %s): %s. Expected: %s", r.CreatedAt.UTC().Format(time.DateOnly), r.Kind, sig, r.Status, r.Why, r.Hypothesis))
+		rec = append(rec, fmt.Sprintf("%s %s (%s, %s%s): %s. Expected: %s", r.CreatedAt.UTC().Format(time.DateOnly), r.Kind, sig, r.Status, watched(r), r.Why, r.Hypothesis))
 	}
 	write("Its record", rec...)
 	elsewhere, err := im.store.ListTeamAppliedElsewhere(ctx, db.ListTeamAppliedElsewhereParams{
@@ -279,4 +279,34 @@ func middle(s string, n int) string {
 	}
 	half := n / 2
 	return string(r[:half]) + fmt.Sprintf("\n… %d characters left out …\n", len(r)-n) + string(r[len(r)-half:])
+}
+
+// watched is how an applied change went, as its record says it: ", watched:
+// clear, 1 of 10 after, 3 of 10 before"; nothing for one never applied.
+func watched(r db.ListAgentProposalRecordRow) string {
+	if r.Watch == nil {
+		return ""
+	}
+	counts := fmt.Sprintf("%d of %d after, %d of %d before", *r.WatchAfterBad, *r.WatchAfterRuns, *r.WatchBeforeBad, *r.WatchBeforeRuns)
+	switch *r.Watch {
+	case watchWatching:
+		return ", being watched: " + counts + " so far"
+	case watchClear:
+		return ", watched: clear, " + counts
+	case watchFlagged, "cleared":
+		flag := ""
+		if r.WatchFlag != nil {
+			flag = *r.WatchFlag
+		}
+		s := ", flagged: " + flag + ", " + counts
+		if *r.Watch == "cleared" {
+			s += ", cleared by a person"
+		}
+		return s
+	case watchEnded:
+		if r.WatchEnded != nil {
+			return ", watch ended: " + *r.WatchEnded
+		}
+	}
+	return ""
 }

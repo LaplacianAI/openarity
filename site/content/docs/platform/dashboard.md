@@ -89,6 +89,21 @@ and reports what it found. A pass cut short this way (or by improvement being
 turned off) with nothing proposed leaves its pattern open, offered again after
 six hours, and the Passes tab says it was cut short.
 
+Every applied change is watched. The agent's next ten judged runs are counted
+against the ones just before the change, measured against how much its runs
+usually vary: from up to 50 runs before it, the brain works out how many bad
+runs out of ten chance alone would give less than one time in twenty, and a
+change whose runs reach that is **flagged** as worse. A change whose runs cost
+clearly more (their median tokens above the usual 90th percentile) without
+failing less is flagged as costlier. With fewer than ten runs before it, a
+change is watched but cannot be flagged. The card says how it went in words,
+with the tokens and steps a run, whether the pattern it targeted became rarer,
+👍 and 👎 before and after, and other changes applied to the same agents
+meanwhile. Flagged changes collect on the **Flagged** tab, where someone who
+may approve clears the flag (keeping the change) or reverts it; nothing is
+reverted by itself. Runs only count while improvement is on, and a change that
+gets too few runs in 30 days stops being watched.
+
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to
 a member (it suggests the member whose name fits, when exactly one does). A

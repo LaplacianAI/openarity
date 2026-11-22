@@ -27,7 +27,11 @@ const (
 	readEveryConvo = authz.Action("session:read_all")
 )
 
-var statuses = []string{"waiting", "applied", "rejected", "reverted", "withdrawn"}
+var statuses = []string{"waiting", "applied", "rejected", "reverted", "withdrawn", flagged}
+
+// flagged asks for the applied changes whose watch flagged them. It is not a
+// stored status, so it stands alone.
+const flagged = "flagged"
 
 // hidden are the statuses only someone who may approve sees: they quote runs
 // that may be in conversations other members cannot read.
@@ -43,6 +47,7 @@ type Reads interface {
 	ListTeamServerNames(ctx context.Context, arg db.ListTeamServerNamesParams) ([]db.ListTeamServerNamesRow, error)
 	ListVisibleRuns(ctx context.Context, arg db.ListVisibleRunsParams) ([]db.ListVisibleRunsRow, error)
 	ListImproverPasses(ctx context.Context, arg db.ListImproverPassesParams) ([]db.ImproverPass, error)
+	GetImprovementWatch(ctx context.Context, proposalID uuid.UUID) (db.ImprovementWatch, error)
 }
 
 type handler struct {
@@ -97,6 +102,8 @@ type view struct {
 	DecidedAt  *time.Time `json:"decided_at"`
 	RevertedBy *uuid.UUID `json:"reverted_by"`
 	RevertedAt *time.Time `json:"reverted_at"`
+	// How the change went once applied; null until it is.
+	Watch *watchView `json:"watch"`
 }
 
 type cursor struct {
@@ -136,6 +143,13 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := db.ListImprovementProposalsParams{TeamID: teamID, Statuses: asked, Q: q, PageSize: limit + 1}
+	if slices.Contains(asked, flagged) {
+		if len(asked) > 1 {
+			http.Error(w, "status flagged cannot be combined with another status", http.StatusBadRequest)
+			return
+		}
+		params.Statuses, params.Flagged = []string{"applied"}, true
+	}
 	if raw := r.URL.Query().Get("agent"); raw != "" {
 		id, err := uuid.Parse(raw)
 		if err != nil {
@@ -205,8 +219,8 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Action != proposals.ActionApprove && req.Action != proposals.ActionReject && req.Action != proposals.ActionRevert {
-		http.Error(w, "action must be approve, reject or revert", http.StatusBadRequest)
+	if !slices.Contains([]string{proposals.ActionApprove, proposals.ActionReject, proposals.ActionRevert, proposals.ActionClear}, req.Action) {
+		http.Error(w, "action must be approve, reject, revert or clear", http.StatusBadRequest)
 		return
 	}
 
@@ -216,9 +230,10 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 	}
 	// Making or undoing a change needs what making it by hand needs, beside
 	// the approve permission the route already checked. Rejecting writes
-	// nothing to the agent or skill, so approve alone decides it.
+	// nothing to the agent or skill, so approve alone decides it, as it does
+	// clearing a flag.
 	var needs []authz.Action
-	if req.Action != proposals.ActionReject {
+	if req.Action != proposals.ActionReject && req.Action != proposals.ActionClear {
 		needs = writesFor(proposals.Kind(row.Kind))
 	}
 	for _, need := range needs {
@@ -366,6 +381,13 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 			}
 			v.Runs = append(v.Runs, ref)
 		}
+	}
+	watch, err := h.reads.GetImprovementWatch(ctx, row.ID)
+	switch {
+	case err == nil:
+		v.Watch = watchViewOf(watch)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return view{}, err
 	}
 	return v, nil
 }

@@ -317,10 +317,14 @@ func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID stri
 }
 
 const listAgentProposalRecord = `-- name: ListAgentProposalRecord :many
-SELECT id, kind, signature, status, why, hypothesis, created_at, decided_at, reverted_at
-FROM improvement_proposals
-WHERE agent_id = $1
-ORDER BY created_at DESC, id DESC
+SELECT p.id, p.kind, p.signature, p.status, p.why, p.hypothesis, p.created_at, p.decided_at, p.reverted_at,
+       w.status AS watch, w.flag AS watch_flag, w.ended_why AS watch_ended,
+       w.before_runs AS watch_before_runs, w.before_bad AS watch_before_bad,
+       w.after_runs AS watch_after_runs, w.after_bad AS watch_after_bad
+FROM improvement_proposals p
+LEFT JOIN improvement_watches w ON w.proposal_id = p.id
+WHERE p.agent_id = $1
+ORDER BY p.created_at DESC, p.id DESC
 LIMIT $2
 `
 
@@ -330,15 +334,22 @@ type ListAgentProposalRecordParams struct {
 }
 
 type ListAgentProposalRecordRow struct {
-	ID         uuid.UUID
-	Kind       string
-	Signature  *string
-	Status     string
-	Why        string
-	Hypothesis string
-	CreatedAt  time.Time
-	DecidedAt  *time.Time
-	RevertedAt *time.Time
+	ID              uuid.UUID
+	Kind            string
+	Signature       *string
+	Status          string
+	Why             string
+	Hypothesis      string
+	CreatedAt       time.Time
+	DecidedAt       *time.Time
+	RevertedAt      *time.Time
+	Watch           *string
+	WatchFlag       *string
+	WatchEnded      *string
+	WatchBeforeRuns *int16
+	WatchBeforeBad  *int16
+	WatchAfterRuns  *int16
+	WatchAfterBad   *int16
 }
 
 // An agent's own record: its newest proposals.
@@ -361,6 +372,13 @@ func (q *Queries) ListAgentProposalRecord(ctx context.Context, arg ListAgentProp
 			&i.CreatedAt,
 			&i.DecidedAt,
 			&i.RevertedAt,
+			&i.Watch,
+			&i.WatchFlag,
+			&i.WatchEnded,
+			&i.WatchBeforeRuns,
+			&i.WatchBeforeBad,
+			&i.WatchAfterRuns,
+			&i.WatchAfterBad,
 		); err != nil {
 			return nil, err
 		}

@@ -85,7 +85,7 @@ func TestTheHelpNamesEveryVerb(t *testing.T) {
 	if err != nil {
 		t.Fatalf("improvements --help: %v", err)
 	}
-	contains(t, out, "list", "show", "passes", "approve", "reject", "revert")
+	contains(t, out, "list", "show", "passes", "approve", "reject", "revert", "clear")
 }
 
 func TestListShowsAgentKindStatusScopeMarksAgeAndWhyOnOneLine(t *testing.T) {
@@ -247,7 +247,7 @@ func TestShowAHiddenOrUnknownProposalIsNotFound(t *testing.T) {
 }
 
 func TestEachDecisionPostsItsActionAndSaysWhatHappened(t *testing.T) {
-	for verb, want := range map[string]string{"approve": "approved", "reject": "rejected", "revert": "reverted"} {
+	for verb, want := range map[string]string{"approve": "approved", "reject": "rejected", "revert": "reverted", "clear": "cleared"} {
 		t.Run(verb, func(t *testing.T) {
 			script := clitest.Routes(t, routes(map[string]clitest.Reply{
 				"POST /teams/{id}/improvements/{proposalID}/decision": {Status: http.StatusOK, Body: proposal(want, "")},

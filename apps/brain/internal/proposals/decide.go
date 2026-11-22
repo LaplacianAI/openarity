@@ -52,7 +52,12 @@ const (
 	ActionApprove = "approve"
 	ActionReject  = "reject"
 	ActionRevert  = "revert"
+	// ActionClear keeps a change its watch flagged: a person looked.
+	ActionClear = "clear"
 )
+
+// errNotFlagged is a clear on a change whose watch has not flagged it.
+var errNotFlagged = errState{"not flagged"}
 
 // Proposal is a stored proposal's snapshots, decoded.
 type Proposal struct {
@@ -77,6 +82,9 @@ func Decode(row db.ImprovementProposal) (Proposal, error) {
 func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action string) (db.ImprovementProposal, error) {
 	// A skill's bytes are stored before the transaction, as the skills API
 	// does: what never commits is the reaper's to remove.
+	if action == ActionClear {
+		return d.clear(ctx, teamID, id, by)
+	}
 	var keys []string
 	var dir *skill.Directory
 	if action != ActionReject {
@@ -128,6 +136,9 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 			if out, err = q.DecideImprovementProposal(ctx, db.DecideImprovementProposalParams{ID: id, Status: "applied", By: &by}); err != nil {
 				return err
 			}
+			if err := startWatch(ctx, q, row); err != nil {
+				return err
+			}
 			return q.WithdrawImprovementProposals(ctx, db.WithdrawImprovementProposalsParams{
 				AppliedID: &id, TeamID: teamID, AgentID: row.AgentID, SkillID: row.SkillID,
 			})
@@ -139,8 +150,10 @@ func (d Decider) Decide(ctx context.Context, teamID, id, by uuid.UUID, action st
 			if err := d.revert(ctx, q, p, dir, keys); err != nil {
 				return err
 			}
-			out, err = q.RevertImprovementProposal(ctx, db.RevertImprovementProposalParams{ID: id, By: &by})
-			return err
+			if out, err = q.RevertImprovementProposal(ctx, db.RevertImprovementProposalParams{ID: id, By: &by}); err != nil {
+				return err
+			}
+			return q.EndRevertedWatch(ctx, id)
 		}
 		return fmt.Errorf("unknown action %q", action)
 	})
@@ -379,4 +392,42 @@ func mapWrite(err error) error {
 func HashText(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// startWatch watches a change just applied, on the agents it reaches: the
+// agent for every kind, and every agent holding the skill for a skill edit.
+func startWatch(ctx context.Context, q *db.Queries, row db.ImprovementProposal) error {
+	agents := []uuid.UUID{row.AgentID}
+	if Kind(row.Kind) == KindSkillEdit && row.SkillID != nil {
+		holders, err := q.ListSkillHolders(ctx, *row.SkillID)
+		if err != nil {
+			return err
+		}
+		if len(holders) > 0 {
+			agents = holders
+		}
+	}
+	return q.StartImprovementWatch(ctx, db.StartImprovementWatchParams{ProposalID: row.ID, TeamID: row.TeamID, AgentIds: agents})
+}
+
+// clear keeps a flagged change, and returns its proposal. It writes nothing
+// to an agent or a skill.
+func (d Decider) clear(ctx context.Context, teamID, id, by uuid.UUID) (db.ImprovementProposal, error) {
+	var out db.ImprovementProposal
+	err := d.store.InTx(ctx, func(q *db.Queries) error {
+		row, err := q.LockImprovementProposal(ctx, db.LockImprovementProposalParams{ID: id, TeamID: teamID})
+		if err != nil {
+			return err
+		}
+		if row.Status != "applied" {
+			return errState{row.Status}
+		}
+		_, err = q.ClearImprovementWatch(ctx, db.ClearImprovementWatchParams{ProposalID: id, TeamID: teamID, By: &by})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFlagged
+		}
+		out = row
+		return err
+	})
+	return out, err
 }

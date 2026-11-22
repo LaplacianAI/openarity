@@ -265,15 +265,18 @@ func (q *Queries) ListAgentsHoldingSkill(ctx context.Context, skillID uuid.UUID)
 }
 
 const listImprovementProposals = `-- name: ListImprovementProposals :many
-SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id FROM improvement_proposals
-WHERE team_id = $1
-  AND status = ANY ($2::text[])
-  AND ($3::uuid IS NULL OR agent_id = $3::uuid)
-  AND strpos(lower(why || ' ' || hypothesis), lower($4::text)) > 0
-  AND (NOT $5::bool
-   OR (created_at, id) < ($6::timestamptz, $7::uuid))
-ORDER BY created_at DESC, id DESC
-LIMIT $8
+SELECT p.id, p.team_id, p.agent_id, p.skill_id, p.kind, p.status, p.why, p.hypothesis, p.scope, p.signature, p.run_ids, p.outsider, p.marks, p.before, p.after, p.created_at, p.decided_by, p.decided_at, p.reverted_by, p.reverted_at, p.withdrawn_by, p.pass_id FROM improvement_proposals p
+WHERE p.team_id = $1
+  AND p.status = ANY ($2::text[])
+  AND ($3::uuid IS NULL OR p.agent_id = $3::uuid)
+  AND strpos(lower(p.why || ' ' || p.hypothesis), lower($4::text)) > 0
+  -- Flagged: applied changes whose watch found them worse or costlier.
+  AND (NOT $5::bool OR EXISTS (
+       SELECT 1 FROM improvement_watches w WHERE w.proposal_id = p.id AND w.status = 'flagged'))
+  AND (NOT $6::bool
+   OR (p.created_at, p.id) < ($7::timestamptz, $8::uuid))
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT $9
 `
 
 type ListImprovementProposalsParams struct {
@@ -281,6 +284,7 @@ type ListImprovementProposalsParams struct {
 	Statuses       []string
 	AgentID        *uuid.UUID
 	Q              string
+	Flagged        bool
 	UseCursor      bool
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
@@ -294,6 +298,7 @@ func (q *Queries) ListImprovementProposals(ctx context.Context, arg ListImprovem
 		arg.Statuses,
 		arg.AgentID,
 		arg.Q,
+		arg.Flagged,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
 		arg.AfterID,

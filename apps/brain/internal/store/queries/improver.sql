@@ -201,10 +201,14 @@ SELECT EXISTS (SELECT 1 FROM run_digests
 
 -- An agent's own record: its newest proposals.
 -- name: ListAgentProposalRecord :many
-SELECT id, kind, signature, status, why, hypothesis, created_at, decided_at, reverted_at
-FROM improvement_proposals
-WHERE agent_id = sqlc.arg(agent_id)
-ORDER BY created_at DESC, id DESC
+SELECT p.id, p.kind, p.signature, p.status, p.why, p.hypothesis, p.created_at, p.decided_at, p.reverted_at,
+       w.status AS watch, w.flag AS watch_flag, w.ended_why AS watch_ended,
+       w.before_runs AS watch_before_runs, w.before_bad AS watch_before_bad,
+       w.after_runs AS watch_after_runs, w.after_bad AS watch_after_bad
+FROM improvement_proposals p
+LEFT JOIN improvement_watches w ON w.proposal_id = p.id
+WHERE p.agent_id = sqlc.arg(agent_id)
+ORDER BY p.created_at DESC, p.id DESC
 LIMIT sqlc.arg(page_size);
 
 -- The team's newest applied changes on other agents.

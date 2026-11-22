@@ -19,14 +19,17 @@ SELECT * FROM improvement_proposals WHERE id = $1 AND team_id = $2 FOR UPDATE;
 
 -- One page, newest first, in the statuses asked for.
 -- name: ListImprovementProposals :many
-SELECT * FROM improvement_proposals
-WHERE team_id = sqlc.arg('team_id')
-  AND status = ANY (sqlc.arg('statuses')::text[])
-  AND (sqlc.narg('agent_id')::uuid IS NULL OR agent_id = sqlc.narg('agent_id')::uuid)
-  AND strpos(lower(why || ' ' || hypothesis), lower(sqlc.arg('q')::text)) > 0
+SELECT p.* FROM improvement_proposals p
+WHERE p.team_id = sqlc.arg('team_id')
+  AND p.status = ANY (sqlc.arg('statuses')::text[])
+  AND (sqlc.narg('agent_id')::uuid IS NULL OR p.agent_id = sqlc.narg('agent_id')::uuid)
+  AND strpos(lower(p.why || ' ' || p.hypothesis), lower(sqlc.arg('q')::text)) > 0
+  -- Flagged: applied changes whose watch found them worse or costlier.
+  AND (NOT sqlc.arg('flagged')::bool OR EXISTS (
+       SELECT 1 FROM improvement_watches w WHERE w.proposal_id = p.id AND w.status = 'flagged'))
   AND (NOT sqlc.arg('use_cursor')::bool
-   OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
-ORDER BY created_at DESC, id DESC
+   OR (p.created_at, p.id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
+ORDER BY p.created_at DESC, p.id DESC
 LIMIT sqlc.arg('page_size');
 
 -- name: DecideImprovementProposal :one

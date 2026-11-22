@@ -223,6 +223,39 @@ type ImprovementProposal struct {
 	PassID      *uuid.UUID
 }
 
+type ImprovementWatch struct {
+	ProposalID   uuid.UUID
+	TeamID       uuid.UUID
+	AgentIds     []uuid.UUID
+	StartedAt    time.Time
+	Status       string
+	Flag         *string
+	EndedWhy     *string
+	OnSeconds    int32
+	BaselineRuns int16
+	BaselineBad  int16
+	Bar          *int16
+	BeforeRuns   int16
+	BeforeBad    int16
+	BeforeUp     int16
+	BeforeDown   int16
+	AfterRuns    int16
+	AfterBad     int16
+	AfterUp      int16
+	AfterDown    int16
+	BeforeTokens *int64
+	AfterTokens  *int64
+	BaselineP90  *int64
+	BeforeSteps  *int32
+	AfterSteps   *int32
+	SigBefore    *int16
+	SigAfter     *int16
+	Overlapping  []uuid.UUID
+	FinishedAt   *time.Time
+	ClearedBy    *uuid.UUID
+	ClearedAt    *time.Time
+}
+
 type ImproverPass struct {
 	ID           uuid.UUID
 	TeamID       uuid.UUID

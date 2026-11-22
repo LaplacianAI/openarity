@@ -16,9 +16,11 @@ import (
 
 const (
 	decidePermission  = "improvement:approve plus agent:write (or skill:write for a skill)"
+	// Rejecting and clearing a flag write nothing to an agent or a skill.
+	approvePermission = "improvement:approve"
 	maxWhy            = 70
 	stampLayout       = "2006-01-02 15:04"
-	statusList        = "waiting, applied, rejected, reverted or withdrawn"
+	statusList        = "waiting, applied, rejected, reverted, withdrawn, or flagged (on its own)"
 	filePrefix        = "files/"
 	unreadableRunNote = "(not yours to open)"
 )
@@ -30,7 +32,10 @@ func New(opts *cli.Options) *cobra.Command {
 		Long: "A team can let its agents propose improvements to themselves from what\n" +
 			"went wrong in their runs: a sharper instruction, a note on a tool, a\n" +
 			"skill. A proposal waits here until somebody decides it. Approving\n" +
-			"applies it; reverting puts the agent back as it was.\n\n" +
+			"applies it; reverting puts the agent back as it was. An applied change\n" +
+			"is watched: its next ten judged runs against the ones before. One that\n" +
+			"went clearly worse, or costlier with no fewer failures, is flagged for a\n" +
+			"person to clear or revert; nothing is reverted by itself.\n\n" +
 			"Deciding needs improvement:approve in the team, and the write\n" +
 			"permission of what the proposal changes: agent:write, or skill:write\n" +
 			"for a skill. Every command takes the team first.",
@@ -40,17 +45,21 @@ func New(opts *cli.Options) *cobra.Command {
 		newListCmd(opts),
 		newShowCmd(opts),
 		newPassesCmd(opts),
-		newDecisionCmd(opts, "approve", client.Approve, "approved",
+		newDecisionCmd(opts, "approve", client.ImprovementDecisionActionApprove, "approved", decidePermission,
 			"Apply the proposal to the agent",
 			"The change is made now, and can be reverted later. It is refused when\n"+
 				"the agent has changed since the proposal was made."),
-		newDecisionCmd(opts, "reject", client.Reject, "rejected",
+		newDecisionCmd(opts, "reject", client.ImprovementDecisionActionReject, "rejected", approvePermission,
 			"Turn the proposal down",
 			"The agent is left as it is, and the same proposal is not made again."),
-		newDecisionCmd(opts, "revert", client.Revert, "reverted",
+		newDecisionCmd(opts, "revert", client.ImprovementDecisionActionRevert, "reverted", decidePermission,
 			"Undo an applied proposal",
 			"The agent goes back to what it was before, unless it has changed\n"+
 				"since — then the brain refuses and says so."),
+		newDecisionCmd(opts, "clear", client.ImprovementDecisionActionClear, "cleared", approvePermission,
+			"Keep a change its watch flagged",
+			"A person looked and keeps it applied; the flag is cleared and the\n"+
+				"improver's record says so. Refused unless the watch flagged it."),
 	)
 	return cmd
 }
@@ -77,6 +86,7 @@ type view struct {
 	RevertedBy *string      `json:"reverted_by" yaml:"reverted_by"`
 	RevertedAt *time.Time   `json:"reverted_at" yaml:"reverted_at"`
 	CreatedAt  time.Time    `json:"created_at" yaml:"created_at"`
+	Watch      *watchView   `json:"watch" yaml:"watch"`
 }
 
 type ref struct {
@@ -114,7 +124,7 @@ func viewOf(p *client.Improvement) view {
 		Runs: make([]runView, 0, len(p.Runs)), Outsider: p.Outsider,
 		DecidedBy: idOrNil(p.DecidedBy), DecidedAt: p.DecidedAt,
 		RevertedBy: idOrNil(p.RevertedBy), RevertedAt: p.RevertedAt, CreatedAt: p.CreatedAt,
-		PassID: idOrNil(p.PassID),
+		PassID: idOrNil(p.PassID), Watch: watchOf(p.Watch),
 	}
 	if p.Skill != nil {
 		s := refOf(*p.Skill)
@@ -245,12 +255,12 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params := &client.ListImprovementsParams{}
 			for _, s := range statuses {
-				status := client.ImprovementStatus(strings.ToLower(strings.TrimSpace(s)))
+				status := client.ImprovementFilter(strings.ToLower(strings.TrimSpace(s)))
 				if !status.Valid() {
 					return fmt.Errorf("%q is not a status — %s", s, statusList)
 				}
 				if params.Status == nil {
-					params.Status = &[]client.ImprovementStatus{}
+					params.Status = &[]client.ImprovementFilter{}
 				}
 				*params.Status = append(*params.Status, status)
 			}
@@ -370,12 +380,12 @@ func newShowCmd(opts *cli.Options) *cobra.Command {
 }
 
 func newDecisionCmd(
-	opts *cli.Options, verb string, action client.ImprovementDecisionAction, did, short, long string,
+	opts *cli.Options, verb string, action client.ImprovementDecisionAction, did, needs, short, long string,
 ) *cobra.Command {
 	return &cobra.Command{
 		Use:   verb + " <team> <proposal>",
 		Short: short,
-		Long: long + "\n\nNeeds " + decidePermission + ".\n\n" +
+		Long: long + "\n\nNeeds " + needs + ".\n\n" +
 			"    oa improvements " + verb + " platform 5d2c8a10-77be-4c1f-8e53-9b0a6f21d4e7",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -396,7 +406,7 @@ func newDecisionCmd(
 			p, err := cli.Result(api.DecideImprovementWithResponse(cmd.Context(), team, id,
 				client.DecideImprovementJSONRequestBody{Action: action}))
 			if err != nil {
-				return cli.Needs(err, decidePermission)
+				return cli.Needs(err, needs)
 			}
 			return printOne(opts, viewOf(p), did)
 		},
@@ -441,6 +451,7 @@ func printOne(opts *cli.Options, v view, did string) error {
 			if v.RevertedBy != nil {
 				table.Row("reverted by", *v.RevertedBy, "")
 			}
+			watchRows(opts, table, v.Watch)
 			for i, r := range v.Runs {
 				label := ""
 				if i == 0 {

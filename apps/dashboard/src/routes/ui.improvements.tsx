@@ -30,7 +30,7 @@ type ImprovementsSearch = {
   q?: string | undefined;
 };
 
-const TABS: Tab[] = ["waiting", "applied", "closed", "passes"];
+const TABS: Tab[] = ["waiting", "applied", "flagged", "closed", "passes"];
 
 export const Route = createFileRoute("/ui/improvements")({
   // The tab, the agent and the words searched for, in the URL so a view of
@@ -119,6 +119,16 @@ function Improvements() {
     enabled: Boolean(teamId) && canApprove,
   });
 
+  // The flagged count, on its tab whichever is open.
+  const flaggedCount = useQuery({
+    queryKey: ["improvements", teamId, "flagged-count"],
+    queryFn: ({ signal }) =>
+      listImprovements(teamId as string, { status: ["flagged"], limit: 100 }, null, signal),
+    enabled: Boolean(teamId) && !perms.isPending,
+  });
+  const flaggedN = flaggedCount.data?.items.length ?? 0;
+  const flaggedMore = Boolean(flaggedCount.data?.next_cursor);
+
   const filtered = agent !== undefined || q !== undefined;
 
   return (
@@ -130,7 +140,7 @@ function Improvements() {
             ? waitingFinding(waiting.data.items, Boolean(waiting.data.next_cursor))
             : null
         }
-        description="Changes the team's agents propose to their own instructions, skills and tools from their runs. Nothing changes until someone who may approve accepts it, and an approved change can be reverted while its agent is as it left it."
+        description="Changes the team's agents propose to their own instructions, skills and tools from their runs. Nothing changes until someone who may approve accepts it. An approved change is watched over its agent's next runs, and can be reverted while its agent is as it left it."
       />
 
       {!teamId ? (
@@ -152,10 +162,17 @@ function Improvements() {
           className="gap-4"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <TabsList>
+            <TabsList className="min-w-0 max-w-full overflow-x-auto">
               {tabsFor(canApprove).map((t) => (
                 <TabsTrigger key={t} value={t}>
                   {TAB_WORDS[t]}
+                  {t === "flagged" && flaggedN > 0 ? (
+                    <span className="ml-1 tabular-nums text-warning">
+                      {flaggedN}
+                      {flaggedMore ? "+" : ""}
+                      <span className="sr-only"> flagged</span>
+                    </span>
+                  ) : null}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -203,7 +220,9 @@ function Improvements() {
                   ? "Nothing matches"
                   : tab === "waiting"
                     ? "Nothing is waiting"
-                    : "Nothing here"
+                    : tab === "flagged"
+                      ? "Nothing is flagged"
+                      : "Nothing here"
               }
               body={
                 filtered
@@ -212,7 +231,9 @@ function Improvements() {
                     ? "When an agent proposes a change to itself from its runs, it appears here for someone who may approve it."
                     : tab === "applied"
                       ? "No proposed change has been applied."
-                      : "No proposed change has been rejected, reverted or withdrawn."
+                      : tab === "flagged"
+                        ? "An applied change is watched over its agent's next ten judged runs. One whose runs went clearly worse than usual, or cost more with no fewer failures, appears here for someone to clear or revert."
+                        : "No proposed change has been rejected, reverted or withdrawn."
               }
             />
           ) : (

@@ -1,20 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import type { ImprovementChange } from "@/api/types";
+import type { ImprovementChange, ImprovementWatch } from "@/api/types";
 import {
   anyPassRunning,
+  costWords,
   fieldWords,
   isScript,
   kindWords,
   listNames,
   missingWrites,
   passOutcome,
+  patternWords,
   prunedWords,
   scopeWords,
   signatureWords,
   tabOf,
   tabsFor,
+  usualWords,
   waitingFinding,
+  watchHeadline,
   writesNeeded,
 } from "./improvements";
 
@@ -60,9 +64,9 @@ describe("what deciding needs", () => {
 });
 
 describe("tabs", () => {
-  it("shows a member Applied only, and an approver all three", () => {
-    expect(tabsFor(false)).toEqual(["applied"]);
-    expect(tabsFor(true)).toEqual(["waiting", "applied", "closed", "passes"]);
+  it("shows a member Applied and Flagged, and an approver every tab", () => {
+    expect(tabsFor(false)).toEqual(["applied", "flagged"]);
+    expect(tabsFor(true)).toEqual(["waiting", "applied", "flagged", "closed", "passes"]);
   });
 
   it("falls back to the first tab the caller has", () => {
@@ -178,5 +182,64 @@ describe("passes", () => {
     ],
   ] as const)("says what came of %o", (pass, said) => {
     expect(passOutcome({ cut_short: false, ...pass })).toBe(said);
+  });
+});
+
+describe("the watch, in words", () => {
+  const side = (runs: number, bad: number, extra: Partial<ImprovementWatch["before"]> = {}) => ({
+    runs,
+    bad,
+    up: 0,
+    down: 0,
+    ...extra,
+  });
+  const watch = (extra: Partial<ImprovementWatch> = {}): ImprovementWatch => ({
+    status: "flagged",
+    flag: "worse",
+    needed: 10,
+    baseline_runs: 20,
+    baseline_bad: 2,
+    bar: 5,
+    before: side(10, 2, { tokens: 1000, steps: 4, signature: 3 }),
+    after: side(10, 7, { tokens: 1200, steps: 5, signature: 0 }),
+    overlapping: [],
+    started_at: "2026-11-01T00:00:00Z",
+    ...extra,
+  });
+
+  it("says each state with its counts", () => {
+    expect(watchHeadline(watch())).toBe(
+      "Flagged, its runs went worse: 7 of 10 went wrong after, 2 of 10 before",
+    );
+    expect(watchHeadline(watch({ status: "watching", after: side(4, 1) }))).toBe(
+      "Watching: 4 of 10 runs so far",
+    );
+    expect(watchHeadline(watch({ status: "cleared", flag: "costlier" }))).toBe(
+      "Flagged (its runs cost more, with no fewer failures), then cleared: 7 of 10 went wrong after, 2 of 10 before",
+    );
+    expect(
+      watchHeadline(watch({ status: "ended", ended_why: "reverted", after: side(3, 1) })),
+    ).toBe("Ended when reverted: 3 of 10 runs counted");
+    expect(
+      watchHeadline(watch({ status: "ended", ended_why: "too_few_runs", after: side(2, 0) })),
+    ).toBe("Ended with too few runs: 2 of 10 in 30 days");
+  });
+
+  it("says the usual rate and the bar, or that there is too little history", () => {
+    expect(usualWords(watch())).toBe("Usually 2 of 20 went wrong; flagged at 5 of 10.");
+    expect(usualWords(watch({ bar: null, baseline_runs: 4 }))).toBe(
+      "Too little history to judge against: 4 runs before it.",
+    );
+  });
+
+  it("says cost and the targeted pattern, and nothing for what was not counted", () => {
+    expect(costWords(watch())).toBe("Tokens a run 1,000 → 1,200 · steps 4 → 5");
+    expect(costWords(watch({ before: side(0, 0), after: side(0, 0) }))).toBeNull();
+    expect(patternWords(watch())).toBe(
+      "The pattern it targeted: in 3 of 10 runs before, 0 of 10 after",
+    );
+    expect(
+      patternWords(watch({ before: side(10, 2, { signature: null }), after: side(10, 1) })),
+    ).toBeNull();
   });
 });

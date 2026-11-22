@@ -1,9 +1,10 @@
 import type {
   Improvement,
   ImprovementChange,
+  ImprovementFilter,
   ImprovementKind,
   ImprovementMark,
-  ImprovementStatus,
+  ImprovementWatch,
   ImproverPass,
 } from "@/api/types";
 import { waitedFor } from "@/lib/format";
@@ -106,31 +107,39 @@ export function fieldWords(field: string): string {
 }
 
 /**
- * The tabs: what is waiting, what is in force, everything that ended without
- * being (or no longer being) in force, and the passes of the improver that
- * wrote them.
+ * The tabs: what is waiting, what is in force, what in force its watch
+ * flagged, everything that ended without being (or no longer being) in
+ * force, and the passes of the improver that wrote them.
  */
-export type Tab = "waiting" | "applied" | "closed" | "passes";
+export type Tab = "waiting" | "applied" | "flagged" | "closed" | "passes";
 
 /** The tabs that list proposals, each by the statuses it holds. */
 export type StatusTab = Exclude<Tab, "passes">;
 
-export const TAB_STATUSES: Record<StatusTab, ImprovementStatus[]> = {
+export const TAB_STATUSES: Record<StatusTab, ImprovementFilter[]> = {
   waiting: ["waiting"],
   applied: ["applied"],
+  flagged: ["flagged"],
   closed: ["rejected", "reverted", "withdrawn"],
 };
 
 export const TAB_WORDS: Record<Tab, string> = {
   waiting: "Waiting",
   applied: "Applied",
+  flagged: "Flagged",
   closed: "Closed",
   passes: "Passes",
 };
 
-/** The tabs a caller may open: waiting, the closed group and the passes quote runs only an approver may read. */
+/**
+ * The tabs a caller may open: waiting, the closed group and the passes quote
+ * runs only an approver may read; flagged changes are applied ones, which
+ * every member sees.
+ */
 export function tabsFor(canApprove: boolean): Tab[] {
-  return canApprove ? ["waiting", "applied", "closed", "passes"] : ["applied"];
+  return canApprove
+    ? ["waiting", "applied", "flagged", "closed", "passes"]
+    : ["applied", "flagged"];
 }
 
 /** The tab asked for if it may be opened, else the first the caller has. */
@@ -218,4 +227,55 @@ export function waitingFinding(
       ? `, for ${waitedFor(oldest.created_at, now)}`
       : `; the oldest for ${waitedFor(oldest.created_at, now)}`;
   return `${n} ${verb} for approval${tail}.`;
+}
+
+/** Why a watch flagged its change, in words. */
+export function flagWords(flag: ImprovementWatch["flag"]): string {
+  if (flag === "worse") return "its runs went worse";
+  if (flag === "costlier") return "its runs cost more, with no fewer failures";
+  if (flag === "both") return "its runs went worse and cost more";
+  return "";
+}
+
+/** "Flagged, its runs went worse: 7 of 10 went wrong after, 2 of 10 before." */
+export function watchHeadline(w: ImprovementWatch): string {
+  const counts = `${w.after.bad} of ${w.after.runs} went wrong after, ${w.before.bad} of ${w.before.runs} before`;
+  switch (w.status) {
+    case "watching":
+      return `Watching: ${w.after.runs} of ${w.needed} runs so far`;
+    case "clear":
+      return `Clear: ${counts}`;
+    case "flagged":
+      return `Flagged, ${flagWords(w.flag)}: ${counts}`;
+    case "cleared":
+      return `Flagged (${flagWords(w.flag)}), then cleared: ${counts}`;
+    case "ended":
+      return w.ended_why === "reverted"
+        ? `Ended when reverted: ${w.after.runs} of ${w.needed} runs counted`
+        : `Ended with too few runs: ${w.after.runs} of ${w.needed} in 30 days`;
+  }
+}
+
+/** The agent's usual rate before the change, and the bar it sets. */
+export function usualWords(w: ImprovementWatch): string {
+  if (w.bar === null || w.bar === undefined) {
+    return `Too little history to judge against: ${count(w.baseline_runs, "run")} before it.`;
+  }
+  return `Usually ${w.baseline_bad} of ${w.baseline_runs} went wrong; flagged at ${w.bar} of ${w.needed}.`;
+}
+
+const tokensNumber = new Intl.NumberFormat("en-US");
+
+/** "Tokens a run 1,000 → 1,200 · steps 4 → 5", or null with nothing counted. */
+export function costWords(w: ImprovementWatch): string | null {
+  const n = (v: number | null | undefined) =>
+    v === null || v === undefined ? "—" : tokensNumber.format(v);
+  if (w.before.tokens == null && w.after.tokens == null) return null;
+  return `Tokens a run ${n(w.before.tokens)} → ${n(w.after.tokens)} · steps ${n(w.before.steps)} → ${n(w.after.steps)}`;
+}
+
+/** "The pattern it targeted: in 3 of 10 runs before, 0 of 10 after", or null for a removal. */
+export function patternWords(w: ImprovementWatch): string | null {
+  if (w.before.signature == null || w.after.signature == null) return null;
+  return `The pattern it targeted: in ${w.before.signature} of ${w.before.runs} runs before, ${w.after.signature} of ${w.after.runs} after`;
 }

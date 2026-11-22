@@ -1060,6 +1060,9 @@ export type ApprovalRuleRequest = {
 
 export type ImprovementStatus = "waiting" | "applied" | "rejected" | "reverted" | "withdrawn";
 
+/** A proposal's state to list by, or flagged: the applied changes whose watch flagged them. */
+export type ImprovementFilter = ImprovementStatus | "flagged";
+
 export type ImprovementKind =
   | "instructions"
   | "description"
@@ -1123,6 +1126,47 @@ export type Improvement = {
   decided_at?: string | null;
   reverted_by?: string | null;
   reverted_at?: string | null;
+  /** How the change went once applied; null until it is. */
+  watch?: ImprovementWatch | null;
+};
+
+/** What one window of judged runs came to. */
+export type ImprovementWatchSide = {
+  runs: number;
+  bad: number;
+  /** Runs a member gave 👍, and 👎. */
+  up: number;
+  down: number;
+  /** The median tokens a run's tree spent, a cached token as a tenth. */
+  tokens?: number | null;
+  steps?: number | null;
+  /** Runs carrying the signature the change targeted; null for a removal. */
+  signature?: number | null;
+};
+
+/**
+ * The agent's judged runs after a change against the ones before, measured
+ * against how much its runs usually vary. A flag asks a person to look.
+ */
+export type ImprovementWatch = {
+  status: "watching" | "clear" | "flagged" | "cleared" | "ended";
+  flag?: "worse" | "costlier" | "both" | null;
+  ended_why?: "reverted" | "too_few_runs" | null;
+  /** The judged runs after the change that decide it. */
+  needed: number;
+  baseline_runs: number;
+  baseline_bad: number;
+  /** The bad runs out of `needed` that flag it; null with too little history. */
+  bar?: number | null;
+  baseline_p90?: number | null;
+  before: ImprovementWatchSide;
+  after: ImprovementWatchSide;
+  /** Other changes applied to the same agents within the windows. */
+  overlapping: string[];
+  started_at: string;
+  finished_at?: string | null;
+  cleared_by?: string | null;
+  cleared_at?: string | null;
 };
 
 /** What set an improver pass going: a weakness that recurred, or the day's turn. */
@@ -1157,4 +1201,4 @@ export type ImproverPass = {
 };
 
 /** POST /teams/{id}/improvements/{proposalID}/decision */
-export type ImprovementDecision = { action: "approve" | "reject" | "revert" };
+export type ImprovementDecision = { action: "approve" | "reject" | "revert" | "clear" };
