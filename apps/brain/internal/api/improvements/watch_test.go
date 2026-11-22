@@ -114,3 +114,27 @@ func TestClearingAFlaggedChange(t *testing.T) {
 		t.Errorf("a cleared change still lists as flagged")
 	}
 }
+
+// Reverting a flagged change ends its watch and keeps the flag, so it is no
+// longer offered to clear, and the record still says it was flagged.
+func TestRevertingAFlaggedChangeEndsItsWatch(t *testing.T) {
+	w := newWorld(t)
+	a := w.agent(t, "support-bot")
+	p := w.mustPropose(t, w.instructionsChange(t, a))
+	if rec := w.decide(t, p.ID, "approve"); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := w.raw.Exec(t.Context(), `UPDATE improvement_watches SET status = 'flagged', flag = 'worse', finished_at = now() WHERE proposal_id = $1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := w.decide(t, p.ID, "revert"); rec.Code != http.StatusOK {
+		t.Fatalf("revert: %d %s", rec.Code, rec.Body)
+	}
+	watch, _ := w.store.GetImprovementWatch(t.Context(), p.ID)
+	if watch.Status != "ended" || watch.EndedWhy == nil || *watch.EndedWhy != "reverted" || watch.Flag == nil || *watch.Flag != "worse" {
+		t.Fatalf("after revert: %+v", watch)
+	}
+	if rec := w.decide(t, p.ID, "clear"); rec.Code != http.StatusConflict {
+		t.Errorf("clear after revert = %d, want 409", rec.Code)
+	}
+}

@@ -232,6 +232,7 @@ type ImprovementWatch struct {
 	Flag         *string
 	EndedWhy     *string
 	OnSeconds    int32
+	LastSweptAt  *time.Time
 	BaselineRuns int16
 	BaselineBad  int16
 	Bar          *int16

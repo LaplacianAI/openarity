@@ -16,9 +16,9 @@ import (
 
 // The watch's numbers, approved in the I4 design.
 const (
-	// watchRuns is how many counted runs after a change decide it, and how
+	// WatchRuns is how many counted runs after a change decide it, and how
 	// many before it a person reads beside them.
-	watchRuns = 10
+	WatchRuns = 10
 	// baselineRuns is the most counted runs before a change its bar is
 	// estimated from, and baselineLeast the fewest it judges against.
 	baselineRuns  = 50
@@ -29,10 +29,13 @@ const (
 	// watchFor is how long a watch waits for its runs, counted only while
 	// the team has improvement on.
 	watchFor = 30 * 24 * time.Hour
-	// watchPage is the most watches one sweep looks at.
-	watchPage = 100
+	// watchPage is how many watches a sweep takes at a time, and
+	// watchPages how many pages at most, so one sweep stays bounded.
+	watchPage  = 100
+	watchPages = 50
 	// A window reads this many times its runs, so runs nobody could judge
-	// (neither good nor bad) do not leave it short.
+	// (neither good nor bad) do not leave it short; one with more unjudged
+	// runs than that counts fewer, and waits for later runs.
 	watchRead = 3
 )
 
@@ -40,6 +43,7 @@ const (
 	watchWatching = "watching"
 	watchClear    = "clear"
 	watchFlagged  = "flagged"
+	watchCleared  = "cleared"
 	watchEnded    = "ended"
 
 	flagWorse    = "worse"
@@ -51,7 +55,7 @@ const (
 
 // WatchStore is what the watch reads and writes.
 type WatchStore interface {
-	TickOpenWatches(ctx context.Context, arg db.TickOpenWatchesParams) ([]db.ImprovementWatch, error)
+	TickOpenWatches(ctx context.Context, pageSize int32) ([]db.TickOpenWatchesRow, error)
 	GetImprovementProposal(ctx context.Context, arg db.GetImprovementProposalParams) (db.ImprovementProposal, error)
 	ListWatchRuns(ctx context.Context, arg db.ListWatchRunsParams) ([]db.ListWatchRunsRow, error)
 	ListOverlappingWatches(ctx context.Context, arg db.ListOverlappingWatchesParams) ([]uuid.UUID, error)
@@ -84,7 +88,7 @@ type window struct {
 }
 
 func windowOf(rs []counted) window {
-	w := window{runs: int16(len(rs))}
+	w := window{runs: int16(len(rs))} //nolint:gosec // G115: at most baselineRuns
 	for _, r := range rs {
 		if r.bad {
 			w.bad++
@@ -104,20 +108,24 @@ func windowOf(rs []counted) window {
 	return w
 }
 
-// bar is the fewest bad runs out of n that chance gives less than
-// watchChance of the time, at the smoothed rate of bad runs in a baseline
-// of runs; ok is false with too little history to judge against.
-func bar(bad, runs, n int) (int, bool) {
+// bar is the fewest bad runs out of WatchRuns that chance gives less than
+// watchChance of the time: a one-sided binomial tail at the baseline's rate
+// of bad runs, smoothed by adding one bad and one good run (Laplace), so a
+// baseline with none bad still gives a rate above zero. The rate is taken as
+// known, so with a short baseline the chance of a false flag is somewhat
+// above watchChance; the design accepts that, a flag being a prompt to look
+// and never a revert. ok is false with too little history to judge against.
+func bar(bad, runs int) (int, bool) {
 	if runs < baselineLeast {
 		return 0, false
 	}
 	p := float64(bad+1) / float64(runs+2)
-	for k := 0; k <= n; k++ {
-		if binomialTail(n, k, p) < watchChance {
+	for k := 0; k <= WatchRuns; k++ {
+		if binomialTail(WatchRuns, k, p) < watchChance {
 			return k, true
 		}
 	}
-	return n + 1, true
+	return WatchRuns + 1, true
 }
 
 // binomialTail is the chance of k or more successes in n tries at p.
@@ -165,7 +173,7 @@ type verdict struct {
 // the baseline's 90th percentile without fewer bad runs than before, both,
 // or clear. Without a bar there is no history to judge against: clear.
 func judgeWatch(baseline, before, after window) verdict {
-	k, ok := bar(int(baseline.bad), int(baseline.runs), watchRuns)
+	k, ok := bar(int(baseline.bad), int(baseline.runs))
 	worse := ok && int(after.bad) >= k
 	costlier := false
 	if p90, ok := percentile(baseline.spent, 90); ok && baseline.runs >= baselineLeast {
@@ -184,25 +192,35 @@ func judgeWatch(baseline, before, after window) verdict {
 	return verdict{status: watchClear}
 }
 
-// Sweep counts every open watch in a team with improvement on, after
-// adding elapsed to the time each has been watched. A watch with its runs
-// gets its verdict; one past watchFor without them ends.
-func (w *Watcher) Sweep(ctx context.Context, elapsed time.Duration) error {
-	open, err := w.store.TickOpenWatches(ctx, db.TickOpenWatchesParams{Seconds: int32(elapsed.Seconds()), PageSize: watchPage})
-	if err != nil {
-		return fmt.Errorf("listing open watches: %w", err)
-	}
+// Sweep goes round the open watches, the least recently swept first. Each
+// counts the time since its last sweep while its team has improvement on;
+// one in a team with it off is passed over until the team turns it back on.
+// A watch with its runs gets its verdict; one past watchFor without them
+// ends.
+func (w *Watcher) Sweep(ctx context.Context) error {
 	var failed []error
-	for _, o := range open {
-		if err := w.count(ctx, o); err != nil {
-			failed = append(failed, err)
+	for range watchPages {
+		open, err := w.store.TickOpenWatches(ctx, watchPage)
+		if err != nil {
+			return errors.Join(append(failed, fmt.Errorf("listing open watches: %w", err))...)
+		}
+		for _, o := range open {
+			if !o.Improving {
+				continue
+			}
+			if err := w.count(ctx, o); err != nil {
+				failed = append(failed, err)
+			}
+		}
+		if len(open) < watchPage {
+			break
 		}
 	}
 	return errors.Join(failed...)
 }
 
 // count reads one watch's windows and writes what they come to.
-func (w *Watcher) count(ctx context.Context, o db.ImprovementWatch) error {
+func (w *Watcher) count(ctx context.Context, o db.TickOpenWatchesRow) error {
 	p, err := w.store.GetImprovementProposal(ctx, db.GetImprovementProposalParams{ID: o.ProposalID, TeamID: o.TeamID})
 	if err != nil {
 		return fmt.Errorf("reading proposal %s: %w", o.ProposalID, err)
@@ -214,7 +232,7 @@ func (w *Watcher) count(ctx context.Context, o db.ImprovementWatch) error {
 	read := func(after bool, n int) ([]counted, []time.Time, error) {
 		rows, err := w.store.ListWatchRuns(ctx, db.ListWatchRunsParams{
 			TeamID: o.TeamID, AgentIds: o.AgentIds, At: o.StartedAt, After: after,
-			Part: key.Part, Target: key.Target, Cause: key.Cause, PageSize: int32(n * watchRead),
+			Part: key.Part, Target: key.Target, Cause: key.Cause, PageSize: int32(n * watchRead), //nolint:gosec // G115: at most baselineRuns times watchRead
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading the runs of proposal %s: %w", o.ProposalID, err)
@@ -238,17 +256,17 @@ func (w *Watcher) count(ctx context.Context, o db.ImprovementWatch) error {
 	if err != nil {
 		return err
 	}
-	afterRuns, afterAt, err := read(true, watchRuns)
+	afterRuns, afterAt, err := read(true, WatchRuns)
 	if err != nil {
 		return err
 	}
-	baseline, before, after := windowOf(baseRuns), windowOf(baseRuns[:min(watchRuns, len(baseRuns))]), windowOf(afterRuns)
+	baseline, before, after := windowOf(baseRuns), windowOf(baseRuns[:min(WatchRuns, len(baseRuns))]), windowOf(afterRuns)
 
 	since, until := o.StartedAt, time.Now()
 	if len(baseAt) > 0 {
 		since = baseAt[len(baseAt)-1]
 	}
-	if len(afterAt) == watchRuns {
+	if len(afterAt) == WatchRuns {
 		until = afterAt[len(afterAt)-1]
 	}
 	overlapping, err := w.store.ListOverlappingWatches(ctx, db.ListOverlappingWatchesParams{
@@ -264,7 +282,7 @@ func (w *Watcher) count(ctx context.Context, o db.ImprovementWatch) error {
 
 	finish := db.FinishImprovementWatchParams{ProposalID: o.ProposalID}
 	switch {
-	case after.runs >= watchRuns:
+	case after.runs >= WatchRuns:
 		v := judgeWatch(baseline, before, after)
 		finish.Status = v.status
 		if v.flag != "" {
@@ -297,8 +315,8 @@ func progressOf(id uuid.UUID, baseline, before, after window, hasKey bool, overl
 		AfterRuns: after.runs, AfterBad: after.bad, AfterUp: after.up, AfterDown: after.down,
 		Overlapping: orEmptyIDs(overlapping),
 	}
-	if k, ok := bar(int(baseline.bad), int(baseline.runs), watchRuns); ok {
-		b := int16(k)
+	if k, ok := bar(int(baseline.bad), int(baseline.runs)); ok {
+		b := int16(k) //nolint:gosec // G115: at most WatchRuns + 1
 		p.Bar = &b
 	}
 	p.BeforeTokens = optional(median(before.spent))
@@ -325,7 +343,7 @@ func optional32(v int64, ok bool) *int32 {
 	if !ok {
 		return nil
 	}
-	n := int32(v)
+	n := int32(min(v, math.MaxInt32)) //nolint:gosec // G115: clamped
 	return &n
 }
 

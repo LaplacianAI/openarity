@@ -7,10 +7,11 @@ VALUES (sqlc.arg(proposal_id), sqlc.arg(team_id), sqlc.arg(agent_ids)::uuid[], n
 -- name: ListSkillHolders :many
 SELECT agent_id FROM agent_skills WHERE skill_id = $1 ORDER BY agent_id;
 
--- A reverted change's watch ends, keeping what it had counted.
+-- A reverted change's watch ends, whatever it had come to, keeping what it
+-- counted and any flag, so the record says it was flagged and then reverted.
 -- name: EndRevertedWatch :exec
-UPDATE improvement_watches SET status = 'ended', ended_why = 'reverted', finished_at = now()
-WHERE proposal_id = $1 AND status = 'watching';
+UPDATE improvement_watches SET status = 'ended', ended_why = 'reverted', finished_at = coalesce(finished_at, now())
+WHERE proposal_id = $1 AND status <> 'ended';
 
 -- A person looked at a flagged change and kept it. No row unless flagged.
 -- name: ClearImprovementWatch :one
@@ -25,15 +26,30 @@ SELECT * FROM improvement_watches WHERE proposal_id = $1;
 -- name: ListImprovementWatches :many
 SELECT * FROM improvement_watches WHERE proposal_id = ANY (sqlc.arg(ids)::uuid[]);
 
--- Open watches in teams with improvement on, oldest first, after the sweep
--- has counted the time since the last one toward each.
+-- One page of open watches, the least recently swept first, so every watch
+-- is reached in turn. Each counts the time since its last sweep toward its
+-- 30 days, but only while its team has improvement on; a watch in a team
+-- with it off is marked swept and not counted, and comes back with on false.
 -- name: TickOpenWatches :many
-UPDATE improvement_watches w SET on_seconds = w.on_seconds + sqlc.arg(seconds)::int
-FROM team_settings ts
-WHERE ts.team_id = w.team_id AND ts.improvement AND w.status = 'watching'
-  AND w.proposal_id IN (SELECT x.proposal_id FROM improvement_watches x
-                        WHERE x.status = 'watching' ORDER BY x.started_at LIMIT sqlc.arg(page_size))
-RETURNING w.*;
+WITH page AS MATERIALIZED (
+    SELECT x.proposal_id FROM improvement_watches x
+    WHERE x.status = 'watching'
+    ORDER BY x.last_swept_at NULLS FIRST, x.started_at
+    LIMIT sqlc.arg(page_size)
+    FOR UPDATE SKIP LOCKED
+), ticked AS (
+    UPDATE improvement_watches w SET
+        on_seconds = w.on_seconds + CASE
+            WHEN EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = w.team_id AND ts.improvement)
+            THEN least(extract(epoch FROM now() - coalesce(w.last_swept_at, now())), 2147483647 - w.on_seconds)::int
+            ELSE 0 END,
+        last_swept_at = now()
+    FROM page
+    WHERE w.proposal_id = page.proposal_id
+    RETURNING w.*
+)
+SELECT t.*, EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = t.team_id AND ts.improvement)::bool AS improving
+FROM ticked t;
 
 -- Judged top-level runs whose trees reach the watched agents, either side of
 -- when the change was applied: before newest first, after oldest first. Each

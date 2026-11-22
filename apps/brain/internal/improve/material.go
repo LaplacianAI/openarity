@@ -287,26 +287,35 @@ func watched(r db.ListAgentProposalRecordRow) string {
 	if r.Watch == nil {
 		return ""
 	}
-	counts := fmt.Sprintf("%d of %d after, %d of %d before", *r.WatchAfterBad, *r.WatchAfterRuns, *r.WatchBeforeBad, *r.WatchBeforeRuns)
+	n := func(v *int16) int16 {
+		if v == nil {
+			return 0
+		}
+		return *v
+	}
+	counts := fmt.Sprintf("%d of %d after, %d of %d before", n(r.WatchAfterBad), n(r.WatchAfterRuns), n(r.WatchBeforeBad), n(r.WatchBeforeRuns))
+	flagged := ""
+	if r.WatchFlag != nil {
+		flagged = ", flagged: " + *r.WatchFlag + ", " + counts
+	}
 	switch *r.Watch {
 	case watchWatching:
 		return ", being watched: " + counts + " so far"
 	case watchClear:
 		return ", watched: clear, " + counts
-	case watchFlagged, "cleared":
-		flag := ""
-		if r.WatchFlag != nil {
-			flag = *r.WatchFlag
-		}
-		s := ", flagged: " + flag + ", " + counts
-		if *r.Watch == "cleared" {
-			s += ", cleared by a person"
-		}
-		return s
+	case watchFlagged:
+		return flagged
+	case watchCleared:
+		return flagged + ", cleared by a person"
 	case watchEnded:
+		why := ""
 		if r.WatchEnded != nil {
-			return ", watch ended: " + *r.WatchEnded
+			why = *r.WatchEnded
 		}
+		if flagged != "" {
+			return flagged + ", then the watch ended: " + why
+		}
+		return ", watch ended: " + why
 	}
 	return ""
 }

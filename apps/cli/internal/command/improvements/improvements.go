@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	decidePermission  = "improvement:approve plus agent:write (or skill:write for a skill)"
+	decidePermission = "improvement:approve plus agent:write (or skill:write for a skill)"
 	// Rejecting and clearing a flag write nothing to an agent or a skill.
 	approvePermission = "improvement:approve"
 	maxWhy            = 70

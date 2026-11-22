@@ -13,8 +13,7 @@ const (
 	watchSchedule  = "improve-watch-sweep"
 	// Every ten minutes, five after the outcome sweep, so the runs it just
 	// judged are counted.
-	watchCron  = "0 5-59/10 * * * *"
-	watchEvery = 10 * time.Minute
+	watchCron = "0 5-59/10 * * * *"
 )
 
 // WatchJob counts how each applied change went, every ten minutes.
@@ -32,7 +31,7 @@ func (j *WatchJob) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	}
 	dbos.RegisterWorkflow(d, j.sweep, dbos.WithWorkflowName(watchSweepFlow))
 	// No backfill: a missed sweep finds the same watches at the next, and
-	// counts only the time it saw improvement on.
+	// counts the time since each was last swept.
 	return []dbos.ScheduleSpec{
 		{ScheduleName: watchSchedule, Schedule: watchCron, WorkflowName: watchSweepFlow, AutomaticBackfill: false},
 	}, nil
@@ -40,6 +39,6 @@ func (j *WatchJob) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 
 func (j *WatchJob) sweep(ctx dbos.Context, in dbos.ScheduledWorkflowInput) (string, error) {
 	return dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
-		return in.ScheduledTime.UTC().Format(time.RFC3339), j.watcher.Sweep(sctx, watchEvery)
+		return in.ScheduledTime.UTC().Format(time.RFC3339), j.watcher.Sweep(sctx)
 	})
 }

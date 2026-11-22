@@ -22,12 +22,12 @@ func TestTheBarIsTheAgentsOwnNoise(t *testing.T) {
 		{25, 50, 9},
 		{50, 50, 11}, // every run bad: no count of ten is rare enough
 	} {
-		got, ok := bar(tc.bad, tc.runs, watchRuns)
+		got, ok := bar(tc.bad, tc.runs)
 		if !ok || got != tc.want {
 			t.Errorf("bar(%d of %d) = %d, %v; want %d", tc.bad, tc.runs, got, ok, tc.want)
 		}
 	}
-	if _, ok := bar(0, baselineLeast-1, watchRuns); ok {
+	if _, ok := bar(0, baselineLeast-1); ok {
 		t.Error("a baseline under ten runs gave a bar")
 	}
 }
@@ -137,7 +137,7 @@ func TestAChangeThatWentWorseIsFlaggedOnce(t *testing.T) {
 	w.several(t, w.agent, 20, 2, 30*time.Hour, 1000) // before: 2 bad in 20
 	w.several(t, w.agent, 10, 7, time.Hour, 1000)    // after: 7 bad in 10
 
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	got := w.watch(t, id)
@@ -168,14 +168,14 @@ func TestAChangeWithinTheBarIsClearAndCantTellIsSkipped(t *testing.T) {
 	for i := range 5 {
 		w.judged(t, w.agent, fmt.Sprintf("%d minutes", 50+i), verdictCantTell, 1000)
 	}
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.watch(t, id); got.Status != watchWatching || got.AfterRuns != 9 {
 		t.Fatalf("with nine counted runs: %+v", got)
 	}
 	w.judged(t, w.agent, "10 minutes", verdictDone, 1000)
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.watch(t, id); got.Status != watchClear || got.AfterRuns != 10 || got.AfterBad != 3 {
@@ -190,7 +190,7 @@ func TestACostlierChangeIsFlagged(t *testing.T) {
 	id := w.watchedChange(t, []uuid.UUID{w.agent}, 24*time.Hour)
 	w.several(t, w.agent, 20, 2, 30*time.Hour, 1000)
 	w.several(t, w.agent, 10, 2, time.Hour, 5000)
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	got := w.watch(t, id)
@@ -207,7 +207,7 @@ func TestARunStartedBeforeTheChangeCountsBefore(t *testing.T) {
 	watcher := NewWatcher(w.store, discard())
 	id := w.watchedChange(t, []uuid.UUID{w.agent}, time.Hour)
 	w.judged(t, w.agent, "61 minutes", verdictNotDone, 1000) // created a minute before, finished after
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.watch(t, id); got.BaselineRuns != 1 || got.AfterRuns != 0 {
@@ -229,7 +229,7 @@ func TestADelegateIsWatchedThroughItsRoots(t *testing.T) {
 		input, status, started_at, finished_at) SELECT gen_random_uuid(), team_id, session_id, id, id, 1, 'call_1', $2, 'helper', 'q', 'succeeded', started_at, finished_at FROM runs WHERE id = $1`,
 		root, delegate)
 	w.judged(t, w.agent, "20 minutes", verdictNotDone, 1000) // the agent alone: not the delegate's
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.watch(t, id); got.AfterRuns != 1 || got.AfterBad != 1 {
@@ -237,28 +237,90 @@ func TestADelegateIsWatchedThroughItsRoots(t *testing.T) {
 	}
 }
 
-// A watch without its runs ends after 30 days watched with improvement on;
-// time with it off is not counted, nor is the watch looked at.
+// A watch counts the time since its last sweep toward its 30 days, only
+// while its team has improvement on: time with it off is not counted, and
+// a watch without its runs ends once 30 days on have passed.
 func TestAWatchWithoutItsRunsEnds(t *testing.T) {
 	w := newWorld(t)
 	watcher := NewWatcher(w.store, discard())
 	id := w.watchedChange(t, []uuid.UUID{w.agent}, 40*24*time.Hour)
-	w.exec(t, `UPDATE improvement_watches SET on_seconds = $2 WHERE proposal_id = $1`, id, int32((watchFor - watchEvery).Seconds()))
+	near := int32((watchFor - 20*time.Minute).Seconds())
+	w.exec(t, `UPDATE improvement_watches SET on_seconds = $2, last_swept_at = now() - interval '2 days' WHERE proposal_id = $1`, id, near)
 
+	// Two days with improvement off: swept, not counted.
 	w.exec(t, `UPDATE team_settings SET improvement = false WHERE team_id = $1`, w.team)
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.watch(t, id); got.Status != watchWatching || got.OnSeconds != int32((watchFor-watchEvery).Seconds()) {
+	if got := w.watch(t, id); got.Status != watchWatching || got.OnSeconds != near || got.LastSweptAt == nil {
 		t.Fatalf("with improvement off: %+v", got)
 	}
-
 	w.exec(t, `UPDATE team_settings SET improvement = true WHERE team_id = $1`, w.team)
-	if err := watcher.Sweep(t.Context(), watchEvery); err != nil {
+	if err := watcher.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.watch(t, id); got.Status != watchWatching || got.OnSeconds > near+60 {
+		t.Fatalf("the days off were counted: %+v", got)
+	}
+
+	// Half an hour on since the last sweep crosses the 30 days.
+	w.exec(t, `UPDATE improvement_watches SET last_swept_at = now() - interval '30 minutes' WHERE proposal_id = $1`, id)
+	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.watch(t, id); got.Status != watchEnded || got.EndedWhy == nil || *got.EndedWhy != endedTooFew {
 		t.Errorf("after 30 days on: %+v", got)
+	}
+}
+
+// Every watch is reached in turn: a page of older watches in a team with
+// improvement off does not keep a newer one from being counted.
+func TestEveryWatchIsReachedInTurn(t *testing.T) {
+	w := newWorld(t)
+	watcher := NewWatcher(w.store, discard())
+	var other, otherAgent uuid.UUID
+	w.scan(t, &other, `INSERT INTO teams (name) VALUES ('quiet') RETURNING id`)
+	w.exec(t, `INSERT INTO team_settings (team_id, improvement) VALUES ($1, false)`, other)
+	w.scan(t, &otherAgent, `INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'idle', 'm', 100, 'react', 3) RETURNING id`, other)
+	w.exec(t, `WITH p AS (
+		INSERT INTO improvement_proposals (team_id, agent_id, kind, status, why, hypothesis, scope, before, after, decided_at)
+		SELECT $1, $2, 'instructions', 'applied', 'w', 'h', 'domain', '{}', '{}', now() - interval '20 days'
+		FROM generate_series(1, $3) RETURNING id)
+		INSERT INTO improvement_watches (proposal_id, team_id, agent_ids, started_at)
+		SELECT id, $1, ARRAY[$2]::uuid[], now() - interval '20 days' FROM p`, other, otherAgent, watchPage+5)
+
+	id := w.watchedChange(t, []uuid.UUID{w.agent}, time.Hour)
+	w.several(t, w.agent, 3, 1, 30*time.Minute, 1000)
+	if err := watcher.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.watch(t, id); got.AfterRuns != 3 || got.LastSweptAt == nil {
+		t.Errorf("the newer watch was not reached: %+v", got)
+	}
+}
+
+// A team that turned improvement off has its watches wait, though their runs
+// are in: they are judged once it is back on.
+func TestAWatchWaitsWhileImprovementIsOff(t *testing.T) {
+	w := newWorld(t)
+	watcher := NewWatcher(w.store, discard())
+	id := w.watchedChange(t, []uuid.UUID{w.agent}, 24*time.Hour)
+	w.several(t, w.agent, 20, 2, 30*time.Hour, 1000)
+	w.several(t, w.agent, 10, 7, time.Hour, 1000)
+	w.exec(t, `UPDATE team_settings SET improvement = false WHERE team_id = $1`, w.team)
+	if err := watcher.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.watch(t, id); got.Status != watchWatching || got.AfterRuns != 0 {
+		t.Fatalf("judged with improvement off: %+v", got)
+	}
+	w.exec(t, `UPDATE team_settings SET improvement = true WHERE team_id = $1`, w.team)
+	if err := watcher.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.watch(t, id); got.Status != watchFlagged {
+		t.Errorf("once back on: %+v", got)
 	}
 }
 

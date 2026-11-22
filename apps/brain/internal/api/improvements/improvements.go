@@ -48,6 +48,7 @@ type Reads interface {
 	ListVisibleRuns(ctx context.Context, arg db.ListVisibleRunsParams) ([]db.ListVisibleRunsRow, error)
 	ListImproverPasses(ctx context.Context, arg db.ListImproverPassesParams) ([]db.ImproverPass, error)
 	GetImprovementWatch(ctx context.Context, proposalID uuid.UUID) (db.ImprovementWatch, error)
+	ListImprovementWatches(ctx context.Context, ids []uuid.UUID) ([]db.ImprovementWatch, error)
 }
 
 type handler struct {
@@ -179,9 +180,27 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The page's watches in one read, rather than one a proposal.
+	ids := make([]uuid.UUID, len(page.Items))
+	for i, row := range page.Items {
+		ids[i] = row.ID
+	}
+	watches, err := h.reads.ListImprovementWatches(r.Context(), ids)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the improvements' watches", err)
+		return
+	}
+	byID := make(map[uuid.UUID]db.ImprovementWatch, len(watches))
+	for _, w := range watches {
+		byID[w.ProposalID] = w
+	}
+
 	out := api.Page[view]{Items: make([]view, 0, len(page.Items)), NextCursor: page.NextCursor}
 	for _, row := range page.Items {
 		v, err := h.view(r, u, row)
+		if watch, ok := byID[row.ID]; ok {
+			v.Watch = watchViewOf(watch)
+		}
 		if err != nil {
 			api.Fail(w, h.logger, u, "failed to read an improvement", err)
 			return
@@ -200,6 +219,10 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	v, err := h.view(r, u, row)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to read the improvement", err)
+		return
+	}
+	if err := h.withWatch(r, &v); err != nil {
+		api.Fail(w, h.logger, u, "failed to read the improvement's watch", err)
 		return
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, v)
@@ -269,6 +292,10 @@ func (h *handler) decide(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, h.logger, http.StatusOK, map[string]any{"id": out.ID, "status": out.Status})
 		return
 	}
+	// Committed either way: a watch that cannot be read is left out, not failed.
+	if err := h.withWatch(r, &v); err != nil {
+		h.logger.ErrorContext(r.Context(), "Failed to read the decided improvement's watch", "improvement_id", out.ID, "error", err)
+	}
 	api.WriteJSON(w, h.logger, http.StatusOK, v)
 }
 
@@ -327,6 +354,20 @@ func (h *handler) find(w http.ResponseWriter, r *http.Request, u *auth.User) (db
 	return row, true
 }
 
+// withWatch adds a proposal's watch to its view; none until it is applied.
+func (h *handler) withWatch(r *http.Request, v *view) error {
+	watch, err := h.reads.GetImprovementWatch(r.Context(), v.ID)
+	switch {
+	case err == nil:
+		v.Watch = watchViewOf(watch)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return err
+	}
+	return nil
+}
+
+// view is a proposal as the API shows it, without its watch: a page reads
+// its watches at once, and get reads the one.
 func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal) (view, error) {
 	ctx := r.Context()
 	p, err := proposals.Decode(row)
@@ -381,13 +422,6 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 			}
 			v.Runs = append(v.Runs, ref)
 		}
-	}
-	watch, err := h.reads.GetImprovementWatch(ctx, row.ID)
-	switch {
-	case err == nil:
-		v.Watch = watchViewOf(watch)
-	case !errors.Is(err, pgx.ErrNoRows):
-		return view{}, err
 	}
 	return v, nil
 }

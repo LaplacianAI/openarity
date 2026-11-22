@@ -14,8 +14,10 @@ CREATE TABLE improvement_watches (
     status        text NOT NULL DEFAULT 'watching',
     flag          text,
     ended_why     text,
-    -- Time watched while the team had improvement on, toward the 30 days.
+    -- Time watched while the team had improvement on, toward the 30 days,
+    -- counted from one sweep to the next; null until the first sweep.
     on_seconds    integer NOT NULL DEFAULT 0,
+    last_swept_at timestamptz,
     baseline_runs smallint NOT NULL DEFAULT 0,
     baseline_bad  smallint NOT NULL DEFAULT 0,
     -- The bad runs out of ten that chance gives under 5% of the time at the
@@ -47,15 +49,19 @@ CREATE TABLE improvement_watches (
     CONSTRAINT improvement_watches_status_known
         CHECK (status IN ('watching', 'clear', 'flagged', 'cleared', 'ended')),
     CONSTRAINT improvement_watches_flag_known CHECK (flag IS NULL OR flag IN ('worse', 'costlier', 'both')),
-    CONSTRAINT improvement_watches_flagged CHECK ((status IN ('flagged', 'cleared')) = (flag IS NOT NULL)),
+    -- A flag is kept when the change is reverted after it, so the record
+    -- still says it was flagged.
+    CONSTRAINT improvement_watches_flagged CHECK (status NOT IN ('flagged', 'cleared') OR flag IS NOT NULL),
+    CONSTRAINT improvement_watches_flag_settled CHECK (status <> 'watching' OR flag IS NULL),
     CONSTRAINT improvement_watches_ended CHECK ((status = 'ended') = (ended_why IS NOT NULL)),
     CONSTRAINT improvement_watches_ended_known
         CHECK (ended_why IS NULL OR ended_why IN ('reverted', 'too_few_runs')),
     CONSTRAINT improvement_watches_finished CHECK ((status = 'watching') = (finished_at IS NULL)),
-    CONSTRAINT improvement_watches_cleared CHECK ((status = 'cleared') = (cleared_at IS NOT NULL)),
+    CONSTRAINT improvement_watches_cleared CHECK (status <> 'cleared' OR cleared_at IS NOT NULL),
+    CONSTRAINT improvement_watches_cleared_flagged CHECK (cleared_at IS NULL OR flag IS NOT NULL),
     CONSTRAINT improvement_watches_agents CHECK (cardinality(agent_ids) > 0)
 );
-CREATE INDEX improvement_watches_open_idx ON improvement_watches (team_id, started_at) WHERE status = 'watching';
+CREATE INDEX improvement_watches_open_idx ON improvement_watches (last_swept_at NULLS FIRST, started_at) WHERE status = 'watching';
 CREATE INDEX improvement_watches_flagged_idx ON improvement_watches (team_id) WHERE status = 'flagged';
 CREATE INDEX improvement_watches_agents_idx ON improvement_watches USING gin (agent_ids);
 

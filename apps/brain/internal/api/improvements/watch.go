@@ -5,11 +5,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/improve"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
-
-// watchRuns is how many judged runs after a change decide its watch.
-const watchRuns = 10
 
 // side is what one window of runs came to.
 type side struct {
@@ -47,7 +45,7 @@ type watchView struct {
 
 func watchViewOf(w db.ImprovementWatch) *watchView {
 	return &watchView{
-		Status: w.Status, Flag: w.Flag, EndedWhy: w.EndedWhy, Needed: watchRuns,
+		Status: w.Status, Flag: w.Flag, EndedWhy: w.EndedWhy, Needed: improve.WatchRuns,
 		BaselineRuns: w.BaselineRuns, BaselineBad: w.BaselineBad, Bar: w.Bar, BaselineP90: w.BaselineP90,
 		Before: side{
 			Runs: w.BeforeRuns, Bad: w.BeforeBad, Up: w.BeforeUp, Down: w.BeforeDown,
