@@ -792,6 +792,25 @@ describe("a team's workspaces", () => {
     expect(put(seen).sandbox).toMatchObject({ provider: "e2b", workspace_size: null });
   });
 
+  // Either way a size changes, every conversation gets a new workspace.
+  it("warns that files go whenever a save would change the size", async () => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: SIZED } });
+    at();
+    const sandbox = await screen.findByRole("region", { name: "Sandbox" });
+    const warning = /without the files in its old one/;
+    expect(within(sandbox).queryByText(warning)).toBeNull();
+
+    await userEvent.click(within(sandbox).getByRole("radio", { name: "Provider's" }));
+    expect(within(sandbox).getByText(warning)).toBeInTheDocument();
+
+    await userEvent.click(within(sandbox).getByRole("radio", { name: "Custom" }));
+    expect(within(sandbox).queryByText(warning)).toBeNull();
+    const memory = within(sandbox).getByLabelText("Memory");
+    await userEvent.clear(memory);
+    await userEvent.type(memory, "4");
+    expect(within(sandbox).getByText(warning)).toBeInTheDocument();
+  });
+
   it("saves a custom size typed into the page", async () => {
     const seen = brain({
       ...team(["team:settings"]),

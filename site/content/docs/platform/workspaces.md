@@ -49,7 +49,13 @@ oa teams settings set platform --keep-stopped-hours 72 --stop-idle-minutes 15
 ```
 
 The same settings are under Workspaces in the Sandbox section of the
-dashboard's Settings. A [hub](hub.md) the team chose
+dashboard's Settings. A change to the keep hours counts for rooms already
+stopped too.
+
+A room that cannot be brought back as it was (the provider lost it, it does
+not answer after a resume, or it is over its disk) is replaced by a fresh
+one. The call that found it does not run: the agent is told its earlier
+files are gone, and its next call uses the fresh room. A [hub](hub.md) the team chose
 from its agents has one when it is granted one, like any agent, and can work
 in it as well as hand work on; the built-in hub has none.
 
@@ -112,7 +118,15 @@ files of the old one. With none set, the provider's size is used:
 | E2B | Its template's, 2 CPUs and 2 GB | Not yet: refused until a template is built per size |
 
 sandboxd's disk is a soft cap: it measures every 30 seconds and stops a room
-past its size.
+past its size. A stopped room keeps its disk until its keep hours end, and
+every room's disk together is held to `SANDBOXD_DISK_BUDGET` (8 GiB by
+default). When stopped rooms fill it, a new room is refused as busy until one
+is deleted: size the budget for the teams' keep hours, or lower them.
+
+Upgrading sandboxd: a workspace room made before stopping existed has no
+volume for `/workspace`, so its files would not survive a stop. Delete such
+rooms (`docker rm -f` the `oa-sb-*` containers) when upgrading; the next call
+makes each conversation a new one.
 
 On E2B the first room waits for that template to be built, a few minutes after
 the sandbox is saved, and again after an upgrade. Until it is, a call says the

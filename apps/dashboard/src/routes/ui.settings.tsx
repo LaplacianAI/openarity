@@ -656,6 +656,11 @@ function lifeKey(d: SettingsDraft) {
   };
 }
 
+/** Whether saving would give the team's workspaces another size. */
+function sizeChanged(d: SettingsDraft, stored: TeamSettings): boolean {
+  return JSON.stringify(lifeKey(d).size) !== JSON.stringify(lifeKey(draftOf(stored)).size);
+}
+
 function sameLife(a: SettingsDraft, b: SettingsDraft): boolean {
   return JSON.stringify(lifeKey(a)) === JSON.stringify(lifeKey(b));
 }
@@ -802,9 +807,12 @@ const IDLE = [
  */
 function Workspaces({
   draft,
+  sizeChanged,
   onChange,
 }: {
   draft: SettingsDraft;
+  /** Whether saving would change the size, which gives every conversation a new workspace. */
+  sizeChanged: boolean;
   onChange: (patch: Partial<SettingsDraft>) => void;
 }) {
   const e2b = draft.sandbox === "e2b";
@@ -854,9 +862,16 @@ function Workspaces({
           {e2b
             ? "2 CPUs and 2 GB, the size its template is built at. A size of your own is not offered for E2B yet."
             : draft.sizeCustom
-              ? `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : ""} Changing it gives each conversation a new workspace, without its files.`
+              ? `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : ""}`
               : "Each conversation's workspace gets the size your sandbox gives one."}
         </p>
+        {sizeChanged ? (
+          <p className="flex items-start gap-1.5 text-xs text-foreground">
+            <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+            Saving gives each conversation a new workspace at this size, without the files in its
+            old one.
+          </p>
+        ) : null}
       </fieldset>
       <fieldset className="space-y-2" aria-describedby="settings-idle-hint">
         <legend className="mb-1.5 text-sm font-medium">Stop when idle</legend>
@@ -878,14 +893,15 @@ function Workspaces({
           ) : null}
         </div>
         <p id="settings-idle-hint" className="text-xs text-muted-foreground">
-          A workspace stops when its conversation's last run ends. This stops one left running, from
-          1 to 1,440 minutes.
+          {draft.idleOwn
+            ? "A workspace stops when its conversation's last run ends. This stops one left running, such as one waiting for an approval, after 1 to 1,440 minutes unused."
+            : "A workspace stops when its conversation's last run ends. One left running, such as one waiting for an approval, stops after the time your deployment sets."}
         </p>
       </fieldset>
       <Field
         label="Keep stopped"
         htmlFor="settings-keep-hours"
-        hint="A stopped workspace keeps its files for the conversation's next run, which starts it again. After this long it is deleted with them. From 1 to 720 hours."
+        hint="A stopped workspace keeps its files for the conversation's next run, which starts it again. After this long it is deleted with them, workspaces stopped before a change included. From 1 to 720 hours."
       >
         <Unit
           id="settings-keep-hours"
@@ -1531,7 +1547,11 @@ function SettingsForm({
           </Field>
         ) : null}
         {draft.sandbox !== "none" ? (
-          <Workspaces draft={draft} onChange={(patch) => set("sandbox", patch)} />
+          <Workspaces
+            draft={draft}
+            sizeChanged={sizeChanged(draft, stored)}
+            onChange={(patch) => set("sandbox", patch)}
+          />
         ) : null}
       </Section>
 
