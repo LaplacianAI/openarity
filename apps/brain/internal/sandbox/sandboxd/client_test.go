@@ -307,7 +307,7 @@ func TestAResumeSandboxdHasNoRoomForIsErrFull(t *testing.T) {
 		t.Fatalf("err = %v, want ErrFull", err)
 	}
 	// A sandboxd that says why keeps its reason in the error.
-	s = newServer(t, http.StatusServiceUnavailable, `{"error":"the sandbox is busy: the workspaces' disk is spent (8200 MiB with this one, of 8192 MiB); stopped workspaces keep theirs until their keep hours end"}`)
+	s = newServer(t, http.StatusServiceUnavailable, `{"error":"the sandbox is busy: the workspaces' disk is spent; stopped workspaces keep theirs until their keep hours end"}`)
 	err = sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil)
 	if !errors.Is(err, sandbox.ErrFull) || !strings.Contains(err.Error(), "disk is spent") {
 		t.Fatalf("err = %v, want ErrFull with the reason", err)

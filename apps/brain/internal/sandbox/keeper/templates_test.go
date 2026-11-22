@@ -260,6 +260,32 @@ func TestATeamsOwnTemplateIsNeverBuilt(t *testing.T) {
 	}
 }
 
+// A team's own template was built at a size of its own, so the team's size
+// is not the room's, and changing it does not replace the room.
+func TestATeamsOwnTemplateKeepsItsOwnSize(t *testing.T) {
+	t.Parallel()
+	w, e, tpl, _ := e2bWorld(t)
+	tmpl := "ours"
+	_, err := w.store.UpsertTeamSettings(t.Context(), db.UpsertTeamSettingsParams{
+		TeamID: w.team, SearchProvider: "none", CompactionMessages: 100, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
+		SandboxProvider: "e2b", BrowserProvider: "none", SandboxSecretID: &w.keyID, SandboxTemplate: &tmpl,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.sized(8192, 4, 20480)
+	k := w.e2bKeeper(tpl)
+	first := w.ensure(k, workspace())
+	if got := w.rooms.Created()[0].Size; got != nil || e.builds() != 0 {
+		t.Fatalf("size = %+v, %d builds; want none", got, e.builds())
+	}
+
+	w.sized(2048, 1, 4096)
+	if again := w.ensure(k, workspace()); again.URL != first.URL || len(w.rooms.Created()) != 1 {
+		t.Fatalf("a size change replaced the room made from the team's own template: %s, then %s", first.URL, again.URL)
+	}
+}
+
 func TestTheSweepRecordsWhatE2BSays(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {

@@ -43,17 +43,14 @@ func (h *hangingRooms) Stop(ctx context.Context, _ keeper.Owner, _ uuid.UUID, _ 
 // A provider that is down costs the sweep its pass's time, not fifty stops'
 // worth, so the tombstones behind it are claimed soon after.
 func TestAPassOfStopsHasATimeOfItsOwn(t *testing.T) {
-	was := sweepStopTimeout
-	sweepStopTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { sweepStopTimeout = was })
-
 	h := &hangingRooms{}
 	e := roomEffect{
 		rows: idleRows{n: stopsPerSweep}, rooms: h, idle: time.Minute,
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		stopPass: 50 * time.Millisecond,
 	}
 	start := time.Now()
-	if err := e.stopIdle(t.Context()); err != nil {
+	if err := e.Prepare(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if took := time.Since(start); took > 5*time.Second {

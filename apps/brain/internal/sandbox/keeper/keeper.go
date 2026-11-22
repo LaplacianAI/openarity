@@ -626,8 +626,11 @@ func (k *Keeper) settings(ctx context.Context, team uuid.UUID) (teamSandbox, err
 	if s.SandboxTemplate != nil {
 		cfg.template = *s.SandboxTemplate
 	}
-	// The table holds a size whole or not at all.
-	if s.SandboxWorkspaceMemoryMb != nil && s.SandboxWorkspaceCpus != nil && s.SandboxWorkspaceDiskMb != nil {
+	// The table holds a size whole or not at all. A team's own E2B template
+	// was built at a size of its own, which a room cannot change, so the
+	// team's is not used: changing it would replace rooms for nothing.
+	ownE2B := cfg.provider == sandbox.E2B && cfg.template != ""
+	if !ownE2B && s.SandboxWorkspaceMemoryMb != nil && s.SandboxWorkspaceCpus != nil && s.SandboxWorkspaceDiskMb != nil {
 		cfg.size = &sandbox.Size{
 			MemoryMB: int(*s.SandboxWorkspaceMemoryMb), CPUs: int(*s.SandboxWorkspaceCpus), DiskMB: int(*s.SandboxWorkspaceDiskMb),
 		}

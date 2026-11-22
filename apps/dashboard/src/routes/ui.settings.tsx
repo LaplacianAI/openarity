@@ -812,6 +812,24 @@ const IDLE = [
   { value: "own", label: "After a time" },
 ] as const;
 
+/** What a workspace's size will be, for the sandbox and size in the draft. */
+function sizeHint(draft: SettingsDraft): string {
+  if (draft.sandbox === "e2b" && draft.sandboxTemplate.trim() !== "") {
+    return "Your own template sets each workspace's size, so a size here is not used.";
+  }
+  if (draft.sandbox === "e2b") {
+    return draft.sizeCustom
+      ? "E2B builds a template at this size in your account first, and new workspaces wait a few minutes for it. A size your E2B plan does not allow shows as a failed build. Disk is the free space E2B makes room for."
+      : "Each conversation's workspace gets 2 CPUs and 2 GB, the size the default template is built at.";
+  }
+  if (!draft.sizeCustom) {
+    return "Each conversation's workspace gets the size your sandbox gives one.";
+  }
+  const daytona =
+    draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : "";
+  return `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${daytona}`;
+}
+
 /**
  * How big a conversation's workspace is, and how long it lives: it stops when
  * the conversation's last run ends, and keeps its files while stopped.
@@ -832,7 +850,7 @@ function Workspaces({
   keepLowered: number | null;
   onChange: (patch: Partial<SettingsDraft>) => void;
 }) {
-  const e2b = draft.sandbox === "e2b";
+  const ownTemplate = draft.sandbox === "e2b" && draft.sandboxTemplate.trim() !== "";
   return (
     <div className="space-y-4 border-t border-rule pt-4">
       <h3 className="text-sm font-medium">Workspaces</h3>
@@ -881,15 +899,9 @@ function Workspaces({
           </div>
         ) : null}
         <p id="settings-size-hint" className="text-xs text-muted-foreground">
-          {!draft.sizeCustom
-            ? e2b
-              ? "Each conversation's workspace gets 2 CPUs and 2 GB, the size the default template is built at."
-              : "Each conversation's workspace gets the size your sandbox gives one."
-            : e2b
-              ? "E2B builds a template at this size in your account first, and new workspaces wait a few minutes for it. A size your E2B plan does not allow shows as a failed build. Disk is the free space E2B makes room for."
-              : `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : ""}`}
+          {sizeHint(draft)}
         </p>
-        {sizeChanged && !providerChanged ? (
+        {sizeChanged && !providerChanged && !ownTemplate ? (
           <Notice>
             Saving gives each conversation a new workspace at this size, without the files in its
             old one.

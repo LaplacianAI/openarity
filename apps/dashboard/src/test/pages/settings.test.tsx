@@ -794,6 +794,29 @@ describe("a team's workspaces", () => {
     expect(put(seen).sandbox).toEqual({ provider: "e2b", api_key: "k" });
   });
 
+  // A team's own template was built at its own size, which a workspace keeps.
+  it("says a team's own E2B template sets the size, and warns of no new workspaces", async () => {
+    const own: TeamSettings = {
+      ...SIZED,
+      sandbox: {
+        ...SIZED.sandbox,
+        provider: "e2b",
+        url: null,
+        template: "acme/ours",
+        key_set: true,
+      },
+    };
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: own } });
+    at();
+    const sandbox = await screen.findByRole("region", { name: "Sandbox" });
+    expect(
+      within(sandbox).getByText(/Your own template sets each workspace's size/),
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(sandbox).getByRole("radio", { name: "Provider's" }));
+    expect(within(sandbox).queryByText(/without the files in its old one/)).toBeNull();
+  });
+
   // Either way a size changes, every conversation gets a new workspace.
   it("warns that files go whenever a save would change the size", async () => {
     brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: SIZED } });

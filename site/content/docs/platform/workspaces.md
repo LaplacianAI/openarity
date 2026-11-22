@@ -147,9 +147,12 @@ anything that must outlive a release somewhere else: a repository it
 pushes to, or an attachment.
 
 On E2B the first room waits for that template to be built, a few minutes after
-the sandbox is saved, and again after an upgrade. Until it is, a call says the
-sandbox is still being prepared and nothing ran; Settings shows the build, and
-why it failed if it did.
+the sandbox is saved or its size changes. Until it is, a call says the sandbox
+is still being prepared and nothing ran, and the agent tells the person rather
+than calling again; Settings shows the build, and why it failed if it did.
+After an upgrade, rooms start from the last template built at the same size
+while the new one builds, so nothing waits. A team that names its own E2B
+template gets that template's size, whatever size it sets.
 
 ## Approvals
 

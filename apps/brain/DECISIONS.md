@@ -940,7 +940,16 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     never another size, which would hand a workspace the wrong memory. Disk
     is `minFreeDiskMb`, the free space E2B grows the filesystem to, best
     effort. Whether a size is allowed is the team's E2B plan's to say; a
-    refusal is a failed build with E2B's reason, not a check here.
+    refusal is a failed build with E2B's reason, not a check here. The
+    template's name is built from the same key the row stores, and the
+    table checks the key's shape, so the two cannot drift. A team that names
+    its own template keeps that template's size: the team's is not used,
+    so changing it replaces no room. Two teams that saved the same E2B key
+    share an account, so they share a name per release and size; E2B adds
+    the second team's build to the template of that name, from the same
+    image at the same size, and each team's row follows its own build.
+    Nothing deletes an older release's templates yet: each release adds one
+    per size to the account, which a follow-up is to prune.
   - **sandboxd's disk is a soft cap.** Docker cannot cap a volume on every
     storage driver, so sandboxd measures volumes every 30 seconds and stops a
     room past its disk, and counts disk against `SANDBOXD_DISK_BUDGET`.

@@ -114,8 +114,8 @@ func (i Images) e2bRelease() string {
 	return hex.EncodeToString(sum[:6])
 }
 
-// sizeKey is a size as a template's name and row carry it: ” for the
-// default, '<cpus>c-<memory>m-<disk>d' otherwise.
+// sizeKey is a size as a template's name and row carry it: the empty string
+// for the default, '<cpus>c-<memory>m-<disk>d' otherwise.
 func sizeKey(size *sandbox.Size) string {
 	if size == nil {
 		return ""
@@ -197,8 +197,9 @@ func (t *Templates) Image(ctx context.Context, team, key uuid.UUID, size *sandbo
 		if row.Error != nil {
 			reason = *row.Error
 		}
-		return "", fmt.Errorf("%w: the team's room template did not build (%s); it is tried again "+
-			"in a few minutes, or when the sandbox is saved in Settings", sandbox.ErrRefused, reason)
+		return "", fmt.Errorf("%w: the team's sandbox template did not build at E2B (%s). Nothing ran, "+
+			"and calling again soon will not help: tell the person, since a team admin sees why in Settings, "+
+			"under Sandbox, and saving it there builds it again", sandbox.ErrRefused, reason)
 	}
 }
 

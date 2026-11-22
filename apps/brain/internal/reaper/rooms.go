@@ -39,6 +39,8 @@ type roomEffect struct {
 	rooms  RoomDeleter
 	idle   time.Duration
 	logger *slog.Logger
+	// stopPass bounds a sweep's stops of idle workspaces, all of them.
+	stopPass time.Duration
 }
 
 // stopsPerSweep is how many idle workspaces one sweep stops; the rest wait
@@ -47,9 +49,10 @@ const stopsPerSweep = 50
 
 // stopTimeout bounds one provider stop within a sweep, and sweepStopTimeout
 // all of them: shorter than a run's own stop, which has one room to stop.
-const stopTimeout = 30 * time.Second
-
-var sweepStopTimeout = 2 * time.Minute // a var so a test can shorten it
+const (
+	stopTimeout      = 30 * time.Second
+	sweepStopTimeout = 2 * time.Minute
+)
 
 // Rooms deletes the sandbox rooms nothing owns any longer: those of a deleted
 // owner, of a team that changed its provider or key, or replaced by a newer
@@ -67,7 +70,7 @@ func Rooms(rows RoomRows, rooms RoomDeleter, idle time.Duration, logger *slog.Lo
 	if logger == nil {
 		panic("reaper: a nil logger")
 	}
-	return roomEffect{rows: rows, rooms: rooms, idle: idle, logger: logger}
+	return roomEffect{rows: rows, rooms: rooms, idle: idle, logger: logger, stopPass: sweepStopTimeout}
 }
 
 func (roomEffect) Name() string { return "rooms" }
@@ -77,9 +80,6 @@ func (e roomEffect) Claim(ctx context.Context, retryBefore time.Time, batch int3
 		return nil, err
 	}
 	if _, err := e.rows.ExpireStoppedSandboxRooms(ctx); err != nil {
-		return nil, err
-	}
-	if err := e.stopIdle(ctx); err != nil {
 		return nil, err
 	}
 
@@ -98,10 +98,11 @@ func (e roomEffect) Claim(ctx context.Context, retryBefore time.Time, batch int3
 	return items, nil
 }
 
-// stopIdle stops the workspaces idle past their team's minutes. One that
-// cannot be stopped now is logged and tried at the next sweep; it does not
-// hold back the tombstones.
-func (e roomEffect) stopIdle(ctx context.Context) error {
+// Prepare stops the workspaces idle past their team's minutes, once a sweep
+// rather than once a batch of tombstones, so a provider that is down costs
+// the sweep one pass's time. One that cannot be stopped now is logged and
+// tried at the next sweep; it does not hold back the tombstones.
+func (e roomEffect) Prepare(ctx context.Context) error {
 	rows, err := e.rows.ListIdleWorkspaceRooms(ctx, db.ListIdleWorkspaceRoomsParams{
 		DefaultMinutes: idleMinutes(e.idle), Max: stopsPerSweep,
 	})
@@ -110,7 +111,7 @@ func (e roomEffect) stopIdle(ctx context.Context) error {
 	}
 	// A time for the whole pass, so a provider that is down costs the
 	// tombstones behind it minutes at most; the rest wait for the next sweep.
-	pass, cancel := context.WithTimeout(ctx, sweepStopTimeout)
+	pass, cancel := context.WithTimeout(ctx, e.stopPass)
 	defer cancel()
 	failed, asked := 0, 0
 	for _, row := range rows {

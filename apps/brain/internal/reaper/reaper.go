@@ -39,6 +39,12 @@ type Effect interface {
 	Backlog(ctx context.Context) (outstanding int64, oldest time.Time, err error)
 }
 
+// A preparer is an effect with work to do once a sweep, before its first
+// claim: work that would cost each batch its time again if it were in Claim.
+type preparer interface {
+	Prepare(ctx context.Context) error
+}
+
 type Sweeper struct {
 	effect Effect
 	logger *slog.Logger
@@ -66,6 +72,11 @@ func (r Result) Overdue() bool {
 func (s *Sweeper) Sweep(ctx context.Context) (Result, error) {
 	res := Result{Effect: s.effect.Name()}
 
+	if p, ok := s.effect.(preparer); ok {
+		if err := p.Prepare(ctx); err != nil {
+			return res, fmt.Errorf("%s: preparing the sweep: %w", s.effect.Name(), err)
+		}
+	}
 	if err := s.drain(ctx, &res); err != nil {
 		return res, err
 	}
