@@ -140,7 +140,7 @@ func (i Images) For(p sandbox.Provider, template string) string {
 		if template != "" {
 			return template
 		}
-		return i.E2BName()
+		return i.E2BName(nil)
 	}
 
 	ref := i.Ref()
@@ -654,7 +654,13 @@ func (k *Keeper) image(ctx context.Context, team uuid.UUID, w Want, cfg teamSand
 		return w.Image, nil
 	}
 	if cfg.provider == sandbox.E2B && cfg.template == "" && k.templates != nil {
-		return k.templates.Image(ctx, team, cfg.keyID)
+		// A workspace starts from the template built at the team's size; a
+		// command server from the default one.
+		var size *sandbox.Size
+		if w.Workspace {
+			size = cfg.size
+		}
+		return k.templates.Image(ctx, team, cfg.keyID, size)
 	}
 	return k.images.For(cfg.provider, cfg.template), nil
 }

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
@@ -24,6 +26,7 @@ import (
 type e2bBuilds struct {
 	mu      sync.Mutex
 	asked   []string // name image
+	sizes   []*sandbox.Size
 	keys    []string
 	refuse  error
 	state   sandbox.BuildState
@@ -32,10 +35,11 @@ type e2bBuilds struct {
 	n       atomic.Int32
 }
 
-func (e *e2bBuilds) BuildTemplate(_ context.Context, name, image string) (sandbox.Build, error) {
+func (e *e2bBuilds) BuildTemplate(_ context.Context, name, image string, size *sandbox.Size) (sandbox.Build, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.asked = append(e.asked, name+" "+image)
+	e.sizes = append(e.sizes, size)
 	if e.refuse != nil {
 		return sandbox.Build{}, e.refuse
 	}
@@ -191,16 +195,16 @@ func TestASaveRetriesAFailedBuildAtOnce(t *testing.T) {
 	w, e, tpl, _ := e2bWorld(t)
 	e.refuse = errors.New("e2b: POST /v3/templates: 403: the plan has no templates")
 
-	row, err := tpl.Want(t.Context(), w.team, w.keyID, keeper.RetryFailedAfter)
+	row, err := tpl.Want(t.Context(), w.team, w.keyID, nil, keeper.RetryFailedAfter)
 	if err != nil || row.Status != keeper.TemplateFailed || !strings.Contains(*row.Error, "403") || row.BuildID != nil {
 		t.Fatalf("a refused build: %+v, %v", row, err)
 	}
-	if _, err := tpl.Want(t.Context(), w.team, w.keyID, keeper.RetryFailedAfter); err != nil || e.builds() != 1 {
+	if _, err := tpl.Want(t.Context(), w.team, w.keyID, nil, keeper.RetryFailedAfter); err != nil || e.builds() != 1 {
 		t.Fatalf("a refused build was retried before its wait: %d builds, %v", e.builds(), err)
 	}
 
 	e.refuse = nil
-	row, err = tpl.Want(t.Context(), w.team, w.keyID, 0)
+	row, err = tpl.Want(t.Context(), w.team, w.keyID, nil, 0)
 	if err != nil || row.Status != keeper.TemplateBuilding || e.builds() != 2 {
 		t.Fatalf("a save did not retry: %+v, %d builds, %v", row, e.builds(), err)
 	}
@@ -213,7 +217,7 @@ func TestCallersAtOnceStartOneBuild(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			if _, err := tpl.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+			if _, err := tpl.Want(t.Context(), w.team, w.keyID, nil, 0); err != nil {
 				t.Error(err)
 			}
 		})
@@ -227,11 +231,11 @@ func TestCallersAtOnceStartOneBuild(t *testing.T) {
 func TestAKeyFromAnotherAccountBuildsItsOwn(t *testing.T) {
 	t.Parallel()
 	w, e, tpl, _ := e2bWorld(t)
-	if _, err := tpl.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+	if _, err := tpl.Want(t.Context(), w.team, w.keyID, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	w.useSandbox("e2b", "")
-	if _, err := tpl.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+	if _, err := tpl.Want(t.Context(), w.team, w.keyID, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if e.builds() != 2 {
@@ -276,7 +280,7 @@ func TestTheSweepRecordsWhatE2BSays(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			w, e, tpl, c := e2bWorld(t)
-			if _, err := tpl.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+			if _, err := tpl.Want(t.Context(), w.team, w.keyID, nil, 0); err != nil {
 				t.Fatal(err)
 			}
 			e.state, e.readErr = tc.state, tc.readErr
@@ -301,14 +305,14 @@ func TestTheSweepRecordsWhatE2BSays(t *testing.T) {
 func TestAFinishedBuildDoesNotFinishTheOneThatReplacedIt(t *testing.T) {
 	t.Parallel()
 	w, _, tpl, _ := e2bWorld(t)
-	first, err := tpl.Want(t.Context(), w.team, w.keyID, 0)
+	first, err := tpl.Want(t.Context(), w.team, w.keyID, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.store.FinishE2BTemplate(t.Context(), db.FinishE2BTemplateParams{ID: first.ID, BuildID: first.BuildID, Status: keeper.TemplateFailed, Error: &[]string{"x"}[0]}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := tpl.Want(t.Context(), w.team, w.keyID, 0)
+	second, err := tpl.Want(t.Context(), w.team, w.keyID, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +331,7 @@ func TestAFinishedBuildDoesNotFinishTheOneThatReplacedIt(t *testing.T) {
 func TestAnUpgradeKeepsRoomsOnTheLastBuiltTemplateWhileItBuilds(t *testing.T) {
 	t.Parallel()
 	w, e, old, _ := e2bWorld(t)
-	if _, err := old.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+	if _, err := old.Want(t.Context(), w.team, w.keyID, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	e.state = sandbox.BuildReady
@@ -340,7 +344,7 @@ func TestAnUpgradeKeepsRoomsOnTheLastBuiltTemplateWhileItBuilds(t *testing.T) {
 	upgraded := keeper.NewTemplates(w.store, w.secrets, func(string) keeper.TemplateClient { return e },
 		keeper.Images{Commit: "def5678"}, logger)
 
-	got, err := upgraded.Image(t.Context(), w.team, w.keyID)
+	got, err := upgraded.Image(t.Context(), w.team, w.keyID, nil)
 	if err != nil || got != builtName {
 		t.Fatalf("during the upgrade's build: %q, %v; want the last built, %q", got, err, builtName)
 	}
@@ -352,7 +356,7 @@ func TestAnUpgradeKeepsRoomsOnTheLastBuiltTemplateWhileItBuilds(t *testing.T) {
 	if err := upgraded.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := upgraded.Image(t.Context(), w.team, w.keyID); err != nil || got != "openarity-sandbox-def5678" {
+	if got, err := upgraded.Image(t.Context(), w.team, w.keyID, nil); err != nil || got != "openarity-sandbox-def5678" {
 		t.Fatalf("after the upgrade's build: %q, %v", got, err)
 	}
 }
@@ -361,7 +365,7 @@ func TestAnUpgradeKeepsRoomsOnTheLastBuiltTemplateWhileItBuilds(t *testing.T) {
 func TestAFailedUpgradeKeepsTheLastBuiltTemplate(t *testing.T) {
 	t.Parallel()
 	w, e, old, _ := e2bWorld(t)
-	if _, err := old.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+	if _, err := old.Want(t.Context(), w.team, w.keyID, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	e.state = sandbox.BuildReady
@@ -373,7 +377,7 @@ func TestAFailedUpgradeKeepsTheLastBuiltTemplate(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	upgraded := keeper.NewTemplates(w.store, w.secrets, func(string) keeper.TemplateClient { return e },
 		keeper.Images{Commit: "def5678"}, logger)
-	if got, err := upgraded.Image(t.Context(), w.team, w.keyID); err != nil || got != builtName {
+	if got, err := upgraded.Image(t.Context(), w.team, w.keyID, nil); err != nil || got != builtName {
 		t.Fatalf("%q, %v; want the last built", got, err)
 	}
 }
@@ -382,7 +386,7 @@ func TestAFailedUpgradeKeepsTheLastBuiltTemplate(t *testing.T) {
 func TestAFailedUpgradeIsLoggedOnce(t *testing.T) {
 	t.Parallel()
 	w, e, old, _ := e2bWorld(t)
-	if _, err := old.Want(t.Context(), w.team, w.keyID, 0); err != nil {
+	if _, err := old.Want(t.Context(), w.team, w.keyID, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	e.state = sandbox.BuildReady
@@ -395,7 +399,7 @@ func TestAFailedUpgradeIsLoggedOnce(t *testing.T) {
 	upgraded := keeper.NewTemplates(w.store, w.secrets, func(string) keeper.TemplateClient { return e },
 		keeper.Images{Commit: "def5678"}, slog.New(slog.NewTextHandler(&logs, nil)))
 	for range 3 {
-		if _, err := upgraded.Image(t.Context(), w.team, w.keyID); err != nil {
+		if _, err := upgraded.Image(t.Context(), w.team, w.keyID, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -419,4 +423,79 @@ func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
+}
+
+var teamSize = sandbox.Size{MemoryMB: 8192, CPUs: 4, DiskMB: 20480}
+
+const sizedName = builtName + "-4c-8192m-20480d"
+
+// A team's own size is in its template's name; the default keeps the name it
+// had, so templates already built stay in use.
+func TestASizedTemplateIsNamedForItsSize(t *testing.T) {
+	t.Parallel()
+	i := keeper.Images{Commit: "abc1234"}
+	if got := i.E2BName(nil); got != builtName {
+		t.Fatalf("default = %q, want %q", got, builtName)
+	}
+	if got := i.E2BName(&teamSize); got != sizedName {
+		t.Fatalf("sized = %q, want %q", got, sizedName)
+	}
+}
+
+// A workspace starts from the template built at its team's size, asked for
+// at that size; a command server from the default.
+func TestAWorkspaceWaitsForItsTeamsSizedTemplate(t *testing.T) {
+	t.Parallel()
+	w, e, tpl, _ := e2bWorld(t)
+	w.sized(int32(teamSize.MemoryMB), int32(teamSize.CPUs), int32(teamSize.DiskMB))
+	k := w.e2bKeeper(tpl)
+
+	if _, err := k.Ensure(t.Context(), w.owner, w.team, workspace()); !errors.Is(err, sandbox.ErrPreparing) {
+		t.Fatalf("workspace Ensure = %v, want ErrPreparing", err)
+	}
+	if e.builds() != 1 || !strings.HasPrefix(e.asked[0], sizedName+" ") || e.sizes[0] == nil || *e.sizes[0] != teamSize {
+		t.Fatalf("asked %v at %v, want the team's size", e.asked, e.sizes)
+	}
+	if row := w.template(sizedName); row.Size != "4c-8192m-20480d" {
+		t.Fatalf("row size = %q", row.Size)
+	}
+
+	server := w.owner
+	server.ID = uuid.New()
+	if _, err := k.Ensure(t.Context(), server, w.team, want()); !errors.Is(err, sandbox.ErrPreparing) {
+		t.Fatalf("server Ensure = %v, want ErrPreparing", err)
+	}
+	if e.builds() != 2 || !strings.HasPrefix(e.asked[1], builtName+" ") || e.sizes[1] != nil {
+		t.Fatalf("asked %v at %v, want the default for a command server", e.asked, e.sizes)
+	}
+}
+
+// While an upgrade's template builds, a room falls back to an older one of
+// its own size only: never the default for a sized workspace, which would
+// give it the wrong memory and disk.
+func TestAnUpgradeFallsBackOnlyToATemplateOfTheSameSize(t *testing.T) {
+	t.Parallel()
+	w, e, old, _ := e2bWorld(t)
+	for _, size := range []*sandbox.Size{nil, &teamSize} {
+		if _, err := old.Want(t.Context(), w.team, w.keyID, size, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.state = sandbox.BuildReady
+	if err := old.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.state = sandbox.BuildRunning
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upgraded := keeper.NewTemplates(w.store, w.secrets, func(string) keeper.TemplateClient { return e },
+		keeper.Images{Commit: "def5678"}, logger)
+
+	if got, err := upgraded.Image(t.Context(), w.team, w.keyID, &teamSize); err != nil || got != sizedName {
+		t.Fatalf("Image = %q, %v; want the older template of the same size, %q", got, err, sizedName)
+	}
+	// A size with nothing of its own built waits, though a default is ready.
+	other := sandbox.Size{MemoryMB: 1024, CPUs: 1, DiskMB: 2048}
+	if got, err := upgraded.Image(t.Context(), w.team, w.keyID, &other); !errors.Is(err, sandbox.ErrPreparing) {
+		t.Fatalf("Image at a size never built = %q, %v; want ErrPreparing, not another size's template", got, err)
+	}
 }

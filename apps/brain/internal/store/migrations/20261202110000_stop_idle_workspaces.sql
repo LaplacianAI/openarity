@@ -39,8 +39,16 @@ ALTER TABLE team_settings
         (sandbox_workspace_memory_mb IS NULL) = (sandbox_workspace_cpus IS NULL)
         AND (sandbox_workspace_cpus IS NULL) = (sandbox_workspace_disk_mb IS NULL));
 
+-- An E2B team's workspace template is built at the team's size, beside the
+-- default one its command servers start from. size is '' for the default and
+-- '<cpus>c-<memory>m-<disk>d' otherwise, so a room waiting for its own size
+-- falls back only to an older release's template of the same size.
+ALTER TABLE e2b_templates ADD COLUMN size text NOT NULL DEFAULT '';
+
 -- +goose Down
 SET LOCAL lock_timeout = '3s';
+
+ALTER TABLE e2b_templates DROP COLUMN size;
 
 ALTER TABLE team_settings
     DROP CONSTRAINT team_settings_sandbox_workspace_size_whole,

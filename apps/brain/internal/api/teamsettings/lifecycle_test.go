@@ -74,15 +74,6 @@ func TestABadStopTimeOrSizeIsRefusedAndNothingIsSaved(t *testing.T) {
 	}
 }
 
-// E2B's size is its template's until a template is built per size.
-func TestASizeForE2BIsRefusedForNow(t *testing.T) {
-	e := newEnv()
-	rec := e.save(t, withSandbox(`{"provider":"e2b","api_key":"k","workspace_size":{"memory_mb":4096,"cpus":2,"disk_mb":4096}}`))
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "e2b") {
-		t.Fatalf("%d %s", rec.Code, rec.Body)
-	}
-}
-
 // With no sandbox the times are still checked: a bad one is the caller's
 // 400, never the table's CHECK as a 500.
 func TestBadStopTimesAreRefusedWithNoSandboxToo(t *testing.T) {
@@ -98,21 +89,6 @@ func TestBadStopTimesAreRefusedWithNoSandboxToo(t *testing.T) {
 	}
 	if rec := newEnv().save(t, withSandbox(`{"provider":"none"}`)); rec.Code != http.StatusOK {
 		t.Fatalf("none with no times: %d %s", rec.Code, rec.Body)
-	}
-}
-
-// A team moving to E2B goes back to the provider's size, whatever sent it:
-// the CLI and a raw PUT, not only the dashboard.
-func TestMovingToE2BClearsTheSize(t *testing.T) {
-	e := newEnv()
-	e.save(t, withSandbox(`{`+sbx+`,"workspace_size":{"memory_mb":8192,"cpus":4,"disk_mb":20480}}`))
-	got := decode(t, e.save(t, withSandbox(`{"provider":"e2b","api_key":"k"}`)))
-	if got.Sandbox.WorkspaceSize != nil {
-		t.Fatalf("size = %+v after moving to e2b", got.Sandbox.WorkspaceSize)
-	}
-	p := e.store.upserts[len(e.store.upserts)-1]
-	if p.SandboxWorkspaceMemoryMb != nil || p.SandboxWorkspaceCpus != nil || p.SandboxWorkspaceDiskMb != nil {
-		t.Fatalf("saved a size for e2b: %+v", p)
 	}
 }
 

@@ -52,8 +52,8 @@ type Secrets interface {
 
 // Templates builds the room template in an E2B team's account.
 type Templates interface {
-	Want(ctx context.Context, team, key uuid.UUID, retry time.Duration) (db.E2BTemplate, error)
-	Current(ctx context.Context, team, key uuid.UUID) (db.E2BTemplate, bool, error)
+	Want(ctx context.Context, team, key uuid.UUID, size *sandboxpkg.Size, retry time.Duration) (db.E2BTemplate, error)
+	Current(ctx context.Context, team, key uuid.UUID, size *sandboxpkg.Size) (db.E2BTemplate, bool, error)
 }
 
 type handler struct {
@@ -202,22 +202,30 @@ const (
 )
 
 // build is the room template's build for an E2B team that names no template
-// of its own. A save of the sandbox asks for one when there is none or the
-// last failed, so the team's first room does not wait for it; a read, and a
-// save of anything else, only reads. Trouble is logged and shown as no
+// of its own: the one at the team's workspace size when it has one, else the
+// default. A save of the sandbox asks for one when there is none or the last
+// failed, so the team's first room does not wait for it; with a size it asks
+// for the default too, which the team's command servers start from. A read,
+// and a save of anything else, only reads. Trouble is logged and shown as no
 // build: the settings were saved, and the next room asks again.
 func (h *handler) build(ctx context.Context, row db.TeamSetting, req buildRequest) *templateBuild {
 	if h.templates == nil || row.SandboxProvider != string(sandboxpkg.E2B) ||
 		row.SandboxTemplate != nil || row.SandboxSecretID == nil {
 		return nil
 	}
+	size := roomSize(row)
 	var b db.E2BTemplate
 	var err error
 	found := true
 	if req == askForBuild {
-		b, err = h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, 0)
+		if size != nil {
+			if _, err := h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, nil, 0); err != nil {
+				h.logger.WarnContext(ctx, "the team's default room template was not asked for", "team_id", row.TeamID, "error", err)
+			}
+		}
+		b, err = h.templates.Want(ctx, row.TeamID, *row.SandboxSecretID, size, 0)
 	} else {
-		b, found, err = h.templates.Current(ctx, row.TeamID, *row.SandboxSecretID)
+		b, found, err = h.templates.Current(ctx, row.TeamID, *row.SandboxSecretID, size)
 	}
 	if err != nil {
 		h.logger.WarnContext(ctx, "the team's room template was not read or asked for", "team_id", row.TeamID, "error", err)
@@ -441,14 +449,21 @@ func lifecycle(p *db.UpsertTeamSettingsParams, s *sandboxRequest, stored *db.Tea
 	if s.IdleMinutes.Set {
 		p.SandboxIdleMinutes = s.IdleMinutes.Value
 	}
-	if s.WorkspaceSize.Set || s.Provider == string(sandboxpkg.E2B) {
-		// E2B's size is its template's, so a team moving to it goes back to
-		// the provider's; a size sent with it was refused above.
+	if s.WorkspaceSize.Set {
 		p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = nil, nil, nil
 		if z := s.WorkspaceSize.Value; z != nil {
 			p.SandboxWorkspaceMemoryMb, p.SandboxWorkspaceCpus, p.SandboxWorkspaceDiskMb = &z.MemoryMB, &z.CPUs, &z.DiskMB
 		}
 	}
+}
+
+// roomSize is the team's workspace size as the sandbox port takes it.
+func roomSize(row db.TeamSetting) *sandboxpkg.Size {
+	z := sizeOf(row)
+	if z == nil {
+		return nil
+	}
+	return &sandboxpkg.Size{MemoryMB: int(z.MemoryMB), CPUs: int(z.CPUs), DiskMB: int(z.DiskMB)}
 }
 
 func sizeOf(row db.TeamSetting) *size {

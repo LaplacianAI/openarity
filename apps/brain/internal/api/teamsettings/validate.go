@@ -315,8 +315,6 @@ func checkLifecycle(s sandboxRequest) error {
 		return nil
 	}
 	switch {
-	case s.Provider == string(sandboxpkg.E2B):
-		return errors.New("sandbox.workspace_size is not yet for e2b: its size is the template's, built at 2 vCPUs and 2 GiB")
 	case z.MemoryMB < 256 || z.MemoryMB > 65536:
 		return errors.New("sandbox.workspace_size.memory_mb must be between 256 and 65536")
 	case z.CPUs < 1 || z.CPUs > 16:

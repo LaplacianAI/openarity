@@ -14,7 +14,7 @@ import (
 // A template is built in three calls, as E2B's SDK makes them
 // (e2b@2.63.0, src/template/buildApi.ts):
 //
-//   - POST /v3/templates {name, cpuCount, memoryMB}: a build of the template
+//   - POST /v3/templates {name, cpuCount, memoryMB, minFreeDiskMb}: a build of the template
 //     of that name in the key's account, made if there is none. It answers
 //     with the template's id and the build's.
 //   - POST /v2/templates/{templateID}/builds/{buildID} {fromImage, steps,
@@ -22,7 +22,8 @@ import (
 //   - GET /templates/{templateID}/builds/{buildID}/status: building,
 //     waiting, ready or error, with the reason for an error.
 
-// RoomCPUs and RoomMemoryMB are the size every room's template is built at.
+// RoomCPUs and RoomMemoryMB are the size a room's template is built at when
+// the team has none of its own; its disk is the team's E2B default.
 const (
 	RoomCPUs     = 2
 	RoomMemoryMB = 2048
@@ -32,6 +33,9 @@ type requestBuild struct {
 	Name     string `json:"name"`
 	CPUCount int    `json:"cpuCount"`
 	MemoryMB int    `json:"memoryMB"`
+	// MinFreeDiskMb is the free disk E2B grows the template's filesystem to,
+	// best effort; left out, the team's default.
+	MinFreeDiskMb *int `json:"minFreeDiskMb,omitempty"`
 }
 
 type triggerBuild struct {
@@ -40,12 +44,17 @@ type triggerBuild struct {
 	Force     bool       `json:"force"`
 }
 
-// BuildTemplate starts a build of the template name from image, at the room's
-// size. The build runs at E2B; BuildStatus says when it is done. A build that
-// was asked for and could not be started is returned with the error, so its
-// ids are not lost.
-func (c *Client) BuildTemplate(ctx context.Context, name, image string) (sandbox.Build, error) {
-	body, err := json.Marshal(requestBuild{Name: name, CPUCount: RoomCPUs, MemoryMB: RoomMemoryMB})
+// BuildTemplate starts a build of the template name from image, at size, or
+// at RoomCPUs and RoomMemoryMB with none. The build runs at E2B; BuildStatus
+// says when it is done. A build that was asked for and could not be started
+// is returned with the error, so its ids are not lost.
+func (c *Client) BuildTemplate(ctx context.Context, name, image string, size *sandbox.Size) (sandbox.Build, error) {
+	req := requestBuild{Name: name, CPUCount: RoomCPUs, MemoryMB: RoomMemoryMB}
+	if size != nil {
+		disk := size.DiskMB
+		req.CPUCount, req.MemoryMB, req.MinFreeDiskMb = size.CPUs, size.MemoryMB, &disk
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return sandbox.Build{}, fmt.Errorf("e2b: encode the template request: %w", err)
 	}

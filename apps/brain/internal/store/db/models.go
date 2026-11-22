@@ -186,6 +186,7 @@ type E2BTemplate struct {
 	Error           *string
 	StartedAt       time.Time
 	UpdatedAt       time.Time
+	Size            string
 }
 
 type GraphOutbox struct {

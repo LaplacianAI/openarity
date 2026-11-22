@@ -921,8 +921,17 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   - **Size is a team setting, and part of the room's hash.** A team chooses
     memory, CPUs and disk, all three or none; a change gives its sessions new
     rooms. sandboxd refuses a size past what its operator gives a workspace;
-    Daytona takes whole GB, rounded up; E2B's is its template's until a
-    template is built per size, so the API refuses a size for E2B.
+    Daytona takes whole GB, rounded up.
+  - **E2B builds a template per size.** E2B fixes a sandbox's CPUs, memory
+    and disk in its template, so a team with a size gets
+    `openarity-sandbox-<commit12>-<c>c-<m>m-<d>d` built in its account
+    beside the default, which its command servers keep using. The row
+    carries the size (`e2b_templates.size`), so a room waiting for its
+    release's template falls back only to an older one of the same size:
+    never another size, which would hand a workspace the wrong memory. Disk
+    is `minFreeDiskMb`, the free space E2B grows the filesystem to, best
+    effort. Whether a size is allowed is the team's E2B plan's to say; a
+    refusal is a failed build with E2B's reason, not a check here.
   - **sandboxd's disk is a soft cap.** Docker cannot cap a volume on every
     storage driver, so sandboxd measures volumes every 30 seconds and stops a
     room past its disk, and counts disk against `SANDBOXD_DISK_BUDGET`.
