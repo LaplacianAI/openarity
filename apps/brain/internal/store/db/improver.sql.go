@@ -200,13 +200,14 @@ func (q *Queries) FailLostImproverPasses(ctx context.Context, arg FailLostImprov
 	return result.RowsAffected(), nil
 }
 
-const finishImproverPass = `-- name: FinishImproverPass :exec
+const finishImproverPass = `-- name: FinishImproverPass :one
 UPDATE improver_passes
 SET status = $1, report = $2, error = $3,
     cut_short = $4,
     proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = $5::uuid),
     finished_at = now()
 WHERE id = $5::uuid AND status = 'running'
+RETURNING team_id, agent_id, trigger, proposed, screened_out, input_tokens, output_tokens
 `
 
 type FinishImproverPassParams struct {
@@ -217,15 +218,36 @@ type FinishImproverPassParams struct {
 	ID       uuid.UUID
 }
 
-func (q *Queries) FinishImproverPass(ctx context.Context, arg FinishImproverPassParams) error {
-	_, err := q.db.Exec(ctx, finishImproverPass,
+type FinishImproverPassRow struct {
+	TeamID       uuid.UUID
+	AgentID      uuid.UUID
+	Trigger      string
+	Proposed     int32
+	ScreenedOut  int32
+	InputTokens  int64
+	OutputTokens int64
+}
+
+// No row when the pass was no longer running: failed as lost meanwhile.
+func (q *Queries) FinishImproverPass(ctx context.Context, arg FinishImproverPassParams) (FinishImproverPassRow, error) {
+	row := q.db.QueryRow(ctx, finishImproverPass,
 		arg.Status,
 		arg.Report,
 		arg.Error,
 		arg.CutShort,
 		arg.ID,
 	)
-	return err
+	var i FinishImproverPassRow
+	err := row.Scan(
+		&i.TeamID,
+		&i.AgentID,
+		&i.Trigger,
+		&i.Proposed,
+		&i.ScreenedOut,
+		&i.InputTokens,
+		&i.OutputTokens,
+	)
+	return i, err
 }
 
 const getImproverPass = `-- name: GetImproverPass :one
