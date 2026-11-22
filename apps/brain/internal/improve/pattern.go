@@ -55,6 +55,9 @@ type plannedPass struct {
 	Trigger string    `json:"trigger"`
 	Keys    []string  `json:"keys,omitempty"`
 	Prune   []string  `json:"prune,omitempty"`
+	// RunsSeen is how many judged runs a daily pass had since the agent's
+	// last pass; none for a pass a pattern started.
+	RunsSeen *int32 `json:"runs_seen,omitempty"`
 }
 
 func (p plannedPass) encode() string {

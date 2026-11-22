@@ -41,6 +41,7 @@ function pass(id: string, extra: Partial<ImproverPass> = {}): ImproverPass {
     trigger: "pattern",
     signatures: ["instructions::skipped_step"],
     pruned: [],
+    prune_proposed: [],
     status: "done",
     cut_short: false,
     report: "It closed tickets before confirming the order.\n\nSecond paragraph.",
@@ -137,14 +138,42 @@ describe("a pass", () => {
     expect(row.textContent).not.toMatch(/tokens/);
   });
 
-  it("says the daily pass, and what it will prune", async () => {
+  it("says the daily pass, the runs it waited for, and how many prune candidates it looked at", async () => {
     brain(
-      serve([pass("p1", { trigger: "daily", signatures: [], pruned: ["skill:a", "tool:b/c"] })]),
+      serve([
+        pass("p1", {
+          trigger: "daily",
+          signatures: [],
+          pruned: ["skill:a", "tool:b/c"],
+          runs_seen: 6,
+        }),
+      ]),
     );
     at();
     expect(
-      await screen.findByRole("button", { name: /The daily pass and 2 to prune/ }),
+      await screen.findByRole("button", {
+        name: /The daily pass, after 6 judged runs, 2 prune candidates looked at/,
+      }),
     ).toBeTruthy();
+  });
+
+  it("marks each prune candidate as kept or proposed for removal", async () => {
+    brain(
+      serve([
+        pass("p1", {
+          trigger: "daily",
+          signatures: [],
+          pruned: ["skill:a", "tool:b/c"],
+          prune_proposed: ["skill:a"],
+        }),
+      ]),
+    );
+    at();
+    await userEvent.click(await screen.findByRole("button", { name: /The daily pass/ }));
+    const list = await screen.findByRole("list", { name: "Prune candidates" });
+    expect(list).toHaveTextContent("skill a (proposed removing)");
+    expect(list).toHaveTextContent("tool b/c (kept)");
+    expect(screen.queryByText(/To prune/)).toBeNull();
   });
 
   it("says nothing to change, and what the screen held back", async () => {
@@ -186,7 +215,9 @@ describe("a pass", () => {
     expect(report).toHaveTextContent("Second paragraph.");
     expect(report.className).toContain("whitespace-pre-wrap");
     expect(report.closest("[id]")?.id).toBe(button.getAttribute("aria-controls"));
-    expect(screen.getByText("To prune: skill triage")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Prune candidates" })).toHaveTextContent(
+      "skill triage (kept)",
+    );
     expect(screen.getByText(/gpt-5 · 9,000 in · 1,234 out/)).toBeInTheDocument();
 
     await userEvent.keyboard(" ");

@@ -2679,7 +2679,10 @@ type ImproverPass struct {
 	OutputTokens int64              `json:"output_tokens" yaml:"output_tokens"`
 	Proposed     int32              `json:"proposed" yaml:"proposed"`
 
-	// Pruned The prune candidates it was given, skill:<name> or tool:<server>/<tool>
+	// PruneProposed The candidates it proposed removing; it kept the rest of `pruned`
+	PruneProposed []string `json:"prune_proposed" yaml:"prune_proposed"`
+
+	// Pruned The prune candidates it was given to look at, skill:<name> or tool:<server>/<tool>
 	Pruned []string `json:"pruned" yaml:"pruned"`
 
 	// Report What it found, proposed and left alone, and why; empty when withheld
@@ -2687,6 +2690,9 @@ type ImproverPass struct {
 
 	// ReportWithheld The report draws on a conversation the caller may not read, so it is not sent. Every conversation is readable with session:read_all.
 	ReportWithheld bool `json:"report_withheld" yaml:"report_withheld"`
+
+	// RunsSeen The judged runs a daily pass had since the agent's last pass; null for one a pattern started
+	RunsSeen *int32 `json:"runs_seen,omitempty" yaml:"runs_seen,omitempty"`
 
 	// ScreenedOut Proposals the screen refused for carrying one run's specifics
 	ScreenedOut int32 `json:"screened_out" yaml:"screened_out"`
@@ -4100,6 +4106,9 @@ type TeamSettings struct {
 	// ImprovementDailyPasses The improver passes the team may run in a day (UTC), at most. 20 until set.
 	ImprovementDailyPasses *int32 `json:"improvement_daily_passes,omitempty" yaml:"improvement_daily_passes,omitempty"`
 
+	// ImprovementDailyRuns The judged runs an agent needs since its last pass before the daily pass looks at it; one with fewer waits for more. 5 until set.
+	ImprovementDailyRuns *int32 `json:"improvement_daily_runs,omitempty" yaml:"improvement_daily_runs,omitempty"`
+
 	// ImprovementPassMinutes The minutes one try at an improver pass may run; past them it stops and reports what it has. 20 until set.
 	ImprovementPassMinutes *int32 `json:"improvement_pass_minutes,omitempty" yaml:"improvement_pass_minutes,omitempty"`
 
@@ -4151,6 +4160,9 @@ type TeamSettingsRequest struct {
 
 	// ImprovementDailyPasses Left out, the stored cap stays.
 	ImprovementDailyPasses *int32 `json:"improvement_daily_passes,omitempty" yaml:"improvement_daily_passes,omitempty"`
+
+	// ImprovementDailyRuns Left out, the stored value stays.
+	ImprovementDailyRuns *int32 `json:"improvement_daily_runs,omitempty" yaml:"improvement_daily_runs,omitempty"`
 
 	// ImprovementPassMinutes Left out, the stored value stays.
 	ImprovementPassMinutes *int32 `json:"improvement_pass_minutes,omitempty" yaml:"improvement_pass_minutes,omitempty"`

@@ -18,8 +18,14 @@ type passView struct {
 	Agent      ref       `json:"agent"`
 	Trigger    string    `json:"trigger"`
 	Signatures []string  `json:"signatures"`
-	Pruned     []string  `json:"pruned"`
-	Status     string    `json:"status"`
+	// Pruned is every prune candidate it was given to look at, and
+	// PruneProposed the ones it proposed removing: it kept the rest.
+	Pruned        []string `json:"pruned"`
+	PruneProposed []string `json:"prune_proposed"`
+	Status        string   `json:"status"`
+	// RunsSeen is how many judged runs a daily pass had since the agent's
+	// last pass; null for one a pattern started.
+	RunsSeen *int32 `json:"runs_seen"`
 	// CutShort is a pass done before it finished: out of steps, tokens or
 	// time, improvement turned off, or its agent gone.
 	CutShort bool   `json:"cut_short"`
@@ -102,6 +108,19 @@ func (h *handler) passes(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to read which runs are visible", err)
 		return
 	}
+	ids := make([]uuid.UUID, len(page.Items))
+	for i, p := range page.Items {
+		ids[i] = p.ID
+	}
+	pruning, err := h.reads.ListPassPruneProposals(r.Context(), ids)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read what the passes proposed pruning", err)
+		return
+	}
+	proposedBy := map[uuid.UUID][]string{}
+	for _, row := range pruning {
+		proposedBy[row.PassID] = append(proposedBy[row.PassID], row.Candidate)
+	}
 	out := api.Page[passView]{Items: make([]passView, 0, len(page.Items)), NextCursor: page.NextCursor}
 	for _, p := range page.Items {
 		report, withheld := p.Report, !readable(p.DrewOn)
@@ -110,7 +129,7 @@ func (h *handler) passes(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Items = append(out.Items, passView{
 			ID: p.ID, Agent: ref{ID: p.AgentID, Name: n.Agent(p.AgentID)}, Trigger: p.Trigger,
-			Signatures: p.Signatures, Pruned: p.Pruned, Status: p.Status, CutShort: p.CutShort, Report: report, ReportWithheld: withheld,
+			Signatures: p.Signatures, Pruned: p.Pruned, PruneProposed: orNone(proposedBy[p.ID]), RunsSeen: p.RunsSeen, Status: p.Status, CutShort: p.CutShort, Report: report, ReportWithheld: withheld,
 			Proposed: p.Proposed, ScreenedOut: p.ScreenedOut, Model: p.Model,
 			InputTokens: p.InputTokens, OutputTokens: p.OutputTokens, Error: p.Error,
 			StartedAt: p.StartedAt, FinishedAt: p.FinishedAt,
@@ -152,4 +171,11 @@ func (h *handler) readableRuns(r *http.Request, u *auth.User, teamID uuid.UUID, 
 		}
 		return true
 	}, nil
+}
+
+func orNone(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

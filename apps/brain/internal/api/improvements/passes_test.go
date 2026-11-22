@@ -99,3 +99,31 @@ func TestAPassReportIsWithheldWhereItsRunsAre(t *testing.T) {
 		t.Errorf("for a moderator = %+v, want shown", got[0])
 	}
 }
+
+// A pass says which of its prune candidates it proposed removing, so the
+// rest read as kept, and how many runs a daily pass had since the last.
+func TestAPassSaysWhatItPrunedAndFromHowManyRuns(t *testing.T) {
+	w := newWorld(t)
+	a := w.agent(t, "support-bot")
+	var pass uuid.UUID
+	if err := w.raw.QueryRow(t.Context(), `INSERT INTO improver_passes (team_id, agent_id, trigger, pruned, status, finished_at, workflow_id, runs_seen)
+		VALUES ($1, $2, 'daily', '{skill:refunds,tool:crm/close}', 'done', now(), 'wf-prune', 7) RETURNING id`,
+		w.team, a.ID).Scan(&pass); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.raw.Exec(t.Context(), `INSERT INTO improvement_proposals (team_id, agent_id, kind, why, hypothesis, scope, signature, before, after, pass_id)
+		VALUES ($1, $2, 'skill_drop', 'w', 'h', 'domain', 'prune:skill:refunds', '{}', '{}', $3)`, w.team, a.ID, pass); err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		Items []passView `json:"items"`
+	}
+	rec := w.serve(t, "GET", "/improvements/passes", nil)
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &page) != nil || len(page.Items) != 1 {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body)
+	}
+	got := page.Items[0]
+	if len(got.PruneProposed) != 1 || got.PruneProposed[0] != "skill:refunds" || got.RunsSeen == nil || *got.RunsSeen != 7 {
+		t.Errorf("pass = %+v", got)
+	}
+}
