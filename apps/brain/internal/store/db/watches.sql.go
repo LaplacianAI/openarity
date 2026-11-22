@@ -414,6 +414,7 @@ const tickOpenWatches = `-- name: TickOpenWatches :many
 WITH page AS MATERIALIZED (
     SELECT x.proposal_id FROM improvement_watches x
     WHERE x.status = 'watching'
+      AND (x.last_swept_at IS NULL OR x.last_swept_at < now() - interval '1 minute')
     ORDER BY x.last_swept_at NULLS FIRST, x.started_at
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -421,11 +422,12 @@ WITH page AS MATERIALIZED (
     UPDATE improvement_watches w SET
         on_seconds = w.on_seconds + CASE
             WHEN EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = w.team_id AND ts.improvement)
-            THEN least(extract(epoch FROM now() - coalesce(w.last_swept_at, now())), 2147483647 - w.on_seconds)::int
+            THEN least(greatest(extract(epoch FROM now() - coalesce(w.last_swept_at, w.started_at)), 0),
+                       2147483647 - w.on_seconds)::int
             ELSE 0 END,
         last_swept_at = now()
     FROM page
-    WHERE w.proposal_id = page.proposal_id
+    WHERE w.proposal_id = page.proposal_id AND w.status = 'watching'
     RETURNING w.proposal_id, w.team_id, w.agent_ids, w.started_at, w.status, w.flag, w.ended_why, w.on_seconds, w.last_swept_at, w.baseline_runs, w.baseline_bad, w.bar, w.before_runs, w.before_bad, w.before_up, w.before_down, w.after_runs, w.after_bad, w.after_up, w.after_down, w.before_tokens, w.after_tokens, w.baseline_p90, w.before_steps, w.after_steps, w.sig_before, w.sig_after, w.overlapping, w.finished_at, w.cleared_by, w.cleared_at
 )
 SELECT t.proposal_id, t.team_id, t.agent_ids, t.started_at, t.status, t.flag, t.ended_why, t.on_seconds, t.last_swept_at, t.baseline_runs, t.baseline_bad, t.bar, t.before_runs, t.before_bad, t.before_up, t.before_down, t.after_runs, t.after_bad, t.after_up, t.after_down, t.before_tokens, t.after_tokens, t.baseline_p90, t.before_steps, t.after_steps, t.sig_before, t.sig_after, t.overlapping, t.finished_at, t.cleared_by, t.cleared_at, EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = t.team_id AND ts.improvement)::bool AS improving
@@ -467,8 +469,9 @@ type TickOpenWatchesRow struct {
 	Improving    bool
 }
 
-// One page of open watches, the least recently swept first, so every watch
-// is reached in turn. Each counts the time since its last sweep toward its
+// One page of open watches not swept in the last minute, the least
+// recently swept first, so every watch is reached in turn and one sweep's
+// pages end once it has been round them all (sweeps are ten minutes apart). Each counts the time since its last sweep toward its
 // 30 days, but only while its team has improvement on; a watch in a team
 // with it off is marked swept and not counted, and comes back with on false.
 func (q *Queries) TickOpenWatches(ctx context.Context, pageSize int32) ([]TickOpenWatchesRow, error) {

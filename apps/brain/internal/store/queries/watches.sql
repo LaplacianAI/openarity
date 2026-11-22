@@ -26,14 +26,16 @@ SELECT * FROM improvement_watches WHERE proposal_id = $1;
 -- name: ListImprovementWatches :many
 SELECT * FROM improvement_watches WHERE proposal_id = ANY (sqlc.arg(ids)::uuid[]);
 
--- One page of open watches, the least recently swept first, so every watch
--- is reached in turn. Each counts the time since its last sweep toward its
+-- One page of open watches not swept in the last minute, the least
+-- recently swept first, so every watch is reached in turn and one sweep's
+-- pages end once it has been round them all (sweeps are ten minutes apart). Each counts the time since its last sweep toward its
 -- 30 days, but only while its team has improvement on; a watch in a team
 -- with it off is marked swept and not counted, and comes back with on false.
 -- name: TickOpenWatches :many
 WITH page AS MATERIALIZED (
     SELECT x.proposal_id FROM improvement_watches x
     WHERE x.status = 'watching'
+      AND (x.last_swept_at IS NULL OR x.last_swept_at < now() - interval '1 minute')
     ORDER BY x.last_swept_at NULLS FIRST, x.started_at
     LIMIT sqlc.arg(page_size)
     FOR UPDATE SKIP LOCKED
@@ -41,11 +43,12 @@ WITH page AS MATERIALIZED (
     UPDATE improvement_watches w SET
         on_seconds = w.on_seconds + CASE
             WHEN EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = w.team_id AND ts.improvement)
-            THEN least(extract(epoch FROM now() - coalesce(w.last_swept_at, now())), 2147483647 - w.on_seconds)::int
+            THEN least(greatest(extract(epoch FROM now() - coalesce(w.last_swept_at, w.started_at)), 0),
+                       2147483647 - w.on_seconds)::int
             ELSE 0 END,
         last_swept_at = now()
     FROM page
-    WHERE w.proposal_id = page.proposal_id
+    WHERE w.proposal_id = page.proposal_id AND w.status = 'watching'
     RETURNING w.*
 )
 SELECT t.*, EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = t.team_id AND ts.improvement)::bool AS improving

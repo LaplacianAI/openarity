@@ -1,6 +1,7 @@
 package improve
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -146,6 +147,10 @@ func TestAChangeThatWentWorseIsFlaggedOnce(t *testing.T) {
 		got.Bar == nil || *got.Bar > 7 || got.SigBefore == nil {
 		t.Fatalf("watch = %+v", got)
 	}
+	// Its first sweep counted the day since it was applied.
+	if got.OnSeconds < int32((23 * time.Hour).Seconds()) {
+		t.Errorf("on seconds = %d, want the day since it was applied", got.OnSeconds)
+	}
 
 	w.exec(t, `UPDATE improvement_watches SET status = 'watching', flag = NULL, finished_at = NULL WHERE proposal_id = $1`, id)
 	n, err := w.store.FinishImprovementWatch(t.Context(), db.FinishImprovementWatchParams{ProposalID: id, Status: watchClear})
@@ -175,6 +180,7 @@ func TestAChangeWithinTheBarIsClearAndCantTellIsSkipped(t *testing.T) {
 		t.Fatalf("with nine counted runs: %+v", got)
 	}
 	w.judged(t, w.agent, "10 minutes", verdictDone, 1000)
+	w.later(t, id)
 	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -256,10 +262,11 @@ func TestAWatchWithoutItsRunsEnds(t *testing.T) {
 		t.Fatalf("with improvement off: %+v", got)
 	}
 	w.exec(t, `UPDATE team_settings SET improvement = true WHERE team_id = $1`, w.team)
+	w.later(t, id)
 	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.watch(t, id); got.Status != watchWatching || got.OnSeconds > near+60 {
+	if got := w.watch(t, id); got.Status != watchWatching || got.OnSeconds > near+int32((11*time.Minute).Seconds())+5 {
 		t.Fatalf("the days off were counted: %+v", got)
 	}
 
@@ -292,12 +299,29 @@ func TestEveryWatchIsReachedInTurn(t *testing.T) {
 
 	id := w.watchedChange(t, []uuid.UUID{w.agent}, time.Hour)
 	w.several(t, w.agent, 3, 1, 30*time.Minute, 1000)
+	pages := &countingTicks{WatchStore: w.store}
+	watcher.store = pages
 	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.watch(t, id); got.AfterRuns != 3 || got.LastSweptAt == nil {
 		t.Errorf("the newer watch was not reached: %+v", got)
 	}
+	// Once round them all, a sweep stops: two pages for 106 watches, not 50.
+	if pages.n != 2 {
+		t.Errorf("one sweep read %d pages, want 2", pages.n)
+	}
+}
+
+// countingTicks counts the pages a sweep reads.
+type countingTicks struct {
+	WatchStore
+	n int
+}
+
+func (c *countingTicks) TickOpenWatches(ctx context.Context, pageSize int32) ([]db.TickOpenWatchesRow, error) {
+	c.n++
+	return c.WatchStore.TickOpenWatches(ctx, pageSize)
 }
 
 // A team that turned improvement off has its watches wait, though their runs
@@ -316,12 +340,20 @@ func TestAWatchWaitsWhileImprovementIsOff(t *testing.T) {
 		t.Fatalf("judged with improvement off: %+v", got)
 	}
 	w.exec(t, `UPDATE team_settings SET improvement = true WHERE team_id = $1`, w.team)
+	w.later(t, id)
 	if err := watcher.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.watch(t, id); got.Status != watchFlagged {
 		t.Errorf("once back on: %+v", got)
 	}
+}
+
+// later is the next sweep coming round: the watch was last swept a sweep
+// ago, as ten minutes passing would leave it.
+func (w *world) later(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	w.exec(t, `UPDATE improvement_watches SET last_swept_at = now() - interval '11 minutes' WHERE proposal_id = $1`, id)
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

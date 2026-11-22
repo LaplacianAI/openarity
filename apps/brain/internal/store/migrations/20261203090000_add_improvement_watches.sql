@@ -66,15 +66,17 @@ CREATE INDEX improvement_watches_flagged_idx ON improvement_watches (team_id) WH
 CREATE INDEX improvement_watches_agents_idx ON improvement_watches USING gin (agent_ids);
 
 -- Changes applied in the last 30 days are watched too, from when they were
--- applied. A skill edit reaches the agents that hold the skill now.
-INSERT INTO improvement_watches (proposal_id, team_id, agent_ids, started_at, on_seconds)
+-- applied, counted as swept now with the time since. A skill edit reaches
+-- the agents that hold the skill now.
+INSERT INTO improvement_watches (proposal_id, team_id, agent_ids, started_at, on_seconds, last_swept_at)
 SELECT p.id, p.team_id,
        CASE WHEN p.kind = 'skill_edit'
             THEN coalesce((SELECT array_agg(s.agent_id) FROM agent_skills s WHERE s.skill_id = p.skill_id),
                           ARRAY[p.agent_id])
             ELSE ARRAY[p.agent_id] END,
        p.decided_at,
-       least(extract(epoch FROM now() - p.decided_at), 2147483647)::integer
+       least(extract(epoch FROM now() - p.decided_at), 2147483647)::integer,
+       now()
 FROM improvement_proposals p
 WHERE p.status = 'applied' AND p.decided_at > now() - interval '30 days';
 

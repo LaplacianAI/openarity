@@ -198,12 +198,12 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	out := api.Page[view]{Items: make([]view, 0, len(page.Items)), NextCursor: page.NextCursor}
 	for _, row := range page.Items {
 		v, err := h.view(r, u, row)
-		if watch, ok := byID[row.ID]; ok {
-			v.Watch = watchViewOf(watch)
-		}
 		if err != nil {
 			api.Fail(w, h.logger, u, "failed to read an improvement", err)
 			return
+		}
+		if watch, ok := byID[row.ID]; ok {
+			v.Watch = watchViewOf(watch)
 		}
 		out.Items = append(out.Items, v)
 	}
