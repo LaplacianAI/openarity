@@ -198,7 +198,8 @@ func (c *Checker) SkipDigest(ctx context.Context, runID uuid.UUID, round int32, 
 }
 
 func (c *Checker) finishDigest(ctx context.Context, runID uuid.UUID, round int32, rows []db.AddRunDigestParams, state string) error {
-	return c.store.InTx(ctx, func(q *db.Queries) error {
+	written := false
+	err := c.store.InTx(ctx, func(q *db.Queries) error {
 		held, err := q.LockRunOutcome(ctx, runID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -214,8 +215,13 @@ func (c *Checker) finishDigest(ctx context.Context, runID uuid.UUID, round int32
 				return fmt.Errorf("writing run %s's digest: %w", runID, err)
 			}
 		}
+		written = true
 		return q.SetRunDigest(ctx, db.SetRunDigestParams{RunID: runID, Digest: state})
 	})
+	if err == nil && written {
+		c.logger.InfoContext(ctx, "A run was digested", "run", runID, "digest", state, "agents", len(rows))
+	}
+	return err
 }
 
 // study asks the model about the run's tree and returns the rows to write.

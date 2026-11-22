@@ -91,7 +91,7 @@ type ImproverStore interface {
 	GetImproverPassByWorkflow(ctx context.Context, workflowID string) (db.ImproverPass, error)
 	TouchImproverPass(ctx context.Context, arg db.TouchImproverPassParams) (int64, error)
 	AddImproverPassUsage(ctx context.Context, arg db.AddImproverPassUsageParams) error
-	FinishImproverPass(ctx context.Context, arg db.FinishImproverPassParams) error
+	FinishImproverPass(ctx context.Context, arg db.FinishImproverPassParams) (db.FinishImproverPassRow, error)
 	FailLostImproverPasses(ctx context.Context, arg db.FailLostImproverPassesParams) (int64, error)
 	GetImproverPass(ctx context.Context, id uuid.UUID) (db.ImproverPass, error)
 	ListAgentRecentRuns(ctx context.Context, arg db.ListAgentRecentRunsParams) ([]uuid.UUID, error)
@@ -197,6 +197,8 @@ func (im *Improver) Begin(ctx context.Context, plan plannedPass, workflowID stri
 	if err != nil {
 		return uuid.UUID{}, fmt.Errorf("recording agent %s's pass: %w", plan.AgentID, err)
 	}
+	im.logger.InfoContext(ctx, "An improver pass began", "pass", pass.ID, "team", plan.TeamID, "agent", plan.AgentID,
+		"trigger", plan.Trigger, "patterns", len(plan.Keys), "prune", len(plan.Prune), "runs", len(ids), "model", model.Name)
 	return pass.ID, nil
 }
 
@@ -462,8 +464,15 @@ func (im *Improver) record(ctx context.Context, id uuid.UUID, p db.FinishImprove
 		im.logger.WarnContext(ctx, "An improver pass failed", "pass", id, "err", failed)
 	}
 	p.ID, p.Report, p.Error = id, clip(p.Report, reportChars), msg
-	if err := im.store.FinishImproverPass(ctx, p); err != nil {
+	row, err := im.store.FinishImproverPass(ctx, p)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // failed as lost meanwhile; that sweep said so
+	}
+	if err != nil {
 		return fmt.Errorf("recording pass %s %s: %w", id, p.Status, err)
 	}
+	im.logger.InfoContext(ctx, "An improver pass finished", "pass", id, "team", row.TeamID, "agent", row.AgentID,
+		"trigger", row.Trigger, "status", p.Status, "proposed", row.Proposed, "screened_out", row.ScreenedOut,
+		"cut_short", p.CutShort, "input_tokens", row.InputTokens, "output_tokens", row.OutputTokens)
 	return nil
 }

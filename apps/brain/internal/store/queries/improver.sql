@@ -125,13 +125,15 @@ SET input_tokens = input_tokens + sqlc.arg(input_tokens),
     screened_out = screened_out + sqlc.arg(screened_out)
 WHERE id = sqlc.arg(id);
 
--- name: FinishImproverPass :exec
+-- No row when the pass was no longer running: failed as lost meanwhile.
+-- name: FinishImproverPass :one
 UPDATE improver_passes
 SET status = sqlc.arg(status), report = sqlc.arg(report), error = sqlc.narg(error),
     cut_short = sqlc.arg(cut_short),
     proposed = (SELECT count(*) FROM improvement_proposals WHERE pass_id = sqlc.arg(id)::uuid),
     finished_at = now()
-WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+WHERE id = sqlc.arg(id)::uuid AND status = 'running'
+RETURNING team_id, agent_id, trigger, proposed, screened_out, input_tokens, output_tokens;
 
 -- name: CountPassProposals :one
 SELECT count(*)::int FROM improvement_proposals WHERE pass_id = $1;

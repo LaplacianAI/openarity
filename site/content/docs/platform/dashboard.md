@@ -144,6 +144,12 @@ While that endpoint cannot be reached, a run is tried again every hour for
 a day before it is marked as one the judge could not tell.
 Only runs that finish while improvement is on are judged: turning it off
 and on again starts from that moment.
+To see it working without opening the dashboard, read the worker's log. Each
+judged run logs `A run was judged` with its verdict, and each digested run
+logs `A run was digested`. Each pass logs `An improver pass began` and then
+`An improver pass finished`, with how many changes it proposed and how many
+the screen held back. These lines carry ids and counts, never what a run or a
+report said.
 Compaction says when a run folds its earlier turns into a summary: past a
 number of messages, and when its next request would read a tenth of its
 token budget, held between an at least and an at most the team chooses
