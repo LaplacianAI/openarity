@@ -170,7 +170,8 @@ func TestAFailedBuildRefusesTheRoomUntilItIsRetried(t *testing.T) {
 	}
 
 	_, err := k.Ensure(t.Context(), w.owner, w.team, want())
-	if !errors.Is(err, sandbox.ErrRefused) || !strings.Contains(err.Error(), "the image could not be pulled") {
+	if !errors.Is(err, sandbox.ErrRefused) || errors.Is(err, sandbox.ErrPreparing) ||
+		!strings.Contains(err.Error(), "the image could not be pulled") || !strings.Contains(err.Error(), "in Settings") {
 		t.Fatalf("Ensure = %v, want ErrRefused with E2B's reason", err)
 	}
 	if e.builds() != 1 {

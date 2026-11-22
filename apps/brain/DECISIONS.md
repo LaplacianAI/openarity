@@ -941,8 +941,8 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     is `minFreeDiskMb`, the free space E2B grows the filesystem to, best
     effort. Whether a size is allowed is the team's E2B plan's to say; a
     refusal is a failed build with E2B's reason, not a check here. The
-    template's name is built from the same key the row stores, and the
-    table checks the key's shape, so the two cannot drift. A team that names
+    template's name and the row's size are both derived by one function,
+    `sizeKey`, and the table checks the size's shape. A team that names
     its own template keeps that template's size: the team's is not used,
     so changing it replaces no room. Two teams that saved the same E2B key
     share an account, so they share a name per release and size; E2B adds

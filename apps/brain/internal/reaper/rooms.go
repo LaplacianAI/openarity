@@ -102,12 +102,13 @@ func (e roomEffect) Claim(ctx context.Context, retryBefore time.Time, batch int3
 // rather than once a batch of tombstones, so a provider that is down costs
 // the sweep one pass's time. One that cannot be stopped now is logged and
 // tried at the next sweep; it does not hold back the tombstones.
-func (e roomEffect) Prepare(ctx context.Context) error {
+func (e roomEffect) Prepare(ctx context.Context) {
 	rows, err := e.rows.ListIdleWorkspaceRooms(ctx, db.ListIdleWorkspaceRoomsParams{
 		DefaultMinutes: idleMinutes(e.idle), Max: stopsPerSweep,
 	})
 	if err != nil {
-		return err
+		e.logger.WarnContext(ctx, "reaper: the idle workspaces were not listed", "error", err)
+		return
 	}
 	// A time for the whole pass, so a provider that is down costs the
 	// tombstones behind it minutes at most; the rest wait for the next sweep.
@@ -126,7 +127,6 @@ func (e roomEffect) Prepare(ctx context.Context) error {
 	if asked > 0 {
 		e.logger.InfoContext(ctx, "idle workspaces asked to stop", "asked", asked, "failed", failed, "listed", len(rows))
 	}
-	return nil
 }
 
 // stopOne stops one idle workspace, within a time of its own so one slow

@@ -2,8 +2,10 @@ package reaper
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,10 +19,14 @@ import (
 // idleRows lists n idle workspaces; nothing else is asked of it here.
 type idleRows struct {
 	RoomRows
-	n int
+	n   int
+	err error
 }
 
 func (r idleRows) ListIdleWorkspaceRooms(context.Context, db.ListIdleWorkspaceRoomsParams) ([]db.SandboxRoom, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
 	rows := make([]db.SandboxRoom, r.n)
 	for i := range rows {
 		rows[i] = db.SandboxRoom{ID: uuid.New(), OwnerKind: "session", OwnerID: uuid.New(), TeamID: uuid.New()}
@@ -50,13 +56,27 @@ func TestAPassOfStopsHasATimeOfItsOwn(t *testing.T) {
 		stopPass: 50 * time.Millisecond,
 	}
 	start := time.Now()
-	if err := e.Prepare(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	e.Prepare(t.Context())
 	if took := time.Since(start); took > 5*time.Second {
 		t.Fatalf("the pass took %v", took)
 	}
 	if n := h.stops.Load(); n >= stopsPerSweep {
 		t.Fatalf("%d stops were tried against a provider that is down", n)
+	}
+}
+
+// A list that fails is logged and the sweep goes on to its tombstones:
+// Prepare has no error to stop it with.
+func TestAnIdleListThatFailsIsLogged(t *testing.T) {
+	var logs strings.Builder
+	h := &hangingRooms{}
+	e := roomEffect{
+		rows: idleRows{err: errors.New("the database is down")}, rooms: h, idle: time.Minute,
+		logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+		stopPass: time.Second,
+	}
+	e.Prepare(t.Context())
+	if h.stops.Load() != 0 || !strings.Contains(logs.String(), "the database is down") {
+		t.Fatalf("%d stops; logged %q", h.stops.Load(), logs.String())
 	}
 }

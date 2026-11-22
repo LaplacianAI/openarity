@@ -140,6 +140,10 @@ rooms when upgrading; the next call makes each conversation a new one:
 docker ps -aq --filter name=oa-sb- | xargs -r docker rm -f
 ```
 
+Changing a team's sandbox provider, its address or its key does the same:
+rooms made with the old ones are deleted, and each conversation gets a new
+workspace, without its files, on its next call.
+
 Upgrading the brain: a room is made from the image of the brain's release,
 so a deploy of a new commit gives each conversation a new workspace on its
 next call, without the old one's files, and the agent is told so. Keep
