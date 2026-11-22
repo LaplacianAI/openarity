@@ -239,10 +239,11 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().Int32Var(&f.idleMinutes, "stop-idle-minutes", 0,
 		"stop a running workspace unused this long, 1 to 1440 minutes")
 	cmd.Flags().BoolVar(&f.noIdleMinutes, "no-stop-idle-minutes", false, "return to the deployment's idle time")
-	cmd.Flags().Int32Var(&f.memoryMB, "workspace-memory-mb", 0, "a workspace room's memory; set with --workspace-cpus and --workspace-disk-mb")
-	cmd.Flags().Int32Var(&f.cpus, "workspace-cpus", 0, "a workspace room's CPUs")
-	cmd.Flags().Int32Var(&f.diskMB, "workspace-disk-mb", 0, "a workspace room's disk")
-	cmd.Flags().BoolVar(&f.noSize, "no-workspace-size", false, "return to the provider's own size")
+	cmd.Flags().Int32Var(&f.memoryMB, "workspace-memory-mb", 0,
+		"a workspace room's memory, 256 to 65536; set with --workspace-cpus and --workspace-disk-mb. A new size gives each conversation a new workspace, without its files")
+	cmd.Flags().Int32Var(&f.cpus, "workspace-cpus", 0, "a workspace room's CPUs, 1 to 16")
+	cmd.Flags().Int32Var(&f.diskMB, "workspace-disk-mb", 0, "a workspace room's disk, 256 to 262144")
+	cmd.Flags().BoolVar(&f.noSize, "no-workspace-size", false, "return to the provider's own size, which also gives each conversation a new workspace")
 	cmd.Flags().StringVar(&f.browser, "browser", "",
 		"what runs drive pages in: none, browserless, steel, lightpanda, cdp, browserbase, hyperbrowser, anchor, kernel or brightdata")
 	cmd.Flags().StringVar(&f.browserURL, "browser-url", "",
@@ -309,6 +310,16 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return fmt.Errorf("--pass-tokens is a count of tokens, 100000 to 2000000, not %d", f.passTokens)
 	case changed("pass-minutes") && (f.passMinutes < 1 || f.passMinutes > 25):
 		return fmt.Errorf("--pass-minutes is a count of minutes, 1 to 25, not %d", f.passMinutes)
+	case changed("keep-stopped-hours") && (f.keepHours < 1 || f.keepHours > 720):
+		return fmt.Errorf("--keep-stopped-hours is a count of hours, 1 to 720, not %d", f.keepHours)
+	case changed("stop-idle-minutes") && (f.idleMinutes < 1 || f.idleMinutes > 1440):
+		return fmt.Errorf("--stop-idle-minutes is a count of minutes, 1 to 1440, not %d", f.idleMinutes)
+	case changed("workspace-memory-mb") && (f.memoryMB < 256 || f.memoryMB > 65536):
+		return fmt.Errorf("--workspace-memory-mb is 256 to 65536, not %d", f.memoryMB)
+	case changed("workspace-cpus") && (f.cpus < 1 || f.cpus > 16):
+		return fmt.Errorf("--workspace-cpus is 1 to 16, not %d", f.cpus)
+	case changed("workspace-disk-mb") && (f.diskMB < 256 || f.diskMB > 262144):
+		return fmt.Errorf("--workspace-disk-mb is 256 to 262144, not %d", f.diskMB)
 	case changed("stop-idle-minutes") && f.noIdleMinutes:
 		return errors.New("--stop-idle-minutes and --no-stop-idle-minutes contradict each other")
 	case slices.ContainsFunc(sizeFlags, changed) && f.noSize:

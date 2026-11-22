@@ -48,8 +48,29 @@ func TestSettingsSetResetsWithNullAndKeepsWhatItLeavesOut(t *testing.T) {
 func TestSettingsSetRefusesHalfASizeOrAContradiction(t *testing.T) {
 	for want, args := range map[string][]string{
 		"together":   {"--workspace-memory-mb", "8192"},
-		"cannot be":  {"--no-workspace-size", "--workspace-memory-mb", "1", "--workspace-cpus", "1", "--workspace-disk-mb", "1"},
+		"cannot be":  {"--no-workspace-size", "--workspace-memory-mb", "1024", "--workspace-cpus", "1", "--workspace-disk-mb", "512"},
 		"contradict": {"--stop-idle-minutes", "5", "--no-stop-idle-minutes"},
+	} {
+		settingsRoutes(t, daytonaSaved, http.StatusOK)
+		_, err := clitest.Execute(t, commands, append([]string{"teams", "settings", "set", teamID}, args...)...)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%v: err = %v, want %q", args, err, want)
+		}
+	}
+}
+
+// Each value is held to its range here, before anything is sent, as the
+// other flags are.
+func TestSettingsSetRefusesAStopTimeOrSizeOutOfRange(t *testing.T) {
+	size := func(m, c, d string) []string {
+		return []string{"--workspace-memory-mb", m, "--workspace-cpus", c, "--workspace-disk-mb", d}
+	}
+	for want, args := range map[string][]string{
+		"--keep-stopped-hours is":  {"--keep-stopped-hours", "721"},
+		"--stop-idle-minutes is":   {"--stop-idle-minutes", "0"},
+		"--workspace-memory-mb is": size("128", "1", "512"),
+		"--workspace-cpus is":      size("1024", "17", "512"),
+		"--workspace-disk-mb is":   size("1024", "1", "300000"),
 	} {
 		settingsRoutes(t, daytonaSaved, http.StatusOK)
 		_, err := clitest.Execute(t, commands, append([]string{"teams", "settings", "set", teamID}, args...)...)
