@@ -40,7 +40,7 @@ func (q *Queries) FinishE2BTemplate(ctx context.Context, arg FinishE2BTemplatePa
 }
 
 const getE2BTemplate = `-- name: GetE2BTemplate :one
-SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at FROM e2b_templates
+SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at, size FROM e2b_templates
 WHERE team_id = $1
   AND sandbox_secret_id = $2
   AND name = $3
@@ -66,14 +66,16 @@ func (q *Queries) GetE2BTemplate(ctx context.Context, arg GetE2BTemplateParams) 
 		&i.Error,
 		&i.StartedAt,
 		&i.UpdatedAt,
+		&i.Size,
 	)
 	return i, err
 }
 
 const getReadyE2BTemplate = `-- name: GetReadyE2BTemplate :one
-SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at FROM e2b_templates
+SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at, size FROM e2b_templates
 WHERE team_id = $1
   AND sandbox_secret_id = $2
+  AND size = $3
   AND status = 'ready'
 ORDER BY updated_at DESC, id DESC
 LIMIT 1
@@ -82,12 +84,14 @@ LIMIT 1
 type GetReadyE2BTemplateParams struct {
 	TeamID          uuid.UUID
 	SandboxSecretID uuid.UUID
+	Size            string
 }
 
-// The newest template already built under the key, of any name: what rooms
-// start from while a newer release's is still being built.
+// The newest template already built under the key at a size, of any
+// release: what rooms of that size start from while a newer release's is
+// still being built. A room is never handed another size than its own.
 func (q *Queries) GetReadyE2BTemplate(ctx context.Context, arg GetReadyE2BTemplateParams) (E2BTemplate, error) {
-	row := q.db.QueryRow(ctx, getReadyE2BTemplate, arg.TeamID, arg.SandboxSecretID)
+	row := q.db.QueryRow(ctx, getReadyE2BTemplate, arg.TeamID, arg.SandboxSecretID, arg.Size)
 	var i E2BTemplate
 	err := row.Scan(
 		&i.ID,
@@ -100,12 +104,13 @@ func (q *Queries) GetReadyE2BTemplate(ctx context.Context, arg GetReadyE2BTempla
 		&i.Error,
 		&i.StartedAt,
 		&i.UpdatedAt,
+		&i.Size,
 	)
 	return i, err
 }
 
 const listBuildingE2BTemplates = `-- name: ListBuildingE2BTemplates :many
-SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at FROM e2b_templates
+SELECT id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at, size FROM e2b_templates
 WHERE status = 'building'
 ORDER BY updated_at
 LIMIT $1
@@ -133,6 +138,7 @@ func (q *Queries) ListBuildingE2BTemplates(ctx context.Context, max int32) ([]E2
 			&i.Error,
 			&i.StartedAt,
 			&i.UpdatedAt,
+			&i.Size,
 		); err != nil {
 			return nil, err
 		}
@@ -165,10 +171,10 @@ func (q *Queries) LockE2BTemplate(ctx context.Context, arg LockE2BTemplateParams
 
 const saveE2BTemplate = `-- name: SaveE2BTemplate :one
 INSERT INTO e2b_templates (
-    team_id, sandbox_secret_id, name, template_id, build_id, status, error
+    team_id, sandbox_secret_id, name, size, template_id, build_id, status, error
 ) VALUES (
-    $1, $2, $3,
-    $4, $5, $6, $7
+    $1, $2, $3, $4,
+    $5, $6, $7, $8
 )
 ON CONFLICT (team_id, sandbox_secret_id, name) DO UPDATE SET
     template_id = EXCLUDED.template_id,
@@ -177,13 +183,14 @@ ON CONFLICT (team_id, sandbox_secret_id, name) DO UPDATE SET
     error       = EXCLUDED.error,
     started_at  = now(),
     updated_at  = now()
-RETURNING id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at
+RETURNING id, team_id, sandbox_secret_id, name, template_id, build_id, status, error, started_at, updated_at, size
 `
 
 type SaveE2BTemplateParams struct {
 	TeamID          uuid.UUID
 	SandboxSecretID uuid.UUID
 	Name            string
+	Size            string
 	TemplateID      *string
 	BuildID         *string
 	Status          string
@@ -197,6 +204,7 @@ func (q *Queries) SaveE2BTemplate(ctx context.Context, arg SaveE2BTemplateParams
 		arg.TeamID,
 		arg.SandboxSecretID,
 		arg.Name,
+		arg.Size,
 		arg.TemplateID,
 		arg.BuildID,
 		arg.Status,
@@ -214,6 +222,7 @@ func (q *Queries) SaveE2BTemplate(ctx context.Context, arg SaveE2BTemplateParams
 		&i.Error,
 		&i.StartedAt,
 		&i.UpdatedAt,
+		&i.Size,
 	)
 	return i, err
 }

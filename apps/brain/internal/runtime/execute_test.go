@@ -1657,7 +1657,7 @@ func TestAFinishedRunFailsWhatItLeftRunning(t *testing.T) {
 	done := f.startUnder(t, f.run, "call_2#c", worker)
 	f.mustExec(t, `UPDATE runs SET status = 'succeeded', output = 'kept', finished_at = now() WHERE id = $1`, done.ID)
 
-	if err := f.exec.finish(t.Context(), f.run, worker, "succeeded", "done", ""); err != nil {
+	if _, err := f.exec.finish(t.Context(), f.run, worker, "succeeded", "done", ""); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
 
@@ -1679,7 +1679,7 @@ func TestAFinishOnALostRunLeavesItsChildren(t *testing.T) {
 		WHERE id = $1`, f.run)
 	child := f.startUnder(t, f.run, "call_1#a", "w-new")
 
-	if err := f.exec.finish(t.Context(), f.run, worker, "failed", "", "lost"); err != nil {
+	if _, err := f.exec.finish(t.Context(), f.run, worker, "failed", "", "lost"); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
 	if r, _ := f.store.GetRun(t.Context(), child.ID); r.Status != "running" {
@@ -1699,7 +1699,7 @@ func TestAFinishWithANULIsRecorded(t *testing.T) {
 			f.mustExec(t, `UPDATE runs SET status = 'running', worker = $2, heartbeat_at = now(), started_at = now()
 				WHERE id = $1`, f.run, worker)
 
-			if err := f.exec.finish(t.Context(), f.run, worker, c.status, c.output, c.failure); err != nil {
+			if _, err := f.exec.finish(t.Context(), f.run, worker, c.status, c.output, c.failure); err != nil {
 				t.Fatalf("finish: %v", err)
 			}
 			r := f.row(t)
@@ -1731,7 +1731,7 @@ func TestAFinishedRunIsNeverSeenWithoutItsFinishedEvent(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- f.exec.finish(t.Context(), f.run, worker, "succeeded", "done", "") }()
+	go func() { _, err := f.exec.finish(t.Context(), f.run, worker, "succeeded", "done", ""); done <- err }()
 
 	// The finished event's write is waiting on the lock: this schema's
 	// run_events, by its oid, since other packages' schemas have one too.

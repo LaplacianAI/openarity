@@ -9,23 +9,26 @@ import (
 
 	"github.com/google/uuid"
 
+	sandboxpkg "github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 type wanted struct {
 	team, key uuid.UUID
+	size      *sandboxpkg.Size
 	retry     time.Duration
 }
 
 type fakeTemplates struct {
-	row   *db.E2BTemplate
-	err   error
-	wants []wanted
-	reads int
+	row       *db.E2BTemplate
+	err       error
+	wants     []wanted
+	reads     int
+	readSizes []*sandboxpkg.Size
 }
 
-func (f *fakeTemplates) Want(_ context.Context, team, key uuid.UUID, retry time.Duration) (db.E2BTemplate, error) {
-	f.wants = append(f.wants, wanted{team, key, retry})
+func (f *fakeTemplates) Want(_ context.Context, team, key uuid.UUID, size *sandboxpkg.Size, retry time.Duration) (db.E2BTemplate, error) {
+	f.wants = append(f.wants, wanted{team, key, size, retry})
 	if f.err != nil {
 		return db.E2BTemplate{}, f.err
 	}
@@ -35,8 +38,9 @@ func (f *fakeTemplates) Want(_ context.Context, team, key uuid.UUID, retry time.
 	return *f.row, nil
 }
 
-func (f *fakeTemplates) Current(context.Context, uuid.UUID, uuid.UUID) (db.E2BTemplate, bool, error) {
+func (f *fakeTemplates) Current(_ context.Context, _, _ uuid.UUID, size *sandboxpkg.Size) (db.E2BTemplate, bool, error) {
 	f.reads++
+	f.readSizes = append(f.readSizes, size)
 	if f.err != nil {
 		return db.E2BTemplate{}, false, f.err
 	}
@@ -141,5 +145,41 @@ func TestASaveOfAnythingElseOnlyReadsTheBuild(t *testing.T) {
 	}
 	if got.Sandbox.TemplateBuild == nil || got.Sandbox.TemplateBuild.Status != "building" {
 		t.Fatalf("template_build = %+v", got.Sandbox.TemplateBuild)
+	}
+}
+
+// An E2B team with a size of its own has its workspace template built at it,
+// and the default one too, which its command servers start from; Settings
+// show the sized one, the one the team chose.
+func TestAnE2BSizeAsksForItsOwnTemplateAndTheDefault(t *testing.T) {
+	e := newEnv()
+	tpl := &fakeTemplates{}
+	e.templates = tpl
+	rec := e.save(t, withSandbox(`{"provider":"e2b","api_key":"e2b-key","workspace_size":{"memory_mb":8192,"cpus":4,"disk_mb":20480}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	want := sandboxpkg.Size{MemoryMB: 8192, CPUs: 4, DiskMB: 20480}
+	if len(tpl.wants) != 2 || tpl.wants[0].size != nil || tpl.wants[1].size == nil || *tpl.wants[1].size != want {
+		t.Fatalf("asked %+v, want the default and then the team's size", tpl.wants)
+	}
+	if got := decode(t, rec); got.Sandbox.WorkspaceSize == nil || got.Sandbox.TemplateBuild == nil {
+		t.Fatalf("sandbox = %+v", got.Sandbox)
+	}
+
+	e.get(t)
+	if n := len(tpl.readSizes); n != 1 || tpl.readSizes[0] == nil || *tpl.readSizes[0] != want {
+		t.Fatalf("read sizes = %v, want the team's size", tpl.readSizes)
+	}
+}
+
+// With no size of its own, only the default is asked for, as before.
+func TestAnE2BTeamWithNoSizeAsksForTheDefaultAlone(t *testing.T) {
+	e := newEnv()
+	tpl := &fakeTemplates{}
+	e.templates = tpl
+	e.save(t, withSandbox(`{"provider":"e2b","api_key":"e2b-key"}`))
+	if len(tpl.wants) != 1 || tpl.wants[0].size != nil {
+		t.Fatalf("asked %+v, want the default alone", tpl.wants)
 	}
 }

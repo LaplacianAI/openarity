@@ -46,7 +46,7 @@ type TemplateStore interface {
 
 // TemplateClient is E2B, as one team's key opens it.
 type TemplateClient interface {
-	BuildTemplate(ctx context.Context, name, image string) (sandbox.Build, error)
+	BuildTemplate(ctx context.Context, name, image string, size *sandbox.Size) (sandbox.Build, error)
 	BuildStatus(ctx context.Context, b sandbox.Build) (sandbox.BuildState, string, error)
 }
 
@@ -84,32 +84,51 @@ func (t *Templates) At(now func() time.Time) *Templates {
 	return t
 }
 
-// E2BName is the template the brain's room image is built as: named for the
-// release's commit, so an upgrade builds a new one, which rooms move to once
-// it is built. A brain that does not know its commit builds -latest once, and
-// an override is named for its reference: neither notices when a mutable tag
-// moves, so a new image under the same tag needs the row deleted to rebuild.
-func (i Images) E2BName() string {
+// E2BName is the template the brain's room image is built as at size, nil
+// for the default: named for the release's commit, so an upgrade builds a new
+// one, which rooms move to once it is built, and for the size, so a team's
+// workspaces get a template of their own beside its command servers'. A brain
+// that does not know its commit builds -latest once, and an override is named
+// for its reference: neither notices when a mutable tag moves, so a new image
+// under the same tag needs the row deleted to rebuild.
+func (i Images) E2BName(size *sandbox.Size) string {
+	name := E2BTemplate + "-" + i.e2bRelease()
+	if k := sizeKey(size); k != "" {
+		name += "-" + k
+	}
+	return name
+}
+
+func (i Images) e2bRelease() string {
 	if i.Override == "" && i.Commit != "" {
 		c := i.Commit
 		if len(c) > 12 {
 			c = c[:12]
 		}
-		return E2BTemplate + "-" + c
+		return c
 	}
 	if i.Override == "" {
-		return E2BTemplate + "-latest"
+		return "latest"
 	}
 	sum := sha256.Sum256([]byte(i.Override))
-	return E2BTemplate + "-" + hex.EncodeToString(sum[:6])
+	return hex.EncodeToString(sum[:6])
 }
 
-// Want is the team's build of the template under key: the one there is, or
-// one asked for now when there is none or the last failed retry or more ago;
-// a retry of 0 asks again for any failed build.
+// sizeKey is a size as a template's name and row carry it: the empty string
+// for the default, '<cpus>c-<memory>m-<disk>d' otherwise.
+func sizeKey(size *sandbox.Size) string {
+	if size == nil {
+		return ""
+	}
+	return fmt.Sprintf("%dc-%dm-%dd", size.CPUs, size.MemoryMB, size.DiskMB)
+}
+
+// Want is the team's build of the template under key at size (nil for the
+// default): the one there is, or one asked for now when there is none or the
+// last failed retry or more ago; a retry of 0 asks again for any failed build.
 // A build E2B refused to start is saved as failed and returned without error.
-func (t *Templates) Want(ctx context.Context, team, key uuid.UUID, retry time.Duration) (db.E2BTemplate, error) {
-	name := t.images.E2BName()
+func (t *Templates) Want(ctx context.Context, team, key uuid.UUID, size *sandbox.Size, retry time.Duration) (db.E2BTemplate, error) {
+	name := t.images.E2BName(size)
 	var row db.E2BTemplate
 	err := t.store.WithE2BTemplateLock(ctx, team, key, name, func(ctx context.Context) error {
 		got, err := t.store.GetE2BTemplate(ctx, db.GetE2BTemplateParams{TeamID: team, SandboxSecretID: key, Name: name})
@@ -120,16 +139,16 @@ func (t *Templates) Want(ctx context.Context, team, key uuid.UUID, retry time.Du
 		case err != nil && !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("reading the team's room template: %w", err)
 		}
-		row, err = t.start(ctx, team, key, name)
+		row, err = t.start(ctx, team, key, name, size)
 		return err
 	})
 	return row, err
 }
 
-// Current is the team's build of the template under key, if one was ever
-// asked for; it asks for none.
-func (t *Templates) Current(ctx context.Context, team, key uuid.UUID) (db.E2BTemplate, bool, error) {
-	row, err := t.store.GetE2BTemplate(ctx, db.GetE2BTemplateParams{TeamID: team, SandboxSecretID: key, Name: t.images.E2BName()})
+// Current is the team's build of the template under key at size, if one was
+// ever asked for; it asks for none.
+func (t *Templates) Current(ctx context.Context, team, key uuid.UUID, size *sandbox.Size) (db.E2BTemplate, bool, error) {
+	row, err := t.store.GetE2BTemplate(ctx, db.GetE2BTemplateParams{TeamID: team, SandboxSecretID: key, Name: t.images.E2BName(size)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return db.E2BTemplate{}, false, nil
 	}
@@ -139,18 +158,19 @@ func (t *Templates) Current(ctx context.Context, team, key uuid.UUID) (db.E2BTem
 	return row, true, nil
 }
 
-// Image is the template a room of the team's starts from under key, once it
-// is built. While it is building, or after it failed, rooms start from the
-// newest template already built under the key, so an upgrade does not stop
-// a team's rooms; a team with none built yet gets sandbox.ErrPreparing while
-// it builds and sandbox.ErrRefused, with E2B's reason, when it failed.
-func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, error) {
-	name := t.images.E2BName()
+// Image is the template a room of the team's starts from under key at size
+// (nil for the default), once it is built. While it is building, or after it
+// failed, rooms start from the newest template of that size already built
+// under the key, so an upgrade does not stop a team's rooms; a team with
+// none built yet gets sandbox.ErrPreparing while it builds and
+// sandbox.ErrRefused, with E2B's reason, when it failed.
+func (t *Templates) Image(ctx context.Context, team, key uuid.UUID, size *sandbox.Size) (string, error) {
+	name := t.images.E2BName(size)
 	cached := key.String() + ":" + name
 	if _, ok := t.ready.Load(cached); ok {
 		return name, nil
 	}
-	row, err := t.Want(ctx, team, key, RetryFailedAfter)
+	row, err := t.Want(ctx, team, key, size, RetryFailedAfter)
 	if err != nil {
 		return "", err
 	}
@@ -158,7 +178,7 @@ func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, err
 		t.ready.Store(cached, struct{}{})
 		return name, nil
 	}
-	prev, found, err := t.lastReady(ctx, team, key)
+	prev, found, err := t.lastReady(ctx, team, key, size)
 	if err != nil {
 		return "", err
 	}
@@ -177,14 +197,16 @@ func (t *Templates) Image(ctx context.Context, team, key uuid.UUID) (string, err
 		if row.Error != nil {
 			reason = *row.Error
 		}
-		return "", fmt.Errorf("%w: the team's room template did not build (%s); it is tried again "+
-			"in a few minutes, or when the sandbox is saved in Settings", sandbox.ErrRefused, reason)
+		return "", fmt.Errorf("%w: the team's sandbox template did not build at E2B (%s). Nothing ran, "+
+			"and calling again soon will not help: tell the person, since a team admin sees why in Settings, "+
+			"under Sandbox, and saving it there builds it again", sandbox.ErrRefused, reason)
 	}
 }
 
-// lastReady is the newest template already built under key, of any name.
-func (t *Templates) lastReady(ctx context.Context, team, key uuid.UUID) (string, bool, error) {
-	prev, err := t.store.GetReadyE2BTemplate(ctx, db.GetReadyE2BTemplateParams{TeamID: team, SandboxSecretID: key})
+// lastReady is the newest template already built under key at size, of any
+// release.
+func (t *Templates) lastReady(ctx context.Context, team, key uuid.UUID, size *sandbox.Size) (string, bool, error) {
+	prev, err := t.store.GetReadyE2BTemplate(ctx, db.GetReadyE2BTemplateParams{TeamID: team, SandboxSecretID: key, Size: sizeKey(size)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -194,17 +216,17 @@ func (t *Templates) lastReady(ctx context.Context, team, key uuid.UUID) (string,
 	return prev.Name, true, nil
 }
 
-func (t *Templates) start(ctx context.Context, team, key uuid.UUID, name string) (db.E2BTemplate, error) {
+func (t *Templates) start(ctx context.Context, team, key uuid.UUID, name string, size *sandbox.Size) (db.E2BTemplate, error) {
 	client, err := t.client(ctx, team, key)
 	if err != nil {
 		return db.E2BTemplate{}, err
 	}
-	b, err := client.BuildTemplate(ctx, name, t.images.Ref())
+	b, err := client.BuildTemplate(ctx, name, t.images.Ref(), size)
 	if err != nil && ctx.Err() != nil {
 		return db.E2BTemplate{}, err
 	}
 	arg := db.SaveE2BTemplateParams{
-		TeamID: team, SandboxSecretID: key, Name: name, Status: TemplateBuilding,
+		TeamID: team, SandboxSecretID: key, Name: name, Size: sizeKey(size), Status: TemplateBuilding,
 		TemplateID: nonEmpty(b.TemplateID), BuildID: nonEmpty(b.BuildID),
 	}
 	if err != nil {

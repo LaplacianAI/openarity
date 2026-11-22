@@ -73,6 +73,13 @@ type fakeWorkspaces struct {
 	ensures, touch int
 	team, session  uuid.UUID
 	ensureErr      error
+	// stops are the sessions stopped, each with what idle said under the lock.
+	stops []stoppedRoom
+}
+
+type stoppedRoom struct {
+	team, session uuid.UUID
+	idle          bool
 }
 
 func (f *fakeWorkspaces) Ensure(_ context.Context, team, session uuid.UUID) (sandbox.Endpoint, error) {
@@ -84,6 +91,23 @@ func (f *fakeWorkspaces) Ensure(_ context.Context, team, session uuid.UUID) (san
 		return sandbox.Endpoint{}, f.ensureErr
 	}
 	return sandbox.Endpoint{URL: f.room.srv.URL, Header: http.Header{"Authorization": {"Bearer room"}}}, nil
+}
+
+func (f *fakeWorkspaces) Stop(ctx context.Context, team, session uuid.UUID, idle func(context.Context) (bool, error)) error {
+	ok, err := idle(ctx)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stops = append(f.stops, stoppedRoom{team, session, ok})
+	return nil
+}
+
+func (f *fakeWorkspaces) stopped() []stoppedRoom {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]stoppedRoom(nil), f.stops...)
 }
 
 func (f *fakeWorkspaces) Touch(_ context.Context, session uuid.UUID) error {
@@ -310,6 +334,26 @@ func TestAProblemIsSaidToTheModelInTheWorkspacesWords(t *testing.T) {
 	}
 	if e, _ := ws.counts(); e != 1 {
 		t.Errorf("a problem replaced the room: ensured %d", e)
+	}
+}
+
+// A workspace the keeper had to replace is said as it is: the call did not
+// run, the files are gone, and the next call uses the fresh room.
+func TestAReplacedWorkspaceIsSaidAndTheNextCallUsesIt(t *testing.T) {
+	f, ws := newWorkspaceFixture(t, true)
+	got := f.build(t)
+	ws.ensureErr = sandbox.ErrReplaced
+	_, err := invoke(t, got, BashToolName, `{"command":"ls"}`)
+	if err == nil || err.Error() != sandbox.ErrReplaced.Error() {
+		t.Fatalf("Bash = %v, want the model told its files are gone, in those words", err)
+	}
+	if n := ws.room.calls("/exec"); n != 0 {
+		t.Fatalf("the command was sent %d times after the room was replaced", n)
+	}
+	ws.ensureErr = nil
+	ws.room.answer("/exec", 200, `{"stdout":"","stderr":"","exit_code":0}`)
+	if _, err := invoke(t, got, BashToolName, `{"command":"ls"}`); err != nil {
+		t.Fatalf("Bash after = %v", err)
 	}
 }
 

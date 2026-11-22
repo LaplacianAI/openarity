@@ -301,6 +301,12 @@ func TestAChangedSpecReplacesTheRoom(t *testing.T) {
 
 			changed := want()
 			change(&changed)
+			if changed.Workspace {
+				// A workspace replaced is said once, then used.
+				if _, err := k.Ensure(t.Context(), w.owner, w.team, changed); !errors.Is(err, sandbox.ErrReplaced) {
+					t.Fatalf("Ensure = %v, want ErrReplaced", err)
+				}
+			}
 			ep := w.ensure(k, changed)
 
 			if call(t, ep) != http.StatusOK {

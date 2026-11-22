@@ -7027,13 +7027,66 @@ components:
         key_set:
           type: boolean
           description: Whether a key is stored. The key itself is never returned.
+        keep_hours:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 720
+          description: |
+            How long a stopped workspace keeps its files before it is deleted.
+            A session's workspace stops when its last run ends, and the next
+            call resumes it.
+        idle_minutes:
+          type: integer
+          format: int32
+          nullable: true
+          minimum: 1
+          maximum: 1440
+          description: |
+            How long a running workspace may go unused before it is stopped;
+            null is the deployment's OPENARITY_SANDBOX_IDLE.
+        workspace_size:
+          $ref: "#/components/schemas/WorkspaceSize"
+          nullable: true
+          description: The size of the team's workspace rooms; null is the provider's own.
         template_build:
           $ref: "#/components/schemas/SandboxTemplateBuild"
           nullable: true
           description: |
             E2B with no template of the team's own: the brain's build of its
-            room image in the team's account, asked for when the sandbox is
-            saved. Null for every other sandbox, and before one is asked for.
+            room image in the team's account, at the team's workspace size when
+            it has one, asked for when the sandbox is saved. Null for every
+            other sandbox, and before one is asked for.
+
+    WorkspaceSize:
+      type: object
+      additionalProperties: false
+      required: [memory_mb, cpus, disk_mb]
+      description: |
+        A workspace room's memory, CPUs and disk. sandboxd refuses a size
+        past what its operator gives a workspace; Daytona takes it in whole
+        GB, rounded up; E2B builds a template at it in the team's account,
+        which new workspaces wait for, its disk as the free space E2B grows
+        the filesystem to, and a size the team's E2B plan refuses is a
+        failed build in `template_build`.
+        Changing it gives the team's sessions new rooms on their next call,
+        without the files of the old ones.
+      properties:
+        memory_mb:
+          type: integer
+          format: int32
+          minimum: 256
+          maximum: 65536
+        cpus:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 16
+        disk_mb:
+          type: integer
+          format: int32
+          minimum: 256
+          maximum: 262144
 
     SandboxTemplateBuild:
       type: object
@@ -7218,6 +7271,23 @@ components:
             The provider's key, or sandboxd's token: required for every
             provider but none. Omit it to keep the stored one while the
             provider and its url are unchanged.
+        keep_hours:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 720
+          description: Omit it to keep the stored value.
+        idle_minutes:
+          type: integer
+          format: int32
+          nullable: true
+          minimum: 1
+          maximum: 1440
+          description: Omit it to keep the stored value; null is the deployment's.
+        workspace_size:
+          $ref: "#/components/schemas/WorkspaceSize"
+          nullable: true
+          description: Omit it to keep the stored size; null is the provider's.
 
     BrowserSettingsRequest:
       type: object

@@ -42,6 +42,11 @@ func (e *ensurer) Ensure(_ context.Context, o keeper.Owner, team uuid.UUID, _ ke
 	return sandbox.Endpoint{URL: "http://room"}, nil
 }
 
+func (e *ensurer) Stop(_ context.Context, o keeper.Owner, team uuid.UUID, _ func(context.Context) (bool, error)) error {
+	e.owner, e.team = o, team
+	return nil
+}
+
 func (e *ensurer) Touch(_ context.Context, o keeper.Owner) error {
 	e.owner = o
 	return nil
@@ -181,5 +186,16 @@ func TestAnUnreachableRoomIsGoneAndItsAddressIsNotRepeated(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "provider-secret") {
 		t.Fatalf("the error repeats the address: %v", err)
+	}
+}
+
+func TestStopStopsTheSessionsRoom(t *testing.T) {
+	e := &ensurer{}
+	team, session := uuid.New(), uuid.New()
+	if err := workroom.New(e).Stop(t.Context(), team, session, func(context.Context) (bool, error) { return true, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if e.owner != (keeper.Owner{Kind: workroom.OwnerKind, ID: session}) || e.team != team {
+		t.Fatalf("stopped %+v of %s", e.owner, e.team)
 	}
 }

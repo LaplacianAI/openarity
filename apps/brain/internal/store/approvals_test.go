@@ -540,7 +540,14 @@ func TestTheApprovalsMigrationRollsBackWithDataInIt(t *testing.T) {
 func TestEveryUnfinishedClauseNamesWaiting(t *testing.T) {
 	t.Parallel()
 
-	notWaiting := map[string]string{}
+	notWaiting := map[string]string{
+		// A run waiting for a person may wait hours: its workspace is stopped
+		// meanwhile, freeing the memory, and resumed with its files when the
+		// run calls it again.
+		"IdleSessionOf":          "a waiting run does not hold its session's workspace running",
+		"SessionIsIdle":          "a waiting run does not hold its session's workspace running",
+		"ListIdleWorkspaceRooms": "a waiting run does not hold its session's workspace running",
+	}
 	seen := map[string]bool{}
 
 	list := regexp.MustCompile(`status\s+IN\s*\(([^)]*)\)`)

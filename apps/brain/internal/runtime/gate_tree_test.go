@@ -182,7 +182,7 @@ func TestAParentThatEndsTakesItsWaitingChildWithIt(t *testing.T) {
 	}
 	f.mustExec(t, `UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now() WHERE id = $1`, child.ID)
 
-	if err := f.exec.finish(t.Context(), f.run, worker, "failed", "", "it broke"); err != nil {
+	if _, err := f.exec.finish(t.Context(), f.run, worker, "failed", "", "it broke"); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
 	wantStatus(t, f.onlyChild(t), "failed", "its parent ended")

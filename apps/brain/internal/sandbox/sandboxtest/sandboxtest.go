@@ -36,9 +36,11 @@ type Rooms struct {
 	created []sandbox.Spec
 	deleted []string
 	starts  [][]string
+	stops   []string
+	resumes []string
 
-	// CreateErr, StartErr and DeleteErr fail those calls.
-	CreateErr, StartErr, DeleteErr error
+	// CreateErr, StartErr, DeleteErr, StopErr and ResumeErr fail those calls.
+	CreateErr, StartErr, DeleteErr, StopErr, ResumeErr error
 	// NeverHealthy makes rooms that are started and never answer /healthz.
 	NeverHealthy bool
 	// CreateDelay holds Create, so concurrent callers overlap.
@@ -52,6 +54,7 @@ type room struct {
 	token   string
 	argv    []string
 	started bool
+	stopped bool // a stopped room answers nothing until it is resumed
 	srv     *httptest.Server
 	rooms   *Rooms
 }
@@ -139,12 +142,70 @@ func (r *Rooms) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+// Stop stops the room: it answers nothing until it is resumed.
+func (r *Rooms) Stop(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.StopErr != nil {
+		return r.StopErr
+	}
+	rm, ok := r.rooms[id]
+	if !ok {
+		return sandbox.ErrNotFound
+	}
+	rm.stopped = true
+	r.stops = append(r.stops, id)
+	return nil
+}
+
+// Resume starts a stopped room again, as its provider would, with the
+// command it had: argv is recorded but not needed.
+func (r *Rooms) Resume(_ context.Context, id string, _ []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ResumeErr != nil {
+		return r.ResumeErr
+	}
+	rm, ok := r.rooms[id]
+	if !ok {
+		return sandbox.ErrNotFound
+	}
+	rm.stopped = false
+	r.resumes = append(r.resumes, id)
+	return nil
+}
+
+// Stops and Resumes are the ids of every room stopped and resumed, in order.
+func (r *Rooms) Stops() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.stops...)
+}
+
+func (r *Rooms) Resumes() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.resumes...)
+}
+
+// IsStopped is whether a room is stopped.
+func (r *Rooms) IsStopped(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rm, ok := r.rooms[id]
+	return ok && rm.stopped
+}
+
 // ServeHTTP is the room: what the shim answers.
 func (rm *room) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	rm.rooms.mu.Lock()
 	up := rm.started && !rm.rooms.NeverHealthy
-	token := rm.token
+	token, stopped := rm.token, rm.stopped
 	rm.rooms.mu.Unlock()
+	if stopped {
+		http.Error(w, "the room is stopped", http.StatusBadGateway)
+		return
+	}
 
 	switch req.URL.Path {
 	case "/healthz":

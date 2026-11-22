@@ -40,6 +40,12 @@ type fake struct {
 	calls  []call
 	states []string // GET /sandbox/{id} answers these in turn, then the last
 	create func(w http.ResponseWriter)
+	// failExec makes the toolbox refuse to run a command, and failStop
+	// Daytona refuse a stop.
+	failExec, failStop bool
+	// shown is the state the last GET answered; a start is refused while
+	// it is on its way somewhere else, as Daytona refuses one.
+	shown string
 }
 
 func newFake(t *testing.T) *fake {
@@ -104,6 +110,7 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		if len(f.states) > 1 {
 			f.states = f.states[1:]
 		}
+		f.shown = st
 		f.mu.Unlock()
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"` + st + `","errorReason":"disk full","toolboxProxyUrl":"` + f.srv.URL + `/toolbox/"}`))
 	case r.Method == http.MethodGet && r.URL.Path == "/api/sandbox/sb-1/ports/8080/preview-url":
@@ -111,8 +118,30 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/toolbox/sb-1/process/session":
 		w.WriteHeader(http.StatusCreated)
 	case r.Method == http.MethodPost && r.URL.Path == "/toolbox/sb-1/process/session/openarity/exec":
+		if f.failExec {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"toolbox unavailable"}`))
+			return
+		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"cmdId":"c1"}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/stop":
+		if f.failStop {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"runner unavailable"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"sb-1","state":"stopping"}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox/sb-1/start":
+		f.mu.Lock()
+		busy := f.shown == "stopping"
+		f.mu.Unlock()
+		if busy {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"statusCode":409,"message":"Sandbox is stopping"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"sb-1","state":"starting"}`))
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/sandbox/sb-1":
 		_, _ = w.Write([]byte(`{"id":"sb-1","state":"destroying"}`))
 	default:
@@ -591,5 +620,160 @@ func TestAPublicRoomOnASelfHostedDaytonaIsRefused(t *testing.T) {
 		if _, err := f.client().Create(t.Context(), s); !errors.Is(err, sandbox.ErrRefused) {
 			t.Errorf("%+v: %v, want ErrRefused", s, err)
 		}
+	}
+}
+
+func TestStopStopsTheSandbox(t *testing.T) {
+	f := newFake(t)
+	if err := f.client().Stop(t.Context(), "sb-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.paths(), ","); got != "POST /api/sandbox/sb-1/stop" {
+		t.Fatalf("calls = %s", got)
+	}
+}
+
+// A stopped sandbox has lost its process: a resume starts it, waits for it,
+// and runs the command again.
+func TestResumeStartsAStoppedSandboxAndRunsItsCommandAgain(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "started"}
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(f.paths(), ",")
+	if !strings.Contains(got, "POST /api/sandbox/sb-1/start") || !strings.HasSuffix(got, "POST /toolbox/sb-1/process/session/openarity/exec") {
+		t.Fatalf("calls = %s", got)
+	}
+	if cmd := f.last(http.MethodPost).Body["command"]; cmd != "'sandbox' 'workspace'" {
+		t.Fatalf("command = %v", cmd)
+	}
+}
+
+// One that runs is left alone, so its command is never run twice.
+func TestResumeOfARunningSandboxRunsNothing(t *testing.T) {
+	f := newFake(t)
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.paths(), ","); got != "GET /api/sandbox/sb-1" {
+		t.Fatalf("calls = %s", got)
+	}
+}
+
+func TestStopAndResumeOfAGoneSandboxAreErrNotFound(t *testing.T) {
+	f := newFake(t)
+	if err := f.client().Stop(t.Context(), "gone"); !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("stop: %v", err)
+	}
+	if err := f.client().Resume(t.Context(), "gone", []string{"x"}); !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("resume: %v", err)
+	}
+}
+
+func TestCreateSendsTheTeamsSizeInWholeGB(t *testing.T) {
+	f := newFake(t)
+	_, err := f.client().Create(t.Context(), sandbox.Spec{
+		Image: "image:room:1", Workspace: true, Size: &sandbox.Size{MemoryMB: 1536, CPUs: 2, DiskMB: 8192},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := f.last(http.MethodPost).Body
+	if b["cpu"] != float64(2) || b["memory"] != float64(2) || b["disk"] != float64(8) {
+		t.Fatalf("size sent = cpu %v memory %v disk %v", b["cpu"], b["memory"], b["disk"])
+	}
+}
+
+func TestCreateWithNoSizeLeavesItToDaytona(t *testing.T) {
+	f := newFake(t)
+	if _, err := f.client().Create(t.Context(), sandbox.Spec{Image: "image:room:1"}); err != nil {
+		t.Fatal(err)
+	}
+	b := f.last(http.MethodPost).Body
+	for _, k := range []string{"cpu", "memory", "disk"} {
+		if _, ok := b[k]; ok {
+			t.Errorf("%s sent with no size", k)
+		}
+	}
+}
+
+// A sandbox still stopping is waited out, then started; an archived one is
+// started as a stopped one is, Daytona restoring its files first.
+func TestResumeWaitsOutAStopAndStartsAnArchivedSandbox(t *testing.T) {
+	for name, states := range map[string][]string{
+		"stopping": {"stopping", "stopping", "stopped", "starting", "started"},
+		"archived": {"archived", "starting", "started"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			f.states = states
+			if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err != nil {
+				t.Fatal(err)
+			}
+			starts := 0
+			for _, p := range f.paths() {
+				if p == "POST /api/sandbox/sb-1/start" {
+					starts++
+				}
+			}
+			if starts != 1 {
+				t.Fatalf("calls = %s, want one start", strings.Join(f.paths(), ","))
+			}
+		})
+	}
+}
+
+// One Daytona cannot bring back is gone, so the keeper replaces it.
+func TestResumeOfASandboxInErrorIsErrNotFound(t *testing.T) {
+	for _, st := range []string{"error", "build_failed", "destroyed", "deleted"} {
+		f := newFake(t)
+		f.states = []string{st}
+		err := f.client().Resume(t.Context(), "sb-1", []string{"x"})
+		if !errors.Is(err, sandbox.ErrNotFound) {
+			t.Fatalf("%s: err = %v, want ErrNotFound", st, err)
+		}
+		for _, p := range f.paths() {
+			if p == "POST /api/sandbox/sb-1/start" {
+				t.Fatalf("%s: a start was sent", st)
+			}
+		}
+	}
+}
+
+// Started, but its command not: it is stopped again, so the next Resume
+// starts it and runs the command rather than finding it started and running
+// nothing.
+func TestAResumeWhoseCommandFailsStopsTheSandboxAgain(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "started"}
+	f.failExec = true
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"sandbox", "workspace"}); err == nil {
+		t.Fatal("Resume succeeded with its command refused")
+	}
+	if p := f.paths(); p[len(p)-1] != "POST /api/sandbox/sb-1/stop" {
+		t.Fatalf("calls = %s, want a stop last", strings.Join(p, ","))
+	}
+}
+
+// A sandbox that fails while it starts is gone too, not a plain error: the
+// keeper replaces it on this call rather than the next.
+func TestAResumeThatFailsWhileStartingIsErrNotFound(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "error"}
+	if err := f.client().Resume(t.Context(), "sb-1", []string{"x"}); !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// A cleanup stop that fails is said, so the room left started without its
+// command is not a mystery when the keeper replaces it.
+func TestAFailedCleanupStopIsSaid(t *testing.T) {
+	f := newFake(t)
+	f.states = []string{"stopped", "starting", "started"}
+	f.failExec, f.failStop = true, true
+	err := f.client().Resume(t.Context(), "sb-1", []string{"x"})
+	if err == nil || !strings.Contains(err.Error(), "stopping it again failed") {
+		t.Fatalf("err = %v", err)
 	}
 }

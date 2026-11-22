@@ -49,10 +49,51 @@ DELETE FROM sandbox_rooms WHERE id = $1;
 -- now is skipped rather than waited for: it is in use. Deleting the rows
 -- tombstones them; the same sweep deletes the rooms.
 --
+-- A session's room is stopped when idle, not deleted (ListIdleWorkspaceRooms),
+-- so only the other owners' rooms are expired here.
+--
 -- name: ExpireIdleSandboxRooms :execrows
 DELETE FROM sandbox_rooms
 WHERE last_used_at < sqlc.arg('cutoff')::timestamptz
+  AND owner_kind <> 'session'
   AND pg_try_advisory_xact_lock(hashtextextended('sandbox-room:' || owner_kind || ':' || owner_id::text, 0));
+
+-- Sessions' rooms that run and have been unused for longer than their
+-- team's idle minutes, or the deployment's when the team set none, for the
+-- reaper to stop.
+--
+-- name: ListIdleWorkspaceRooms :many
+SELECT r.* FROM sandbox_rooms r
+LEFT JOIN team_settings ts ON ts.team_id = r.team_id
+WHERE r.owner_kind = 'session'
+  AND r.stopped_at IS NULL
+  AND r.last_used_at < now() - make_interval(mins => coalesce(ts.sandbox_idle_minutes, sqlc.arg('default_minutes')::int))
+  AND NOT EXISTS (
+      SELECT 1 FROM runs o WHERE o.session_id = r.owner_id AND o.status IN ('queued', 'running'))
+-- In no fixed order: a room that cannot be stopped now (a provider that is
+-- down, a key since replaced) is listed again, and must not keep the head of
+-- every sweep from the others.
+ORDER BY random()
+LIMIT sqlc.arg('max');
+
+-- Stopped rooms past their team's keep hours (a running room's NULL
+-- stopped_at never compares): their rows go, which
+-- tombstones each room and its token for the sweep. A room being resumed
+-- right now is skipped.
+--
+-- name: ExpireStoppedSandboxRooms :execrows
+DELETE FROM sandbox_rooms r
+USING sandbox_rooms s
+LEFT JOIN team_settings ts ON ts.team_id = s.team_id
+WHERE r.id = s.id
+  AND s.stopped_at < now() - make_interval(hours => coalesce(ts.sandbox_keep_hours, 24))
+  AND pg_try_advisory_xact_lock(hashtextextended('sandbox-room:' || s.owner_kind || ':' || s.owner_id::text, 0));
+
+-- name: MarkSandboxRoomStopped :exec
+UPDATE sandbox_rooms SET stopped_at = now() WHERE id = $1;
+
+-- name: MarkSandboxRoomResumed :exec
+UPDATE sandbox_rooms SET stopped_at = NULL, last_used_at = now() WHERE id = $1;
 
 -- name: ClaimDeletedRooms :many
 UPDATE deleted_rooms

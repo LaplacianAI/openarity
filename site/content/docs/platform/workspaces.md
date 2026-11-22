@@ -34,9 +34,32 @@ existed, applied again, ends the grant. Add `workspace: true` to the file.
 
 The room is made by the first call that needs it and is shared by every agent
 working on the conversation, delegates included, so a file one writes is there
-for the next. It stays while it is used, and an idle room is deleted after
-`OPENARITY_SANDBOX_IDLE` (thirty minutes by default) with what was in it. A
-conversation deleted takes its room with it. A [hub](hub.md) the team chose
+for the next. A conversation deleted takes its room with it.
+
+The room stops when the conversation's last run ends, and holds no memory
+while stopped. Its files stay: the next run that calls it starts it again
+with `/workspace` as it was left. A room left running, such as one whose run
+is waiting for a person's approval, stops after the team's idle minutes, or
+`OPENARITY_SANDBOX_IDLE` (thirty minutes by default) when the team has set
+none. A stopped room is deleted with its files after the team's keep hours,
+24 unless the team sets otherwise, from 1 to 720:
+
+```sh
+oa teams settings set platform --keep-stopped-hours 72 --stop-idle-minutes 15
+```
+
+The same settings are under Workspaces in the Sandbox section of the
+dashboard's Settings. A change to the keep hours counts for rooms already
+stopped too.
+
+A room that cannot be brought back as it was (the provider lost it, it does
+not answer after a resume, or it is over its disk) is replaced by a fresh
+one. The call that found it does not run: the agent is told its earlier
+files are gone, and its next call uses the fresh room. Calls made at the same
+moment by other agents of the conversation reach the fresh room without the
+notice. The old room is deleted before the new one is made, since a sandbox
+with room for only one would refuse the new one otherwise; if the new one is
+refused too, the conversation has none until a later call. A [hub](hub.md) the team chose
 from its agents has one when it is granted one, like any agent, and can work
 in it as well as hand work on; the built-in hub has none.
 
@@ -79,16 +102,61 @@ token read inside a room is not enough to call the workspace from outside.
 A provider whose commands run as root, or can `sudo`, keeps nothing in the
 room from them; the workspace warns when it starts as root.
 
-On sandboxd a workspace room has 1.5 GiB of memory, one CPU and a 512 MiB
-`/workspace`, set with `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS`
-and `SANDBOXD_WORKSPACE_BYTES`. On E2B the room template the brain builds in
-the team's account has 2 vCPUs and 2 GiB; on Daytona the snapshot sets the
-size.
+## Size
+
+A team may give its workspaces a size of its own, memory, CPUs and disk
+together, so a team that trains models can have 8 GB while another has 1:
+
+```sh
+oa teams settings set ml --workspace-memory-mb 8192 --workspace-cpus 4 --workspace-disk-mb 20480
+oa teams settings set ml --no-workspace-size     # back to the provider's
+```
+
+A change gives each conversation a new room on its next call, without the
+files of the old one. With none set, the provider's size is used:
+
+| Provider | Without a size | With one |
+| --- | --- | --- |
+| sandboxd | 1.5 GiB of memory, one CPU and 512 MiB of disk | Up to what its operator gives a workspace, `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS` and `SANDBOXD_WORKSPACE_BYTES`; past that the room is refused |
+| Daytona | Its snapshot's | Memory and disk rounded up to whole GB |
+| E2B | Its template's, 2 CPUs and 2 GB | A template built at it in the team's account; new workspaces wait a few minutes for it, and a size the team's E2B plan refuses shows as a failed build in Settings. Disk is the free space E2B makes room for, best effort |
+
+sandboxd's disk is a soft cap: it measures every 30 seconds and stops a room
+past its size. A stopped room keeps its disk until its keep hours end, and
+every room's disk together is held to `SANDBOXD_DISK_BUDGET` (8 GiB by
+default). A new room is let in while what the rooms hold now, plus its own disk
+(512 MiB unless the team set a size), fits: at the defaults, about sixteen workspaces that filled their
+disk. When stopped rooms fill it, a new room is refused as busy, and the
+error says the disk is held by stopped workspaces, until one is deleted: size
+the budget for the teams' keep hours, or lower them. Making room by deleting
+the longest-stopped workspace is
+[#281](https://github.com/LaplacianAI/openarity/issues/281).
+
+Upgrading sandboxd: a workspace room made before stopping existed has no
+volume for `/workspace`, so its files would not survive a stop. Delete such
+rooms when upgrading; the next call makes each conversation a new one:
+
+```sh
+docker ps -aq --filter name=oa-sb- | xargs -r docker rm -f
+```
+
+Changing a team's sandbox provider, its address or its key does the same:
+rooms made with the old ones are deleted, and each conversation gets a new
+workspace, without its files, on its next call.
+
+Upgrading the brain: a room is made from the image of the brain's release,
+so a deploy of a new commit gives each conversation a new workspace on its
+next call, without the old one's files, and the agent is told so. Keep
+anything that must outlive a release somewhere else: a repository it
+pushes to, or an attachment.
 
 On E2B the first room waits for that template to be built, a few minutes after
-the sandbox is saved, and again after an upgrade. Until it is, a call says the
-sandbox is still being prepared and nothing ran; Settings shows the build, and
-why it failed if it did.
+the sandbox is saved or its size changes. Until it is, a call says the sandbox
+is still being prepared and nothing ran, and the agent tells the person rather
+than calling again; Settings shows the build, and why it failed if it did.
+After an upgrade, rooms start from the last template built at the same size
+while the new one builds, so nothing waits. A team that names its own E2B
+template gets that template's size, whatever size it sets.
 
 ## Approvals
 
@@ -104,8 +172,8 @@ grants it.
 
 ## Not built
 
-- **Files outlive the room** only while it is in use. Saving `/workspace` when
-  an idle room is deleted, and bringing it back, comes next.
+- **Files outlive the room** only until its keep hours end. Saving
+  `/workspace` somewhere longer-lived comes later.
 - **A granted skill's scripts** are not yet copied into the room.
 - **A file in the room cannot yet be sent** to the person or read as an
   attachment.

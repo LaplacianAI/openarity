@@ -52,8 +52,9 @@ type createBody struct {
 	Labels map[string]string `json:"labels"`
 	// sandboxd serves a public room through its proxy, and gives a
 	// workspace room its /workspace and its size.
-	Network   string `json:"network,omitempty"`
-	Workspace bool   `json:"workspace,omitempty"`
+	Network   string        `json:"network,omitempty"`
+	Workspace bool          `json:"workspace,omitempty"`
+	Size      *sandbox.Size `json:"size,omitempty"`
 }
 
 func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
@@ -65,6 +66,7 @@ func (c *Client) Create(ctx context.Context, s sandbox.Spec) (string, error) {
 
 		Network:   string(s.Network),
 		Workspace: s.Workspace,
+		Size:      s.Size,
 	}
 	for _, e := range s.Egress {
 		body.Egress = append(body.Egress, egressBody{Host: e.Host, Port: e.Port})
@@ -112,6 +114,28 @@ func (c *Client) Delete(ctx context.Context, room string) error {
 	err := c.do(ctx, http.MethodDelete, roomPath(room), nil, http.StatusNoContent, nil)
 	if errors.Is(err, sandbox.ErrNotFound) {
 		return nil
+	}
+	return err
+}
+
+// Stop stops the room; sandboxd keeps a workspace's files on its volume.
+func (c *Client) Stop(ctx context.Context, room string) error {
+	err := c.do(ctx, http.MethodPost, roomPath(room)+"/stop", nil, http.StatusNoContent, nil)
+	if isNotStarted(err) {
+		// never started: there is nothing running to stop
+		return nil
+	}
+	return err
+}
+
+// Resume starts the room again. Docker starts the room's container with its
+// own command, so argv is not sent.
+func (c *Client) Resume(ctx context.Context, room string, _ []string) error {
+	err := c.do(ctx, http.MethodPost, roomPath(room)+"/resume", nil, http.StatusNoContent, nil)
+	if isNotStarted(err) {
+		// Its container is gone (pruned, or never made): there is nothing
+		// to resume, and the keeper replaces it.
+		return fmt.Errorf("%w: %w", sandbox.ErrNotFound, err)
 	}
 	return err
 }
@@ -175,9 +199,29 @@ func statusError(status int, raw []byte) error {
 		return fmt.Errorf("%w: %s", sandbox.ErrRefused, e.Error)
 	case http.StatusNotFound:
 		return sandbox.ErrNotFound
+	case http.StatusServiceUnavailable:
+		// sandboxd says why after its prefix; an older one says only that.
+		if strings.HasPrefix(e.Error, "the sandbox is busy") {
+			if reason := strings.TrimPrefix(e.Error, "the sandbox is busy"); reason != "" {
+				return fmt.Errorf("%w%s", sandbox.ErrFull, reason)
+			}
+			return sandbox.ErrFull
+		}
+	case http.StatusConflict:
+		return &conflict{msg: e.Error}
 	}
 	if e.Error == "" {
 		return fmt.Errorf("sandboxd answered %d", status)
 	}
 	return fmt.Errorf("sandboxd answered %d: %s", status, e.Error)
+}
+
+// conflict is sandboxd's 409: a room started twice, or one not started yet.
+type conflict struct{ msg string }
+
+func (c *conflict) Error() string { return "sandboxd answered 409: " + c.msg }
+
+func isNotStarted(err error) bool {
+	var c *conflict
+	return errors.As(err, &c) && strings.Contains(c.msg, "has not started")
 }

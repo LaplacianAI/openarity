@@ -253,6 +253,16 @@ export type SettingsDraft = {
   sandboxTemplate: string;
   /** Typed only; the stored key is never read back. */
   sandboxKey: string;
+  /** Whether workspaces get the team's own size, not the provider's. */
+  sizeCustom: boolean;
+  /** Memory and disk in GB, CPUs whole, as typed. */
+  sizeMemory: string;
+  sizeCPUs: string;
+  sizeDisk: string;
+  /** Whether a workspace left running stops after the team's own time, not the deployment's. */
+  idleOwn: boolean;
+  idleMinutes: string;
+  keepHours: string;
   browser: BrowserProvider;
   browserURL: string;
   /** Typed only; the stored key is never read back. */
@@ -295,6 +305,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     sandboxURL: s.sandbox?.url ?? "",
     sandboxTemplate: s.sandbox?.template ?? "",
     sandboxKey: "",
+    ...lifeOf(s.sandbox),
     // A brain from before browsers sends none: the team has none.
     browser: s.browser?.provider ?? "none",
     browserURL: s.browser?.url ?? "",
@@ -327,13 +338,25 @@ export type Group =
   | "browser"
   | "improvement";
 
+/** The draft's workspace fields, in the order the page shows them. */
+const LIFE = [
+  "sizeCustom",
+  "sizeMemory",
+  "sizeCPUs",
+  "sizeDisk",
+  "idleOwn",
+  "idleMinutes",
+  "keepHours",
+] as const satisfies readonly (keyof SettingsDraft)[];
+const LIFE_SET = new Set<keyof SettingsDraft>(LIFE);
+
 /** Which of the draft's fields each group owns. */
 const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
   model: ["modelOn", "modelName", "maxTokens", "temperature"],
   hub: ["hub"],
   compaction: ["compaction", "tokensMin", "tokensMax"],
   search: ["provider", "url", "key", "dropKey"],
-  sandbox: ["sandbox", "sandboxURL", "sandboxTemplate", "sandboxKey"],
+  sandbox: ["sandbox", "sandboxURL", "sandboxTemplate", "sandboxKey", ...LIFE],
   browser: ["browser", "browserURL", "browserKey", "dropBrowserKey"],
   improvement: [
     "improvement",
@@ -370,11 +393,16 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
   const base = draftOf(stored);
-  return FIELDS[group].some((f) =>
-    BY_VALUE.has(f)
-      ? (parseWhole(d[f] as string) ?? d[f]) !== (parseWhole(base[f] as string) ?? base[f])
-      : !same(d[f], base[f]),
+  const changed = FIELDS[group].some((f) =>
+    LIFE_SET.has(f)
+      ? false
+      : BY_VALUE.has(f)
+        ? (parseWhole(d[f] as string) ?? d[f]) !== (parseWhole(base[f] as string) ?? base[f])
+        : !same(d[f], base[f]),
   );
+  // A workspace's times and size are compared by what they mean: a size
+  // typed and then put back to the provider's is no change.
+  return changed || (group === "sandbox" && !sameLife(d, base));
 }
 
 /** The compaction fields of a draft, as lib/compaction checks them. */
@@ -582,6 +610,126 @@ function improvementRequest(
   return out;
 }
 
+/** What the page starts a size from when the team has none of its own. */
+const SIZE_START = { memory_mb: 2048, cpus: 2, disk_mb: 10240 };
+const IDLE_START = 30;
+/** What a brain that predates stopping keeps a stopped workspace for. */
+const KEEP_HOURS = 24;
+
+function lifeOf(s: TeamSettings["sandbox"] | undefined) {
+  const size = s?.workspace_size ?? null;
+  const shown = size ?? SIZE_START;
+  return {
+    sizeCustom: size !== null,
+    sizeMemory: gbOf(shown.memory_mb),
+    sizeCPUs: String(shown.cpus),
+    sizeDisk: gbOf(shown.disk_mb),
+    idleOwn: s?.idle_minutes != null,
+    idleMinutes: String(s?.idle_minutes ?? IDLE_START),
+    keepHours: String(s?.keep_hours ?? KEEP_HOURS),
+  };
+}
+
+/** MB as the GB the page shows: 1536 is 1.5. */
+function gbOf(mb: number): string {
+  return String(Number((mb / 1024).toFixed(2)));
+}
+
+/** GB as typed, in MB; null when it is not a number. */
+function mbOf(raw: string): number | null {
+  const t = raw.trim();
+  return /^\d+(\.\d+)?$/.test(t) || /^\.\d+$/.test(t) ? Math.round(Number(t) * 1024) : null;
+}
+
+/** A workspace's times and size by what they mean, a typo kept as typed so it reads as a change. */
+function lifeKey(d: SettingsDraft) {
+  return {
+    keep: parseWhole(d.keepHours) ?? d.keepHours.trim(),
+    idle: d.idleOwn ? (parseWhole(d.idleMinutes) ?? d.idleMinutes.trim()) : null,
+    size: d.sizeCustom
+      ? [
+          mbOf(d.sizeMemory) ?? d.sizeMemory.trim(),
+          parseWhole(d.sizeCPUs) ?? d.sizeCPUs.trim(),
+          mbOf(d.sizeDisk) ?? d.sizeDisk.trim(),
+        ]
+      : null,
+  };
+}
+
+/** Whether saving would give the team's workspaces another size. */
+function sizeChanged(d: SettingsDraft, stored: TeamSettings): boolean {
+  return JSON.stringify(lifeKey(d).size) !== JSON.stringify(lifeKey(draftOf(stored)).size);
+}
+
+/** Whether saving would move the team's workspaces to another sandbox. */
+function providerChanged(d: SettingsDraft, stored: TeamSettings): boolean {
+  const was = stored.sandbox?.provider ?? "none";
+  return was !== "none" && d.sandbox !== was;
+}
+
+/** The stored keep hours when the draft lowers them, else null. */
+function keepLowered(d: SettingsDraft, stored: TeamSettings): number | null {
+  const was = stored.sandbox?.keep_hours ?? KEEP_HOURS;
+  const now = parseWhole(d.keepHours);
+  return now !== null && now >= 1 && now < was ? was : null;
+}
+
+function sameLife(a: SettingsDraft, b: SettingsDraft): boolean {
+  return JSON.stringify(lifeKey(a)) === JSON.stringify(lifeKey(b));
+}
+
+/** The workspace fields of the sandbox a Save sends. */
+type Life = Pick<
+  NonNullable<TeamSettingsRequest["sandbox"]>,
+  "keep_hours" | "idle_minutes" | "workspace_size"
+>;
+
+/**
+ * A workspace's times and size, each sent only when it changed: left out, the
+ * brain keeps what it holds, so a Save made in a tab opened earlier never
+ * writes over them.
+ */
+function lifeRequest(d: SettingsDraft, stored: TeamSettings): Life | string {
+  const out: Life = {};
+  const was = lifeKey(draftOf(stored));
+  const now = lifeKey(d);
+
+  if (JSON.stringify(now.size) !== JSON.stringify(was.size)) {
+    if (!d.sizeCustom) {
+      out.workspace_size = null;
+    } else {
+      const memory = mbOf(d.sizeMemory);
+      const cpus = parseWhole(d.sizeCPUs);
+      const disk = mbOf(d.sizeDisk);
+      if (memory === null || memory < 256 || memory > 65536) {
+        return "Memory is between 0.25 and 64 GB.";
+      }
+      if (cpus === null || cpus < 1 || cpus > 16) return "CPUs is a whole number from 1 to 16.";
+      if (disk === null || disk < 256 || disk > 262144) return "Disk is between 0.25 and 256 GB.";
+      out.workspace_size = { memory_mb: memory, cpus, disk_mb: disk };
+    }
+  }
+  if (now.idle !== was.idle) {
+    if (!d.idleOwn) {
+      out.idle_minutes = null;
+    } else {
+      const minutes = parseWhole(d.idleMinutes);
+      if (minutes === null || minutes < 1 || minutes > 1440) {
+        return "Stop when idle is a whole number of minutes, from 1 to 1,440.";
+      }
+      out.idle_minutes = minutes;
+    }
+  }
+  if (now.keep !== was.keep) {
+    const hours = parseWhole(d.keepHours);
+    if (hours === null || hours < 1 || hours > 720) {
+      return "Keep stopped is a whole number of hours, from 1 to 720.";
+    }
+    out.keep_hours = hours;
+  }
+  return out;
+}
+
 /**
  * The sandbox as the brain takes it. Its key is kept as the search key is:
  * left out, it stays while the provider and its URL are unchanged.
@@ -603,6 +751,10 @@ function sandboxRequest(
     }
     sandbox.template = template;
   }
+
+  const life = lifeRequest(d, stored);
+  if (typeof life === "string") return life;
+  Object.assign(sandbox, life);
 
   const was = stored.sandbox;
   const keeps =
@@ -649,6 +801,207 @@ export function browserRequest(
     return "The key stays with the old address. Paste it again, or choose to reach it with none.";
   }
   return browser;
+}
+
+const SIZES = [
+  { value: "provider", label: "Provider's" },
+  { value: "custom", label: "Custom" },
+] as const;
+const IDLE = [
+  { value: "deployment", label: "Deployment's" },
+  { value: "own", label: "After a time" },
+] as const;
+
+/** What a workspace's size will be, for the sandbox and size in the draft. */
+function sizeHint(draft: SettingsDraft): string {
+  if (draft.sandbox === "e2b" && draft.sandboxTemplate.trim() !== "") {
+    return "Your own template sets each workspace's size, so a size here is not used.";
+  }
+  if (draft.sandbox === "e2b") {
+    return draft.sizeCustom
+      ? "E2B builds a template at this size in your account first, and new workspaces wait a few minutes for it. A size your E2B plan does not allow shows as a failed build. Disk is the free space E2B makes room for."
+      : "Each conversation's workspace gets 2 CPUs and 2 GB, the size the default template is built at.";
+  }
+  if (!draft.sizeCustom) {
+    return "Each conversation's workspace gets the size your sandbox gives one.";
+  }
+  const daytona =
+    draft.sandbox === "daytona" ? " Daytona rounds memory and disk up to a whole GB." : "";
+  return `Each conversation's workspace gets this. A size past what your sandbox allows a workspace is refused when the workspace is made.${daytona}`;
+}
+
+/**
+ * How big a conversation's workspace is, and how long it lives: it stops when
+ * the conversation's last run ends, and keeps its files while stopped.
+ */
+function Workspaces({
+  draft,
+  sizeChanged,
+  providerChanged,
+  keepLowered,
+  onChange,
+}: {
+  draft: SettingsDraft;
+  /** Whether saving would change the size, which gives every conversation a new workspace. */
+  sizeChanged: boolean;
+  /** Whether saving would move to another sandbox, which does the same. */
+  providerChanged: boolean;
+  /** The stored keep hours, when the draft lowers them. */
+  keepLowered: number | null;
+  onChange: (patch: Partial<SettingsDraft>) => void;
+}) {
+  const ownTemplate = draft.sandbox === "e2b" && draft.sandboxTemplate.trim() !== "";
+  return (
+    <div className="space-y-4 border-t border-rule pt-4">
+      <h3 className="text-sm font-medium">Workspaces</h3>
+      {providerChanged ? (
+        <Notice>
+          Saving gives each conversation a new workspace in this sandbox, without the files in its
+          old one.
+        </Notice>
+      ) : null}
+      <fieldset className="space-y-2" aria-describedby="settings-size-hint">
+        <legend className="mb-1.5 text-sm font-medium">Size</legend>
+        <Segments
+          label="Size"
+          value={draft.sizeCustom ? "custom" : "provider"}
+          options={SIZES}
+          onChange={(v) => onChange({ sizeCustom: v === "custom" })}
+        />
+        {draft.sizeCustom ? (
+          <div className="grid gap-3 pt-1 sm:grid-cols-3">
+            <Field label="Memory" htmlFor="settings-size-memory">
+              <Unit
+                id="settings-size-memory"
+                unit="GB"
+                decimal
+                value={draft.sizeMemory}
+                onChange={(sizeMemory) => onChange({ sizeMemory })}
+              />
+            </Field>
+            <Field label="CPUs" htmlFor="settings-size-cpus">
+              <Unit
+                id="settings-size-cpus"
+                unit="CPUs"
+                value={draft.sizeCPUs}
+                onChange={(sizeCPUs) => onChange({ sizeCPUs })}
+              />
+            </Field>
+            <Field label="Disk" htmlFor="settings-size-disk">
+              <Unit
+                id="settings-size-disk"
+                unit="GB"
+                decimal
+                value={draft.sizeDisk}
+                onChange={(sizeDisk) => onChange({ sizeDisk })}
+              />
+            </Field>
+          </div>
+        ) : null}
+        <p id="settings-size-hint" className="text-xs text-muted-foreground">
+          {sizeHint(draft)}
+        </p>
+        {sizeChanged && !providerChanged && !ownTemplate ? (
+          <Notice>
+            Saving gives each conversation a new workspace at this size, without the files in its
+            old one.
+          </Notice>
+        ) : null}
+      </fieldset>
+      <fieldset className="space-y-2" aria-describedby="settings-idle-hint">
+        <legend className="mb-1.5 text-sm font-medium">Stop when idle</legend>
+        <div className="flex flex-wrap items-center gap-3">
+          <Segments
+            label="Stop when idle"
+            value={draft.idleOwn ? "own" : "deployment"}
+            options={IDLE}
+            onChange={(v) => onChange({ idleOwn: v === "own" })}
+          />
+          {draft.idleOwn ? (
+            <Unit
+              id="settings-idle-minutes"
+              aria-label="Minutes idle"
+              unit="minutes"
+              value={draft.idleMinutes}
+              onChange={(idleMinutes) => onChange({ idleMinutes })}
+            />
+          ) : null}
+        </div>
+        <p id="settings-idle-hint" className="text-xs text-muted-foreground">
+          {draft.idleOwn
+            ? "A workspace stops when its conversation's last run ends. This stops one left running, such as one waiting for an approval, after 1 to 1,440 minutes unused."
+            : "A workspace stops when its conversation's last run ends. One left running, such as one waiting for an approval, stops after the time your deployment sets."}
+        </p>
+      </fieldset>
+      <Field
+        label="Keep stopped"
+        htmlFor="settings-keep-hours"
+        hint="A stopped workspace keeps its files for the conversation's next run, which starts it again. After this long it is deleted with them, workspaces stopped before a change included. From 1 to 720 hours."
+      >
+        <Unit
+          id="settings-keep-hours"
+          unit="hours"
+          value={draft.keepHours}
+          onChange={(keepHours) => onChange({ keepHours })}
+        />
+      </Field>
+      {keepLowered !== null ? (
+        <Notice>
+          Lowering it from {keepLowered} hours deletes workspaces already stopped longer than{" "}
+          {draft.keepHours.trim()}, with their files, at the next sweep.
+        </Notice>
+      ) : null}
+    </div>
+  );
+}
+
+/** What a save would cost that is not undone, said before it is made. */
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <p role="status" className="flex items-start gap-1.5 text-xs text-foreground">
+      <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/** A number with its unit after it, muted, and figures that line up. */
+function Unit({
+  id,
+  unit,
+  value,
+  onChange,
+  decimal,
+  ...aria
+}: {
+  id: string;
+  unit: string;
+  value: string;
+  onChange: (next: string) => void;
+  decimal?: boolean;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
+}) {
+  return (
+    <div className="relative w-full max-w-40">
+      <Input
+        id={id}
+        inputMode={decimal ? "decimal" : "numeric"}
+        autoComplete="off"
+        className="pr-20 tabular-nums"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        {...aria}
+      />
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
+      >
+        {unit}
+      </span>
+    </div>
+  );
 }
 
 /** One group: what it decides, its fields, and its own Save. */
@@ -1165,7 +1518,7 @@ function SettingsForm({
 
       <Section
         title="Sandbox"
-        about="Where the team's command MCP servers run, each in a sandbox of its own that reaches only the network its server lists."
+        about="Where the team's command MCP servers and its agents' workspaces run. A command server's sandbox reaches only the network its server lists."
         {...props("sandbox")}
       >
         <Field label="Sandbox provider" htmlFor="settings-sandbox" hint={sandboxAbout}>
@@ -1236,6 +1589,15 @@ function SettingsForm({
               onChange={(e) => set("sandbox", { sandboxKey: e.target.value })}
             />
           </Field>
+        ) : null}
+        {draft.sandbox !== "none" ? (
+          <Workspaces
+            draft={draft}
+            sizeChanged={sizeChanged(draft, stored)}
+            providerChanged={providerChanged(draft, stored)}
+            keepLowered={keepLowered(draft, stored)}
+            onChange={(patch) => set("sandbox", patch)}
+          />
         ) : null}
       </Section>
 

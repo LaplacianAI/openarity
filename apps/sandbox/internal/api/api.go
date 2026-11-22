@@ -31,6 +31,8 @@ const maxBody = 1 << 20
 type Rooms interface {
 	Create(ctx context.Context, sp rooms.Spec) (string, error)
 	Start(ctx context.Context, id string, argv []string) error
+	Stop(ctx context.Context, id string) error
+	Resume(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
 	Exists(ctx context.Context, id string) error
 	Target(ctx context.Context, id string, port int) (string, error)
@@ -72,6 +74,8 @@ func New(r Rooms, token, publicURL string, logger *slog.Logger) *Handler {
 	})
 	h.mux.Handle("POST /v1/rooms", h.bearer(h.create))
 	h.mux.Handle("POST /v1/rooms/{id}/start", h.bearer(h.start))
+	h.mux.Handle("POST /v1/rooms/{id}/stop", h.bearer(h.stop))
+	h.mux.Handle("POST /v1/rooms/{id}/resume", h.bearer(h.resume))
 	h.mux.Handle("GET /v1/rooms/{id}/ports/{port}", h.bearer(h.port))
 	h.mux.Handle("DELETE /v1/rooms/{id}", h.bearer(h.remove))
 	h.mux.HandleFunc("/v1/rooms/{id}/ports/{port}/proxy", h.proxy)
@@ -111,14 +115,19 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, rooms.ErrNotFound):
 		writeError(w, http.StatusNotFound, "no such room")
 	case errors.Is(err, rooms.ErrBusy):
-		writeError(w, http.StatusServiceUnavailable, "the sandbox is busy")
+		// It starts "the sandbox is busy", which a client reads as full, and
+		// may say why.
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, rooms.ErrUnavailable):
 		// the message names the image, and the daemon's reason
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, rooms.ErrRefused):
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, rooms.ErrStarted):
+	case errors.Is(err, rooms.ErrStarted), errors.Is(err, rooms.ErrNotStarted):
 		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, rooms.ErrOverDisk):
+		// the message says how much it holds, and of how much
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	default:
 		h.logger.Error("request failed", "path", r.URL.Path, "err", err.Error())
 		writeError(w, http.StatusInternalServerError, "the sandbox failed")
@@ -165,6 +174,28 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// stop and resume forget the room's addresses: a container started again
+// may be given another.
+func (h *Handler) stop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.rooms.Stop(r.Context(), id); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.forget(id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) resume(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.rooms.Resume(r.Context(), id); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.forget(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -99,6 +99,16 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		ImprovementPassTokens:  kept(p.ImprovementPassTokens, f.row, func(s db.TeamSetting) int32 { return s.ImprovementPassTokens }, 400_000),
 		ImprovementPassMinutes: kept(p.ImprovementPassMinutes, f.row, func(s db.TeamSetting) int16 { return s.ImprovementPassMinutes }, 20),
 		UpdatedAt:              time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
+
+		SandboxIdleMinutes:       p.SandboxIdleMinutes,
+		SandboxWorkspaceMemoryMb: p.SandboxWorkspaceMemoryMb,
+		SandboxWorkspaceCpus:     p.SandboxWorkspaceCpus,
+		SandboxWorkspaceDiskMb:   p.SandboxWorkspaceDiskMb,
+	}
+	// The table's default, as the upsert's COALESCE has it.
+	row.SandboxKeepHours = 24
+	if p.SandboxKeepHours != nil {
+		row.SandboxKeepHours = *p.SandboxKeepHours
 	}
 	f.row = &row
 	return row, nil
@@ -282,10 +292,17 @@ type wire struct {
 		KeySet   bool    `json:"key_set"`
 	} `json:"search"`
 	Sandbox struct {
-		Provider string  `json:"provider"`
-		URL      *string `json:"url"`
-		Template *string `json:"template"`
-		KeySet   bool    `json:"key_set"`
+		Provider      string  `json:"provider"`
+		URL           *string `json:"url"`
+		Template      *string `json:"template"`
+		KeySet        bool    `json:"key_set"`
+		KeepHours     int32   `json:"keep_hours"`
+		IdleMinutes   *int32  `json:"idle_minutes"`
+		WorkspaceSize *struct {
+			MemoryMB int32 `json:"memory_mb"`
+			CPUs     int32 `json:"cpus"`
+			DiskMB   int32 `json:"disk_mb"`
+		} `json:"workspace_size"`
 		// A pointer, so a null is told from an object.
 		TemplateBuild *struct {
 			Name      string    `json:"name"`

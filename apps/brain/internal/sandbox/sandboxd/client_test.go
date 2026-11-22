@@ -118,15 +118,22 @@ func TestCreateMaps422ToErrRefusedWithSandboxdsReason(t *testing.T) {
 	}
 }
 
+// A busy sandboxd is full, said so the agent knows nothing ran and why; any
+// other 503 is neither refused nor not found, nor full.
 func TestCreateReports503AsAnErrorThatIsNeitherRefusedNorNotFound(t *testing.T) {
 	t.Parallel()
 	s := newServer(t, http.StatusServiceUnavailable, `{"error":"the sandbox is busy"}`)
 	c := sandboxd.New(s.URL, "tok", s.Client())
 	_, err := c.Create(t.Context(), sandbox.Spec{Image: "x"})
-	if err == nil || errors.Is(err, sandbox.ErrRefused) || errors.Is(err, sandbox.ErrNotFound) {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, sandbox.ErrFull) || !strings.Contains(err.Error(), "Nothing ran") {
+		t.Fatalf("busy: err = %v, want ErrFull", err)
 	}
-	if !strings.Contains(err.Error(), "busy") {
+	s = newServer(t, http.StatusServiceUnavailable, `{"error":"pulling the image failed"}`)
+	_, err = sandboxd.New(s.URL, "tok", s.Client()).Create(t.Context(), sandbox.Spec{Image: "x"})
+	if err == nil || errors.Is(err, sandbox.ErrRefused) || errors.Is(err, sandbox.ErrNotFound) || errors.Is(err, sandbox.ErrFull) {
+		t.Fatalf("an image failure: err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "pulling the image failed") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -256,4 +263,80 @@ func TestNewPanicsOnANilClient(t *testing.T) {
 		}
 	}()
 	sandboxd.New("http://x", "t", nil)
+}
+
+func TestStopAndResumePostToTheRoom(t *testing.T) {
+	for _, c := range []struct {
+		path string
+		call func(*sandboxd.Client) error
+	}{
+		{"/v1/rooms/r1/stop", func(c *sandboxd.Client) error { return c.Stop(t.Context(), "r1") }},
+		{"/v1/rooms/r1/resume", func(c *sandboxd.Client) error { return c.Resume(t.Context(), "r1", []string{"ignored"}) }},
+	} {
+		s := newServer(t, http.StatusNoContent, "")
+		if err := c.call(sandboxd.New(s.URL, "tok", s.Client())); err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+		if got := s.last(t); got.Method != http.MethodPost || got.Path != c.path || got.Auth != "Bearer tok" || got.Body != "" {
+			t.Fatalf("request = %+v", got)
+		}
+	}
+}
+
+func TestStopOfARoomNeverStartedIsNotAnError(t *testing.T) {
+	s := newServer(t, http.StatusConflict, `{"error":"the room has not started"}`)
+	if err := sandboxd.New(s.URL, "tok", s.Client()).Stop(t.Context(), "r1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A room whose container is gone has nothing to resume: ErrNotFound, so the
+// keeper replaces it rather than failing every call until it expires.
+func TestAResumeOfARoomNeverStartedIsErrNotFound(t *testing.T) {
+	s := newServer(t, http.StatusConflict, `{"error":"the room has not started"}`)
+	err := sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil)
+	if !errors.Is(err, sandbox.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAResumeSandboxdHasNoRoomForIsErrFull(t *testing.T) {
+	s := newServer(t, http.StatusServiceUnavailable, `{"error":"the sandbox is busy"}`)
+	err := sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil)
+	if !errors.Is(err, sandbox.ErrFull) {
+		t.Fatalf("err = %v, want ErrFull", err)
+	}
+	// A sandboxd that says why keeps its reason in the error.
+	s = newServer(t, http.StatusServiceUnavailable, `{"error":"the sandbox is busy: the workspaces' disk is spent; stopped workspaces keep theirs until their keep hours end"}`)
+	err = sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil)
+	if !errors.Is(err, sandbox.ErrFull) || !strings.Contains(err.Error(), "disk is spent") {
+		t.Fatalf("err = %v, want ErrFull with the reason", err)
+	}
+	// An image that cannot be pulled is a 503 too, and is not full.
+	s = newServer(t, http.StatusServiceUnavailable, `{"error":"pulling the image failed"}`)
+	if err := sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil); errors.Is(err, sandbox.ErrFull) {
+		t.Fatalf("an image failure was read as full: %v", err)
+	}
+}
+
+func TestAResumeOverItsDiskIsRefused(t *testing.T) {
+	s := newServer(t, http.StatusUnprocessableEntity, `{"error":"the workspace holds more than it may: 600 MiB of 512"}`)
+	err := sandboxd.New(s.URL, "tok", s.Client()).Resume(t.Context(), "r1", nil)
+	if !errors.Is(err, sandbox.ErrRefused) || !strings.Contains(err.Error(), "600 MiB of 512") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateSendsAWorkspacesSize(t *testing.T) {
+	t.Parallel()
+	s := newServer(t, http.StatusCreated, `{"id":"r1"}`)
+	_, err := sandboxd.New(s.URL, "tok", s.Client()).Create(t.Context(), sandbox.Spec{
+		Image: "x", Workspace: true, Size: &sandbox.Size{MemoryMB: 4096, CPUs: 2, DiskMB: 1024},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.last(t).Body; !strings.Contains(got, `"size":{"memory_mb":4096,"cpus":2,"disk_mb":1024}`) {
+		t.Fatalf("body = %s", got)
+	}
 }
