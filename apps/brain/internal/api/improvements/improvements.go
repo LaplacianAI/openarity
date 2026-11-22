@@ -49,7 +49,7 @@ type Reads interface {
 	ListImproverPasses(ctx context.Context, arg db.ListImproverPassesParams) ([]db.ImproverPass, error)
 	GetImprovementWatch(ctx context.Context, proposalID uuid.UUID) (db.ImprovementWatch, error)
 	ListImprovementWatches(ctx context.Context, ids []uuid.UUID) ([]db.ImprovementWatch, error)
-	ListPassPruneProposals(ctx context.Context, passIds []uuid.UUID) ([]db.ListPassPruneProposalsRow, error)
+	ListPassPruneProposals(ctx context.Context, passIDs []uuid.UUID) ([]db.ListPassPruneProposalsRow, error)
 }
 
 type handler struct {
