@@ -17,6 +17,7 @@ import type {
   ImprovementDecision,
   ImprovementWatch,
 } from "@/api/types";
+import { TriedOnPastRuns } from "@/components/improvement-replay";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Mono } from "@/components/ui-bits";
@@ -31,6 +32,7 @@ import {
   MARK_WORDS,
   missingWrites,
   patternWords,
+  replayWorse,
   SAVES_WORDS,
   scopeWords,
   timeWords,
@@ -314,6 +316,7 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
   const decidedAt = item.status === "reverted" ? item.reverted_at : (item.decided_at ?? null);
   // An efficiency change says what it aims to save, before what kind of change it is.
   const saves = item.goal === "efficiency" ? (item.saves ?? []) : [];
+  const worse = replayWorse(item.replay);
 
   return (
     <div
@@ -345,8 +348,17 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
         </p>
       ) : null}
 
-      {item.marks.length > 0 || item.reaches.length > 0 || saves.length > 0 ? (
+      {item.marks.length > 0 || item.reaches.length > 0 || saves.length > 0 || worse ? (
         <ul aria-label="What kind of change" className="flex flex-wrap gap-1.5">
+          {worse ? (
+            <li
+              data-worse
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs text-warning shadow-[inset_0_0_0_1px_var(--sheet-edge)]"
+            >
+              <TriangleAlert aria-hidden className="size-3 shrink-0" />
+              Worse on past runs
+            </li>
+          ) : null}
           {saves.map((v) => {
             const Icon = v === "cost" ? Coins : Timer;
             return (
@@ -393,6 +405,10 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
           <Change key={c.field} change={c} />
         ))}
       </div>
+
+      {item.replay && item.replay.status !== "off" ? (
+        <TriedOnPastRuns teamId={teamId} proposalId={item.id} replay={item.replay} />
+      ) : null}
 
       {item.watch ? <Watch watch={item.watch} goal={item.goal} saves={item.saves} /> : null}
 

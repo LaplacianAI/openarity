@@ -226,6 +226,36 @@ type ImprovementProposal struct {
 	Saves       []string
 }
 
+type ImprovementReplay struct {
+	ProposalID        uuid.UUID
+	TeamID            uuid.UUID
+	SourceRunID       uuid.UUID
+	Position          int16
+	Chosen            string
+	Status            string
+	SkipWhy           *string
+	Error             *string
+	Original          string
+	Replayed          *string
+	Verdict           *string
+	Why               *string
+	Diverged          bool
+	Recorded          int16
+	Live              int16
+	NotMade           int16
+	InputTokens       int64
+	CachedInputTokens int64
+	OutputTokens      int64
+	JudgeTokens       int64
+	Steps             int32
+	WorkMs            int64
+	Answer            *string
+	Trace             []byte
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+}
+
 type ImprovementWatch struct {
 	ProposalID   uuid.UUID
 	TeamID       uuid.UUID
@@ -675,6 +705,11 @@ type TeamSetting struct {
 	ImprovementEfficiencySpread   int16
 	ImprovementEfficiencyMarkRuns int16
 	ImprovementEfficiencyMargin   int16
+	ImprovementReplay             bool
+	ImprovementReplayRuns         int16
+	ImprovementReplayTokens       int32
+	ImprovementReplayMinutes      int16
+	ImprovementReplayDaily        int16
 }
 
 type User struct {

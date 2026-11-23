@@ -3190,6 +3190,41 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/improvements/{proposalID}/replays/{runID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ImprovementID"
+      - name: runID
+        in: path
+        required: true
+        description: The past run the change was tried on
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getImprovementReplay
+      tags: [improvements]
+      summary: Read one try of a proposed improvement on a past run
+      description: |
+        Each call the try made, and how it was served, with the answer it came
+        to. Readable as the proposal is, and only by someone who may read the
+        past run's conversation; to anyone else it is a 403.
+      responses:
+        "200":
+          description: The try
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImprovementReplayTrace"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/improvements/{proposalID}/decision:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -6991,6 +7026,42 @@ components:
             How many bad runs fewer than the usual bar flag an applied
             efficiency change worse; 0 is the usual bar. Read as each watch
             is judged. 1 until set.
+        improvement_replay:
+          type: boolean
+          description: >-
+            Whether each proposal is tried on a few of its agent's past runs
+            before it is decided, and judged. A try acts on nothing: a call
+            the past run made gets what it got then, a new read runs, and
+            anything else is not made. Runs only while improvement is on.
+            False until set.
+        improvement_replay_runs:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 10
+          description: >-
+            The past runs a proposal is tried on: half that it cites, half
+            recent good ones of its agent. 4 until set.
+        improvement_replay_tokens:
+          type: integer
+          format: int32
+          minimum: 20000
+          maximum: 1000000
+          description: The tokens one try may spend; past it, it is stopped and counts as could not tell. 200000 until set.
+        improvement_replay_minutes:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 30
+          description: The minutes one try may take; past them, it is stopped and counts as could not tell. 10 until set.
+        improvement_replay_daily:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 500
+          description: >-
+            The tries a team runs a day (UTC); past it, a proposal's tries
+            still to run are skipped, and not tried later. 40 until set.
         improvement_since:
           type: string
           format: date-time
@@ -7298,6 +7369,33 @@ components:
           format: int32
           minimum: 0
           maximum: 3
+          description: Left out, the stored value stays.
+        improvement_replay:
+          type: boolean
+          description: Left out, the stored value stays.
+        improvement_replay_runs:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 10
+          description: Left out, the stored value stays.
+        improvement_replay_tokens:
+          type: integer
+          format: int32
+          minimum: 20000
+          maximum: 1000000
+          description: Left out, the stored value stays.
+        improvement_replay_minutes:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 30
+          description: Left out, the stored value stays.
+        improvement_replay_daily:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 500
           description: Left out, the stored value stays.
         compaction_messages:
           type: integer
@@ -7706,6 +7804,163 @@ components:
           nullable: true
           allOf:
             - $ref: "#/components/schemas/ImprovementWatch"
+        replay:
+          description: How it fared on past runs before it was decided; null in a decision's answer
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ImprovementReplay"
+
+    ImprovementReplay:
+      type: object
+      description: |
+        How the change fared on a few of its agent's past runs, tried before
+        anyone decided on it. status is off when it was never tried (its team
+        had trying off when it was proposed), trying while a try is still to
+        run, done once one came to an outcome, and none when none could be
+        tried or every try failed. Shown, never acted on: the approver decides.
+      required: [status, runs]
+      properties:
+        status:
+          type: string
+          enum: [off, trying, done, none]
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImprovementReplayRun"
+
+    ImprovementRunRef:
+      type: object
+      required: [id, readable]
+      properties:
+        id:
+          type: string
+          format: uuid
+        readable:
+          type: boolean
+        session_id:
+          type: string
+          format: uuid
+          description: The conversation the run is read in; present only when readable
+
+    ImprovementReplayCost:
+      type: object
+      required: [tokens, steps, work_ms]
+      properties:
+        tokens:
+          type: integer
+          format: int64
+          description: Tokens spent, a cached token as a tenth
+        steps:
+          type: integer
+          format: int32
+        work_ms:
+          type: integer
+          format: int64
+          description: Time working, in milliseconds, leaving out time waiting for a person's approval
+
+    ImprovementReplayRun:
+      type: object
+      description: |
+        One past run the change was tried on, beside what the run did itself.
+        request and why are withheld (null, with withheld true) from a caller
+        who may not read the run's conversation.
+      required: [run, chosen, status, original, recorded, live, not_made, diverged, withheld, before]
+      properties:
+        run:
+          $ref: "#/components/schemas/ImprovementRunRef"
+        chosen:
+          type: string
+          enum: [cited, good]
+          description: A run the proposal cites, or a recent good run of its agent
+        status:
+          type: string
+          enum: [queued, trying, done, failed, skipped]
+        skip_why:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        original:
+          type: string
+          enum: [good, bad]
+          description: How the run itself went, 👍 and 👎 counted
+        replayed:
+          type: string
+          enum: [good, bad, cant_tell]
+          nullable: true
+          description: How the try went; null until it is done
+        verdict:
+          type: string
+          nullable: true
+          description: The judge's verdict on the try
+        why:
+          type: string
+          nullable: true
+        request:
+          type: string
+          nullable: true
+          description: What the run was asked
+        withheld:
+          type: boolean
+        diverged:
+          type: boolean
+          description: The try came to a call the run never made that was not a read, and it was not made
+        recorded:
+          type: integer
+          format: int32
+          description: Calls given what the run's same call got
+        live:
+          type: integer
+          format: int32
+          description: New calls that only read, run for real
+        not_made:
+          type: integer
+          format: int32
+        before:
+          $ref: "#/components/schemas/ImprovementReplayCost"
+        after:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ImprovementReplayCost"
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ImprovementReplayCall:
+      type: object
+      required: [name, how, arguments]
+      properties:
+        name:
+          type: string
+        how:
+          type: string
+          enum: [recorded, live, not_made]
+        arguments:
+          type: string
+        output:
+          type: string
+        error:
+          type: string
+
+    ImprovementReplayTrace:
+      type: object
+      required: [run, calls]
+      properties:
+        run:
+          $ref: "#/components/schemas/ImprovementRunRef"
+        answer:
+          type: string
+          nullable: true
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImprovementReplayCall"
 
     ImprovementWatchSide:
       type: object

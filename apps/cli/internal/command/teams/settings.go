@@ -28,6 +28,7 @@ var settingFlags = []string{
 	"search", "search-url", "search-key-stdin", "no-search-key",
 	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share", "daily-passes", "pass-tokens", "pass-minutes", "daily-runs",
 	"efficiency", "efficiency-runs", "efficiency-days", "efficiency-spread", "efficiency-mark-runs", "efficiency-margin",
+	"replay", "replay-runs", "replay-tokens", "replay-minutes", "replay-daily",
 	"compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 	"keep-stopped-hours", "stop-idle-minutes", "no-stop-idle-minutes", "workspace-memory-mb", "workspace-cpus", "workspace-disk-mb", "no-workspace-size",
@@ -108,6 +109,11 @@ type settingsFlags struct {
 	effSpread        int32
 	effMarkRuns      int32
 	effMargin        int32
+	replay           string
+	replayRuns       int32
+	replayTokens     int32
+	replayMinutes    int32
+	replayDaily      int32
 
 	compaction int32
 	tokensMin  int32
@@ -288,6 +294,16 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		"the good runs a waste mark must appear in before an efficiency pass looks, 2 to 50 and at most --efficiency-runs; 3 until set")
 	cmd.Flags().Int32Var(&f.effMargin, "efficiency-margin", 0,
 		"how many bad runs fewer flag an efficiency change worse than any other change, 0 to 3; 1 until set")
+	cmd.Flags().StringVar(&f.replay, "replay", "",
+		"on or off: try each proposed change on a few of its agent's past runs before it is decided, sending and changing nothing; runs only while --improvement is on")
+	cmd.Flags().Int32Var(&f.replayRuns, "replay-runs", 0,
+		"the past runs a change is tried on, half it is meant to fix and half that went well, 1 to 10; 4 until set")
+	cmd.Flags().Int32Var(&f.replayTokens, "replay-tokens", 0,
+		"the tokens one try may spend before it is stopped, 20000 to 1000000; 200000 until set")
+	cmd.Flags().Int32Var(&f.replayMinutes, "replay-minutes", 0,
+		"the minutes one try may take before it is stopped, 1 to 30; 10 until set")
+	cmd.Flags().Int32Var(&f.replayDaily, "replay-daily", 0,
+		"the tries the team runs a day; past it, changes are shown untried, 1 to 500; 40 until set")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().Int32Var(&f.tokensMin, "compaction-tokens-min", 0,
 		"the least a run's next request may read before it compacts, 30000 to 1000000")
@@ -348,6 +364,16 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return fmt.Errorf("--efficiency-mark-runs, %d, cannot be above --efficiency-runs, %d", f.effMarkRuns, f.effRuns)
 	case changed("efficiency-margin") && (f.effMargin < 0 || f.effMargin > 3):
 		return fmt.Errorf("--efficiency-margin is a count of bad runs, 0 to 3, not %d", f.effMargin)
+	case changed("replay") && f.replay != "on" && f.replay != "off":
+		return fmt.Errorf("--replay takes on or off, not %q", f.replay)
+	case changed("replay-runs") && (f.replayRuns < 1 || f.replayRuns > 10):
+		return fmt.Errorf("--replay-runs is a count of past runs, 1 to 10, not %d", f.replayRuns)
+	case changed("replay-tokens") && (f.replayTokens < 20_000 || f.replayTokens > 1_000_000):
+		return fmt.Errorf("--replay-tokens is a count of tokens, 20000 to 1000000, not %d", f.replayTokens)
+	case changed("replay-minutes") && (f.replayMinutes < 1 || f.replayMinutes > 30):
+		return fmt.Errorf("--replay-minutes is a count of minutes, 1 to 30, not %d", f.replayMinutes)
+	case changed("replay-daily") && (f.replayDaily < 1 || f.replayDaily > 500):
+		return fmt.Errorf("--replay-daily is a count of tries, 1 to 500, not %d", f.replayDaily)
 	case changed("keep-stopped-hours") && (f.keepHours < 1 || f.keepHours > 720):
 		return fmt.Errorf("--keep-stopped-hours is a count of hours, 1 to 720, not %d", f.keepHours)
 	case changed("stop-idle-minutes") && (f.idleMinutes < 1 || f.idleMinutes > 1440):
@@ -476,6 +502,7 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 		req.ImprovementPassMinutes = &f.passMinutes
 	}
 	f.applyEfficiency(changed, &req)
+	f.applyReplay(changed, &req)
 	req.Sandbox = f.applySandbox(changed, cur.Sandbox, k.sandbox)
 	req.Browser = f.applyBrowser(changed, cur.Browser, k.browser)
 	return req
@@ -707,6 +734,51 @@ func (f *settingsFlags) applyEfficiency(changed func(string) bool, req *client.T
 	}
 }
 
+// applyReplay sends the replay settings given; each left out keeps what is
+// stored.
+func (f *settingsFlags) applyReplay(changed func(string) bool, req *client.TeamSettingsRequest) {
+	if changed("replay") {
+		on := f.replay == "on"
+		req.ImprovementReplay = &on
+	}
+	for _, v := range []struct {
+		flag string
+		from *int32
+		to   **int32
+	}{
+		{"replay-runs", &f.replayRuns, &req.ImprovementReplayRuns},
+		{"replay-tokens", &f.replayTokens, &req.ImprovementReplayTokens},
+		{"replay-minutes", &f.replayMinutes, &req.ImprovementReplayMinutes},
+		{"replay-daily", &f.replayDaily, &req.ImprovementReplayDaily},
+	} {
+		if changed(v.flag) {
+			*v.to = v.from
+		}
+	}
+}
+
+// printReplay prints whether changes are tried on past runs first, and
+// with what, nothing for a brain that predates it.
+func printReplay(table *printer.Table, opts *cli.Options, s *client.TeamSettings) {
+	if s.ImprovementReplay == nil {
+		return
+	}
+	label, value := opts.Styles.Label.Render, opts.Styles.Value.Render
+	if !*s.ImprovementReplay {
+		table.Row(label("try on past runs"), opts.Styles.Muted.Render("off"))
+		return
+	}
+	n := func(p *int32) string {
+		if p == nil {
+			return "?"
+		}
+		return strconv.Itoa(int(*p))
+	}
+	table.Row(label("try on past runs"), value("on · "+n(s.ImprovementReplayRuns)+" past runs a change · "+
+		n(s.ImprovementReplayTokens)+" tokens and "+n(s.ImprovementReplayMinutes)+" minutes a try · "+
+		n(s.ImprovementReplayDaily)+" tries a day"))
+}
+
 // printEfficiency prints the efficiency pass and its numbers, nothing for a
 // brain that predates it.
 func printEfficiency(table *printer.Table, opts *cli.Options, s *client.TeamSettings) {
@@ -776,6 +848,7 @@ func printJudge(table *printer.Table, opts *cli.Options, s *client.TeamSettings)
 		table.Row(label("daily pass"), value("after "+strconv.Itoa(int(*s.ImprovementDailyRuns))+" judged runs since an agent's last pass"))
 	}
 	printEfficiency(table, opts, s)
+	printReplay(table, opts, s)
 }
 
 // printSandbox prints nothing for a brain that predates sandboxes, which

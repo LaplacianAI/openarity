@@ -35,6 +35,7 @@ import { DeleteTeamDialog } from "@/components/delete-team-dialog";
 import { EfficiencyFields } from "@/components/efficiency-settings";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
+import { ReplayFields } from "@/components/replay-settings";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +66,12 @@ import {
   efficiencyRequest,
   spreadOf,
 } from "@/lib/efficiency-settings";
+import {
+  REPLAY_NUMBERS,
+  type ReplayDraft,
+  replayDraftOf,
+  replayRequest,
+} from "@/lib/replay-settings";
 import { cn } from "@/lib/utils";
 import { waitWords } from "@/lib/wait";
 
@@ -246,59 +253,60 @@ function DangerZone({ teamId, teamName }: { teamId: string; teamName: string }) 
   );
 }
 
-export type SettingsDraft = EfficiencyDraft & {
-  modelOn: boolean;
-  modelName: string;
-  maxTokens: string;
-  temperature: string;
-  provider: SearchProvider;
-  url: string;
-  key: string;
-  dropKey: boolean;
-  sandbox: SandboxProvider;
-  sandboxURL: string;
-  /** E2B only; empty for the default template. */
-  sandboxTemplate: string;
-  /** Typed only; the stored key is never read back. */
-  sandboxKey: string;
-  /** Whether workspaces get the team's own size, not the provider's. */
-  sizeCustom: boolean;
-  /** Memory and disk in GB, CPUs whole, as typed. */
-  sizeMemory: string;
-  sizeCPUs: string;
-  sizeDisk: string;
-  /** Whether a workspace left running stops after the team's own time, not the deployment's. */
-  idleOwn: boolean;
-  idleMinutes: string;
-  keepHours: string;
-  browser: BrowserProvider;
-  browserURL: string;
-  /** Typed only; the stored key is never read back. */
-  browserKey: string;
-  /** A self-hosted browser only: reach it with no key. */
-  dropBrowserKey: boolean;
-  improvement: boolean;
-  /** Whether runs are judged on a model of their own, not the team's. */
-  judgeOn: boolean;
-  judgeName: string;
-  judgeMaxTokens: string;
-  judgeTemperature: string;
-  /** The share of good runs studied, as typed. */
-  sampleShare: string;
-  /** The most improver passes in a day, as typed. */
-  dailyPasses: string;
-  /** What one try at a pass may spend, as typed. */
-  passTokens: string;
-  passMinutes: string;
-  /** The judged runs a daily pass waits for, as typed. */
-  dailyRuns: string;
-  /** Messages, and the token lines, as typed: compared by value. */
-  compaction: string;
-  tokensMin: string;
-  tokensMax: string;
-  /** The chosen hub agent; null for the built-in orchestrator. */
-  hub: Picked | null;
-};
+export type SettingsDraft = EfficiencyDraft &
+  ReplayDraft & {
+    modelOn: boolean;
+    modelName: string;
+    maxTokens: string;
+    temperature: string;
+    provider: SearchProvider;
+    url: string;
+    key: string;
+    dropKey: boolean;
+    sandbox: SandboxProvider;
+    sandboxURL: string;
+    /** E2B only; empty for the default template. */
+    sandboxTemplate: string;
+    /** Typed only; the stored key is never read back. */
+    sandboxKey: string;
+    /** Whether workspaces get the team's own size, not the provider's. */
+    sizeCustom: boolean;
+    /** Memory and disk in GB, CPUs whole, as typed. */
+    sizeMemory: string;
+    sizeCPUs: string;
+    sizeDisk: string;
+    /** Whether a workspace left running stops after the team's own time, not the deployment's. */
+    idleOwn: boolean;
+    idleMinutes: string;
+    keepHours: string;
+    browser: BrowserProvider;
+    browserURL: string;
+    /** Typed only; the stored key is never read back. */
+    browserKey: string;
+    /** A self-hosted browser only: reach it with no key. */
+    dropBrowserKey: boolean;
+    improvement: boolean;
+    /** Whether runs are judged on a model of their own, not the team's. */
+    judgeOn: boolean;
+    judgeName: string;
+    judgeMaxTokens: string;
+    judgeTemperature: string;
+    /** The share of good runs studied, as typed. */
+    sampleShare: string;
+    /** The most improver passes in a day, as typed. */
+    dailyPasses: string;
+    /** What one try at a pass may spend, as typed. */
+    passTokens: string;
+    passMinutes: string;
+    /** The judged runs a daily pass waits for, as typed. */
+    dailyRuns: string;
+    /** Messages, and the token lines, as typed: compared by value. */
+    compaction: string;
+    tokensMin: string;
+    tokensMax: string;
+    /** The chosen hub agent; null for the built-in orchestrator. */
+    hub: Picked | null;
+  };
 
 export function draftOf(s: TeamSettings): SettingsDraft {
   return {
@@ -333,6 +341,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     passMinutes: String(s.improvement_pass_minutes ?? 20),
     dailyRuns: String(s.improvement_daily_runs ?? 5),
     ...efficiencyDraftOf(s),
+    ...replayDraftOf(s),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -387,6 +396,11 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
     "effSpread",
     "effMarkRuns",
     "effMargin",
+    "replay",
+    "replayRuns",
+    "replayTokens",
+    "replayMinutes",
+    "replayDaily",
   ],
 };
 
@@ -411,6 +425,10 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
   "effRuns",
   "effDays",
   "effMarkRuns",
+  "replayRuns",
+  "replayTokens",
+  "replayMinutes",
+  "replayDaily",
 ]);
 
 /** The efficiency pass's numbers: hidden, and never sent, while it is off. */
@@ -422,11 +440,14 @@ const EFF_NUMBERS: ReadonlySet<keyof SettingsDraft> = new Set([
   "effMargin",
 ]);
 
+/** Trying on past runs' numbers: hidden, and never sent, while it is off. */
+const REPLAY_SET: ReadonlySet<keyof SettingsDraft> = new Set(REPLAY_NUMBERS);
+
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
   const base = draftOf(stored);
   const changed = FIELDS[group].some((f) =>
-    LIFE_SET.has(f) || (EFF_NUMBERS.has(f) && !d.efficiency)
+    LIFE_SET.has(f) || (EFF_NUMBERS.has(f) && !d.efficiency) || (REPLAY_SET.has(f) && !d.replay)
       ? false
       : f === "effSpread"
         ? spreadOf(d.effSpread) !== spreadOf(base.effSpread)
@@ -652,7 +673,9 @@ function improvementRequest(
   }
   const efficiency = efficiencyRequest(d, base);
   if (typeof efficiency === "string") return efficiency;
-  return { ...out, ...efficiency };
+  const replay = replayRequest(d, base);
+  if (typeof replay === "string") return replay;
+  return { ...out, ...efficiency, ...replay };
 }
 
 /** What the page starts a size from when the team has none of its own. */
@@ -1840,6 +1863,11 @@ function SettingsForm({
               </Field>
             </div>
             <EfficiencyFields
+              draft={draft}
+              onChange={(patch) => set("improvement", patch)}
+              showProblems={effChecked}
+            />
+            <ReplayFields
               draft={draft}
               onChange={(patch) => set("improvement", patch)}
               showProblems={effChecked}

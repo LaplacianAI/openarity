@@ -133,6 +133,7 @@ func (w *world) serve(t *testing.T, method, path string, body any) *httptest.Res
 		{"GET", "/teams/{id}/improvements"},
 		{"GET", "/teams/{id}/improvements/passes"},
 		{"GET", "/teams/{id}/improvements/{proposalID}"},
+		{"GET", "/teams/{id}/improvements/{proposalID}/replays/{runID}"},
 		{"POST", "/teams/{id}/improvements/{proposalID}/decision"},
 	} {
 		if err := rs.Add(r.method, r.path, "member", nil); err != nil {

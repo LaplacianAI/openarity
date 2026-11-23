@@ -623,3 +623,93 @@ describe("watching", () => {
     expect(screen.queryByRole("button", { name: "Clear flag" })).toBeNull();
   });
 });
+
+describe("tried on past runs", () => {
+  const runOf = (id: string, original: "good" | "bad", replayed: "good" | "bad", extra = {}) => ({
+    run: { id, readable: true, session_id: "s1" },
+    chosen: original === "bad" ? ("cited" as const) : ("good" as const),
+    status: "done" as const,
+    original,
+    replayed,
+    request: `request ${id}`,
+    withheld: false,
+    diverged: false,
+    recorded: 2,
+    live: 0,
+    not_made: 0,
+    before: { tokens: 18_400, steps: 9, work_ms: 41_000 },
+    after: { tokens: 12_000, steps: 5, work_ms: 20_000 },
+    ...extra,
+  });
+
+  it("says how a waiting change fared, warns when one that went well now goes wrong, and shows a try's steps", async () => {
+    const item = proposal("p1", {
+      replay: {
+        status: "done",
+        runs: [
+          runOf("r1", "bad", "good", { diverged: true, not_made: 1 }),
+          runOf("r2", "good", "bad"),
+          {
+            ...runOf("r3", "good", "good"),
+            request: null,
+            withheld: true,
+            run: { id: "r3", readable: false },
+          },
+        ],
+      },
+    });
+    brain({
+      ...team(APPROVER),
+      ...lists([item]),
+      "GET /teams/{id}/improvements/{id}/replays/{id}": {
+        body: {
+          run: { id: "r1", readable: true },
+          answer: "Refunded order 42.",
+          calls: [
+            { name: "orders__lookup", how: "recorded", arguments: "{}", output: "order 42: paid" },
+            { name: "orders__refund", how: "not_made", arguments: "{}", error: "Not made" },
+          ],
+        },
+      },
+    });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    expect(
+      within(within(card).getByRole("list", { name: "What kind of change" })).getByText(
+        "Worse on past runs",
+      ),
+    ).toBeInTheDocument();
+    const tried = within(card).getByRole("region", { name: "Tried on past runs" });
+    expect(tried).toHaveTextContent(
+      "Tried on 3 past runs: 1 that went wrong now done · 1 that went well still do · 1 that went well now go wrong",
+    );
+    expect(tried).toHaveTextContent("Went wrong, now done");
+    expect(tried).toHaveTextContent("18,400 → 12,000 tokens · 9 → 5 steps · 41 s → 20 s");
+    expect(tried).toHaveTextContent("Went a different way: 1 step was skipped");
+    expect(tried).toHaveTextContent("A conversation you cannot read");
+    // A withheld try offers no steps.
+    expect(within(tried).getAllByRole("button", { name: "See the steps" })).toHaveLength(2);
+
+    await userEvent.click(
+      within(tried).getAllByRole("button", { name: "See the steps" })[0] as HTMLElement,
+    );
+    expect(await within(tried).findByText("Refunded order 42.")).toBeInTheDocument();
+    expect(tried).toHaveTextContent("As in the past run");
+    expect(tried).toHaveTextContent("Skipped");
+  });
+
+  it("says nothing of a change never tried", async () => {
+    brain({
+      ...team(APPROVER),
+      ...lists([proposal("p1", { replay: { status: "off", runs: [] } })]),
+    });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    expect(within(card).queryByRole("region", { name: "Tried on past runs" })).toBeNull();
+    expect(within(card).queryByText("Worse on past runs")).toBeNull();
+  });
+});

@@ -38,6 +38,10 @@ const (
 	defaultEfficiencySpread   = 200
 	defaultEfficiencyMarkRuns = 3
 	defaultEfficiencyMargin   = 1
+	defaultReplayRuns         = 4
+	defaultReplayTokens       = 200_000
+	defaultReplayMinutes      = 10
+	defaultReplayDaily        = 40
 	// The brain's line before teams could set it, kept for a team that
 	// never saved its settings.
 	defaultCompactionTokensMin = 50_000
@@ -182,6 +186,11 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	p.ImprovementEfficiencyRuns = req.ImprovementEfficiencyRuns
 	p.ImprovementEfficiencyDays, p.ImprovementEfficiencySpread = req.ImprovementEfficiencyDays, req.ImprovementEfficiencySpread
 	p.ImprovementEfficiencyMarkRuns, p.ImprovementEfficiencyMargin = req.ImprovementEfficiencyMarkRuns, req.ImprovementEfficiencyMargin
+	if req.ImprovementReplay != nil {
+		p.ImprovementReplay = pgtype.Bool{Bool: *req.ImprovementReplay, Valid: true}
+	}
+	p.ImprovementReplayRuns, p.ImprovementReplayTokens = req.ImprovementReplayRuns, req.ImprovementReplayTokens
+	p.ImprovementReplayMinutes, p.ImprovementReplayDaily = req.ImprovementReplayMinutes, req.ImprovementReplayDaily
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	lifecycle(&p, req.Sandbox, stored)
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
@@ -424,6 +433,11 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 		ImprovementEfficiencySpread:   row.ImprovementEfficiencySpread,
 		ImprovementEfficiencyMarkRuns: row.ImprovementEfficiencyMarkRuns,
 		ImprovementEfficiencyMargin:   row.ImprovementEfficiencyMargin,
+		ImprovementReplay:             row.ImprovementReplay,
+		ImprovementReplayRuns:         row.ImprovementReplayRuns,
+		ImprovementReplayTokens:       row.ImprovementReplayTokens,
+		ImprovementReplayMinutes:      row.ImprovementReplayMinutes,
+		ImprovementReplayDaily:        row.ImprovementReplayDaily,
 
 		CompactionMessages:  row.CompactionMessages,
 		CompactionTokensMin: row.CompactionTokensMin,
@@ -456,6 +470,10 @@ func defaults() settings {
 		ImprovementEfficiencySpread:   defaultEfficiencySpread,
 		ImprovementEfficiencyMarkRuns: defaultEfficiencyMarkRuns,
 		ImprovementEfficiencyMargin:   defaultEfficiencyMargin,
+		ImprovementReplayRuns:         defaultReplayRuns,
+		ImprovementReplayTokens:       defaultReplayTokens,
+		ImprovementReplayMinutes:      defaultReplayMinutes,
+		ImprovementReplayDaily:        defaultReplayDaily,
 		CompactionMessages:            defaultCompaction,
 		CompactionTokensMin:           defaultCompactionTokensMin,
 		CompactionTokensMax:           defaultCompactionTokensMax,

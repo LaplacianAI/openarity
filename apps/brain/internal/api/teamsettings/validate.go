@@ -40,6 +40,11 @@ const (
 	minEfficiencyMarkRuns = 2
 	maxEfficiencyMarkRuns = 50
 	maxEfficiencyMargin   = 3
+	maxReplayRuns         = 10
+	minReplayTokens       = 20_000
+	maxReplayTokens       = 1_000_000
+	maxReplayMinutes      = 30
+	maxReplayDaily        = 500
 
 	minCompaction = 10
 	maxCompaction = 10000
@@ -77,6 +82,9 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 		return fmt.Errorf("improvement_daily_runs must be between 1 and %d", maxDailyRuns)
 	}
 	if err := checkEfficiency(req, stored); err != nil {
+		return err
+	}
+	if err := checkReplay(req); err != nil {
 		return err
 	}
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
@@ -364,6 +372,27 @@ func checkTemplate(s sandboxRequest) error {
 		return errors.New("sandbox.template is for e2b; the brain chooses every other provider's image")
 	case len(*s.Template) > maxTemplateBytes || !templateName.MatchString(*s.Template):
 		return fmt.Errorf("sandbox.template must be an E2B template name, such as openarity-sandbox, at most %d bytes", maxTemplateBytes)
+	}
+	return nil
+}
+
+// checkReplay holds each replay number a request sends to its range.
+func checkReplay(req settingsRequest) error {
+	for _, v := range []struct {
+		name     string
+		value    *int16
+		min, max int16
+	}{
+		{"improvement_replay_runs", req.ImprovementReplayRuns, 1, maxReplayRuns},
+		{"improvement_replay_minutes", req.ImprovementReplayMinutes, 1, maxReplayMinutes},
+		{"improvement_replay_daily", req.ImprovementReplayDaily, 1, maxReplayDaily},
+	} {
+		if v.value != nil && (*v.value < v.min || *v.value > v.max) {
+			return fmt.Errorf("%s must be between %d and %d", v.name, v.min, v.max)
+		}
+	}
+	if n := req.ImprovementReplayTokens; n != nil && (*n < minReplayTokens || *n > maxReplayTokens) {
+		return fmt.Errorf("improvement_replay_tokens must be between %d and %d", minReplayTokens, maxReplayTokens)
 	}
 	return nil
 }

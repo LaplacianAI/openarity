@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net"
 
+	"github.com/google/uuid"
+
 	"github.com/LaplacianAI/openarity/apps/brain/internal/browser"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
@@ -14,6 +16,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/improve"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/purge"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/replay"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
@@ -104,10 +107,6 @@ func newJobs(
 		return nil, nil, err
 	}
 	judging := newImproveJob(cfg, logger, dbStore)
-	improving, err := newImproverJob(cfg, logger, dbStore, secretStore)
-	if err != nil {
-		return nil, nil, err
-	}
 	templates := keeper.TemplatesJob(newTemplates(cfg, logger, dbStore, secretStore))
 	watching := improve.NewWatchJob(improve.NewWatcher(dbStore, logger))
 
@@ -117,29 +116,63 @@ func newJobs(
 		if err != nil {
 			return nil, nil, err
 		}
-		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), judging, improving, watching, templates}, func() {}, nil
+		improving, replaying, err := newImprovingJobs(cfg, logger, dbStore, secretStore, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), judging, improving, replaying, watching, templates}, func() {}, nil
 	}
 
 	g, embedder, closeGraph, err := dialGraph(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	runs, err := newRunJob(cfg, logger, dbStore, secretStore,
-		&runtime.GraphDeps{Search: g, Embed: embedder, Store: dbStore})
+	graphDeps := &runtime.GraphDeps{Search: g, Embed: embedder, Store: dbStore}
+	runs, err := newRunJob(cfg, logger, dbStore, secretStore, graphDeps)
+	if err != nil {
+		closeGraph()
+		return nil, nil, err
+	}
+	improving, replaying, err := newImprovingJobs(cfg, logger, dbStore, secretStore, graphDeps)
 	if err != nil {
 		closeGraph()
 		return nil, nil, err
 	}
 	projector := graph.NewProjector(dbStore, g, embedder, logger)
 	return []worker.Job{
-		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), graph.DrainJob(projector, logger), judging, improving, watching, templates,
+		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent), graph.DrainJob(projector, logger), judging, improving, replaying, watching, templates,
 	}, closeGraph, nil
+}
+
+// newImprovingJobs is the improver and the replays of what it proposes: each
+// proposal it stores is tried on past runs, when its team has that on. A
+// proposal whose tries cannot be queued is still stored; it is shown without
+// them.
+func newImprovingJobs(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store,
+	graphDeps *runtime.GraphDeps,
+) (*improve.ImproverJob, *replay.Job, error) {
+	replaying, err := newReplayJob(cfg, logger, dbStore, secretStore, graphDeps)
+	if err != nil {
+		return nil, nil, err
+	}
+	improving, err := newImproverJob(cfg, logger, dbStore, secretStore, func(ctx context.Context, proposalID, teamID uuid.UUID) {
+		if err := replaying.Enqueue(ctx, proposalID, teamID); err != nil {
+			logger.WarnContext(ctx, "a proposal's tries on past runs could not be queued",
+				slog.String("proposal_id", proposalID.String()), slog.Any("error", err))
+		}
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return improving, replaying, nil
 }
 
 // newImproverJob finds each agent's patterns and runs the improver on them,
 // on the judge's model endpoint; it reads skill files from the store the
 // runs read them from.
-func newImproverJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) (*improve.ImproverJob, error) {
+func newImproverJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store,
+	stored func(ctx context.Context, proposalID, teamID uuid.UUID),
+) (*improve.ImproverJob, error) {
 	attachments, err := newAttachmentStore(cfg, secretStore, logger)
 	if err != nil {
 		return nil, err
@@ -149,6 +182,7 @@ func newImproverJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Stor
 	if err != nil {
 		return nil, err
 	}
+	im.OnStored(stored)
 	return improve.NewImproverJob(im, dbStore), nil
 }
 

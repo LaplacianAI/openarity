@@ -36,6 +36,7 @@ linters:
             - "**/internal/harness/**"
             - "**/internal/proposals/**"
             - "**/internal/improve/**"
+            - "**/internal/replay/**"
           deny:
             - pkg: github.com/LaplacianAI/openarity/apps/brain/internal/api
               desc: harness, proposals and improve sit below the routes; move what is needed below internal/api

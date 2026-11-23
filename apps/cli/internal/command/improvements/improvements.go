@@ -38,7 +38,9 @@ func New(opts *cli.Options) *cobra.Command {
 			"runs against the ones before. One that went clearly worse, or costlier\n" +
 			"with no fewer failures, is flagged for a person to clear or revert, as\n" +
 			"is an efficiency change whose good runs did not save what it said they\n" +
-			"would; nothing is reverted by itself.\n\n" +
+			"would; nothing is reverted by itself. With trying on past runs on, a\n" +
+			"proposal is first tried on a few of its agent's past runs, sending and\n" +
+			"changing nothing, and show says how each went.\n\n" +
 			"Deciding needs improvement:approve in the team, and the write\n" +
 			"permission of what the proposal changes: agent:write, or skill:write\n" +
 			"for a skill. Every command takes the team first.",
@@ -48,6 +50,7 @@ func New(opts *cli.Options) *cobra.Command {
 		newListCmd(opts),
 		newShowCmd(opts),
 		newPassesCmd(opts),
+		newReplayCmd(opts),
 		newDecisionCmd(opts, "approve", client.ImprovementDecisionActionApprove, "approved", decidePermission,
 			"Apply the proposal to the agent",
 			"The change is made now, and can be reverted later. It is refused when\n"+
@@ -92,6 +95,7 @@ type view struct {
 	RevertedAt *time.Time   `json:"reverted_at" yaml:"reverted_at"`
 	CreatedAt  time.Time    `json:"created_at" yaml:"created_at"`
 	Watch      *watchView   `json:"watch" yaml:"watch"`
+	Replay     *replayView  `json:"replay" yaml:"replay"`
 }
 
 type ref struct {
@@ -129,7 +133,7 @@ func viewOf(p *client.Improvement) view {
 		Runs: make([]runView, 0, len(p.Runs)), Outsider: p.Outsider,
 		DecidedBy: idOrNil(p.DecidedBy), DecidedAt: p.DecidedAt,
 		RevertedBy: idOrNil(p.RevertedBy), RevertedAt: p.RevertedAt, CreatedAt: p.CreatedAt,
-		PassID: idOrNil(p.PassID), Watch: watchOf(p.Watch),
+		PassID: idOrNil(p.PassID), Watch: watchOf(p.Watch), Replay: replayOf(p.Replay),
 		Goal: string(p.Goal), Saves: make([]string, 0, len(p.Saves)),
 	}
 	for _, s := range p.Saves {
@@ -467,6 +471,7 @@ func printOne(opts *cli.Options, v view, did string) error {
 				table.Row("reverted by", *v.RevertedBy, "")
 			}
 			watchRows(opts, table, v.Watch, v.Goal)
+			replayRows(opts, table, v.Replay)
 			for i, r := range v.Runs {
 				label := ""
 				if i == 0 {

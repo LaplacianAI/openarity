@@ -13,7 +13,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -63,6 +63,11 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.ImprovementEfficiencySpread,
 		&i.ImprovementEfficiencyMarkRuns,
 		&i.ImprovementEfficiencyMargin,
+		&i.ImprovementReplay,
+		&i.ImprovementReplayRuns,
+		&i.ImprovementReplayTokens,
+		&i.ImprovementReplayMinutes,
+		&i.ImprovementReplayDaily,
 	)
 	return i, err
 }
@@ -92,7 +97,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily
 `
 
 type SetTeamApprovalParams struct {
@@ -150,6 +155,11 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.ImprovementEfficiencySpread,
 		&i.ImprovementEfficiencyMarkRuns,
 		&i.ImprovementEfficiencyMargin,
+		&i.ImprovementReplay,
+		&i.ImprovementReplayRuns,
+		&i.ImprovementReplayTokens,
+		&i.ImprovementReplayMinutes,
+		&i.ImprovementReplayDaily,
 	)
 	return i, err
 }
@@ -178,6 +188,8 @@ INSERT INTO team_settings (
     improvement_daily_runs, improvement_since,
     improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days,
     improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin,
+    improvement_replay, improvement_replay_runs, improvement_replay_tokens,
+    improvement_replay_minutes, improvement_replay_daily,
     sandbox_keep_hours, sandbox_idle_minutes,
     sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 ) VALUES (
@@ -201,10 +213,15 @@ INSERT INTO team_settings (
     COALESCE($31::smallint, 200),
     COALESCE($32::smallint, 3),
     COALESCE($33::smallint, 1),
+    COALESCE($34::bool, false),
+    COALESCE($35::smallint, 4),
+    COALESCE($36::integer, 200000),
+    COALESCE($37::smallint, 10),
+    COALESCE($38::smallint, 40),
     -- The caller sends what is stored for these when a save leaves them out:
     -- a null idle or size is the provider's, not "keep".
-    COALESCE($34::integer, 24), $35,
-    $36, $37, $38
+    COALESCE($39::integer, 24), $40,
+    $41, $42, $43
 )
 ON CONFLICT (team_id) DO UPDATE SET
     model_name          = EXCLUDED.model_name,
@@ -244,13 +261,18 @@ ON CONFLICT (team_id) DO UPDATE SET
     improvement_efficiency_spread    = COALESCE($31::smallint, team_settings.improvement_efficiency_spread),
     improvement_efficiency_mark_runs = COALESCE($32::smallint, team_settings.improvement_efficiency_mark_runs),
     improvement_efficiency_margin    = COALESCE($33::smallint, team_settings.improvement_efficiency_margin),
+    improvement_replay         = COALESCE($34::bool, team_settings.improvement_replay),
+    improvement_replay_runs    = COALESCE($35::smallint, team_settings.improvement_replay_runs),
+    improvement_replay_tokens  = COALESCE($36::integer, team_settings.improvement_replay_tokens),
+    improvement_replay_minutes = COALESCE($37::smallint, team_settings.improvement_replay_minutes),
+    improvement_replay_daily   = COALESCE($38::smallint, team_settings.improvement_replay_daily),
     -- Set each time the switch goes on, kept while it stays on: runs from
     -- before it went on are never judged.
     improvement_since   = CASE
         WHEN EXCLUDED.improvement AND NOT team_settings.improvement THEN now()
         ELSE team_settings.improvement_since END,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily
 `
 
 type UpsertTeamSettingsParams struct {
@@ -287,6 +309,11 @@ type UpsertTeamSettingsParams struct {
 	ImprovementEfficiencySpread   *int16
 	ImprovementEfficiencyMarkRuns *int16
 	ImprovementEfficiencyMargin   *int16
+	ImprovementReplay             pgtype.Bool
+	ImprovementReplayRuns         *int16
+	ImprovementReplayTokens       *int32
+	ImprovementReplayMinutes      *int16
+	ImprovementReplayDaily        *int16
 	SandboxKeepHours              *int32
 	SandboxIdleMinutes            *int32
 	SandboxWorkspaceMemoryMb      *int32
@@ -332,6 +359,11 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		arg.ImprovementEfficiencySpread,
 		arg.ImprovementEfficiencyMarkRuns,
 		arg.ImprovementEfficiencyMargin,
+		arg.ImprovementReplay,
+		arg.ImprovementReplayRuns,
+		arg.ImprovementReplayTokens,
+		arg.ImprovementReplayMinutes,
+		arg.ImprovementReplayDaily,
 		arg.SandboxKeepHours,
 		arg.SandboxIdleMinutes,
 		arg.SandboxWorkspaceMemoryMb,
@@ -382,6 +414,11 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.ImprovementEfficiencySpread,
 		&i.ImprovementEfficiencyMarkRuns,
 		&i.ImprovementEfficiencyMargin,
+		&i.ImprovementReplay,
+		&i.ImprovementReplayRuns,
+		&i.ImprovementReplayTokens,
+		&i.ImprovementReplayMinutes,
+		&i.ImprovementReplayDaily,
 	)
 	return i, err
 }
