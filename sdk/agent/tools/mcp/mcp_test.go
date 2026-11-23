@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
 // tool is one tool a test server offers: what it declares, and what it answers.
@@ -79,9 +81,26 @@ func names(session *Session) []string {
 func find(t *testing.T, session *Session, name string) func(context.Context, json.RawMessage) (string, error) {
 	t.Helper()
 
+	call := result(t, session, name)
+	return func(ctx context.Context, args json.RawMessage) (string, error) {
+		r, err := call(ctx, args)
+		return r.Output, err
+	}
+}
+
+// result is the named tool's whole answer: its text and the files it attached.
+func result(t *testing.T, session *Session, name string) func(context.Context, json.RawMessage) (agent.ToolResult, error) {
+	t.Helper()
+
 	for _, tl := range session.Tools() {
 		if tl.Name == name {
-			return tl.Invoke
+			return func(ctx context.Context, args json.RawMessage) (agent.ToolResult, error) {
+				r, ok, err := tl.Call(ctx, args)
+				if !ok {
+					t.Fatalf("%s cannot be called", name)
+				}
+				return r, err
+			}
 		}
 	}
 	t.Fatalf("no tool named %q; the session offered %v", name, names(session))
@@ -336,60 +355,166 @@ func TestASilentSuccessSaysItReturnedNothing(t *testing.T) {
 	}
 }
 
-func TestNonTextContentIsCountedRatherThanDropped(t *testing.T) {
-	t.Parallel()
-
+// answer is a server whose one tool returns blocks, and that tool's whole
+// answer.
+func answer(t *testing.T, isError bool, blocks ...sdk.Content) (agent.ToolResult, error) {
+	t.Helper()
 	url := serve(t, tool{
-		name: "screenshot",
+		name: "get",
 		handler: func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
-			return &sdk.CallToolResult{Content: []sdk.Content{
-				&sdk.TextContent{Text: "here it is"},
-				&sdk.ImageContent{Data: []byte{1, 2, 3}, MIMEType: "image/png"},
-			}}, nil
+			return &sdk.CallToolResult{Content: blocks, IsError: isError}, nil
 		},
 	})
+	return result(t, connect(t, Server{Name: "s", URL: url}), "s__get")(t.Context(), json.RawMessage(`{}`))
+}
 
-	session := connect(t, Server{Name: "browser", URL: url})
-	out, err := find(t, session, "browser__screenshot")(t.Context(), json.RawMessage(`{}`))
+// An image a tool returns reaches the model as one, named in the text too.
+func TestAnImageIsAttachedAndNamed(t *testing.T) {
+	t.Parallel()
+
+	png := []byte{0x89, 'P', 'N', 'G', 1, 2, 3}
+	r, err := answer(t, false,
+		&sdk.TextContent{Text: "here it is"},
+		&sdk.ImageContent{Data: png, MIMEType: "image/png"},
+	)
 	if err != nil {
-		t.Fatalf("Invoke: %v", err)
+		t.Fatalf("Call: %v", err)
 	}
-	if !strings.Contains(out, "here it is") {
-		t.Errorf("the text block was lost: %q", out)
+	if len(r.Attach) != 1 {
+		t.Fatalf("attached %d, want the image", len(r.Attach))
 	}
-	if !strings.Contains(out, "omitted") {
-		t.Errorf("the image was dropped without saying so: %q", out)
+	got := r.Attach[0]
+	if got.Type != agent.ContentImage || got.Blob == nil || got.Blob.MediaType != "image/png" ||
+		got.Blob.Name != "image-1.png" || string(got.Blob.Data) != string(png) {
+		t.Errorf("attached %+v, want the image's bytes as image-1.png", got)
+	}
+	if r.Output != "here it is\n[attached image-1.png: image/png, 7 bytes]" {
+		t.Errorf("Output = %q, want the text, then the image named", r.Output)
 	}
 }
 
-func TestAnEmbeddedTextResourceIsShownAndABlobIsCounted(t *testing.T) {
+// A document a tool embeds is attached under its URI's name; an image
+// embedded as a blob is an image; text embedded is shown, as before.
+func TestAnEmbeddedDocumentIsAttachedUnderItsName(t *testing.T) {
 	t.Parallel()
 
-	url := serve(t, tool{
-		name: "get_file_contents",
-		handler: func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
-			return &sdk.CallToolResult{Content: []sdk.Content{
-				&sdk.TextContent{Text: "successfully downloaded text file"},
-				&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{
-					URI: "repo://o/r/main.go", MIMEType: "text/x-go", Text: "package main",
-				}},
-				&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{
-					URI: "repo://o/r/logo.png", MIMEType: "image/png", Blob: []byte{1, 2, 3},
-				}},
-			}}, nil
-		},
-	})
-
-	session := connect(t, Server{Name: "github", URL: url})
-	out, err := find(t, session, "github__get_file_contents")(t.Context(), json.RawMessage(`{}`))
+	r, err := answer(t, false,
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "repo://o/r/main.go", MIMEType: "text/x-go", Text: "package main"}},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "file:///tmp/lease.pdf", MIMEType: "application/pdf", Blob: []byte("%PDF-1.7")}},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "repo://o/r/logo.png", MIMEType: "image/png; q=1", Blob: []byte{1, 2}}},
+	)
 	if err != nil {
-		t.Fatalf("Invoke: %v", err)
+		t.Fatalf("Call: %v", err)
 	}
-	if !strings.Contains(out, "package main") {
-		t.Errorf("the file's text was dropped: %q", out)
+	if len(r.Attach) != 2 {
+		t.Fatalf("attached %+v, want the PDF and the logo", r.Attach)
 	}
-	if !strings.Contains(out, "[1 non-text content block(s) omitted]") {
-		t.Errorf("the blob was not counted as the one block omitted: %q", out)
+	if pdf := r.Attach[0]; pdf.Type != agent.ContentFile || pdf.Blob.Name != "lease.pdf" || pdf.Blob.MediaType != "application/pdf" {
+		t.Errorf("first attached %+v, want lease.pdf as a file", pdf)
+	}
+	if logo := r.Attach[1]; logo.Type != agent.ContentImage || logo.Blob.Name != "logo.png" || logo.Blob.MediaType != "image/png" {
+		t.Errorf("second attached %+v, want logo.png as an image, its type bare", logo)
+	}
+	if !strings.HasPrefix(r.Output, "package main\n[attached lease.pdf") {
+		t.Errorf("Output = %q, want the text first, then each file named", r.Output)
+	}
+}
+
+// What a model cannot be passed is never attached, and the text says what
+// it was and why.
+func TestWhatCannotBePassedIsNamedNotAttached(t *testing.T) {
+	t.Parallel()
+
+	size := int64(2048)
+	for name, tc := range map[string]struct {
+		block sdk.Content
+		want  string
+	}{
+		"an image over 5 MB": {&sdk.ImageContent{Data: make([]byte, maxImageBytes+1), MIMEType: "image/png"}, "[image-1.png: image/png, 5.0 MB, more than the 5.0 MB an image is passed up to]"},
+		"a PDF over 10 MB":   {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://big.pdf", MIMEType: "application/pdf", Blob: make([]byte, maxDocBytes+1)}}, "[big.pdf: application/pdf, 10.0 MB, more than the 10.0 MB a PDF or a text file is passed up to]"},
+		"an SVG":             {&sdk.ImageContent{Data: []byte("<svg/>"), MIMEType: "image/svg+xml"}, "[image-1: image/svg+xml, 6 bytes, which a model cannot read]"},
+		"a zip":              {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a.zip", MIMEType: "application/zip", Blob: []byte{1}}}, "[a.zip: application/zip, 1 bytes, which a model cannot read]"},
+		"audio":              {&sdk.AudioContent{Data: []byte{1, 2}, MIMEType: "audio/wav"}, "[audio-1: audio/wav, 2 bytes, which a model here cannot hear]"},
+		"a link":             {&sdk.ResourceLink{URI: "https://x.example/r.csv", Name: "r.csv", MIMEType: "text/csv", Size: &size}, "[a link to r.csv: https://x.example/r.csv (text/csv, 2 KB), not fetched]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r, err := answer(t, false, tc.block)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if len(r.Attach) != 0 || r.Output != tc.want {
+				t.Errorf("attached %d, Output %q; want none, and %q", len(r.Attach), r.Output, tc.want)
+			}
+		})
+	}
+}
+
+// A call passes on eight files at most; the ninth is named, and the names
+// stay apart.
+func TestAFileBeyondEightIsNamedNotAttached(t *testing.T) {
+	t.Parallel()
+
+	blocks := make([]sdk.Content, 0, filesPerCall+1)
+	for range filesPerCall + 1 {
+		blocks = append(blocks, &sdk.ImageContent{Data: []byte{1}, MIMEType: "image/jpeg"})
+	}
+	r, err := answer(t, false, blocks...)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if len(r.Attach) != filesPerCall || r.Attach[filesPerCall-1].Blob.Name != "image-8.jpg" {
+		t.Fatalf("attached %d, the last %+v; want %d, the last image-8.jpg", len(r.Attach), r.Attach[len(r.Attach)-1].Blob, filesPerCall)
+	}
+	if !strings.HasSuffix(r.Output, "[image-9.jpg: image/jpeg, 1 bytes, past the 8 files a call passes on]") {
+		t.Errorf("Output = %q, want the ninth named as past the limit", r.Output)
+	}
+}
+
+// A file left out keeps its place in the numbering, so the next one is not
+// given its name.
+func TestAFileLeftOutKeepsItsNumber(t *testing.T) {
+	t.Parallel()
+
+	r, err := answer(t, false,
+		&sdk.ImageContent{Data: make([]byte, maxImageBytes+1), MIMEType: "image/png"},
+		&sdk.ImageContent{Data: []byte{1}, MIMEType: "image/png"},
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if len(r.Attach) != 1 || r.Attach[0].Blob.Name != "image-2.png" {
+		t.Fatalf("attached %+v, want the second image as image-2.png", r.Attach)
+	}
+	if !strings.HasPrefix(r.Output, "[image-1.png:") || !strings.HasSuffix(r.Output, "[attached image-2.png: image/png, 1 bytes]") {
+		t.Errorf("Output = %q, want image-1.png left out and image-2.png attached", r.Output)
+	}
+}
+
+// An error is its text: a file that came with it is named, never attached.
+func TestAnErrorAttachesNothing(t *testing.T) {
+	t.Parallel()
+
+	r, err := answer(t, true,
+		&sdk.TextContent{Text: "render failed"},
+		&sdk.ImageContent{Data: []byte{1}, MIMEType: "image/png"},
+	)
+	if err == nil || err.Error() != "render failed\n[image-1.png: image/png, 1 bytes, not shown with an error]" {
+		t.Errorf("err = %v, want the error's text with the image named", err)
+	}
+	if len(r.Attach) != 0 {
+		t.Errorf("attached %d with an error, want none", len(r.Attach))
+	}
+}
+
+// A tool that answers with an image and no text has answered: it is not
+// "returned no text content".
+func TestAnImageAloneIsAnAnswer(t *testing.T) {
+	t.Parallel()
+
+	r, err := answer(t, false, &sdk.ImageContent{Data: []byte{1}, MIMEType: "image/webp"})
+	if err != nil || len(r.Attach) != 1 || r.Output != "[attached image-1.webp: image/webp, 1 bytes]" {
+		t.Errorf("Output %q, %d attached, err %v; want the image named and attached", r.Output, len(r.Attach), err)
 	}
 }
 

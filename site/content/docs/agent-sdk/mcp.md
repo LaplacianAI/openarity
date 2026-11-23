@@ -74,10 +74,30 @@ gets.
 A transport failure is different and is returned as a real error: it will fail
 again next step and the model cannot fix it.
 
-Content that is not text — an image, an embedded resource — is counted rather
-than dropped, so a tool that answers with a screenshot produces
-`[1 non-text content block(s) omitted]` instead of an empty string. An empty
-string reads to a model as a tool that did nothing, and it calls it again.
+## Images and files a tool returns
+
+A tool that answers with an image or a document hands it to the model. Each
+MCP tool is a `Tool` with `Result`, and what it returned besides text is
+attached: the model reads it in the turn after the tool's result, named by
+the call that attached it, as any `ToolResult.Attach` is.
+
+| What the tool returns | What the model gets |
+| --- | --- |
+| Text, or an embedded resource holding text | The text, in order |
+| An image (any but SVG), as an image block or an embedded blob | The image, up to 5 MB |
+| A PDF or plain text as an embedded blob | The file, up to 10 MB, named from its URI |
+| Anything else: audio, SVG, a zip, a resource link | A line saying what it was and why it is not passed |
+
+Each file attached is named in the text too, as
+`[attached image-1.png: image/png, 220 KB]`, and a call passes eight files at
+most; past that, or past a size, the file is a line saying so. A result marked
+`IsError` is its text alone: a file that came with it is named, never
+attached. Nothing is dropped without a word, since an empty answer reads to a
+model as a tool that did nothing, and it calls it again.
+
+The bytes travel in the transcript, as `Blob.Data`. A caller that keeps
+transcripts should move them out, to a `Blob.Ref` it can fetch, before it
+saves one.
 
 ## The tool list is read once
 

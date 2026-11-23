@@ -271,15 +271,29 @@ func offer(url string, tools ...string) string {
 func serve(t *testing.T, tools ...string) *mcpServer {
 	t.Helper()
 
+	answers := make(map[string][]sdk.Content, len(tools))
+	for _, name := range tools {
+		answers[name] = []sdk.Content{&sdk.TextContent{Text: name + " ran"}}
+	}
+	return serveAnswering(t, answers)
+}
+
+// serveAnswering is serve with each tool's answer given: its content blocks.
+func serveAnswering(t *testing.T, answers map[string][]sdk.Content) *mcpServer {
+	t.Helper()
+
 	s := &mcpServer{}
 	server := sdk.NewServer(&sdk.Implementation{Name: "test", Version: "v1"}, nil)
-	for _, name := range tools {
+	tools := make([]string, 0, len(answers))
+	for name, content := range answers {
+		tools = append(tools, name)
 		server.AddTool(&sdk.Tool{Name: name, InputSchema: json.RawMessage(`{"type":"object"}`)},
 			func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
 				s.calls.Add(1)
-				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: name + " ran"}}}, nil
+				return &sdk.CallToolResult{Content: content}, nil
 			})
 	}
+	slices.Sort(tools)
 
 	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -438,11 +452,26 @@ func tool(t *testing.T, built Built, name string) agent.Tool {
 
 	for _, tl := range heldTools(built) {
 		if tl.Name == name {
-			return tl
+			return answering(tl)
 		}
 	}
 	t.Fatalf("no tool %q; the spec has %v", name, toolNames(built))
 	return agent.Tool{}
+}
+
+// answering is tl with an Invoke that answers through Call, so a test reads
+// the text of a tool that answers with Result, as an MCP tool does, the way
+// it reads any other's.
+func answering(tl agent.Tool) agent.Tool {
+	if tl.Invoke != nil || tl.Result == nil {
+		return tl
+	}
+	call := tl.Call
+	tl.Invoke = func(ctx context.Context, args json.RawMessage) (string, error) {
+		r, _, err := call(ctx, args)
+		return r.Output, err
+	}
+	return tl
 }
 
 // --- the spec ---

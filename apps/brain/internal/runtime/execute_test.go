@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
@@ -385,6 +386,60 @@ func TestARunThatCallsAToolRecordsTheCallAndTheResult(t *testing.T) {
 	}
 	if result := payload[toolResult](t, events[4]); result.ID != "c1" || result.Output != "fetch ran" {
 		t.Errorf("tool_result = %+v", result)
+	}
+	server.waitClosed(t, 1)
+}
+
+// An image an MCP tool returns reaches the model on its next request, in the
+// turn after the tool's result, as an image: not "omitted".
+func TestAnImageAnMCPToolReturnsReachesTheModel(t *testing.T) {
+	model := newScripted(callTool("c1", "chart", `{}`), answer("a rising line", 10, 5))
+	f := newExecFixture(t, model)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+	server := serveAnswering(t, map[string][]sdk.Content{"chart": {
+		&sdk.TextContent{Text: "the chart"},
+		&sdk.ImageContent{Data: png, MIMEType: "image/png"},
+	}})
+	var id uuid.UUID
+	if err := f.raw.QueryRow(t.Context(),
+		`INSERT INTO mcp_servers (team_id, name, url, bare) VALUES ($1, 'plots', $2, true) RETURNING id`,
+		f.team, server.url).Scan(&id); err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+	f.mustExec(t, `INSERT INTO mcp_tools (mcp_server_id, team_id, name) VALUES ($1, $2, 'chart')`, id, f.team)
+	f.mustExec(t, `INSERT INTO agent_mcp_servers (agent_id, mcp_server_id, team_id) VALUES ($1, $2, $3)`, f.agent, id, f.team)
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	reqs := f.model.requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d model requests, want 2", len(reqs))
+	}
+	msgs := reqs[1].Messages
+	var result, attached *agent.Message
+	for i := range msgs {
+		switch {
+		case msgs[i].Role == agent.RoleTool && msgs[i].ToolCallID == "c1":
+			result = &msgs[i]
+		case result != nil && msgs[i].Role == agent.RoleUser:
+			attached = &msgs[i]
+		}
+	}
+	if result == nil || result.Text() != "the chart\n[attached image-1.png: image/png, 8 bytes]" {
+		t.Fatalf("the tool's result reached the model as %+v", result)
+	}
+	if attached == nil {
+		t.Fatal("no turn after the tool's result carried its image")
+	}
+	var image *agent.Content
+	for i, c := range attached.Content {
+		if c.Type == agent.ContentImage {
+			image = &attached.Content[i]
+		}
+	}
+	if image == nil || image.Blob == nil || image.Blob.MediaType != "image/png" || !bytes.Equal(image.Blob.Data, png) {
+		t.Errorf("the turn after the result carried %+v, want the image's bytes", attached.Content)
 	}
 	server.waitClosed(t, 1)
 }

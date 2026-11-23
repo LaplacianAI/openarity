@@ -86,17 +86,20 @@ func (l *lazyServer) tool(name string, row db.ListGrantedMCPToolsRow) agent.Tool
 		Name:        name,
 		Description: row.Description,
 		Schema:      json.RawMessage(row.InputSchema),
-		Invoke: func(ctx context.Context, args json.RawMessage) (string, error) {
+		// Result, not Invoke: the live tool answers with the files it
+		// returned as well as its text.
+		Result: func(ctx context.Context, args json.RawMessage) (agent.ToolResult, error) {
 			live, err := l.opened(ctx)
 			if err != nil {
-				return "", err
+				return agent.ToolResult{}, err
 			}
 			for _, t := range live.Tools() {
 				if t.Name == name {
-					return t.Invoke(ctx, args)
+					r, _, err := t.Call(ctx, args)
+					return r, err
 				}
 			}
-			return "", fmt.Errorf("the MCP server %q no longer offers %s; discover its tools again", l.server.Name, row.Name)
+			return agent.ToolResult{}, fmt.Errorf("the MCP server %q no longer offers %s; discover its tools again", l.server.Name, row.Name)
 		},
 	}
 }

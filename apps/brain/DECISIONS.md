@@ -685,6 +685,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   save the reads and leave every file a run saw lingering in a process that
   runs other teams' work. At most eight files go in one request, the newest;
   images are read up to 5 MB and PDFs and text up to 10 MB.
+- **Until F2, a tool's own files ride in the transcript.** An image or a
+  document an MCP tool returns, like a browser screenshot, reaches the model
+  as `Blob.Data`, so its bytes are saved in the run's transcript in Postgres,
+  outside the attachment encryption the rule above keeps. That was chosen
+  over holding MCP files back until they can be stored, for one slice: F2
+  stores a tool's file as a conversation attachment and leaves only its
+  `attachment:<id>` in the transcript. The same limits hold meanwhile: eight
+  files a call, images up to 5 MB, PDFs and text up to 10 MB.
 - **What Postgres cannot include in a transaction gets a tombstone, not a
   best-effort call.** A cascade does not reach a bucket or a secret store, and
   the two writes can never both be atomic. What is atomic is recording the
