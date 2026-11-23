@@ -16,6 +16,8 @@ INSERT INTO team_settings (
     judge_model_name, judge_model_max_tokens, judge_model_temperature,
     improvement_sample_share, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes,
     improvement_daily_runs, improvement_since,
+    improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days,
+    improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin,
     sandbox_keep_hours, sandbox_idle_minutes,
     sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 ) VALUES (
@@ -33,6 +35,12 @@ INSERT INTO team_settings (
     COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, 20),
     COALESCE(sqlc.narg(improvement_daily_runs)::smallint, 5),
     CASE WHEN sqlc.arg(improvement)::bool THEN now() END,
+    COALESCE(sqlc.narg(improvement_efficiency)::bool, false),
+    COALESCE(sqlc.narg(improvement_efficiency_runs)::smallint, 20),
+    COALESCE(sqlc.narg(improvement_efficiency_days)::smallint, 14),
+    COALESCE(sqlc.narg(improvement_efficiency_spread)::smallint, 200),
+    COALESCE(sqlc.narg(improvement_efficiency_mark_runs)::smallint, 3),
+    COALESCE(sqlc.narg(improvement_efficiency_margin)::smallint, 1),
     -- The caller sends what is stored for these when a save leaves them out:
     -- a null idle or size is the provider's, not "keep".
     COALESCE(sqlc.narg(sandbox_keep_hours)::integer, 24), sqlc.narg(sandbox_idle_minutes),
@@ -70,6 +78,12 @@ ON CONFLICT (team_id) DO UPDATE SET
     improvement_pass_tokens  = COALESCE(sqlc.narg(improvement_pass_tokens)::integer, team_settings.improvement_pass_tokens),
     improvement_pass_minutes = COALESCE(sqlc.narg(improvement_pass_minutes)::smallint, team_settings.improvement_pass_minutes),
     improvement_daily_runs   = COALESCE(sqlc.narg(improvement_daily_runs)::smallint, team_settings.improvement_daily_runs),
+    improvement_efficiency           = COALESCE(sqlc.narg(improvement_efficiency)::bool, team_settings.improvement_efficiency),
+    improvement_efficiency_runs      = COALESCE(sqlc.narg(improvement_efficiency_runs)::smallint, team_settings.improvement_efficiency_runs),
+    improvement_efficiency_days      = COALESCE(sqlc.narg(improvement_efficiency_days)::smallint, team_settings.improvement_efficiency_days),
+    improvement_efficiency_spread    = COALESCE(sqlc.narg(improvement_efficiency_spread)::smallint, team_settings.improvement_efficiency_spread),
+    improvement_efficiency_mark_runs = COALESCE(sqlc.narg(improvement_efficiency_mark_runs)::smallint, team_settings.improvement_efficiency_mark_runs),
+    improvement_efficiency_margin    = COALESCE(sqlc.narg(improvement_efficiency_margin)::smallint, team_settings.improvement_efficiency_margin),
     -- Set each time the switch goes on, kept while it stays on: runs from
     -- before it went on are never judged.
     improvement_since   = CASE

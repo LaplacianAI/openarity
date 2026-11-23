@@ -58,6 +58,9 @@ type plannedPass struct {
 	// RunsSeen is how many judged runs a daily pass had since the agent's
 	// last pass; none for a pass a pattern started.
 	RunsSeen *int32 `json:"runs_seen,omitempty"`
+	// RunIDs are the runs an efficiency pass reads, chosen as it was
+	// planned: the costliest good runs, and cheap ones like them.
+	RunIDs []uuid.UUID `json:"run_ids,omitempty"`
 }
 
 func (p plannedPass) encode() string {

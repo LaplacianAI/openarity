@@ -31,11 +31,14 @@ func New(opts *cli.Options) *cobra.Command {
 		Short: "Review the changes agents propose to themselves, and decide them",
 		Long: "A team can let its agents propose improvements to themselves from what\n" +
 			"went wrong in their runs: a sharper instruction, a note on a tool, a\n" +
-			"skill. A proposal waits here until somebody decides it. Approving\n" +
-			"applies it; reverting puts the agent back as it was. An applied change\n" +
-			"is watched: its next ten judged runs against the ones before. One that\n" +
-			"went clearly worse, or costlier with no fewer failures, is flagged for a\n" +
-			"person to clear or revert; nothing is reverted by itself.\n\n" +
+			"skill. With the efficiency pass on, they also propose making good runs\n" +
+			"cheaper or quicker, marked with what each saves. A proposal waits here\n" +
+			"until somebody decides it. Approving applies it; reverting puts the\n" +
+			"agent back as it was. An applied change is watched: its next ten judged\n" +
+			"runs against the ones before. One that went clearly worse, or costlier\n" +
+			"with no fewer failures, is flagged for a person to clear or revert, as\n" +
+			"is an efficiency change whose good runs did not save what it said they\n" +
+			"would; nothing is reverted by itself.\n\n" +
 			"Deciding needs improvement:approve in the team, and the write\n" +
 			"permission of what the proposal changes: agent:write, or skill:write\n" +
 			"for a skill. Every command takes the team first.",
@@ -74,6 +77,8 @@ type view struct {
 	Kind       string       `json:"kind" yaml:"kind"`
 	Status     string       `json:"status" yaml:"status"`
 	Scope      string       `json:"scope" yaml:"scope"`
+	Goal       string       `json:"goal" yaml:"goal"`
+	Saves      []string     `json:"saves" yaml:"saves"`
 	Marks      []string     `json:"marks" yaml:"marks"`
 	Why        string       `json:"why" yaml:"why"`
 	Hypothesis string       `json:"hypothesis" yaml:"hypothesis"`
@@ -125,6 +130,13 @@ func viewOf(p *client.Improvement) view {
 		DecidedBy: idOrNil(p.DecidedBy), DecidedAt: p.DecidedAt,
 		RevertedBy: idOrNil(p.RevertedBy), RevertedAt: p.RevertedAt, CreatedAt: p.CreatedAt,
 		PassID: idOrNil(p.PassID), Watch: watchOf(p.Watch),
+		Goal: string(p.Goal), Saves: make([]string, 0, len(p.Saves)),
+	}
+	for _, s := range p.Saves {
+		v.Saves = append(v.Saves, string(s))
+	}
+	if v.Watch != nil {
+		v.Watch.saves = v.Saves
 	}
 	if p.Skill != nil {
 		s := refOf(*p.Skill)
@@ -427,6 +439,9 @@ func printOne(opts *cli.Options, v view, did string) error {
 			}
 			table.Row("status", statusCell(opts, v.Status), "")
 			table.Row("scope", scopeText(v.Scope), "")
+			if len(v.Saves) > 0 {
+				table.Row("goal", "efficiency: saves "+strings.Join(v.Saves, " and "), "")
+			}
 			table.Row("marks", marksCell(v.Marks), "")
 			if len(v.Reaches) > 0 {
 				names := make([]string, 0, len(v.Reaches))
@@ -451,7 +466,7 @@ func printOne(opts *cli.Options, v view, did string) error {
 			if v.RevertedBy != nil {
 				table.Row("reverted by", *v.RevertedBy, "")
 			}
-			watchRows(opts, table, v.Watch)
+			watchRows(opts, table, v.Watch, v.Goal)
 			for i, r := range v.Runs {
 				label := ""
 				if i == 0 {

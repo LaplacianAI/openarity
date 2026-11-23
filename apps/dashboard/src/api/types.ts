@@ -886,6 +886,18 @@ export type TeamSettings = {
   improvement_pass_minutes: number;
   /** The judged runs an agent needs since its last pass before the daily pass looks at it. */
   improvement_daily_runs: number;
+  /** Whether the weekly efficiency pass runs; only while improvement is on. A brain from before it sends none. */
+  improvement_efficiency?: boolean;
+  /** The good runs an agent needs in the window; 10 to 500. */
+  improvement_efficiency_runs?: number;
+  /** The days of runs it counts; 7 to 60. */
+  improvement_efficiency_days?: number;
+  /** How far the costliest good runs sit above the usual, in percent of it (200 is twice); 125 to 1000. */
+  improvement_efficiency_spread?: number;
+  /** The good runs a waste mark must appear in; 2 to 50, at most the runs. */
+  improvement_efficiency_mark_runs?: number;
+  /** Bad runs fewer than the usual bar that flag an efficiency change; 0 to 3. */
+  improvement_efficiency_margin?: number;
   /** When improvement was last turned on; runs that finished before it are never judged. Read only. */
   improvement_since: string | null;
   compaction_messages: number;
@@ -938,6 +950,13 @@ export type TeamSettingsRequest = {
   /** 1 to 25. Left out, the stored value stays. */
   improvement_pass_minutes?: number;
   improvement_daily_runs?: number;
+  /** Each left out keeps the stored value. */
+  improvement_efficiency?: boolean;
+  improvement_efficiency_runs?: number;
+  improvement_efficiency_days?: number;
+  improvement_efficiency_spread?: number;
+  improvement_efficiency_mark_runs?: number;
+  improvement_efficiency_margin?: number;
   compaction_messages: number;
   /** Left out, the stored value stays. */
   compaction_tokens_min?: number;
@@ -1134,6 +1153,10 @@ export type Improvement = {
   /** A general weakness of agents (invariant), or this team's domain. */
   scope: "invariant" | "domain";
   signature?: string | null;
+  /** Quality, for runs that went wrong, or efficiency, for good runs made cheaper or quicker. A brain from before sends none. */
+  goal?: "quality" | "efficiency";
+  /** What an efficiency change aims to save; empty for a quality change. */
+  saves?: ("cost" | "time")[];
   marks: ImprovementMark[];
   /** For a skill_edit, every agent that holds the skill now. */
   reaches: NamedRef[];
@@ -1163,6 +1186,8 @@ export type ImprovementWatchSide = {
   /** The median tokens a run's tree spent, a cached token as a tenth. */
   tokens?: number | null;
   steps?: number | null;
+  /** The median time its good runs worked, in ms, leaving out waits for a person. For an efficiency change, tokens are its good runs' too. */
+  work_ms?: number | null;
   /** Runs carrying the signature the change targeted; null for a removal. */
   signature?: number | null;
 };
@@ -1173,7 +1198,7 @@ export type ImprovementWatchSide = {
  */
 export type ImprovementWatch = {
   status: "watching" | "clear" | "flagged" | "cleared" | "ended";
-  flag?: "worse" | "costlier" | "both" | null;
+  flag?: "worse" | "costlier" | "both" | "no_saving" | null;
   ended_why?: "reverted" | "too_few_runs" | null;
   /** The judged runs after the change that decide it. */
   needed: number;
@@ -1192,8 +1217,8 @@ export type ImprovementWatch = {
   cleared_at?: string | null;
 };
 
-/** What set an improver pass going: a weakness that recurred, or the day's turn. */
-export type ImproverTrigger = "pattern" | "daily";
+/** What set an improver pass going: a weakness that recurred, the day's turn, or the week's look at good runs. */
+export type ImproverTrigger = "pattern" | "daily" | "efficiency";
 
 export type ImproverPassStatus = "running" | "done" | "failed";
 
@@ -1208,7 +1233,7 @@ export type ImproverPass = {
   pruned: string[];
   /** The candidates it proposed removing; it kept the rest of pruned. */
   prune_proposed: string[];
-  /** The judged runs a daily pass had since the agent's last pass; null for one a pattern started. */
+  /** The judged runs a daily pass had since the agent's last pass, or the good runs an efficiency pass drew from; null for one a pattern started. */
   runs_seen?: number | null;
   status: ImproverPassStatus;
   /** Done before it finished: out of steps, tokens or time, improvement turned off, or its agent gone. */
