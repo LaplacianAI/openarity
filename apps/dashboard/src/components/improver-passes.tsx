@@ -27,7 +27,11 @@ import { cn } from "@/lib/utils";
 
 /** "An efficiency pass, from 34 good runs: the same call made twice · crm__lookup". */
 function EfficiencyWhy({ pass }: { pass: ImproverPass }) {
-  const reasons = pass.signatures.map(efficiencyReason).filter((r) => r !== null);
+  // Each reason with the signature it came from, which a pass names once.
+  const reasons = pass.signatures.flatMap((sig) => {
+    const r = efficiencyReason(sig);
+    return r ? [{ sig, ...r }] : [];
+  });
   return (
     <>
       {pass.runs_seen != null
@@ -35,8 +39,7 @@ function EfficiencyWhy({ pass }: { pass: ImproverPass }) {
         : "An efficiency pass"}
       {reasons.length > 0 ? ": " : null}
       {reasons.map((r, i) => (
-        // A pass names each reason once, so the signature is the key.
-        <Fragment key={pass.signatures[i]}>
+        <Fragment key={r.sig}>
           {i > 0 ? ", " : null}
           {r.words}
           {r.target ? (

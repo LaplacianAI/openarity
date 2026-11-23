@@ -1,6 +1,7 @@
 package improve
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -389,11 +390,12 @@ func TestAnEfficiencyPassProposesOnlyWhatMakesARunDoLess(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"a server grant", efficiencyEdit(runs, "server_grant", map[string]any{"server": "crm"}, "cost"), "an efficiency pass proposes only"},
-		{"a description", efficiencyEdit(runs, "description", map[string]any{"text": "x"}, "cost"), "an efficiency pass proposes only"},
+		{"a server grant", efficiencyEdit(runs, "server_grant", map[string]any{"server": "crm"}, "cost"), "an efficiency change is only"},
+		{"a description", efficiencyEdit(runs, "description", map[string]any{"text": "x"}, "cost"), "an efficiency change is only"},
 		{"a raised limit", efficiencyEdit(runs, "limits", map[string]any{"max_steps": 9}, "cost"), "raises cost"},
 		{"a widened delegation", efficiencyEdit(runs, "delegation", map[string]any{"mode": "team"}, "time"), "widens reach"},
 		{"no saving named", efficiencyEdit(runs, "instructions", replace), "says what it saves"},
+		{"a costlier loop", efficiencyEdit(runs, "pattern", map[string]any{"pattern": "plan"}, "cost"), "only to the react loop"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _ := w.proposeWith(t, im, pass, tc.args, reply{text: screenOKText})
@@ -413,6 +415,26 @@ func TestAnEfficiencyPassProposesOnlyWhatMakesARunDoLess(t *testing.T) {
 	got := w.proposals(t, "waiting")
 	if len(got) != 1 || got[0].Goal != proposals.GoalEfficiency || !slices.Equal(got[0].Saves, []string{"cost", "time"}) {
 		t.Errorf("stored %+v", got)
+	}
+}
+
+// An efficiency pass counts against the team's passes a day: one past the
+// cap is not begun, without an error.
+func TestAnEfficiencyPassCountsAgainstTheDailyCap(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	w.exec(t, `UPDATE team_settings SET improvement_daily_passes = 1 WHERE team_id = $1`, w.team)
+	pass, runs := w.efficiencyPass(t, im)
+	if err := im.done(t.Context(), pass.ID, outcome{}); err != nil {
+		t.Fatal(err)
+	}
+	seen := int32(2)
+	_, err := im.Begin(t.Context(), plannedPass{
+		TeamID: w.team, AgentID: w.agent, Trigger: triggerEfficiency,
+		Keys: []string{"efficiency:spread"}, RunIDs: runs, RunsSeen: &seen,
+	}, uuid.NewString())
+	if !errors.Is(err, errNoPass) {
+		t.Errorf("a pass past the day's cap: %v, want none begun", err)
 	}
 }
 
@@ -453,7 +475,7 @@ func TestAnEfficiencyChangeThatSavedNothingIsFlagged(t *testing.T) {
 	baseline := runsOf(50, 5, 1000, 4000)
 	before := runsOf(10, 1, 1000, 4000)
 	cost := efficiencyRule{on: true, margin: 1, cost: true}
-	time := efficiencyRule{on: true, margin: 1, time: true}
+	quicker := efficiencyRule{on: true, margin: 1, time: true}
 
 	if v := judgeWatch(baseline, before, runsOf(10, 1, 800, 4000), cost); v.status != watchClear {
 		t.Errorf("cheaper good runs: %+v", v)
@@ -461,10 +483,10 @@ func TestAnEfficiencyChangeThatSavedNothingIsFlagged(t *testing.T) {
 	if v := judgeWatch(baseline, before, runsOf(10, 1, 1000, 3000), cost); v.flag != flagNoSaving {
 		t.Errorf("a cost change whose good runs cost the same: %+v", v)
 	}
-	if v := judgeWatch(baseline, before, runsOf(10, 1, 1000, 3000), time); v.status != watchClear {
+	if v := judgeWatch(baseline, before, runsOf(10, 1, 1000, 3000), quicker); v.status != watchClear {
 		t.Errorf("a time change whose good runs got quicker: %+v", v)
 	}
-	if v := judgeWatch(baseline, before, runsOf(10, 1, 800, 4000), time); v.flag != flagNoSaving {
+	if v := judgeWatch(baseline, before, runsOf(10, 1, 800, 4000), quicker); v.flag != flagNoSaving {
 		t.Errorf("a time change judged on tokens: %+v", v)
 	}
 	if v := judgeWatch(baseline, before, runsOf(10, 1, 1000, 4000), efficiencyRule{}); v.status != watchClear {
@@ -473,7 +495,7 @@ func TestAnEfficiencyChangeThatSavedNothingIsFlagged(t *testing.T) {
 	// Runs that failed early and cheap are no saving: only good runs count.
 	failedCheap := windowOf(append(slices.Repeat([]counted{{spent: 1000, workMS: 4000}}, 5),
 		slices.Repeat([]counted{{bad: true}}, 5)...))
-	if cost.saved(before, failedCheap) || time.saved(before, failedCheap) {
+	if cost.saved(before, failedCheap) || quicker.saved(before, failedCheap) {
 		t.Error("failures that spent nothing counted as a saving")
 	}
 }
@@ -500,5 +522,63 @@ func TestAnEfficiencyChangeIsHeldToAStricterBar(t *testing.T) {
 	}
 	if got := saved(3).flagAt(2); got != 1 {
 		t.Errorf("flagAt(2) with margin 3 = %d, want 1", got)
+	}
+}
+
+// A failed call made again is a retry, and not also a repeat; made a third
+// time after succeeding, it is a repeat.
+func TestARetryIsNotARepeat(t *testing.T) {
+	root := uuid.New()
+	retry := []db.ListEfficiencyEventsRow{
+		callEv(root, "1", "crm__lookup", "a"), resultEv(root, "1", "crm__lookup", true, 10),
+		callEv(root, "2", "crm__lookup", "a"), resultEv(root, "2", "crm__lookup", false, 10),
+	}
+	if got := markKeys(runCostOf(root, retry, 0)); !slices.Equal(got, []string{"efficiency:retried_error:crm__lookup"}) {
+		t.Errorf("a retry = %v", got)
+	}
+	again := append(slices.Clone(retry), callEv(root, "3", "crm__lookup", "a"))
+	if got := markKeys(runCostOf(root, again, 0)); !slices.Contains(got, "efficiency:repeated_call:crm__lookup") {
+		t.Errorf("the same call after it succeeded = %v", got)
+	}
+}
+
+// Each reason starts at its bar and not one below: a spread of exactly the
+// team's multiple, a mark in exactly its runs.
+func TestReasonsStartAtTheirBar(t *testing.T) {
+	// 20 runs: the 90th percentile is the 18th; the median the 10th.
+	at := costs(append(slices.Repeat([]int64{100}, 17), 200, 200, 200)...)
+	below := costs(append(slices.Repeat([]int64{100}, 17), 199, 199, 199)...)
+	if got := reasons(at, efficiencyBar{spread: 200, markRuns: 3}); !slices.Equal(got, []string{"efficiency:spread"}) {
+		t.Errorf("exactly 2× = %v", got)
+	}
+	if got := reasons(below, efficiencyBar{spread: 200, markRuns: 3}); len(got) != 0 {
+		t.Errorf("1.99× = %v", got)
+	}
+	marked := costs(slices.Repeat([]int64{100}, 20)...)
+	for i := range 2 {
+		marked[i].marks = []wasteMark{{name: markUnused}}
+	}
+	if got := reasons(marked, efficiencyBar{spread: 200, markRuns: 3}); len(got) != 0 {
+		t.Errorf("a mark in 2 of 3 runs = %v", got)
+	}
+	marked[2].marks = []wasteMark{{name: markUnused}}
+	if got := reasons(marked, efficiencyBar{spread: 200, markRuns: 3}); !slices.Equal(got, []string{"efficiency:unused_tools"}) {
+		t.Errorf("a mark in 3 of 3 runs = %v", got)
+	}
+}
+
+// A saving must show: equal medians are none, and a change naming cost and
+// time needs both to fall.
+func TestASavingMustShowInFull(t *testing.T) {
+	before := runsOf(10, 0, 1000, 4000)
+	both := efficiencyRule{on: true, cost: true, time: true}
+	if both.saved(before, runsOf(10, 0, 1000, 3000)) {
+		t.Error("equal tokens counted as a cost saving")
+	}
+	if both.saved(before, runsOf(10, 0, 900, 4000)) {
+		t.Error("a change naming cost and time saved on cost alone")
+	}
+	if !both.saved(before, runsOf(10, 0, 900, 3000)) {
+		t.Error("cheaper and quicker runs were not a saving")
 	}
 }

@@ -57,6 +57,13 @@ func Create(ctx context.Context, q *db.Queries, n Proposed) (db.ImprovementPropo
 	if err != nil {
 		return db.ImprovementProposal{}, err
 	}
+	if goal == GoalEfficiency {
+		// Held here, not only by the improver, so no caller stores an
+		// efficiency change that does more.
+		if err := CheckEfficiency(n.Kind, n.Before, n.After); err != nil {
+			return db.ImprovementProposal{}, err
+		}
+	}
 	for _, s := range []*SkillState{n.Before.Skill, n.After.Skill} {
 		if s == nil {
 			continue

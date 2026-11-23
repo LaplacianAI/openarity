@@ -34,7 +34,7 @@ tool_note {server, tool, note}: an empty note removes it.
 limits {max_tokens?, max_steps?, steer_continuations?, token_budget?}.
 delegation {mode?: none, listed or team, add?: [agents], remove?: [agents]}.
 pattern {pattern}.
-On an efficiency pass, saves is cost, time or both, and only the kinds that make a run do less are taken.
+On an efficiency pass, saves is cost, time or both, and only the kinds that make a run do less are taken; a pattern only to react.
 The answer says whether it was stored, or why not; a refusal can be corrected and proposed again.`
 
 var proposeSchema = schemaJSON(obj{
@@ -64,14 +64,6 @@ type proposeArgs struct {
 	Scope      string          `json:"scope"`
 	Edit       json.RawMessage `json:"edit"`
 	Saves      []string        `json:"saves"`
-}
-
-// The kinds an efficiency pass may propose: those that can make a run do
-// less. A limit only lowered, a delegation only narrowed and a skill edit
-// without a script are held to that by their marks.
-var efficiencyKinds = []string{
-	"instructions", "tool_note", "tools_narrow", "skill_drop",
-	"limits", "delegation", "pattern", "skill_edit",
 }
 
 // refusal is a proposal the brain will not store, said to the model so it
@@ -204,10 +196,9 @@ func (t *passTools) parse(raw json.RawMessage) (proposeArgs, []uuid.UUID, error)
 // change to a target a pass.
 func (t *passTools) guard(ctx context.Context, n proposals.Proposed) error {
 	if t.pass.Trigger == triggerEfficiency {
-		for _, m := range proposals.Marks(n.Kind, n.Before, n.After) {
-			if slices.Contains(widening, m) {
-				return refused("an efficiency change makes a run do less, and this one %s", strings.ReplaceAll(m, "_", " "))
-			}
+		// Create holds it to this too; said here first, with the rest.
+		if err := proposals.CheckEfficiency(n.Kind, n.Before, n.After); err != nil {
+			return err
 		}
 	}
 	if n.Outsider {
@@ -324,8 +315,8 @@ func (t *passTools) efficiencyKind(in proposeArgs) error {
 		}
 		return nil
 	}
-	if !slices.Contains(efficiencyKinds, in.Kind) {
-		return refused("an efficiency pass proposes only %s: %s could widen what the agent does", strings.Join(efficiencyKinds, ", "), in.Kind)
+	if !slices.Contains(proposals.EfficiencyKinds, proposals.Kind(in.Kind)) {
+		return proposals.CheckEfficiency(proposals.Kind(in.Kind), proposals.Snapshot{}, proposals.Snapshot{})
 	}
 	if len(in.Saves) == 0 {
 		return refused("an efficiency change says what it saves: cost, time or both")

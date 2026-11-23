@@ -77,6 +77,13 @@ func TestEfficiencyMigratesAndRollsBack(t *testing.T) {
 	if err := exec(`UPDATE improver_passes SET trigger = 'efficiency' WHERE workflow_id = 'w1'`); err != nil {
 		t.Errorf("an efficiency pass: %v", err)
 	}
+	if err := exec(`UPDATE improvement_proposals SET status = 'applied', decided_at = now() WHERE id = $1`, proposal); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec(`INSERT INTO improvement_watches (proposal_id, team_id, agent_ids, started_at, status, flag, finished_at)
+		VALUES ($1, $2, ARRAY[$3::uuid], now(), 'flagged', 'no_saving', now())`, proposal, team, agent); err != nil {
+		t.Fatalf("a no_saving watch: %v", err)
+	}
 
 	if _, err := p.DownTo(t.Context(), dailyPassRuns); err != nil {
 		t.Fatalf("DownTo(%d): %v", dailyPassRuns, err)
@@ -90,10 +97,20 @@ func TestEfficiencyMigratesAndRollsBack(t *testing.T) {
 	if scalar[string](t, s, `SELECT trigger FROM improver_passes WHERE workflow_id = 'w1'`) != "daily" {
 		t.Error("an efficiency pass was not rolled back to one the old check knows")
 	}
+	if scalar[string](t, s, `SELECT flag FROM improvement_watches WHERE proposal_id = $1`, proposal) != "costlier" {
+		t.Error("a no_saving flag was not rolled back to costlier")
+	}
 	if err := exec(`UPDATE improver_passes SET trigger = 'efficiency' WHERE workflow_id = 'w1'`); err == nil {
 		t.Error("the rolled-back check takes an efficiency pass")
 	}
 	if scalar[bool](t, s, `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'run_work_ms')`) {
 		t.Error("run_work_ms outlived its rollback")
+	}
+	// And up again, over the rows the Down rewrote.
+	if _, err := p.UpTo(t.Context(), addEfficiency); err != nil {
+		t.Fatalf("UpTo(%d) again: %v", addEfficiency, err)
+	}
+	if scalar[string](t, s, `SELECT goal FROM improvement_proposals WHERE id = $1`, proposal) != "quality" {
+		t.Error("migrating up again did not make the proposal a quality change")
 	}
 }

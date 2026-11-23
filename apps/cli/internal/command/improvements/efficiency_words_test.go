@@ -11,12 +11,16 @@ import (
 // that saved nothing is said in words.
 func TestEfficiencyIsSaidInWords(t *testing.T) {
 	n := int32(34)
-	p := &client.ImproverPass{Trigger: client.ImproverPassTriggerEfficiency, RunsSeen: &n}
-	if got := triggerCell(p); got != "efficiency, from 34 good runs" {
-		t.Errorf("trigger = %q", got)
+	p := &client.ImproverPass{
+		Trigger: client.ImproverPassTriggerEfficiency, RunsSeen: &n,
+		Signatures: []string{"efficiency:repeated_call:crm__lookup", "efficiency:spread", "efficiency:long_tool_wait:x\x1b[2Jy"},
+	}
+	got := triggerCell(p)
+	if !strings.HasPrefix(got, "efficiency, from 34 good runs: repeated call crm__lookup, spread, long tool wait ") || strings.Contains(got, "\x1b") {
+		t.Errorf("trigger = %q, want the reasons in words and the escape made safe", got)
 	}
 	flag := "no_saving"
-	if got := flagWords(&flag); !strings.Contains(got, "did not get cheaper or quicker") {
+	if got := flagWords(&flag, []string{"time"}); !strings.Contains(got, "did not get quicker,") {
 		t.Errorf("flag = %q", got)
 	}
 	ms := int64(41_000)

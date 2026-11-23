@@ -13,10 +13,13 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-// The efficiency pass, approved in the I5 design. How many runs, over how
+// The efficiency pass: the improver looking at an agent whose runs go well
+// but whose costliest spend far more than the rest. How many runs, over how
 // many days, how wide a spread and how many runs a waste mark needs are each
 // team's settings; what a waste mark is stays fixed, as it says what a run
-// shows rather than how much a team wants.
+// shows rather than how much a team wants. The dashboard's Team settings
+// say these thresholds in words (apps/dashboard/src/lib/efficiency-settings.ts):
+// change both together.
 const (
 	triggerEfficiency = "efficiency"
 	efficiencyPrefix  = "efficiency:"
@@ -129,9 +132,13 @@ func runCostOf(root uuid.UUID, events []db.ListEfficiencyEventsRow, maxSteps int
 		run       uuid.UUID
 		name, arg string
 	}
+	type callID struct {
+		run uuid.UUID
+		id  string
+	}
 	made := map[call]int{}
 	failed := map[call]bool{}
-	byID := map[[2]string]call{}
+	byID := map[callID]call{}
 	calledRoot, calledTree := map[string]bool{}, map[string]bool{}
 	marks := map[wasteMark]bool{}
 	rootSteps := 0
@@ -148,14 +155,15 @@ func runCostOf(root uuid.UUID, events []db.ListEfficiencyEventsRow, maxSteps int
 			}
 		case "tool_call":
 			k := call{e.RunID, e.Name, e.ArgsHash}
+			// A call made again after it failed is a retry, not a repeat:
+			// each is its own mark, and one call is counted once.
 			if failed[k] {
 				marks[wasteMark{markRetried, e.Name}] = true
-			}
-			made[k]++
-			if made[k] == 2 {
+				delete(failed, k)
+			} else if made[k]++; made[k] == 2 {
 				marks[wasteMark{markRepeated, e.Name}] = true
 			}
-			byID[[2]string{e.RunID.String(), e.CallID}] = k
+			byID[callID{e.RunID, e.CallID}] = k
 			calledTree[e.Name] = true
 			if e.RunID == root {
 				calledRoot[e.Name] = true
@@ -165,7 +173,7 @@ func runCostOf(root uuid.UUID, events []db.ListEfficiencyEventsRow, maxSteps int
 			if time.Duration(e.DurationMs)*time.Millisecond > longToolWait {
 				marks[wasteMark{markLongWait, e.Name}] = true
 			}
-			if k, ok := byID[[2]string{e.RunID.String(), e.CallID}]; ok && e.Failed {
+			if k, ok := byID[callID{e.RunID, e.CallID}]; ok && e.Failed {
 				failed[k] = true
 			}
 		}
@@ -330,21 +338,21 @@ func (im *Improver) digestParts(ctx context.Context, runs []runCost) (map[uuid.U
 	return parts, nil
 }
 
-// goodCosts is what each good run among rows cost and did.
-func (im *Improver) goodCosts(ctx context.Context, rows []costRow, maxSteps int32) ([]runCost, error) {
-	good := slices.DeleteFunc(slices.Clone(rows), func(r costRow) bool { return !r.good() })
-	if len(good) == 0 {
+// costsOf is what each of rows cost and did, read from its events. The
+// caller chooses the rows: a sweep its good runs, a pass the ones it was given.
+func (im *Improver) costsOf(ctx context.Context, rows []costRow, maxSteps int32) ([]runCost, error) {
+	if len(rows) == 0 {
 		return nil, nil
 	}
-	ids := make([]uuid.UUID, len(good))
-	for i, r := range good {
+	ids := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
 		ids[i] = r.id
 	}
 	events, err := im.store.ListEfficiencyEvents(ctx, ids)
 	if err != nil {
 		return nil, fmt.Errorf("reading what the runs did: %w", err)
 	}
-	return measure(good, events, maxSteps), nil
+	return measure(rows, events, maxSteps), nil
 }
 
 // efficiencyPlan is the pass an agent's good runs call for, when they do:
@@ -360,10 +368,11 @@ func (im *Improver) efficiencyPlan(ctx context.Context, a db.ListEfficiencyAgent
 	for i, r := range rows {
 		cr[i] = costRow{id: r.ID, at: r.CreatedAt, verdict: r.Verdict, up: r.Up, down: r.Down, spent: r.Spent, workMS: r.WorkMs}
 	}
-	if countGood(cr) < int(a.MinRuns) {
+	good := slices.DeleteFunc(cr, func(r costRow) bool { return !r.good() })
+	if len(good) < int(a.MinRuns) {
 		return plannedPass{}, false, nil
 	}
-	costs, err := im.goodCosts(ctx, cr, a.MaxSteps)
+	costs, err := im.costsOf(ctx, good, a.MaxSteps)
 	if err != nil {
 		return plannedPass{}, false, err
 	}
@@ -383,16 +392,6 @@ func (im *Improver) efficiencyPlan(ctx context.Context, a db.ListEfficiencyAgent
 	}
 	seen := int32(len(costs)) //nolint:gosec // G115: at most efficiencyRunsRead
 	return plannedPass{TeamID: a.TeamID, AgentID: a.ID, Trigger: triggerEfficiency, Keys: keys, RunIDs: ids, RunsSeen: &seen}, true, nil
-}
-
-func countGood(rows []costRow) int {
-	n := 0
-	for _, r := range rows {
-		if r.good() {
-			n++
-		}
-	}
-	return n
 }
 
 // writeEfficiency is what an efficiency pass reads beside the agent: why it
@@ -416,13 +415,13 @@ func (im *Improver) writeEfficiency(ctx context.Context, pass db.ImproverPass, m
 	if err != nil {
 		return fmt.Errorf("reading the cost of pass %s's runs: %w", pass.ID, err)
 	}
+	// Every run it was given, chosen as good when it was planned, whatever
+	// a later vote says.
 	cr := make([]costRow, len(rows))
 	for i, r := range rows {
-		// Chosen as good: read as good whatever a later vote says, so the
-		// pass sees every run it was given.
-		cr[i] = costRow{id: r.ID, at: r.CreatedAt, verdict: verdictDone, spent: r.Spent, workMS: r.WorkMs}
+		cr[i] = costRow{id: r.ID, at: r.CreatedAt, verdict: r.Verdict, up: r.Up, down: r.Down, spent: r.Spent, workMS: r.WorkMs}
 	}
-	costs, err := im.goodCosts(ctx, cr, m.state.Agent.MaxSteps)
+	costs, err := im.costsOf(ctx, cr, m.state.Agent.MaxSteps)
 	if err != nil {
 		return err
 	}

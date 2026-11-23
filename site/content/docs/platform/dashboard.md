@@ -122,13 +122,15 @@ agent with a pattern still open, a change waiting, or a change still watched or
 flagged is left alone. The pass reads the costliest good runs beside cheap ones
 on requests like them, and may only propose what makes a run do less: an
 instruction, a tool note, a narrower tool list, a dropped skill, a lower limit,
-a narrower delegation, a pattern, or a skill edit without a script. It never
-proposes a different model. Its proposals are marked **Saves cost** or **Saves
+a narrower delegation, a move to the plain ReAct loop, or a skill edit without a
+script. It never proposes a different model. An efficiency pass counts against
+the team's passes a day; one past the cap waits for the next week. Its proposals are marked **Saves cost** or **Saves
 time**. Once applied, such a change is flagged as worse a number of bad runs
 sooner than any other (one until changed), and flagged **no saving** when the
 median tokens or work time of its good runs, whichever it aimed at, did not
-fall; its card shows both. Each of these numbers is a team setting, explained
-beside its field.
+fall, both of them for a change aimed at both; its card shows both. Each of
+these numbers is a team setting, explained beside its field, and a change to the
+margin applies to changes still being watched.
 
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to

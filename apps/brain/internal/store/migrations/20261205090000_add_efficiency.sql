@@ -42,8 +42,13 @@ ALTER TABLE improvement_watches
 
 -- How long a run's tree spent working, in milliseconds: the gaps between its
 -- events in the order they were written, leaving out a gap that ends in a
--- run resuming, which is time spent waiting for a person's approval. The
--- watch and the efficiency sweep both count it here, so they agree.
+-- run resuming. That is mostly time spent waiting for a person's approval;
+-- a run taken over by another worker after its first was lost also resumes,
+-- and that wait is not the agent's work either. Events of one tree written
+-- in the same instant fall back to run and sequence order; their gap is
+-- nothing either way. The watch and the efficiency sweep both count it here,
+-- so they agree. It reads one tree's events by the runs' root index and the
+-- events' primary key, so it costs what that tree's events are.
 -- +goose StatementBegin
 CREATE FUNCTION run_work_ms(root uuid) RETURNS bigint
 LANGUAGE sql STABLE AS $$
@@ -62,9 +67,10 @@ SET LOCAL lock_timeout = '3s';
 
 DROP FUNCTION run_work_ms(uuid);
 
--- The flag and trigger the earlier checks know nothing of become the
--- nearest they do: a change that saved nothing was flagged on its cost, and
--- an efficiency pass ran on the same schedule's terms as a daily one.
+-- This Down loses what the earlier checks cannot hold, and says so: a
+-- no_saving flag becomes costlier (the nearest, as it was flagged on what
+-- the change spent), and an efficiency pass becomes daily. Migrating up again
+-- does not bring either back. Proposals lose their goal and saving.
 UPDATE improvement_watches SET flag = 'costlier' WHERE flag = 'no_saving';
 ALTER TABLE improvement_watches
     DROP COLUMN after_work_ms,

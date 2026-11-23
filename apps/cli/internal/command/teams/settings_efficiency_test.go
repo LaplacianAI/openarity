@@ -23,7 +23,7 @@ func TestSettingsShowDisplaysTheEfficiencyPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
-	for _, want := range []string{"efficiency pass", "20 good runs in 14 days", "costliest 1.5×", "waste mark in 3 runs", "1 bad run(s) sooner"} {
+	for _, want := range []string{"efficiency pass", "20 good runs in 14 days", "costliest 1.5×", "waste mark in 3 runs", "flagged worse 1 bad run sooner"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

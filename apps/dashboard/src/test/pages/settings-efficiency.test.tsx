@@ -6,7 +6,8 @@ import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
 import { brain, showAt, team } from "@/test/brain";
 
-const { Route, draftOf, isDirty, settingsRequest, spreadOf } = await import("@/routes/ui.settings");
+const { Route, draftOf, isDirty, settingsRequest } = await import("@/routes/ui.settings");
+const { spreadOf } = await import("@/lib/efficiency-settings");
 await (Route.options.component as { preload?: () => Promise<void> }).preload?.();
 
 afterEach(() => {
@@ -61,6 +62,7 @@ describe("the spread", () => {
     ["1.25", 125],
     [" 2× ", 200],
     ["10x", 1000],
+    ["1,5", 150],
   ])("reads %j as %d percent", (raw, pct) => {
     expect(spreadOf(raw)).toBe(pct);
   });
@@ -118,18 +120,31 @@ describe("the request", () => {
   });
 
   it.each([
-    [{ effRuns: "9" }, /Good runs needed must be a whole number from 10 to 500/],
+    [{ effRuns: "9" }, /Good runs needed: a whole number from 10 to 500/],
     [{ effRuns: "501" }, /10 to 500/],
-    [{ effDays: "6" }, /Days to look back must be a whole number from 7 to 60/],
+    [{ effDays: "6" }, /Days to look back: a whole number from 7 to 60/],
     [{ effDays: "61" }, /7 to 60/],
     [{ effMarkRuns: "1" }, /2 to 50/],
     [{ effMarkRuns: "51" }, /2 to 50/],
     [{ effSpread: "1.2" }, /1.25 to 10/],
     [{ effSpread: "11" }, /1.25 to 10/],
     [{ effSpread: "lots" }, /1.25 to 10/],
-    [{ effRuns: "10", effMarkRuns: "12" }, /cannot be more than the good runs needed, 10/],
+    [{ effRuns: "10", effMarkRuns: "12" }, /no more than the good runs needed, 10/],
   ])("refuses %j, saying why", (patch, why) => {
     expect(settingsRequest({ ...draftOf(EFFICIENT), ...patch }, EFFICIENT)).toMatch(why);
+  });
+
+  it("says nothing of numbers hidden while the pass is off, and sends none of them", () => {
+    const body = settingsRequest(
+      { ...draftOf(EFFICIENT), efficiency: false, effRuns: "5" },
+      EFFICIENT,
+    );
+    expect(body).toMatchObject({ improvement_efficiency: false });
+    expect(body).not.toHaveProperty("improvement_efficiency_runs");
+  });
+
+  it("reads a margin the page does not offer as the default", () => {
+    expect(draftOf({ ...EFFICIENT, improvement_efficiency_margin: 7 }).effMargin).toBe("1");
   });
 });
 
@@ -171,6 +186,9 @@ describe("the page", () => {
     await userEvent.click(within(section()).getByRole("button", { name: "Save" }));
     expect(await within(section()).findByRole("alert")).toHaveTextContent(/10 to 500/);
     expect(seen.some((x) => x.method === "PUT")).toBe(false);
+    // The field itself says what is wrong, and is marked invalid.
+    expect(runs).toHaveAttribute("aria-invalid", "true");
+    expect(runs).toHaveAccessibleDescription(/A whole number from 10 to 500/);
 
     await userEvent.clear(runs);
     await userEvent.type(runs, "40");

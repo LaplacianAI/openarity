@@ -32,6 +32,7 @@ import type {
 } from "@/api/types";
 import { Choice, type ChoiceGroup, chosen, Segments } from "@/components/choices";
 import { DeleteTeamDialog } from "@/components/delete-team-dialog";
+import { EfficiencyFields } from "@/components/efficiency-settings";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { ErrorState } from "@/components/states";
@@ -40,6 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SwitchField } from "@/components/ui/switch";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
+import { Unit } from "@/components/unit-input";
 import { LeaveGuard } from "@/components/unsaved";
 import { NO_MODEL } from "@/lib/ask";
 import {
@@ -57,6 +59,12 @@ import {
   TOKENS,
   tidied,
 } from "@/lib/compaction";
+import {
+  type EfficiencyDraft,
+  efficiencyDraftOf,
+  efficiencyRequest,
+  spreadOf,
+} from "@/lib/efficiency-settings";
 import { cn } from "@/lib/utils";
 import { waitWords } from "@/lib/wait";
 
@@ -238,7 +246,7 @@ function DangerZone({ teamId, teamName }: { teamId: string; teamName: string }) 
   );
 }
 
-export type SettingsDraft = {
+export type SettingsDraft = EfficiencyDraft & {
   modelOn: boolean;
   modelName: string;
   maxTokens: string;
@@ -284,15 +292,6 @@ export type SettingsDraft = {
   passMinutes: string;
   /** The judged runs a daily pass waits for, as typed. */
   dailyRuns: string;
-  /** Whether the weekly efficiency pass runs. */
-  efficiency: boolean;
-  /** Its numbers as typed: good runs, days, the spread as a multiple ("2" for 2×), runs a sign needs. */
-  effRuns: string;
-  effDays: string;
-  effSpread: string;
-  effMarkRuns: string;
-  /** Bad runs sooner an efficiency change is flagged, "0" to "3". */
-  effMargin: Margin;
   /** Messages, and the token lines, as typed: compared by value. */
   compaction: string;
   tokensMin: string;
@@ -333,12 +332,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     passTokens: grouped(s.improvement_pass_tokens ?? 400_000),
     passMinutes: String(s.improvement_pass_minutes ?? 20),
     dailyRuns: String(s.improvement_daily_runs ?? 5),
-    efficiency: s.improvement_efficiency ?? false,
-    effRuns: String(s.improvement_efficiency_runs ?? EFFICIENCY.runs.start),
-    effDays: String(s.improvement_efficiency_days ?? EFFICIENCY.days.start),
-    effSpread: String((s.improvement_efficiency_spread ?? EFFICIENCY.spread.start) / 100),
-    effMarkRuns: String(s.improvement_efficiency_mark_runs ?? EFFICIENCY.markRuns.start),
-    effMargin: String(s.improvement_efficiency_margin ?? 1) as Margin,
+    ...efficiencyDraftOf(s),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -585,7 +579,6 @@ function improvementRequest(
       | "improvement_pass_tokens"
       | "improvement_pass_minutes"
       | "improvement_daily_runs"
-      | EfficiencyKey
     >
   | string {
   const base = draftOf(stored);
@@ -597,7 +590,6 @@ function improvementRequest(
     | "improvement_pass_tokens"
     | "improvement_pass_minutes"
     | "improvement_daily_runs"
-    | EfficiencyKey
   > = {};
   const judgeChanged = (
     ["judgeOn", "judgeName", "judgeMaxTokens", "judgeTemperature"] as const
@@ -652,175 +644,6 @@ function improvementRequest(
   const efficiency = efficiencyRequest(d, base);
   if (typeof efficiency === "string") return efficiency;
   return { ...out, ...efficiency };
-}
-
-/** The settings of the weekly efficiency pass, as the brain names them. */
-type EfficiencyKey =
-  | "improvement_efficiency"
-  | "improvement_efficiency_runs"
-  | "improvement_efficiency_days"
-  | "improvement_efficiency_spread"
-  | "improvement_efficiency_mark_runs"
-  | "improvement_efficiency_margin";
-
-/** Bad runs sooner an efficiency change is flagged. */
-type Margin = "0" | "1" | "2" | "3";
-
-/** The efficiency pass's ranges and defaults, as the brain holds them. */
-const EFFICIENCY = {
-  runs: { min: 10, max: 500, start: 20 },
-  days: { min: 7, max: 60, start: 14 },
-  /** In percent of the usual run: 200 is twice. */
-  spread: { min: 125, max: 1000, start: 200 },
-  markRuns: { min: 2, max: 50, start: 3 },
-} as const;
-
-const MARGINS: readonly { value: Margin; label: string }[] = [
-  { value: "0", label: "As strictly as any change" },
-  { value: "1", label: "1 bad run sooner" },
-  { value: "2", label: "2 bad runs sooner" },
-  { value: "3", label: "3 bad runs sooner" },
-];
-
-/** A spread typed as a multiple, "2" or "1.5×", in percent; null when it is not one. */
-export function spreadOf(raw: string): number | null {
-  const t = raw.trim().replace(/[×x]$/i, "").trim();
-  if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;
-  return Math.round(Number(t) * 100);
-}
-
-/** What the efficiency pass's Save sends: each value that changed, checked as the brain checks it. */
-function efficiencyRequest(
-  d: SettingsDraft,
-  base: SettingsDraft,
-): Pick<TeamSettingsRequest, EfficiencyKey> | string {
-  const out: Pick<TeamSettingsRequest, EfficiencyKey> = {};
-  if (d.efficiency !== base.efficiency) out.improvement_efficiency = d.efficiency;
-  const counts = [
-    ["effRuns", "improvement_efficiency_runs", EFFICIENCY.runs, "Good runs needed"],
-    ["effDays", "improvement_efficiency_days", EFFICIENCY.days, "Days to look back"],
-    [
-      "effMarkRuns",
-      "improvement_efficiency_mark_runs",
-      EFFICIENCY.markRuns,
-      "Runs a sign of waste needs",
-    ],
-  ] as const;
-  for (const [field, key, range, name] of counts) {
-    if (parseWhole(d[field]) === parseWhole(base[field])) continue;
-    const n = wholeNumber(d[field]);
-    if (n === null || n < range.min || n > range.max) {
-      return `${name} must be a whole number from ${range.min} to ${range.max}.`;
-    }
-    out[key] = n;
-  }
-  const runs = wholeNumber(d.effRuns) ?? EFFICIENCY.runs.start;
-  const marks = wholeNumber(d.effMarkRuns) ?? EFFICIENCY.markRuns.start;
-  if (marks > runs) {
-    return `Runs a sign of waste needs, ${marks}, cannot be more than the good runs needed, ${runs}.`;
-  }
-  if (spreadOf(d.effSpread) !== spreadOf(base.effSpread)) {
-    const pct = spreadOf(d.effSpread);
-    if (pct === null || pct < EFFICIENCY.spread.min || pct > EFFICIENCY.spread.max) {
-      return "Costliest runs against the usual must be a number from 1.25 to 10, such as 2 for twice.";
-    }
-    out.improvement_efficiency_spread = pct;
-  }
-  if (d.effMargin !== base.effMargin) out.improvement_efficiency_margin = Number(d.effMargin);
-  return out;
-}
-
-/**
- * The weekly efficiency pass: its switch, and once it is on, the numbers that
- * decide which agents it looks at and how strictly their changes are watched.
- * Each says what it does in plain words, for a reader new to it.
- */
-function EfficiencyFields({
-  draft,
-  onChange,
-}: {
-  draft: SettingsDraft;
-  onChange: (patch: Partial<SettingsDraft>) => void;
-}) {
-  return (
-    <div className="space-y-4 border-t border-rule pt-4">
-      <SwitchField
-        label="Also make good runs cheaper and faster"
-        description="Once a week, on Sunday morning (UTC), the improver looks at agents whose runs go well but whose costliest runs spend far more tokens or time than their usual one. It proposes the smallest change that would bring those down, never a bigger model or more access, and an approver decides. An agent with a weakness still open, or a change still waiting or being watched, is left alone until that is settled."
-        checked={draft.efficiency}
-        onCheckedChange={(efficiency) => onChange({ efficiency })}
-      />
-      {draft.efficiency ? (
-        <div className="grid items-start gap-3 sm:grid-cols-2">
-          <Field
-            label="Good runs needed"
-            htmlFor="settings-eff-runs"
-            hint={`An agent is looked at only once it has had this many runs judged good in the days below. More runs make the comparison fairer; fewer let a quiet agent be looked at sooner. From ${EFFICIENCY.runs.min} to ${EFFICIENCY.runs.max}.`}
-          >
-            <Input
-              id="settings-eff-runs"
-              inputMode="numeric"
-              autoComplete="off"
-              className="max-w-40 tabular-nums"
-              value={draft.effRuns}
-              onChange={(e) => onChange({ effRuns: e.target.value })}
-            />
-          </Field>
-          <Field
-            label="Days to look back"
-            htmlFor="settings-eff-days"
-            hint={`How far back the weekly look counts runs and compares the costly ones with the cheap. From ${EFFICIENCY.days.min} to ${EFFICIENCY.days.max} days.`}
-          >
-            <Unit
-              id="settings-eff-days"
-              unit="days"
-              value={draft.effDays}
-              onChange={(effDays) => onChange({ effDays })}
-            />
-          </Field>
-          <Field
-            label="Costliest runs, against the usual"
-            htmlFor="settings-eff-spread"
-            hint="An agent is looked at when its costliest tenth of good runs costs at least this many times its usual run, in tokens or in time. 2 means twice. From 1.25 to 10."
-          >
-            <Unit
-              id="settings-eff-spread"
-              unit="×"
-              decimal
-              value={draft.effSpread}
-              onChange={(effSpread) => onChange({ effSpread })}
-            />
-          </Field>
-          <Field
-            label="Runs a sign of waste needs"
-            htmlFor="settings-eff-marks"
-            hint={`A sign of waste is something a run's record shows by itself: the same call made twice, a failed call made again, twenty or more tools offered and two or fewer used, a run close to its step limit, or a tool that took over 30 seconds. An agent is also looked at when one sign shows in this many good runs. From ${EFFICIENCY.markRuns.min} to ${EFFICIENCY.markRuns.max}, and no more than the good runs needed.`}
-          >
-            <Input
-              id="settings-eff-marks"
-              inputMode="numeric"
-              autoComplete="off"
-              className="max-w-40 tabular-nums"
-              value={draft.effMarkRuns}
-              onChange={(e) => onChange({ effMarkRuns: e.target.value })}
-            />
-          </Field>
-          <Field
-            label="Watch these changes more strictly"
-            htmlFor="settings-eff-margin"
-            hint="Every applied change is watched over its next 10 runs and flagged for a person if too many go wrong. A change meant only to save should make nothing worse, so it can be flagged sooner. It is also flagged when the saving it promised does not show."
-          >
-            <Choice
-              id="settings-eff-margin"
-              value={draft.effMargin}
-              options={MARGINS}
-              onChange={(effMargin) => onChange({ effMargin })}
-            />
-          </Field>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 /** What the page starts a size from when the team has none of its own. */
@@ -1175,45 +998,6 @@ function Notice({ children }: { children: ReactNode }) {
       <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
       <span>{children}</span>
     </p>
-  );
-}
-
-/** A number with its unit after it, muted, and figures that line up. */
-function Unit({
-  id,
-  unit,
-  value,
-  onChange,
-  decimal,
-  ...aria
-}: {
-  id: string;
-  unit: string;
-  value: string;
-  onChange: (next: string) => void;
-  decimal?: boolean;
-  "aria-label"?: string;
-  "aria-describedby"?: string;
-  "aria-invalid"?: boolean;
-}) {
-  return (
-    <div className="relative w-full max-w-40">
-      <Input
-        id={id}
-        inputMode={decimal ? "decimal" : "numeric"}
-        autoComplete="off"
-        className="pr-20 tabular-nums"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        {...aria}
-      />
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
-      >
-        {unit}
-      </span>
-    </div>
   );
 }
 
@@ -2040,7 +1824,11 @@ function SettingsForm({
                 />
               </Field>
             </div>
-            <EfficiencyFields draft={draft} onChange={(patch) => set("improvement", patch)} />
+            <EfficiencyFields
+              draft={draft}
+              onChange={(patch) => set("improvement", patch)}
+              showProblems={problem?.group === "improvement"}
+            />
           </>
         ) : null}
       </Section>

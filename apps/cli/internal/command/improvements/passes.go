@@ -19,11 +19,27 @@ func triggerCell(p *client.ImproverPass) string {
 	case client.ImproverPassTriggerDaily:
 		return "daily"
 	case client.ImproverPassTriggerEfficiency:
+		why := "efficiency"
 		if p.RunsSeen != nil {
-			return "efficiency, from " + strconv.Itoa(int(*p.RunsSeen)) + " good runs"
+			why += ", from " + strconv.Itoa(int(*p.RunsSeen)) + " good runs"
 		}
-		return "efficiency"
+		// Each reason as efficiency:<mark>[:<target>]; a target is a tool's
+		// name from a run, so it is made safe for the terminal.
+		var reasons []string
+		for _, s := range p.Signatures {
+			mark, target, _ := strings.Cut(strings.TrimPrefix(s, "efficiency:"), ":")
+			r := strings.ReplaceAll(mark, "_", " ")
+			if target != "" {
+				r += " " + cli.Safe(target)
+			}
+			reasons = append(reasons, r)
+		}
+		if len(reasons) > 0 {
+			why += ": " + strings.Join(reasons, ", ")
+		}
+		return why
 	case client.ImproverPassTriggerPattern:
+		// Said below, with its signatures.
 	}
 	if len(p.Signatures) == 0 {
 		return "pattern"

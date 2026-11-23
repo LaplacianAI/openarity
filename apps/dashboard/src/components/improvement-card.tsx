@@ -180,7 +180,15 @@ function Change({ change }: { change: ImprovementChange }) {
  * rate, cost, the pattern it targeted, votes and what was applied beside it.
  * A flag is said in words and marked with an icon, never by colour alone.
  */
-function Watch({ watch, goal }: { watch: ImprovementWatch; goal: Improvement["goal"] }) {
+function Watch({
+  watch,
+  goal,
+  saves,
+}: {
+  watch: ImprovementWatch;
+  goal: Improvement["goal"];
+  saves: Improvement["saves"];
+}) {
   const flagged = watch.status === "flagged";
   const cost = costWords(watch, goal);
   const time = goal === "efficiency" ? timeWords(watch) : null;
@@ -203,7 +211,7 @@ function Watch({ watch, goal }: { watch: ImprovementWatch; goal: Improvement["go
         ) : (
           <Eye aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span>{watchHeadline(watch)}</span>
+        <span>{watchHeadline(watch, saves)}</span>
       </p>
       {watch.status !== "watching" || watch.after.runs > 0 ? (
         <ul className="space-y-0.5 pl-5 text-muted-foreground">
@@ -386,7 +394,7 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
         ))}
       </div>
 
-      {item.watch ? <Watch watch={item.watch} goal={item.goal} /> : null}
+      {item.watch ? <Watch watch={item.watch} goal={item.goal} saves={item.saves} /> : null}
 
       {item.runs.length > 0 ? (
         <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">

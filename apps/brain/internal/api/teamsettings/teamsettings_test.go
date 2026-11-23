@@ -1478,6 +1478,22 @@ func TestTheEfficiencySettings(t *testing.T) {
 	if len(e.store.upserts) != saved {
 		t.Error("refused efficiency settings were saved")
 	}
+	// Runs lowered alone under the stored mark runs is refused, not left to
+	// the database's check.
+	e.save(t, `{`+improveBase+`,"improvement_efficiency_mark_runs":15}`)
+	saved = len(e.store.upserts)
+	if rec := e.save(t, `{`+improveBase+`,"improvement_efficiency_runs":10}`); rec.Code != http.StatusBadRequest ||
+		!strings.Contains(rec.Body.String(), "improvement_efficiency_mark_runs") {
+		t.Errorf("runs under the stored mark runs = %d %q, want 400", rec.Code, rec.Body)
+	}
+	for _, bad := range []string{`"improvement_efficiency_spread":"200"`, `"improvement_efficiency_margin":1.5`, `"improvement_efficiency_spread":70000`, `"improvement_efficiency":"yes"`} {
+		if rec := e.save(t, `{`+improveBase+`,`+bad+`}`); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d %q, want 400", bad, rec.Code, rec.Body)
+		}
+	}
+	if len(e.store.upserts) != saved {
+		t.Error("a refused save was written")
+	}
 	// Held to the runs stored, 40, not the default: 30 is fine.
 	if got := decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_efficiency_mark_runs":30}`)); got.ImprovementEfficiencyMarkRuns != 30 {
 		t.Errorf("mark runs under the stored runs = %d, want 30", got.ImprovementEfficiencyMarkRuns)

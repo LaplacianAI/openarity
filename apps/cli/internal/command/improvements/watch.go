@@ -2,6 +2,7 @@ package improvements
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ type watchView struct {
 	FinishedAt   *time.Time `json:"finished_at" yaml:"finished_at"`
 	ClearedBy    *string    `json:"cleared_by" yaml:"cleared_by"`
 	ClearedAt    *time.Time `json:"cleared_at" yaml:"cleared_at"`
+	// saves is what the change aimed to save, from the proposal: what a
+	// no_saving flag is said by. Printed with the proposal, not here.
+	saves []string
 }
 
 type sideView struct {
@@ -68,8 +72,9 @@ func watchOf(w *client.ImprovementWatch) *watchView {
 	return v
 }
 
-// flagWords is why a change was flagged, in words.
-func flagWords(flag *string) string {
+// flagWords is why a change was flagged, in words; a change that saved
+// nothing by what it aimed to save.
+func flagWords(flag *string, saves []string) string {
 	if flag == nil {
 		return ""
 	}
@@ -81,7 +86,17 @@ func flagWords(flag *string) string {
 	case "both":
 		return "its runs went worse and cost more"
 	case "no_saving":
-		return "its good runs did not get cheaper or quicker, as it said they would"
+		var aim []string
+		if slices.Contains(saves, "cost") {
+			aim = append(aim, "cheaper")
+		}
+		if slices.Contains(saves, "time") {
+			aim = append(aim, "quicker")
+		}
+		if len(aim) == 0 {
+			aim = []string{"cheaper or quicker"}
+		}
+		return "its good runs did not get " + strings.Join(aim, " and ") + ", as it said they would"
 	}
 	return cli.Safe(*flag)
 }
@@ -95,9 +110,9 @@ func watchLine(w *watchView) string {
 	case "clear":
 		return "clear: " + counts
 	case "flagged":
-		return "flagged, " + flagWords(w.Flag) + ": " + counts
+		return "flagged, " + flagWords(w.Flag, w.saves) + ": " + counts
 	case "cleared":
-		return "flagged (" + flagWords(w.Flag) + "), then cleared: " + counts
+		return "flagged (" + flagWords(w.Flag, w.saves) + "), then cleared: " + counts
 	case "ended":
 		if w.EndedWhy != nil && *w.EndedWhy == "reverted" {
 			return fmt.Sprintf("ended when reverted: %d of %d runs counted", w.After.Runs, w.Needed)

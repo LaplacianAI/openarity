@@ -229,17 +229,31 @@ export function waitingFinding(
   return `${n} ${verb} for approval${tail}.`;
 }
 
-/** Why a watch flagged its change, in words. */
-export function flagWords(flag: ImprovementWatch["flag"]): string {
+/**
+ * Why a watch flagged its change, in words. A change that saved nothing is
+ * said by what it aimed to save: cheaper, quicker, or both.
+ */
+export function flagWords(
+  flag: ImprovementWatch["flag"],
+  saves: Improvement["saves"] = [],
+): string {
   if (flag === "worse") return "its runs went worse";
   if (flag === "costlier") return "its runs cost more, with no fewer failures";
   if (flag === "both") return "its runs went worse and cost more";
-  if (flag === "no_saving") return "its good runs did not get cheaper or quicker, as it expected";
+  if (flag === "no_saving") {
+    const aim = [
+      saves?.includes("cost") ? "cheaper" : null,
+      saves?.includes("time") ? "quicker" : null,
+    ]
+      .filter(Boolean)
+      .join(" and ");
+    return `its good runs did not get ${aim || "cheaper or quicker"}, as it expected`;
+  }
   return "";
 }
 
 /** "Flagged, its runs went worse: 7 of 10 went wrong after, 2 of 10 before." */
-export function watchHeadline(w: ImprovementWatch): string {
+export function watchHeadline(w: ImprovementWatch, saves: Improvement["saves"] = []): string {
   const counts = `${w.after.bad} of ${w.after.runs} went wrong after, ${w.before.bad} of ${w.before.runs} before`;
   switch (w.status) {
     case "watching":
@@ -247,9 +261,9 @@ export function watchHeadline(w: ImprovementWatch): string {
     case "clear":
       return `Clear: ${counts}`;
     case "flagged":
-      return `Flagged, ${flagWords(w.flag)}: ${counts}`;
+      return `Flagged, ${flagWords(w.flag, saves)}: ${counts}`;
     case "cleared":
-      return `Flagged (${flagWords(w.flag)}), then cleared: ${counts}`;
+      return `Flagged (${flagWords(w.flag, saves)}), then cleared: ${counts}`;
     case "ended":
       return w.ended_why === "reverted"
         ? `Ended when reverted: ${w.after.runs} of ${w.needed} runs counted`
