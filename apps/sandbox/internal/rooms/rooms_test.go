@@ -35,6 +35,43 @@ type fakeEngine struct {
 	stopped map[string]bool  // containers stopped, which have left their network
 	volumes map[string]int64 // bytes each volume holds
 	starts  int
+
+	finished   map[string]time.Time // when each stopped container last stopped; absent: never ran
+	createSize int64                // bytes a volume holds when it is made
+	peak       int64                // the most every volume has held together, after a create
+	stateErr   error                // when set, ContainerState fails with it
+	sizesErr   error                // when set, VolumeSizes fails with it
+	stuck      map[string]bool      // volumes RemoveVolume fails to remove
+	volumeGone []string             // every volume removed, in order
+
+	inspected     []string    // every container ContainerState was asked about, in order
+	onSizes       func()      // when set, VolumeSizes calls it first, holding no lock: it may block
+	onFirstRemove func()      // when set, the first removal of the kind in hookOn calls it, once
+	hookOn        string      // "container" or "volume"
+	honourCtx     bool        // when set, a removal with an ended context fails with its error
+	removeCtxEnds []time.Time // the deadline each removal's context had; zero for none
+}
+
+// beforeRemove is what a removal does first: the hook, once for its kind, then the
+// caller's context if the fake honours it. It holds no lock while it calls
+// the hook, which may cancel a context.
+func (f *fakeEngine) beforeRemove(ctx context.Context, kind string) error {
+	f.mu.Lock()
+	var hook func()
+	if f.hookOn == kind {
+		hook, f.onFirstRemove = f.onFirstRemove, nil
+	}
+	honour := f.honourCtx
+	end, _ := ctx.Deadline()
+	f.removeCtxEnds = append(f.removeCtxEnds, end)
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	if honour {
+		return ctx.Err()
+	}
+	return nil
 }
 
 func (f *fakeEngine) HasImage(_ context.Context, ref string) (bool, error) {
@@ -175,6 +212,10 @@ func (f *fakeEngine) StopContainer(_ context.Context, name string, _ time.Durati
 		f.stopped = map[string]bool{}
 	}
 	f.stopped[name] = true
+	if f.finished == nil {
+		f.finished = map[string]time.Time{}
+	}
+	f.finished[name] = time.Now()
 	if n := f.networks[c.HostConfig.NetworkMode]; n != nil {
 		delete(n.Containers, name+"-id")
 	}
@@ -191,6 +232,20 @@ func (f *fakeEngine) ContainerRunning(_ context.Context, name string) (bool, err
 	return !f.stopped[name], nil
 }
 
+func (f *fakeEngine) ContainerState(_ context.Context, name string) (bool, time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.inspected = append(f.inspected, name)
+	if f.stateErr != nil {
+		return false, time.Time{}, f.stateErr
+	}
+	if _, ok := f.containers[name]; !ok {
+		return false, time.Time{}, &docker.Error{Status: 404}
+	}
+	return !f.stopped[name], f.finished[name], nil
+}
+
 func (f *fakeEngine) CreateVolume(_ context.Context, name string, _ map[string]string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -198,25 +253,43 @@ func (f *fakeEngine) CreateVolume(_ context.Context, name string, _ map[string]s
 	if f.volumes == nil {
 		f.volumes = map[string]int64{}
 	}
-	f.volumes[name] = 0
+	f.volumes[name] = f.createSize
+	var held int64
+	for _, n := range f.volumes {
+		held += n
+	}
+	f.peak = max(f.peak, held)
 	return nil
 }
 
-func (f *fakeEngine) RemoveVolume(_ context.Context, name string) error {
+func (f *fakeEngine) RemoveVolume(ctx context.Context, name string) error {
+	if err := f.beforeRemove(ctx, "volume"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	if _, ok := f.volumes[name]; !ok {
 		return &docker.Error{Status: 404}
 	}
+	if f.stuck[name] {
+		return &docker.Error{Status: 500}
+	}
 	delete(f.volumes, name)
+	f.volumeGone = append(f.volumeGone, name)
 	return nil
 }
 
 func (f *fakeEngine) VolumeSizes(context.Context, string) (map[string]int64, error) {
+	if f.onSizes != nil {
+		f.onSizes()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	if f.sizesErr != nil {
+		return nil, f.sizesErr
+	}
 	out := make(map[string]int64, len(f.volumes))
 	for k, v := range f.volumes {
 		out[k] = v
@@ -224,7 +297,10 @@ func (f *fakeEngine) VolumeSizes(context.Context, string) (map[string]int64, err
 	return out, nil
 }
 
-func (f *fakeEngine) RemoveContainer(_ context.Context, name string) error {
+func (f *fakeEngine) RemoveContainer(ctx context.Context, name string) error {
+	if err := f.beforeRemove(ctx, "container"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	f.calls++
 	defer f.mu.Unlock()
