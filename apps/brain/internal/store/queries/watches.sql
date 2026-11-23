@@ -31,6 +31,8 @@ SELECT * FROM improvement_watches WHERE proposal_id = ANY (sqlc.arg(ids)::uuid[]
 -- pages end once it has been round them all (sweeps are ten minutes apart). Each counts the time since its last sweep toward its
 -- 30 days, but only while its team has improvement on; a watch in a team
 -- with it off is marked swept and not counted, and comes back with on false.
+-- Each comes with its team's margin for an efficiency change, read as it is
+-- judged.
 -- name: TickOpenWatches :many
 WITH page AS MATERIALIZED (
     SELECT x.proposal_id FROM improvement_watches x
@@ -51,13 +53,14 @@ WITH page AS MATERIALIZED (
     WHERE w.proposal_id = page.proposal_id AND w.status = 'watching'
     RETURNING w.*
 )
-SELECT t.*, EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = t.team_id AND ts.improvement)::bool AS improving
+SELECT t.*, EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = t.team_id AND ts.improvement)::bool AS improving,
+       COALESCE((SELECT ts.improvement_efficiency_margin FROM team_settings ts WHERE ts.team_id = t.team_id), 1)::smallint AS efficiency_margin
 FROM ticked t;
 
 -- Judged top-level runs whose trees reach the watched agents, either side of
 -- when the change was applied: before newest first, after oldest first. Each
 -- with its verdict and votes, what its tree spent (a cached token as a
--- tenth, as the budget counts) and its steps, and whether a digest of it
+-- tenth, as the budget counts), its steps and how long it worked, and whether a digest of it
 -- carries the targeted signature.
 -- name: ListWatchRuns :many
 SELECT r.id, r.created_at, o.verdict,
@@ -67,6 +70,7 @@ SELECT r.id, r.created_at, o.verdict,
           FROM runs t WHERE t.root_run_id = r.id)::bigint AS spent,
        (SELECT count(*) FROM run_events e JOIN runs t ON t.id = e.run_id
           WHERE t.root_run_id = r.id AND e.kind = 'step')::int AS steps,
+       run_work_ms(r.id)::bigint AS work_ms,
        EXISTS (SELECT 1 FROM run_digests d
                WHERE d.run_id = r.id AND d.agent_id = ANY (sqlc.arg(agent_ids)::uuid[])
                  AND d.part = sqlc.arg(part)::text AND d.target = sqlc.arg(target)::text
@@ -100,6 +104,7 @@ UPDATE improvement_watches SET
     before_tokens = sqlc.narg(before_tokens), after_tokens = sqlc.narg(after_tokens),
     baseline_p90 = sqlc.narg(baseline_p90),
     before_steps = sqlc.narg(before_steps), after_steps = sqlc.narg(after_steps),
+    before_work_ms = sqlc.narg(before_work_ms), after_work_ms = sqlc.narg(after_work_ms),
     sig_before = sqlc.narg(sig_before), sig_after = sqlc.narg(sig_after),
     overlapping = sqlc.arg(overlapping)::uuid[]
 WHERE proposal_id = sqlc.arg(proposal_id) AND status = 'watching';

@@ -323,9 +323,12 @@ func (q *Queries) GetImproverPassByWorkflow(ctx context.Context, workflowID stri
 
 const listAgentProposalRecord = `-- name: ListAgentProposalRecord :many
 SELECT p.id, p.kind, p.signature, p.status, p.why, p.hypothesis, p.created_at, p.decided_at, p.reverted_at,
+       p.goal, p.saves,
        w.status AS watch, w.flag AS watch_flag, w.ended_why AS watch_ended,
        w.before_runs AS watch_before_runs, w.before_bad AS watch_before_bad,
-       w.after_runs AS watch_after_runs, w.after_bad AS watch_after_bad
+       w.after_runs AS watch_after_runs, w.after_bad AS watch_after_bad,
+       w.before_tokens AS watch_before_tokens, w.after_tokens AS watch_after_tokens,
+       w.before_work_ms AS watch_before_work_ms, w.after_work_ms AS watch_after_work_ms
 FROM improvement_proposals p
 LEFT JOIN improvement_watches w ON w.proposal_id = p.id
 WHERE p.agent_id = $1
@@ -339,22 +342,28 @@ type ListAgentProposalRecordParams struct {
 }
 
 type ListAgentProposalRecordRow struct {
-	ID              uuid.UUID
-	Kind            string
-	Signature       *string
-	Status          string
-	Why             string
-	Hypothesis      string
-	CreatedAt       time.Time
-	DecidedAt       *time.Time
-	RevertedAt      *time.Time
-	Watch           *string
-	WatchFlag       *string
-	WatchEnded      *string
-	WatchBeforeRuns *int16
-	WatchBeforeBad  *int16
-	WatchAfterRuns  *int16
-	WatchAfterBad   *int16
+	ID                uuid.UUID
+	Kind              string
+	Signature         *string
+	Status            string
+	Why               string
+	Hypothesis        string
+	CreatedAt         time.Time
+	DecidedAt         *time.Time
+	RevertedAt        *time.Time
+	Goal              string
+	Saves             []string
+	Watch             *string
+	WatchFlag         *string
+	WatchEnded        *string
+	WatchBeforeRuns   *int16
+	WatchBeforeBad    *int16
+	WatchAfterRuns    *int16
+	WatchAfterBad     *int16
+	WatchBeforeTokens *int64
+	WatchAfterTokens  *int64
+	WatchBeforeWorkMs *int64
+	WatchAfterWorkMs  *int64
 }
 
 // An agent's own record: its newest proposals.
@@ -377,6 +386,8 @@ func (q *Queries) ListAgentProposalRecord(ctx context.Context, arg ListAgentProp
 			&i.CreatedAt,
 			&i.DecidedAt,
 			&i.RevertedAt,
+			&i.Goal,
+			&i.Saves,
 			&i.Watch,
 			&i.WatchFlag,
 			&i.WatchEnded,
@@ -384,6 +395,10 @@ func (q *Queries) ListAgentProposalRecord(ctx context.Context, arg ListAgentProp
 			&i.WatchBeforeBad,
 			&i.WatchAfterRuns,
 			&i.WatchAfterBad,
+			&i.WatchBeforeTokens,
+			&i.WatchAfterTokens,
+			&i.WatchBeforeWorkMs,
+			&i.WatchAfterWorkMs,
 		); err != nil {
 			return nil, err
 		}

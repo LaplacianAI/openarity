@@ -27,6 +27,7 @@ var settingFlags = []string{
 	"model", "max-tokens", "temperature", "no-model",
 	"search", "search-url", "search-key-stdin", "no-search-key",
 	"improvement", "judge-model", "judge-max-tokens", "judge-temperature", "no-judge-model", "sample-share", "daily-passes", "pass-tokens", "pass-minutes", "daily-runs",
+	"efficiency", "efficiency-runs", "efficiency-days", "efficiency-spread", "efficiency-mark-runs", "efficiency-margin",
 	"compaction-messages", "compaction-tokens-min", "compaction-tokens-max", "hub", "no-hub",
 	"sandbox", "sandbox-url", "sandbox-key-stdin", "e2b-template", "no-e2b-template",
 	"keep-stopped-hours", "stop-idle-minutes", "no-stop-idle-minutes", "workspace-memory-mb", "workspace-cpus", "workspace-disk-mb", "no-workspace-size",
@@ -101,6 +102,12 @@ type settingsFlags struct {
 	passTokens       int32
 	passMinutes      int32
 	dailyRuns        int32
+	efficiency       string
+	effRuns          int32
+	effDays          int32
+	effSpread        int32
+	effMarkRuns      int32
+	effMargin        int32
 
 	compaction int32
 	tokensMin  int32
@@ -269,6 +276,18 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 		"the minutes one try at an improver pass may run, 1 to 25; 20 until set")
 	cmd.Flags().Int32Var(&f.dailyRuns, "daily-runs", 0,
 		"the judged runs an agent needs since its last pass before the daily pass looks at it, 1 to 100; 5 until set")
+	cmd.Flags().StringVar(&f.efficiency, "efficiency", "",
+		"on or off: a weekly pass that proposes making an agent's good runs cheaper and faster; runs only while --improvement is on")
+	cmd.Flags().Int32Var(&f.effRuns, "efficiency-runs", 0,
+		"the good runs an agent needs in the window before an efficiency pass looks at it, 10 to 500; 20 until set")
+	cmd.Flags().Int32Var(&f.effDays, "efficiency-days", 0,
+		"the days of runs an efficiency pass counts, 7 to 60; 14 until set")
+	cmd.Flags().Int32Var(&f.effSpread, "efficiency-spread", 0,
+		"how far the costliest good runs must sit above the usual one, in percent: 200 is twice, 125 to 1000; 200 until set")
+	cmd.Flags().Int32Var(&f.effMarkRuns, "efficiency-mark-runs", 0,
+		"the good runs a waste mark must appear in before an efficiency pass looks, 2 to 50 and at most --efficiency-runs; 3 until set")
+	cmd.Flags().Int32Var(&f.effMargin, "efficiency-margin", 0,
+		"how many bad runs fewer flag an efficiency change worse than any other change, 0 to 3; 1 until set")
 	cmd.Flags().Int32Var(&f.compaction, "compaction-messages", 0, "messages before a transcript compacts, 10 to 10000")
 	cmd.Flags().Int32Var(&f.tokensMin, "compaction-tokens-min", 0,
 		"the least a run's next request may read before it compacts, 30000 to 1000000")
@@ -315,6 +334,20 @@ func (f *settingsFlags) check(changed func(string) bool) error {
 		return fmt.Errorf("--pass-minutes is a count of minutes, 1 to 25, not %d", f.passMinutes)
 	case changed("daily-runs") && (f.dailyRuns < 1 || f.dailyRuns > 100):
 		return fmt.Errorf("--daily-runs is a count of runs, 1 to 100, not %d", f.dailyRuns)
+	case changed("efficiency") && f.efficiency != "on" && f.efficiency != "off":
+		return fmt.Errorf("--efficiency takes on or off, not %q", f.efficiency)
+	case changed("efficiency-runs") && (f.effRuns < 10 || f.effRuns > 500):
+		return fmt.Errorf("--efficiency-runs is a count of good runs, 10 to 500, not %d", f.effRuns)
+	case changed("efficiency-days") && (f.effDays < 7 || f.effDays > 60):
+		return fmt.Errorf("--efficiency-days is a count of days, 7 to 60, not %d", f.effDays)
+	case changed("efficiency-spread") && (f.effSpread < 125 || f.effSpread > 1000):
+		return fmt.Errorf("--efficiency-spread is a percentage, 125 to 1000 (200 is twice), not %d", f.effSpread)
+	case changed("efficiency-mark-runs") && (f.effMarkRuns < 2 || f.effMarkRuns > 50):
+		return fmt.Errorf("--efficiency-mark-runs is a count of good runs, 2 to 50, not %d", f.effMarkRuns)
+	case changed("efficiency-mark-runs") && changed("efficiency-runs") && f.effMarkRuns > f.effRuns:
+		return fmt.Errorf("--efficiency-mark-runs, %d, cannot be above --efficiency-runs, %d", f.effMarkRuns, f.effRuns)
+	case changed("efficiency-margin") && (f.effMargin < 0 || f.effMargin > 3):
+		return fmt.Errorf("--efficiency-margin is a count of bad runs, 0 to 3, not %d", f.effMargin)
 	case changed("keep-stopped-hours") && (f.keepHours < 1 || f.keepHours > 720):
 		return fmt.Errorf("--keep-stopped-hours is a count of hours, 1 to 720, not %d", f.keepHours)
 	case changed("stop-idle-minutes") && (f.idleMinutes < 1 || f.idleMinutes > 1440):
@@ -442,6 +475,7 @@ func (f *settingsFlags) apply(changed func(string) bool, cur *client.TeamSetting
 	if changed("pass-minutes") {
 		req.ImprovementPassMinutes = &f.passMinutes
 	}
+	f.applyEfficiency(changed, &req)
 	req.Sandbox = f.applySandbox(changed, cur.Sandbox, k.sandbox)
 	req.Browser = f.applyBrowser(changed, cur.Browser, k.browser)
 	return req
@@ -649,6 +683,70 @@ func printSettings(opts *cli.Options, s *client.TeamSettings) error {
 	})
 }
 
+// applyEfficiency sends the efficiency settings given; each left out keeps
+// what is stored.
+func (f *settingsFlags) applyEfficiency(changed func(string) bool, req *client.TeamSettingsRequest) {
+	if changed("efficiency") {
+		on := f.efficiency == "on"
+		req.ImprovementEfficiency = &on
+	}
+	for _, v := range []struct {
+		flag string
+		from *int32
+		to   **int32
+	}{
+		{"efficiency-runs", &f.effRuns, &req.ImprovementEfficiencyRuns},
+		{"efficiency-days", &f.effDays, &req.ImprovementEfficiencyDays},
+		{"efficiency-spread", &f.effSpread, &req.ImprovementEfficiencySpread},
+		{"efficiency-mark-runs", &f.effMarkRuns, &req.ImprovementEfficiencyMarkRuns},
+		{"efficiency-margin", &f.effMargin, &req.ImprovementEfficiencyMargin},
+	} {
+		if changed(v.flag) {
+			*v.to = v.from
+		}
+	}
+}
+
+// printEfficiency prints the efficiency pass and its numbers, nothing for a
+// brain that predates it.
+func printEfficiency(table *printer.Table, opts *cli.Options, s *client.TeamSettings) {
+	if s.ImprovementEfficiency == nil {
+		return
+	}
+	label, value := opts.Styles.Label.Render, opts.Styles.Value.Render
+	if !*s.ImprovementEfficiency {
+		table.Row(label("efficiency pass"), opts.Styles.Muted.Render("off"))
+		return
+	}
+	n := func(p *int32) string {
+		if p == nil {
+			return "?"
+		}
+		return strconv.Itoa(int(*p))
+	}
+	spread := "?"
+	if p := s.ImprovementEfficiencySpread; p != nil {
+		spread = strconv.FormatFloat(float64(*p)/100, 'g', -1, 64) + "×"
+	}
+	table.Row(label("efficiency pass"), value("on, weekly · "+n(s.ImprovementEfficiencyRuns)+" good runs in "+
+		n(s.ImprovementEfficiencyDays)+" days · costliest "+spread+" the usual, or a waste mark in "+
+		n(s.ImprovementEfficiencyMarkRuns)+" runs · "+strictWords(s.ImprovementEfficiencyMargin)))
+}
+
+// strictWords says how much sooner an efficiency change is flagged worse:
+// by the margin, or "?" from a brain that sent none.
+func strictWords(m *int32) string {
+	switch {
+	case m == nil:
+		return "flagged worse ? bad runs sooner"
+	case *m == 0:
+		return "watched as strictly as any change"
+	case *m == 1:
+		return "flagged worse 1 bad run sooner"
+	}
+	return "flagged worse " + strconv.Itoa(int(*m)) + " bad runs sooner"
+}
+
 // printJudge prints nothing for a brain that predates the judge, which sends
 // no share.
 func printJudge(table *printer.Table, opts *cli.Options, s *client.TeamSettings) {
@@ -677,6 +775,7 @@ func printJudge(table *printer.Table, opts *cli.Options, s *client.TeamSettings)
 	if s.ImprovementDailyRuns != nil {
 		table.Row(label("daily pass"), value("after "+strconv.Itoa(int(*s.ImprovementDailyRuns))+" judged runs since an agent's last pass"))
 	}
+	printEfficiency(table, opts, s)
 }
 
 // printSandbox prints nothing for a brain that predates sandboxes, which

@@ -83,20 +83,24 @@ type runRef struct {
 }
 
 type view struct {
-	ID         uuid.UUID          `json:"id"`
-	Kind       string             `json:"kind"`
-	Status     string             `json:"status"`
-	Agent      ref                `json:"agent"`
-	Skill      *ref               `json:"skill"`
-	Why        string             `json:"why"`
-	Hypothesis string             `json:"hypothesis"`
-	Scope      string             `json:"scope"`
-	Signature  *string            `json:"signature"`
-	Marks      []string           `json:"marks"`
-	Reaches    []ref              `json:"reaches"`
-	Changes    []proposals.Change `json:"changes"`
-	Runs       []runRef           `json:"runs"`
-	Outsider   bool               `json:"outsider"`
+	ID         uuid.UUID `json:"id"`
+	Kind       string    `json:"kind"`
+	Status     string    `json:"status"`
+	Agent      ref       `json:"agent"`
+	Skill      *ref      `json:"skill"`
+	Why        string    `json:"why"`
+	Hypothesis string    `json:"hypothesis"`
+	Scope      string    `json:"scope"`
+	Signature  *string   `json:"signature"`
+	// Goal is quality, for what went wrong, or efficiency, for a good run
+	// made cheaper or quicker; Saves names cost, time or both for the latter.
+	Goal     string             `json:"goal"`
+	Saves    []string           `json:"saves"`
+	Marks    []string           `json:"marks"`
+	Reaches  []ref              `json:"reaches"`
+	Changes  []proposals.Change `json:"changes"`
+	Runs     []runRef           `json:"runs"`
+	Outsider bool               `json:"outsider"`
 	// The improver pass that wrote it; null for one written otherwise.
 	PassID     *uuid.UUID `json:"pass_id"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -390,12 +394,16 @@ func (h *handler) view(r *http.Request, u *auth.User, row db.ImprovementProposal
 		ID: row.ID, Kind: row.Kind, Status: row.Status,
 		Agent: ref{ID: row.AgentID, Name: n.Agent(row.AgentID)},
 		Why:   row.Why, Hypothesis: row.Hypothesis, Scope: row.Scope, Signature: row.Signature,
+		Goal: row.Goal, Saves: row.Saves,
 		Marks: proposals.Marks(proposals.Kind(row.Kind), p.Before, p.After), Reaches: []ref{}, Changes: proposals.Changes(p, n),
 		Runs: []runRef{}, Outsider: row.Outsider, PassID: row.PassID, CreatedAt: row.CreatedAt,
 		DecidedBy: row.DecidedBy, DecidedAt: row.DecidedAt, RevertedBy: row.RevertedBy, RevertedAt: row.RevertedAt,
 	}
 	if v.Marks == nil {
 		v.Marks = []string{}
+	}
+	if v.Saves == nil {
+		v.Saves = []string{}
 	}
 	if row.SkillID != nil {
 		v.Skill = &ref{ID: *row.SkillID, Name: n.Skill(*row.SkillID)}

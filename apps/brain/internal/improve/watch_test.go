@@ -68,13 +68,13 @@ func TestAWatchsVerdict(t *testing.T) {
 		"worse and costlier":       {window{runs: 10, bad: 8, spent: spends(10, 2000)}, verdict{watchFlagged, flagBoth}},
 		"costlier at the p90 only": {window{runs: 10, bad: 3, spent: spends(10, 1000)}, verdict{status: watchClear}},
 	} {
-		if got := judgeWatch(baseline, before, tc.after); got != tc.want {
+		if got := judgeWatch(baseline, before, tc.after, efficiencyRule{}); got != tc.want {
 			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
 		}
 	}
 	// Too little history to judge against: nothing is flagged.
 	little := window{runs: 5, bad: 0, spent: spends(5, 10)}
-	if got := judgeWatch(little, little, window{runs: 10, bad: 10, spent: spends(10, 99999)}); got.status != watchClear {
+	if got := judgeWatch(little, little, window{runs: 10, bad: 10, spent: spends(10, 99999)}, efficiencyRule{}); got.status != watchClear {
 		t.Errorf("with five baseline runs: %+v, want clear", got)
 	}
 }

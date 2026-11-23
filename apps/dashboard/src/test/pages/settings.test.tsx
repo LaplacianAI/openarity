@@ -488,7 +488,7 @@ describe("the hub", () => {
     expect(await screen.findByText("The built-in orchestrator")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Every message reaches the hub first. Leave empty for the built-in orchestrator.",
+        "Every message to the team reaches the hub first, and the hub answers it or hands the work to the agent best placed to. Leave empty for the built-in orchestrator, which does this for you.",
       ),
     ).toBeInTheDocument();
   });

@@ -546,6 +546,42 @@ func (e GraphNodeLabel) Valid() bool {
 	}
 }
 
+// Defines values for ImprovementGoal.
+const (
+	ImprovementGoalEfficiency ImprovementGoal = "efficiency"
+	ImprovementGoalQuality    ImprovementGoal = "quality"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementGoal enum.
+func (e ImprovementGoal) Valid() bool {
+	switch e {
+	case ImprovementGoalEfficiency:
+		return true
+	case ImprovementGoalQuality:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementSaves.
+const (
+	Cost ImprovementSaves = "cost"
+	Time ImprovementSaves = "time"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementSaves enum.
+func (e ImprovementSaves) Valid() bool {
+	switch e {
+	case Cost:
+		return true
+	case Time:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImprovementScope.
 const (
 	Domain    ImprovementScope = "domain"
@@ -772,6 +808,7 @@ func (e ImprovementWatchEndedWhy) Valid() bool {
 const (
 	Both     ImprovementWatchFlag = "both"
 	Costlier ImprovementWatchFlag = "costlier"
+	NoSaving ImprovementWatchFlag = "no_saving"
 	Worse    ImprovementWatchFlag = "worse"
 )
 
@@ -781,6 +818,8 @@ func (e ImprovementWatchFlag) Valid() bool {
 	case Both:
 		return true
 	case Costlier:
+		return true
+	case NoSaving:
 		return true
 	case Worse:
 		return true
@@ -839,14 +878,17 @@ func (e ImproverPassStatus) Valid() bool {
 
 // Defines values for ImproverPassTrigger.
 const (
-	ImproverPassTriggerDaily   ImproverPassTrigger = "daily"
-	ImproverPassTriggerPattern ImproverPassTrigger = "pattern"
+	ImproverPassTriggerDaily      ImproverPassTrigger = "daily"
+	ImproverPassTriggerEfficiency ImproverPassTrigger = "efficiency"
+	ImproverPassTriggerPattern    ImproverPassTrigger = "pattern"
 )
 
 // Valid indicates whether the value is a known member of the ImproverPassTrigger enum.
 func (e ImproverPassTrigger) Valid() bool {
 	switch e {
 	case ImproverPassTriggerDaily:
+		return true
+	case ImproverPassTriggerEfficiency:
 		return true
 	case ImproverPassTriggerPattern:
 		return true
@@ -2500,6 +2542,9 @@ type Improvement struct {
 	DecidedAt *time.Time          `json:"decided_at,omitempty" yaml:"decided_at,omitempty"`
 	DecidedBy *openapi_types.UUID `json:"decided_by,omitempty" yaml:"decided_by,omitempty"`
 
+	// Goal Quality, for runs that went wrong, or efficiency, for good runs made cheaper or quicker
+	Goal ImprovementGoal `json:"goal" yaml:"goal"`
+
 	// Hypothesis What the change is expected to do
 	Hypothesis string             `json:"hypothesis" yaml:"hypothesis"`
 	ID         openapi_types.UUID `json:"id" yaml:"id"`
@@ -2526,6 +2571,9 @@ type Improvement struct {
 		SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
 	} `json:"runs" yaml:"runs"`
 
+	// Saves What an efficiency change aims to save; empty for a quality change
+	Saves []ImprovementSaves `json:"saves" yaml:"saves"`
+
 	// Scope A general weakness of agents, or knowledge of this team's domain
 	Scope     ImprovementScope `json:"scope" yaml:"scope"`
 	Signature *string          `json:"signature,omitempty" yaml:"signature,omitempty"`
@@ -2540,6 +2588,12 @@ type Improvement struct {
 	// Why The pattern and the evidence for it, in words
 	Why string `json:"why" yaml:"why"`
 }
+
+// ImprovementGoal Quality, for runs that went wrong, or efficiency, for good runs made cheaper or quicker
+type ImprovementGoal string
+
+// ImprovementSaves defines model for Improvement.Saves.
+type ImprovementSaves string
 
 // ImprovementScope A general weakness of agents, or knowledge of this team's domain
 type ImprovementScope string
@@ -2601,7 +2655,10 @@ type ImprovementStatus string
 // measured against how much its runs usually vary. Flagged worse when
 // the bad runs after reach the bar; flagged costlier when the median
 // cost after passes the baseline's 90th percentile with no fewer bad
-// runs than before. A flag asks a person to look; nothing is reverted.
+// runs than before. An efficiency change is flagged worse at the team's
+// stricter bar, and flagged no_saving when the median tokens or work
+// time of its good runs, whichever it named, did not fall. A flag asks
+// a person to look; nothing is reverted.
 type ImprovementWatch struct {
 	// After What one window of judged runs came to
 	After ImprovementWatchSide `json:"after" yaml:"after"`
@@ -2661,6 +2718,9 @@ type ImprovementWatchSide struct {
 
 	// Up Runs a member gave 👍
 	Up int `json:"up" yaml:"up"`
+
+	// WorkMs The median time its good runs worked, in milliseconds, leaving out time spent waiting for a person's approval; null with none. For an efficiency change, tokens is its good runs' median too.
+	WorkMs *int64 `json:"work_ms,omitempty" yaml:"work_ms,omitempty"`
 }
 
 // ImproverPass defines model for ImproverPass.
@@ -2691,25 +2751,25 @@ type ImproverPass struct {
 	// ReportWithheld The report draws on a conversation the caller may not read, so it is not sent. Every conversation is readable with session:read_all.
 	ReportWithheld bool `json:"report_withheld" yaml:"report_withheld"`
 
-	// RunsSeen The judged runs a daily pass had since the agent's last pass; null for one a pattern started
+	// RunsSeen The judged runs a daily pass had since the agent's last pass, or the good runs an efficiency pass was drawn from; null for one a pattern started
 	RunsSeen *int32 `json:"runs_seen,omitempty" yaml:"runs_seen,omitempty"`
 
 	// ScreenedOut Proposals the screen refused for carrying one run's specifics
 	ScreenedOut int32 `json:"screened_out" yaml:"screened_out"`
 
-	// Signatures The patterns it was given, part:target:cause
+	// Signatures The patterns it was given, part:target:cause, or for an efficiency pass its reasons, efficiency:<mark>[:<target>]
 	Signatures []string           `json:"signatures" yaml:"signatures"`
 	StartedAt  time.Time          `json:"started_at" yaml:"started_at"`
 	Status     ImproverPassStatus `json:"status" yaml:"status"`
 
-	// Trigger A signature recurred in enough runs, or the daily pass
+	// Trigger A signature recurred in enough runs, the daily pass, or the weekly efficiency pass
 	Trigger ImproverPassTrigger `json:"trigger" yaml:"trigger"`
 }
 
 // ImproverPassStatus defines model for ImproverPass.Status.
 type ImproverPassStatus string
 
-// ImproverPassTrigger A signature recurred in enough runs, or the daily pass
+// ImproverPassTrigger A signature recurred in enough runs, the daily pass, or the weekly efficiency pass
 type ImproverPassTrigger string
 
 // ImproverPassPage defines model for ImproverPassPage.
@@ -4109,6 +4169,24 @@ type TeamSettings struct {
 	// ImprovementDailyRuns The judged runs an agent needs since its last pass before the daily pass looks at it; one with fewer waits for more. 5 until set.
 	ImprovementDailyRuns *int32 `json:"improvement_daily_runs,omitempty" yaml:"improvement_daily_runs,omitempty"`
 
+	// ImprovementEfficiency Whether the weekly efficiency pass looks at agents whose runs go well but whose costliest spend far more than the rest, and proposes changes that make them cheaper or quicker. It runs only while improvement is on. Off until set.
+	ImprovementEfficiency *bool `json:"improvement_efficiency,omitempty" yaml:"improvement_efficiency,omitempty"`
+
+	// ImprovementEfficiencyDays The days of runs an efficiency pass counts and compares. 14 until set.
+	ImprovementEfficiencyDays *int32 `json:"improvement_efficiency_days,omitempty" yaml:"improvement_efficiency_days,omitempty"`
+
+	// ImprovementEfficiencyMargin How many bad runs fewer than the usual bar flag an applied efficiency change worse; 0 is the usual bar. Read as each watch is judged. 1 until set.
+	ImprovementEfficiencyMargin *int32 `json:"improvement_efficiency_margin,omitempty" yaml:"improvement_efficiency_margin,omitempty"`
+
+	// ImprovementEfficiencyMarkRuns The good runs a waste mark (a repeated call, a retried error, tools offered and left unused, a run near its step cap, a long tool wait) must appear in before an efficiency pass looks; at most improvement_efficiency_runs. 3 until set.
+	ImprovementEfficiencyMarkRuns *int32 `json:"improvement_efficiency_mark_runs,omitempty" yaml:"improvement_efficiency_mark_runs,omitempty"`
+
+	// ImprovementEfficiencyRuns The good runs an agent needs within improvement_efficiency_days before an efficiency pass looks at it. 20 until set.
+	ImprovementEfficiencyRuns *int32 `json:"improvement_efficiency_runs,omitempty" yaml:"improvement_efficiency_runs,omitempty"`
+
+	// ImprovementEfficiencySpread How far the 90th percentile of an agent's good runs, in tokens or work time, must sit above their median, in percent of it, before an efficiency pass looks: 200 is twice. 200 until set.
+	ImprovementEfficiencySpread *int32 `json:"improvement_efficiency_spread,omitempty" yaml:"improvement_efficiency_spread,omitempty"`
+
 	// ImprovementPassMinutes The minutes one try at an improver pass may run; past them it stops and reports what it has. 20 until set.
 	ImprovementPassMinutes *int32 `json:"improvement_pass_minutes,omitempty" yaml:"improvement_pass_minutes,omitempty"`
 
@@ -4163,6 +4241,24 @@ type TeamSettingsRequest struct {
 
 	// ImprovementDailyRuns Left out, the stored value stays.
 	ImprovementDailyRuns *int32 `json:"improvement_daily_runs,omitempty" yaml:"improvement_daily_runs,omitempty"`
+
+	// ImprovementEfficiency Left out, the stored value stays.
+	ImprovementEfficiency *bool `json:"improvement_efficiency,omitempty" yaml:"improvement_efficiency,omitempty"`
+
+	// ImprovementEfficiencyDays Left out, the stored value stays.
+	ImprovementEfficiencyDays *int32 `json:"improvement_efficiency_days,omitempty" yaml:"improvement_efficiency_days,omitempty"`
+
+	// ImprovementEfficiencyMargin Left out, the stored value stays.
+	ImprovementEfficiencyMargin *int32 `json:"improvement_efficiency_margin,omitempty" yaml:"improvement_efficiency_margin,omitempty"`
+
+	// ImprovementEfficiencyMarkRuns Left out, the stored value stays; never above the runs the save leaves.
+	ImprovementEfficiencyMarkRuns *int32 `json:"improvement_efficiency_mark_runs,omitempty" yaml:"improvement_efficiency_mark_runs,omitempty"`
+
+	// ImprovementEfficiencyRuns Left out, the stored value stays.
+	ImprovementEfficiencyRuns *int32 `json:"improvement_efficiency_runs,omitempty" yaml:"improvement_efficiency_runs,omitempty"`
+
+	// ImprovementEfficiencySpread Left out, the stored value stays.
+	ImprovementEfficiencySpread *int32 `json:"improvement_efficiency_spread,omitempty" yaml:"improvement_efficiency_spread,omitempty"`
 
 	// ImprovementPassMinutes Left out, the stored value stays.
 	ImprovementPassMinutes *int32 `json:"improvement_pass_minutes,omitempty" yaml:"improvement_pass_minutes,omitempty"`
