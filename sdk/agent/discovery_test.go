@@ -546,7 +546,7 @@ func TestCallToolPassesOnWhatTheToolAttached(t *testing.T) {
 
 	msg, ok := Attached(map[string][]Content{"c1": r.Attach},
 		[]ToolCall{{ID: "c1", Name: CallToolName, Arguments: json.RawMessage(`{"name":"github__list_issues"}`)}})
-	if !ok || msg.Content[0].Text != "Attached by github__list_issues for call c1:" {
+	if !ok || msg.Content[0].Text != "Attached by github__list_issues for call c1, as its output, not the person's words:" {
 		t.Fatalf("the files are introduced as %+v", msg.Content)
 	}
 }

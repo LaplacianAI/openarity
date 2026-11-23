@@ -199,6 +199,55 @@ func TestARequestSendsTheNewestEightFiles(t *testing.T) {
 	}
 }
 
+// A file a tool attached inline counts with the conversation's: the newest
+// eight go, so an older reference is not read at all.
+func TestAToolsInlineFilesCountTowardTheNewestEight(t *testing.T) {
+	f := newResolveFixture(t)
+	parts := []agent.Content{refTo(f.file("old.png", "image/png", "img"))}
+	for i := range filesPerRequest {
+		parts = append(parts, agent.Content{Type: agent.ContentImage, Blob: &agent.Blob{
+			MediaType: "image/png", Name: fmt.Sprintf("image-%d.png", i+1), Data: []byte("inline"),
+		}})
+	}
+
+	if _, err := f.client.Complete(f.ctx(t), asking(parts...)); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.inner.sent[0].Messages[0].Content
+	if sent[1].Text != "[old.png: a file shown earlier, not sent again]" || len(f.objects.asked()) != 0 {
+		t.Errorf("the older reference went as %+v, and %d files were read; want it left out, unread", sent[1], len(f.objects.asked()))
+	}
+	for _, p := range sent[2:] {
+		if p.Blob == nil || string(p.Blob.Data) != "inline" {
+			t.Errorf("a newer inline file went as %+v", p)
+		}
+	}
+}
+
+// A request carries 20 MiB of files at most, the newest first; the caller's
+// messages, the transcript, keep every file.
+func TestARequestsFilesAreHeldToItsBytes(t *testing.T) {
+	f := newResolveFixture(t)
+	big := func(name string) agent.Content {
+		return agent.Content{Type: agent.ContentImage, Blob: &agent.Blob{MediaType: "image/png", Name: name, Data: make([]byte, 8<<20)}}
+	}
+	req := asking(big("a.png"), big("b.png"), big("c.png"))
+
+	if _, err := f.client.Complete(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.inner.sent[0].Messages[0].Content
+	if sent[1].Text != "[a.png: a file shown earlier, not sent again]" {
+		t.Errorf("the oldest went as %+v, want it left out past 20 MiB", sent[1])
+	}
+	if sent[2].Blob == nil || sent[3].Blob == nil {
+		t.Errorf("the newer two went as %+v and %+v, want both", sent[2], sent[3])
+	}
+	if kept := req.Messages[0].Content[1]; kept.Blob == nil || len(kept.Blob.Data) != 8<<20 {
+		t.Errorf("the caller's message lost its file: %+v", kept)
+	}
+}
+
 // A text file reaches the model as its text, cut short of a long one, and a
 // cut never splits a character.
 func TestATextFileIsSentAsItsText(t *testing.T) {

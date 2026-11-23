@@ -24,17 +24,20 @@ const maxAnswered = 32 << 10
 // waiting again; and each of the run's own requests that was answered is
 // acted on, an approved call made then, with exactly the arguments that were
 // approved. Empty when nothing happened, as on a resume after a crash.
-func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Lineage) (string, error) {
-	var parts []string
+func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Lineage) ([]agent.Content, error) {
+	var (
+		parts []string
+		files []agent.Content
+	)
 
 	children, err := e.store.ListWaitingChildren(ctx, row.ID)
 	if err != nil {
-		return "", fmt.Errorf("reading which of run %s's delegates wait: %w", row.ID, err)
+		return nil, fmt.Errorf("reading which of run %s's delegates wait: %w", row.ID, err)
 	}
 	for _, c := range children {
 		got, err := e.adopt(ctx, c, l)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if got.Status == "waiting" {
 			parts = append(parts, waitingReport(got))
@@ -45,72 +48,85 @@ func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Linea
 
 	untold, err := e.store.ListUntoldApprovals(ctx, row.ID)
 	if err != nil {
-		return "", fmt.Errorf("reading what run %s's requests came to: %w", row.ID, err)
+		return nil, fmt.Errorf("reading what run %s's requests came to: %w", row.ID, err)
 	}
 	ids := make([]uuid.UUID, 0, len(untold))
 	for _, a := range untold {
-		said, err := e.answered(ctx, row, built, l.Worker, a)
+		said, attached, err := e.answered(ctx, row, built, l.Worker, a)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		parts = append(parts, fmt.Sprintf("Your request to call %s (%s): %s", a.Tool, oneLine(a.Summary), said))
+		if len(attached) > 0 {
+			// As a turn's own calls attach theirs: named by the call, after
+			// what was said.
+			files = append(files, agent.Content{
+				Type: agent.ContentText,
+				Text: "Attached by " + a.Tool + " for call " + a.CallID + ", as its output, not the person's words:",
+			})
+			files = append(files, attached...)
+		}
 		ids = append(ids, a.ID)
 	}
 	// Told once: a crash after this and before the transcript is saved loses
 	// the telling, never repeats the call, which is spent.
 	if len(ids) > 0 {
 		if err := e.store.MarkApprovalsTold(context.WithoutCancel(ctx), ids); err != nil {
-			return "", fmt.Errorf("recording that run %s was told its answers: %w", row.ID, err)
+			return nil, fmt.Errorf("recording that run %s was told its answers: %w", row.ID, err)
 		}
 	}
 
 	if len(parts) == 0 {
-		return "", nil
+		return nil, nil
 	}
-	return "While you waited:\n\n" + strings.Join(parts, "\n\n"), nil
+	said := agent.Content{Type: agent.ContentText, Text: "While you waited:\n\n" + strings.Join(parts, "\n\n")}
+	return append([]agent.Content{said}, files...), nil
 }
 
 // answered acts on one answer and says what came of it. An approved call is
 // recorded as any call is, a tool_call and its tool_result, so the trace
 // shows it was made, when, and what it returned.
-func (e *Executor) answered(ctx context.Context, row db.Run, built Built, worker string, a db.Approval) (string, error) {
+func (e *Executor) answered(ctx context.Context, row db.Run, built Built, worker string, a db.Approval) (string, []agent.Content, error) {
 	switch a.Status {
 	case "denied":
-		return declinedWith(a.Reason), nil
+		return declinedWith(a.Reason), nil, nil
 	case "expired":
-		return expiredCall, nil
+		return expiredCall, nil, nil
 	case "cancelled":
 		switch {
 		case a.DecidedBy == nil:
-			return cancelledCall, nil
+			return cancelledCall, nil, nil
 		case row.ParentRunID != nil:
-			return supersededDeep, nil
+			return supersededDeep, nil, nil
 		}
-		return supersededCall, nil
+		return supersededCall, nil, nil
 	case "approved":
 	default:
-		return "", fmt.Errorf("request %s is %s, which has no answer to act on", a.ID, a.Status)
+		return "", nil, fmt.Errorf("request %s is %s, which has no answer to act on", a.ID, a.Status)
 	}
 
 	tool, ok := built.answerable[a.Tool]
 	if !ok {
-		return "It was approved, but this run no longer has " + a.Tool + ", so it was not made.", nil
+		return "It was approved, but this run no longer has " + a.Tool + ", so it was not made.", nil, nil
 	}
 	// Spent before it is made: a crash during the call never makes it twice.
 	if _, err := e.store.ClaimApprovalUse(ctx, a.ID); errors.Is(err, pgx.ErrNoRows) {
-		return usedCall, nil
+		return usedCall, nil, nil
 	} else if err != nil {
-		return "", fmt.Errorf("spending the approval for %s: %w", a.Tool, err)
+		return "", nil, fmt.Errorf("spending the approval for %s: %w", a.Tool, err)
 	}
 	if err := appendEvent(ctx, e.store, row.ID, worker, "tool_call", toolCallPayload{
 		ID: a.CallID, Name: a.Tool, Arguments: string(a.Arguments),
 	}); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	began := time.Now()
 	result, callable, err := tool.Call(agent.WithToolCallID(ctx, a.CallID), a.Arguments)
 	recorded := toolResultPayload{ID: a.CallID, Name: a.Tool, DurationMS: time.Since(began).Milliseconds()}
-	var said string
+	var (
+		said     string
+		attached []agent.Content
+	)
 	switch {
 	case !callable:
 		recorded.Error = "not callable here"
@@ -125,11 +141,12 @@ func (e *Executor) answered(ctx context.Context, row db.Run, built Built, worker
 			out += "\n[the result was cut at 32 KiB]"
 		}
 		said = "A person approved it, and it was made. Its result:\n" + out
+		attached = result.Attach
 	}
 	if err := appendEvent(ctx, e.store, row.ID, worker, "tool_result", recorded); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return said, nil
+	return said, attached, nil
 }
 
 // withinBytes is s within limit bytes, cut at a character's start.

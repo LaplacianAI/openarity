@@ -211,12 +211,12 @@ func TestAnAnswerThatMakesNothingSaysWhatItWas(t *testing.T) {
 		{deep, db.Approval{Status: "cancelled", DecidedBy: &sam}, supersededDeep},
 		{deep, db.Approval{Status: "cancelled"}, cancelledCall},
 	} {
-		got, err := (&Executor{}).answered(t.Context(), c.run, Built{}, worker, c.a)
+		got, _, err := (&Executor{}).answered(t.Context(), c.run, Built{}, worker, c.a)
 		if err != nil || got != c.want {
 			t.Errorf("%s by %v, delegated %v: %q, %v; want %q", c.a.Status, c.a.DecidedBy, c.run.ParentRunID != nil, got, err, c.want)
 		}
 	}
-	if _, err := (&Executor{}).answered(t.Context(), top, Built{}, worker, db.Approval{Status: "pending"}); err == nil {
+	if _, _, err := (&Executor{}).answered(t.Context(), top, Built{}, worker, db.Approval{Status: "pending"}); err == nil {
 		t.Error("a pending request was acted on")
 	}
 }

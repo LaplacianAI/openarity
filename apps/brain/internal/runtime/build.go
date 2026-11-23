@@ -546,7 +546,10 @@ func limited(t agent.Tool) agent.Tool {
 	t.Result = func(ctx context.Context, args json.RawMessage) (agent.ToolResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
 		defer cancel()
-		r, _, err := call(ctx, args)
+		r, callable, err := call(ctx, args)
+		if !callable {
+			return agent.ToolResult{}, fmt.Errorf("%s cannot be called", t.Name)
+		}
 		return r, err
 	}
 	return t

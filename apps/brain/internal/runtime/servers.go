@@ -95,6 +95,7 @@ func (l *lazyServer) tool(name string, row db.ListGrantedMCPToolsRow) agent.Tool
 			}
 			for _, t := range live.Tools() {
 				if t.Name == name {
+					// An MCP session's tools always have Result, so always a call.
 					r, _, err := t.Call(ctx, args)
 					return r, err
 				}

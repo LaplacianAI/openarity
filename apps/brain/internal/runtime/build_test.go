@@ -25,6 +25,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
+	"github.com/LaplacianAI/openarity/sdk/agent/tools/mcp"
 )
 
 // --- fakes ---
@@ -1698,4 +1699,46 @@ func graphTool(t *testing.T, built Built) agent.Tool {
 	}
 	t.Fatal("no graph tool")
 	return agent.Tool{}
+}
+
+// What the model is passed of a conversation's files and of an MCP tool's is
+// one policy, written twice: these keep the two in step.
+func TestAToolsFilesAreHeldToTheConversationsLimits(t *testing.T) {
+	for name, pair := range map[string][2]int{
+		"an image":        {maxImageBytes, mcp.MaxImageBytes},
+		"a PDF":           {maxDocBytes, mcp.MaxDocBytes},
+		"a text file":     {maxTextBytes, mcp.MaxTextBytes},
+		"files at a time": {filesPerRequest, mcp.FilesPerCall},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s: the brain passes %d, an MCP tool %d", name, pair[0], pair[1])
+		}
+	}
+}
+
+// limited holds a tool to its time and keeps what it attached; a tool with
+// nothing to call is an error, not an empty answer.
+func TestLimitedKeepsAToolsFilesAndItsDeadline(t *testing.T) {
+	image := agent.Content{Type: agent.ContentImage, Blob: &agent.Blob{MediaType: "image/png", Data: []byte("x")}}
+	var deadline bool
+	wrapped := limited(agent.Tool{Name: "chart", Result: func(ctx context.Context, _ json.RawMessage) (agent.ToolResult, error) {
+		d, ok := ctx.Deadline()
+		deadline = ok && time.Until(d) <= toolCallTimeout
+		return agent.ToolResult{Output: "the chart", Attach: []agent.Content{image}}, nil
+	}})
+
+	if wrapped.Invoke != nil {
+		t.Error("limited left an Invoke, which a caller may take for the whole answer")
+	}
+	r, ok, err := wrapped.Call(t.Context(), json.RawMessage(`{}`))
+	if !ok || err != nil || r.Output != "the chart" || len(r.Attach) != 1 {
+		t.Fatalf("Call = %+v, %v, %v; want the text and the image", r, ok, err)
+	}
+	if !deadline {
+		t.Error("the call had no deadline within toolCallTimeout")
+	}
+
+	if _, _, err := limited(agent.Tool{Name: "nothing"}).Call(t.Context(), nil); err == nil {
+		t.Error("a tool with nothing to call answered without an error")
+	}
 }

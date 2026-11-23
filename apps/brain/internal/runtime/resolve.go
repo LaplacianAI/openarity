@@ -19,6 +19,10 @@ import (
 // maxTextBytes is how much of a text file a model is sent.
 const maxTextBytes = 100 << 10
 
+// bytesPerRequest is how much of a conversation's files and its tools' one
+// request carries, the newest first: under what a provider takes in one.
+const bytesPerRequest = 20 << 20
+
 type AttachmentReader interface {
 	GetAttachmentInSession(ctx context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error)
 }
@@ -86,24 +90,33 @@ func (s *refusingStream) Err() error { return refused(s.Stream.Err(), s.files, s
 
 type place struct{ msg, part int }
 
-// resolve fills the bytes of every attachment the request names, newest
-// eight first; older ones are said to be earlier files rather than sent
-// again. It copies what it changes, so the caller's messages, which are the
-// transcript, keep only the references.
+// resolve fills the bytes of every attachment the request names and keeps
+// the files a tool attached whole, the newest first, up to eight files and
+// bytesPerRequest of them; older ones are said to be earlier files rather
+// than sent again. It copies what it changes, so the caller's messages,
+// which are the transcript, keep only the references and every file.
 func (r *resolving) resolve(ctx context.Context, req agent.Request) (agent.Request, int, error) {
-	var named []place
+	var (
+		files []place
+		refs  bool
+	)
 	for i, m := range req.Messages {
 		for j, c := range m.Content {
-			if c.Blob != nil && len(c.Blob.Data) == 0 && strings.HasPrefix(c.Blob.Ref, attachmentRef) {
-				named = append(named, place{i, j})
+			switch {
+			case c.Blob == nil:
+			case len(c.Blob.Data) > 0:
+				files = append(files, place{i, j})
+			case strings.HasPrefix(c.Blob.Ref, attachmentRef):
+				files = append(files, place{i, j})
+				refs = true
 			}
 		}
 	}
-	if len(named) == 0 {
+	if len(files) == 0 {
 		return req, 0, nil
 	}
 	session, ok := sessionOf(ctx)
-	if !ok {
+	if refs && !ok {
 		return req, 0, errors.New("a request names a conversation's files, but no conversation was given to read them from")
 	}
 
@@ -116,22 +129,36 @@ func (r *resolving) resolve(ctx context.Context, req agent.Request) (agent.Reque
 		}
 		msgs[p.msg].Content[p.part] = c
 	}
+	earlier := func(p place, name string) {
+		set(p, textPart(fmt.Sprintf("[%s: a file shown earlier, not sent again]", name)))
+	}
 
-	sent := 0
-	for k, p := range named {
-		blob := msgs[p.msg].Content[p.part].Blob
-		if k < len(named)-filesPerRequest {
-			set(p, textPart(fmt.Sprintf("[%s: a file shown earlier, not sent again]", blob.Name)))
+	sent, bytes := 0, 0
+	for k := len(files) - 1; k >= 0; k-- {
+		p := files[k]
+		part := msgs[p.msg].Content[p.part]
+		if sent >= filesPerRequest {
+			earlier(p, part.Blob.Name)
 			continue
 		}
-		part, err := r.fetch(ctx, session, blob)
-		if err != nil {
-			return req, 0, err
+		if len(part.Blob.Data) == 0 {
+			var err error
+			if part, err = r.fetch(ctx, session, part.Blob); err != nil {
+				return req, 0, err
+			}
 		}
+		if part.Blob == nil {
+			// Read as text, or no longer there: said in a line of its own.
+			set(p, part)
+			continue
+		}
+		if bytes+len(part.Blob.Data) > bytesPerRequest {
+			earlier(p, part.Blob.Name)
+			continue
+		}
+		bytes += len(part.Blob.Data)
 		set(p, part)
-		if part.Blob != nil {
-			sent++
-		}
+		sent++
 	}
 	req.Messages = msgs
 	return req, sent, nil

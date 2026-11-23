@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -146,15 +148,14 @@ func call(ctx context.Context, live *sdk.ClientSession, name string, args json.R
 	}
 
 	if res.IsError {
-		// An error is its text: whatever came with it is counted, never shown.
-		text := resultOf(res, false).Output
+		text := textOf(res)
 		if text == "" {
 			text = "the tool reported an error and said nothing about it"
 		}
 		return agent.ToolResult{}, errors.New(text)
 	}
 	// Every file attached is named in the text, so empty text is no answer.
-	out := resultOf(res, true)
+	out := resultOf(res)
 	if out.Output == "" {
 		out.Output = "the tool returned no text content"
 	}
@@ -162,133 +163,253 @@ func call(ctx context.Context, live *sdk.ClientSession, name string, args json.R
 }
 
 // What a model is passed of a tool's files, as the brain's read_attachment
-// passes a conversation's: an image up to 5 MB, a PDF or a text file up to
-// 10 MB, and at most eight files a call. The rest is named in the text.
+// passes a conversation's: an image up to 5 MiB, a PDF up to 10 MiB, text up
+// to 100 KiB, at most eight files and 10 MiB of them a call. The rest is
+// named in the text.
 const (
-	maxImageBytes = 5 << 20
-	maxDocBytes   = 10 << 20
-	filesPerCall  = 8
+	MaxImageBytes = 5 << 20
+	MaxDocBytes   = 10 << 20
+	MaxTextBytes  = 100 << 10
+	FilesPerCall  = 8
+	BytesPerCall  = 10 << 20
+	maxNameRunes  = 100
 )
 
-// resultOf is a tool's answer as the model reads it: its text blocks, in
-// order, and the images and documents it returned attached, each named in
-// the text too. A file a model cannot be passed is a line saying what it was
-// and why; with keep false, every file is.
-func resultOf(res *sdk.CallToolResult, keep bool) agent.ToolResult {
-	var (
-		out   agent.ToolResult
-		lines []string
-		files int // attached
-		seen  int // every block not text, so each is named apart
-	)
+// The images a model reads, by what their bytes say they are.
+var images = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+
+// textOf is an error's answer: its text, each file it came with named and
+// never attached.
+func textOf(res *sdk.CallToolResult) string {
+	var lines []string
+	seen := 0
 	for _, c := range res.Content {
 		if text, ok := textIn(c); ok {
-			lines = append(lines, text)
+			if text != "" {
+				lines = append(lines, text)
+			}
 			continue
 		}
 		seen++
-		f := fileIn(c, seen)
-		switch {
-		case f.line != "":
-			lines = append(lines, f.line)
-		case !keep:
-			lines = append(lines, fmt.Sprintf("[%s: %s, %s, not shown with an error]", f.name, f.mediaType, sizeOf(len(f.data))))
-		case files >= filesPerCall:
-			lines = append(lines, fmt.Sprintf("[%s: %s, %s, past the %d files a call passes on]", f.name, f.mediaType, sizeOf(len(f.data)), filesPerCall))
-		case len(f.data) > f.limit:
-			lines = append(lines, fmt.Sprintf("[%s: %s, %s, more than the %s %s is passed up to]", f.name, f.mediaType, sizeOf(len(f.data)), sizeOf(f.limit), f.what))
-		default:
-			files++
-			out.Attach = append(out.Attach, agent.Content{
-				Type: f.kind,
-				Blob: &agent.Blob{MediaType: f.mediaType, Name: f.name, Data: f.data},
-			})
-			lines = append(lines, fmt.Sprintf("[attached %s: %s, %s]", f.name, f.mediaType, sizeOf(len(f.data))))
+		lines = append(lines, "["+describe(c, seen)+", not shown with an error]")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// resultOf is a tool's answer as the model reads it: its text, in order; the
+// images and PDFs it returned attached, each named in the text too; the text
+// files it returned in the text, under a line naming each; and a line for
+// each file a model cannot be passed, saying what it was and why.
+func resultOf(res *sdk.CallToolResult) agent.ToolResult {
+	var (
+		out   agent.ToolResult
+		lines []string
+		seen  int // every block not text, so each is named apart
+		bytes int // attached
+	)
+	for _, c := range res.Content {
+		if text, ok := textIn(c); ok {
+			if text != "" {
+				lines = append(lines, text)
+			}
+			continue
 		}
+		seen++
+		att, note := fileIn(c, seen)
+		switch {
+		case att == nil:
+		case len(out.Attach) >= FilesPerCall:
+			note = fmt.Sprintf("[%s, past the %d files a call passes on]", described(att), FilesPerCall)
+			att = nil
+		case bytes+len(att.Blob.Data) > BytesPerCall:
+			note = fmt.Sprintf("[%s, past the %s a call passes on]", described(att), sizeOf(BytesPerCall))
+			att = nil
+		default:
+			bytes += len(att.Blob.Data)
+		}
+		if att != nil {
+			out.Attach = append(out.Attach, *att)
+		}
+		lines = append(lines, note)
 	}
 	out.Output = strings.Join(lines, "\n")
 	return out
 }
 
 // textIn is the text a content block carries: a text block's, or an embedded
-// resource's when it is text rather than a blob, as a file a server returns.
+// resource's when it holds text rather than a blob.
 func textIn(c sdk.Content) (string, bool) {
 	switch c := c.(type) {
 	case *sdk.TextContent:
 		return c.Text, true
 	case *sdk.EmbeddedResource:
-		if c.Resource != nil && c.Resource.Blob == nil {
+		if c.Resource == nil || len(c.Resource.Blob) == 0 {
+			if c.Resource == nil {
+				return "", true
+			}
 			return c.Resource.Text, true
 		}
 	}
 	return "", false
 }
 
-// A file is a block that is not text: what it would be attached as, or, in
-// line, why it never can be.
-type file struct {
-	kind      agent.ContentType
-	mediaType string
-	name      string
-	data      []byte
-	limit     int
-	what      string
-	line      string
-}
-
-// fileIn is block c as a file, the nth of its result.
-func fileIn(c sdk.Content, n int) file {
+// fileIn is block c, the nth that is not text, as the model may be passed
+// it: attached, with the line naming it; or only a line, in the text, saying
+// what it was and, when it is text, holding it.
+func fileIn(c sdk.Content, n int) (*agent.Content, string) {
 	switch c := c.(type) {
 	case *sdk.ImageContent:
-		return readableAs(c.MIMEType, fmt.Sprintf("image-%d%s", n, extension(c.MIMEType)), c.Data)
+		if !strings.HasPrefix(bareType(c.MIMEType), "image/") {
+			return nil, "[" + describe(c, n) + ", an image block that is not an image]"
+		}
+		return readable(c.MIMEType, fmt.Sprintf("image-%d", n), c.Data)
+	case *sdk.EmbeddedResource:
+		return readable(c.Resource.MIMEType, nameOf(c.Resource.URI, n), c.Resource.Blob)
+	case *sdk.AudioContent:
+		return nil, "[" + describe(c, n) + ", which a model here cannot hear]"
+	case *sdk.ResourceLink:
+		return nil, "[" + describe(c, n) + ", not fetched]"
+	default:
+		return nil, "[a content block of a kind this client does not read]"
+	}
+}
+
+// readable is data, declared as mediaType, as a model may be passed it. An
+// image or a PDF is attached only when its bytes are what it says; text is
+// held in the line, when it is UTF-8; anything else is only named.
+func readable(mediaType, name string, data []byte) (*agent.Content, string) {
+	kind := bareType(mediaType)
+	if kind == "" {
+		kind = "no type"
+	}
+	if len(data) == 0 {
+		return nil, fmt.Sprintf("[%s: %s, empty]", name, kind)
+	}
+	sniffed := bareType(http.DetectContentType(data))
+	switch {
+	case images[kind] != "":
+		name += images[kind]
+		switch {
+		case sniffed != kind:
+			return nil, fmt.Sprintf("[%s: said to be %s, but its bytes are %s]", name, kind, sniffed)
+		case len(data) > MaxImageBytes:
+			return nil, fmt.Sprintf("[%s: %s, %s, more than the %s an image is passed up to]", name, kind, exactly(len(data)), sizeOf(MaxImageBytes))
+		}
+		return attach(agent.ContentImage, kind, name, data)
+	case kind == "application/pdf":
+		switch {
+		case sniffed != kind:
+			return nil, fmt.Sprintf("[%s: said to be %s, but its bytes are %s]", name, kind, sniffed)
+		case len(data) > MaxDocBytes:
+			return nil, fmt.Sprintf("[%s: %s, %s, more than the %s a PDF is passed up to]", name, kind, exactly(len(data)), sizeOf(MaxDocBytes))
+		}
+		return attach(agent.ContentFile, kind, name, data)
+	case textual(kind):
+		if !utf8.Valid(data) {
+			return nil, fmt.Sprintf("[%s: %s, %s, which is not UTF-8 text]", name, kind, sizeOf(len(data)))
+		}
+		// Text a model reads as text goes in the tool's own text, cut where a
+		// conversation's text file would be.
+		if len(data) > MaxTextBytes {
+			cut := MaxTextBytes
+			for cut > 0 && !utf8.RuneStart(data[cut]) {
+				cut--
+			}
+			return nil, fmt.Sprintf("[%s: %s, %s, the first %s]\n%s", name, kind, sizeOf(len(data)), sizeOf(MaxTextBytes), data[:cut])
+		}
+		return nil, fmt.Sprintf("[%s: %s, %s]\n%s", name, kind, sizeOf(len(data)), data)
+	case strings.HasPrefix(kind, "image/"):
+		return nil, fmt.Sprintf("[%s: %s, %s, an image type a model is not passed]", name, kind, sizeOf(len(data)))
+	default:
+		return nil, fmt.Sprintf("[%s: %s, %s, which a model cannot read]", name, kind, sizeOf(len(data)))
+	}
+}
+
+func attach(kind agent.ContentType, mediaType, name string, data []byte) (*agent.Content, string) {
+	c := &agent.Content{Type: kind, Blob: &agent.Blob{MediaType: mediaType, Name: name, Data: data}}
+	return c, "[attached " + described(c) + "]"
+}
+
+// described is an attached file as its line names it.
+func described(c *agent.Content) string {
+	return fmt.Sprintf("%s: %s, %s", c.Blob.Name, c.Blob.MediaType, sizeOf(len(c.Blob.Data)))
+}
+
+// describe is a block that is not text, named for a line: what it was, and
+// how big.
+func describe(c sdk.Content, n int) string {
+	switch c := c.(type) {
+	case *sdk.ImageContent:
+		return fmt.Sprintf("image-%d: %s, %s", n, bareType(c.MIMEType), sizeOf(len(c.Data)))
+	case *sdk.AudioContent:
+		return fmt.Sprintf("audio-%d: %s, %s", n, bareType(c.MIMEType), sizeOf(len(c.Data)))
 	case *sdk.EmbeddedResource:
 		if c.Resource == nil {
-			return file{line: "[an embedded resource with nothing in it]"}
+			return fmt.Sprintf("file-%d", n)
 		}
-		name := path.Base(c.Resource.URI)
-		if name == "." || name == "/" || name == "" {
-			name = fmt.Sprintf("file-%d", n)
-		}
-		return readableAs(c.Resource.MIMEType, name, c.Resource.Blob)
-	case *sdk.AudioContent:
-		return file{line: fmt.Sprintf("[audio-%d: %s, %s, which a model here cannot hear]", n, bareType(c.MIMEType), sizeOf(len(c.Data)))}
+		return fmt.Sprintf("%s: %s, %s", nameOf(c.Resource.URI, n), bareType(c.Resource.MIMEType), sizeOf(len(c.Resource.Blob)))
 	case *sdk.ResourceLink:
 		size := ""
 		if c.Size != nil {
-			size = ", " + sizeOf(int(*c.Size))
+			size = ", " + sizeOf(max(0, *c.Size))
 		}
-		return file{line: fmt.Sprintf("[a link to %s: %s (%s%s), not fetched]", c.Name, c.URI, bareType(c.MIMEType), size)}
-	default:
-		return file{line: "[a content block of a kind this client does not read]"}
+		return fmt.Sprintf("a link to %s: %s (%s%s)", clean(c.Name, fmt.Sprintf("link-%d", n)), linkOf(c.URI), bareType(c.MIMEType), size)
 	}
+	return fmt.Sprintf("block-%d", n)
 }
 
-// readableAs is data of mediaType as a model can be passed it: an image other
-// than SVG, a PDF or plain text. Any other type is a line naming it.
-func readableAs(mediaType, name string, data []byte) file {
-	kind := bareType(mediaType)
-	switch {
-	case strings.HasPrefix(kind, "image/") && kind != "image/svg+xml":
-		return file{kind: agent.ContentImage, mediaType: kind, name: name, data: data, limit: maxImageBytes, what: "an image"}
-	case kind == "application/pdf" || kind == "text/plain":
-		return file{kind: agent.ContentFile, mediaType: kind, name: name, data: data, limit: maxDocBytes, what: "a PDF or a text file"}
-	case textual(kind):
-		// SVG, JSON, CSV, source: text a model reads as text, so it goes in
-		// the tool's own text, where a large one is previewed as any long
-		// result is.
-		switch {
-		case len(data) > maxDocBytes:
-			return file{line: fmt.Sprintf("[%s: %s, %s, more than the %s text is passed up to]", name, kind, sizeOf(len(data)), sizeOf(maxDocBytes))}
-		case !utf8.Valid(data):
-			return file{line: fmt.Sprintf("[%s: %s, %s, which is not UTF-8 text]", name, kind, sizeOf(len(data)))}
+// nameOf is the file a URI names, for a model and a provider to read: the
+// last part of its path, never its query or fragment, cleaned; file-n when
+// it names none.
+func nameOf(uri string, n int) string {
+	fallback := fmt.Sprintf("file-%d", n)
+	u, err := url.Parse(uri)
+	if err != nil {
+		if i := strings.IndexAny(uri, "?#"); i >= 0 {
+			uri = uri[:i]
 		}
-		return file{line: fmt.Sprintf("[%s: %s, %s]\n%s", name, kind, sizeOf(len(data)), data)}
-	default:
-		if kind == "" {
-			kind = "no type"
-		}
-		return file{line: fmt.Sprintf("[%s: %s, %s, which a model cannot read]", name, kind, sizeOf(len(data)))}
+		return clean(path.Base(uri), fallback)
 	}
+	// x://name.csv names its file where a host would be.
+	switch {
+	case u.Path != "" && u.Path != "/":
+		return clean(path.Base(u.Path), fallback)
+	case u.Host != "":
+		return clean(u.Host, fallback)
+	}
+	return clean(u.Opaque, fallback)
+}
+
+// linkOf is a link as a line shows it: without its query or fragment, which
+// can carry a token, and cleaned.
+func linkOf(uri string) string {
+	if u, err := url.Parse(uri); err == nil {
+		u.RawQuery, u.Fragment, u.RawFragment, u.User = "", "", "", nil
+		uri = u.String()
+	} else if i := strings.IndexAny(uri, "?#"); i >= 0 {
+		uri = uri[:i]
+	}
+	return clean(uri, "a link")
+}
+
+// clean is a name a server chose, safe in a line of the tool's text: no
+// control characters or brackets, which could end the line or forge one, no
+// "." or ".." alone, and at most maxNameRunes; fallback when nothing is left.
+func clean(name, fallback string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '[' || r == ']' || r == utf8.RuneError {
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.TrimSpace(name)
+	if r := []rune(name); len(r) > maxNameRunes {
+		name = string(r[:maxNameRunes])
+	}
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return fallback
+	}
+	return name
 }
 
 // textual is whether a type is text by its name: any text/ type, and the
@@ -305,35 +426,28 @@ func textual(kind string) bool {
 	return false
 }
 
+// bareType is a media type without its parameters, lowercase.
 func bareType(mediaType string) string {
 	kind, _, _ := strings.Cut(mediaType, ";")
 	return strings.ToLower(strings.TrimSpace(kind))
 }
 
-func extension(mediaType string) string {
-	switch bareType(mediaType) {
-	case "image/png":
-		return ".png"
-	case "image/jpeg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	case "image/svg+xml":
-		return ".svg"
-	}
-	return ""
-}
-
-// sizeOf is n bytes as a person reads it.
-func sizeOf(n int) string {
+// sizeOf is n bytes as a person reads it, in binary units.
+func sizeOf[N int | int64](n N) string {
 	switch {
 	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
 	case n >= 1<<10:
-		return fmt.Sprintf("%d KB", n>>10)
+		return fmt.Sprintf("%d KiB", n>>10)
+	case n == 1:
+		return "1 byte"
 	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
+// exactly is n bytes to the byte, for a size beside the limit it passed,
+// where a rounded figure would read as the limit itself.
+func exactly(n int) string {
 	return fmt.Sprintf("%d bytes", n)
 }
 

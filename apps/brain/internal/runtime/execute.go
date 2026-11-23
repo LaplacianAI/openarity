@@ -360,8 +360,8 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		if err != nil {
 			return "", "", err
 		}
-		if said != "" {
-			msgs = append(msgs, agent.Message{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: said}}})
+		if len(said) > 0 {
+			msgs = append(msgs, agent.Message{Role: agent.RoleUser, Content: said})
 		}
 	} else {
 		err = appendEvent(ctx, e.store, row.ID, l.Worker, "started", startedOf(built.Agent, built.Spec))
