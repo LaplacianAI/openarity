@@ -80,6 +80,20 @@ sandboxd and `Reconcile` opens each room's egress guard again.
 - **The proxy** to a room's port is authenticated by `X-Sandboxd-Token`, an
   HMAC of the room id under `SANDBOXD_TOKEN`, because `Authorization` is the
   brain's bearer token for the shim and must pass through untouched.
+- **A new workspace that does not fit the disk budget evicts.** `Start` is the
+  only caller of `workspaceVolume`, which holds `Service.mu` from measuring to
+  `CreateVolume`. If the budget is spent it plans first: the stopped
+  workspaces (a container that exists, is not running and has a stop time,
+  read with `Engine.ContainerState`) in order of stop time, ties by id, as few
+  as cover the gap, or none if they cannot, and then it is `ErrBusy` with
+  nothing deleted. The plan is deleted with `teardown` on a context that
+  ignores the caller's, then measured again. Running rooms, rooms with a
+  volume and no container, and the room being started are never chosen. Resume
+  does not evict. Sandboxd does not know teams, so a victim may be any team's.
+  The lock is held while the volumes are measured and any victims deleted, so
+  a slow disk walk delays other creates and resumes, as Resume already does.
+  A volume whose container and network are gone is not reclaimed by eviction,
+  and a container that exited on its own counts as stopped.
 - **Run it against a rootless daemon**, so root in a room is an unprivileged
   user on the host. `deployment/docker-compose.sandboxd.yml` says how.
 
