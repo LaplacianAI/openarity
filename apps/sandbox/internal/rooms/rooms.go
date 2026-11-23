@@ -622,19 +622,37 @@ func (s *Service) Start(ctx context.Context, id string, argv []string) error {
 // not know teams, so a stopped workspace of any team may be the one deleted.
 // Its room is then not found, and the brain replaces it on the next resume.
 //
-// s.mu is held from the measure to the volume's creation, so one start at a
-// time measures, evicts and creates, and two cannot pick the same victim or
-// delete a room another is creating. It does not promise the disk never
-// passes the budget: a new volume measures about nothing until it is written
-// to. It is released before the container is made.
+// A workspace that fits is made without s.mu, as before: the measure walks
+// every volume and can take seconds, and a start that needs no room must not
+// make every other create and resume wait for it. Only a workspace that does
+// not fit takes s.mu, measures again (another start may have freed or taken
+// the room), and from there holds it to the volume's creation, so one such
+// start at a time evicts and creates, and two cannot pick the same victim or
+// delete a room another is creating. A room being started has no container
+// yet, so an eviction never picks it. The lock does not promise the disk
+// never passes the budget: a new volume measures about nothing until it is
+// written to. It is released before the container is made.
 func (s *Service) workspaceVolume(ctx context.Context, id string, sp Spec) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	sizes, err := s.engine.VolumeSizes(ctx, roomLabel)
 	if err != nil {
 		return err
 	}
 	_, _, disk := s.limits.workspaceSize(sp)
+	if disk+total(sizes) <= s.limits.DiskBudget {
+		return s.engine.CreateVolume(ctx, volumeName(id), map[string]string{roomLabel: id})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.makeRoom(ctx, id, disk)
+}
+
+// makeRoom measures, deletes stopped workspaces if the new one does not fit,
+// measures again, and makes the volume. The caller holds s.mu.
+func (s *Service) makeRoom(ctx context.Context, id string, disk int64) error {
+	sizes, err := s.engine.VolumeSizes(ctx, roomLabel)
+	if err != nil {
+		return err
+	}
 	if used := disk + total(sizes); used > s.limits.DiskBudget {
 		plan, ok, err := s.evictionPlan(ctx, id, sizes, used-s.limits.DiskBudget)
 		if err != nil {
