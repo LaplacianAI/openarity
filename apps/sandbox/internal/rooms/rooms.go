@@ -29,7 +29,8 @@ import (
 var (
 	// ErrNotFound is a room the daemon does not hold.
 	ErrNotFound = errors.New("no such room")
-	// ErrBusy is a create refused because the memory budget is spent.
+	// ErrBusy is a create refused because the memory budget or the disk
+	// budget is spent.
 	ErrBusy = errors.New("the sandbox is busy")
 	// ErrRefused is a spec sandboxd cannot honour. The error wrapping it says why.
 	ErrRefused = errors.New("the spec cannot be honoured")
@@ -186,6 +187,7 @@ type Engine interface {
 	StartContainer(ctx context.Context, name string) error
 	StopContainer(ctx context.Context, name string, grace time.Duration) error
 	ContainerRunning(ctx context.Context, name string) (bool, error)
+	ContainerState(ctx context.Context, name string) (running bool, finishedAt time.Time, err error)
 	CreateVolume(ctx context.Context, name string, labels map[string]string) error
 	RemoveVolume(ctx context.Context, name string) error
 	VolumeSizes(ctx context.Context, label string) (map[string]int64, error)
@@ -614,25 +616,130 @@ func (s *Service) Start(ctx context.Context, id string, argv []string) error {
 }
 
 // workspaceVolume makes the room's /workspace, unless the workspaces' disk
-// is spent: a new one may hold up to WorkspaceBytes.
+// is spent: a new one may hold up to WorkspaceBytes. When it is spent, the
+// stopped workspaces are deleted, the one stopped longest first and no more
+// than it takes, to make room; a running room is never touched. Sandboxd does
+// not know teams, so a stopped workspace of any team may be the one deleted.
+// Its room is then not found, and the brain replaces it on the next resume.
+//
+// s.mu is held from the measure to the volume's creation, so one start at a
+// time measures, evicts and creates, and two cannot pick the same victim or
+// delete a room another is creating. It does not promise the disk never
+// passes the budget: a new volume measures about nothing until it is written
+// to. It is released before the container is made.
 func (s *Service) workspaceVolume(ctx context.Context, id string, sp Spec) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	sizes, err := s.engine.VolumeSizes(ctx, roomLabel)
 	if err != nil {
 		return err
 	}
-	_, _, used := s.limits.workspaceSize(sp)
-	for _, n := range sizes {
-		used += n
-	}
-	if used > s.limits.DiskBudget {
-		s.logger.Warn("a workspace was refused: the workspaces' disk is spent",
-			"room", id, "volumes", len(sizes), "used_bytes", used, "budget_bytes", s.limits.DiskBudget)
-		// The numbers are the operator's, so they are logged, not told to
-		// the team's agent.
-		return fmt.Errorf("%w: the workspaces' disk is spent; "+
-			"stopped workspaces keep theirs until their keep hours end", ErrBusy)
+	_, _, disk := s.limits.workspaceSize(sp)
+	if used := disk + total(sizes); used > s.limits.DiskBudget {
+		plan, ok, err := s.evictionPlan(ctx, id, sizes, used-s.limits.DiskBudget)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return s.diskSpent(id, len(sizes), used)
+		}
+		s.evict(ctx, plan)
+		// teardown only logs what it could not remove, so measure again.
+		sizes, err = s.engine.VolumeSizes(ctx, roomLabel)
+		if err != nil {
+			return err
+		}
+		if used := disk + total(sizes); used > s.limits.DiskBudget {
+			return s.diskSpent(id, len(sizes), used)
+		}
 	}
 	return s.engine.CreateVolume(ctx, volumeName(id), map[string]string{roomLabel: id})
+}
+
+func total(sizes map[string]int64) int64 {
+	var n int64
+	for _, b := range sizes {
+		n += b
+	}
+	return n
+}
+
+// diskSpent is the refusal of a workspace the disk budget has no room for.
+func (s *Service) diskSpent(id string, volumes int, used int64) error {
+	s.logger.Warn("a workspace was refused: the workspaces' disk is spent",
+		"room", id, "volumes", volumes, "used_bytes", used, "budget_bytes", s.limits.DiskBudget)
+	// The numbers are the operator's, so they are logged, not told to the
+	// team's agent.
+	return fmt.Errorf("%w: the workspaces' disk is spent, "+
+		"and deleting stopped workspaces could not free enough", ErrBusy)
+}
+
+// victim is a stopped workspace that may be deleted for its disk.
+type victim struct {
+	id      string
+	bytes   int64
+	stopped time.Time
+}
+
+// evictionPlan picks the stopped workspaces to delete to free gap bytes: the
+// ones stopped longest, as few as cover it. ok is false when every one of
+// them together would not, and then nothing should be deleted. A room is a
+// candidate only if it holds disk and its container exists, is stopped, and
+// ran: a volume with no container belongs to a start under way (or to
+// nothing sandboxd made), and a container that never ran has no stop time to
+// order it by. The room being started is never one. The caller holds s.mu,
+// which is what keeps a candidate from being resumed before it is deleted.
+func (s *Service) evictionPlan(ctx context.Context, self string, sizes map[string]int64, gap int64) (plan []victim, ok bool, err error) {
+	var all []victim
+	for name, n := range sizes {
+		id, found := strings.CutPrefix(name, networkPrefix)
+		if !found || !ValidID(id) || id == self || n <= 0 {
+			continue
+		}
+		running, finished, err := s.engine.ContainerState(ctx, containerName(id))
+		if docker.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("inspecting room %s: %w", id, err)
+		}
+		if running || finished.IsZero() {
+			continue
+		}
+		all = append(all, victim{id: id, bytes: n, stopped: finished})
+	}
+	// Ties go to the lower id so the choice is the same every time.
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].stopped.Equal(all[j].stopped) {
+			return all[i].stopped.Before(all[j].stopped)
+		}
+		return all[i].id < all[j].id
+	})
+	var freed int64
+	for _, v := range all {
+		plan = append(plan, v)
+		if freed += v.bytes; freed >= gap {
+			return plan, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// evictTimeout bounds the deletes of one plan. s.mu is held while they run,
+// and they do not follow the caller's context, so a daemon that hangs on one
+// would otherwise hold every create and resume for as long as it hangs.
+const evictTimeout = 2 * time.Minute
+
+// evict deletes the planned rooms. The caller giving up must not leave one
+// half deleted, so the deletes do not follow its context, only evictTimeout.
+func (s *Service) evict(ctx context.Context, plan []victim) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), evictTimeout)
+	defer cancel()
+	for _, v := range plan {
+		s.logger.Warn("deleting a stopped workspace to make room for a new one",
+			"room", v.id, "bytes", v.bytes, "stopped_at", v.stopped.UTC().Format(time.RFC3339))
+		s.teardown(ctx, v.id)
+	}
 }
 
 func (s *Service) dropVolume(ctx context.Context, id string, sp Spec) {
