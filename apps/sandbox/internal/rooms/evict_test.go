@@ -374,12 +374,11 @@ func TestEqualStopTimesAreBrokenByRoomID(t *testing.T) {
 	}
 }
 
-// With a fake whose new volume is full size the moment it is made (the
-// daemon's measures about nothing until it is written to), starts that race
-// see each other's volumes: the room the budget has goes to two of them, and
-// no room is deleted for two. This is only as strong as that fake; the lock
-// itself is pinned by TestTheLockIsHeldFromTheMeasureToTheVolume.
-func TestConcurrentStartsWithFullSizeVolumesTakeTheRoomOnceEach(t *testing.T) {
+// Starts that fit are made without the lock, so racing ones may together pass
+// the budget, as on main, and the test does not say how many are started. What
+// the lock owes the ones that do not fit is that no room is deleted for two,
+// and that nothing but a stopped room is deleted.
+func TestConcurrentStartsWithFullSizeVolumesDeleteNoRoomTwice(t *testing.T) {
 	t.Parallel()
 	const starts = 6
 	s, e := evictService(3 * testDisk)
@@ -410,28 +409,10 @@ func TestConcurrentStartsWithFullSizeVolumesTakeTheRoomOnceEach(t *testing.T) {
 	close(gate)
 	wg.Wait()
 
-	// Room for the running one and two more: the two stopped went for them.
-	var ok, busy int
 	for _, err := range errs {
-		switch {
-		case err == nil:
-			ok++
-		case errors.Is(err, ErrBusy):
-			busy++
-		default:
+		if err != nil && !errors.Is(err, ErrBusy) {
 			t.Errorf("Start: %v", err)
 		}
-	}
-	if ok != 2 || busy != starts-2 {
-		t.Fatalf("%d started and %d busy, want 2 and %d", ok, busy, starts-2)
-	}
-	if e.peak > 3*testDisk {
-		t.Fatalf("the volumes held %d bytes together, past the budget of %d", e.peak, 3*testDisk)
-	}
-	got := deleted(e)
-	slices.Sort(got)
-	if want := []string{roomID(2), roomID(3)}; !slices.Equal(got, want) {
-		t.Fatalf("deleted %v, want %v", got, want)
 	}
 	seen := map[string]bool{}
 	for _, name := range e.removed {
@@ -439,6 +420,14 @@ func TestConcurrentStartsWithFullSizeVolumesTakeTheRoomOnceEach(t *testing.T) {
 			t.Errorf("%s was removed twice: two starts chose the same room", name)
 		}
 		seen[name] = true
+	}
+	for _, id := range deleted(e) {
+		if id != roomID(2) && id != roomID(3) {
+			t.Errorf("room %s was deleted, and it was not a stopped one", id)
+		}
+	}
+	if !whole(e, roomID(1)) {
+		t.Error("a running workspace was touched")
 	}
 }
 
@@ -504,17 +493,21 @@ func TestConcurrentStartsWithEmptyNewVolumesDeleteNoRoomTwiceAndRefuseNone(t *te
 	}
 }
 
-// The lock is held across both measures and the deletes between them, so
-// nothing else measures, evicts or creates in the middle. The start is held
-// inside VolumeSizes, and the test tries the lock from outside.
-func TestTheLockIsHeldFromTheMeasureToTheVolume(t *testing.T) {
+// A start that does not fit takes the lock for its second measure, the
+// deletes, the third measure and the volume, so nothing else evicts or
+// creates in the middle. The first measure is made without it. The start is
+// held inside VolumeSizes, and the test tries the lock from outside.
+func TestTheLockIsHeldFromTheSecondMeasureToTheVolume(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		block int // which VolumeSizes call to hold
+		name    string
+		block   int // which VolumeSizes call to hold
+		locked  bool
+		deleted bool // whether the victim is gone by then
 	}{
-		{"in the first measure", 1},
-		{"in the measure after the deletes", 2},
+		{"in the first measure, which takes no lock", 1, false, false},
+		{"in the second measure, before any delete", 2, true, false},
+		{"in the measure after the deletes", 3, true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -550,12 +543,15 @@ func TestTheLockIsHeldFromTheMeasureToTheVolume(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("workspaceVolume never measured")
 			}
-			if s.mu.TryLock() {
+			got := s.mu.TryLock()
+			if got {
 				s.mu.Unlock()
-				t.Fatal("the lock was free while a start was measuring")
 			}
-			if tt.block == 2 && !gone(e, roomID(2)) {
-				t.Error("the second measure came before the deletes were done")
+			if held := !got; held != tt.locked {
+				t.Fatalf("lock held = %v during measure %d, want %v", held, tt.block, tt.locked)
+			}
+			if got := gone(e, roomID(2)); got != tt.deleted {
+				t.Errorf("victim gone = %v during measure %d, want %v", got, tt.block, tt.deleted)
 			}
 			free()
 			select {
@@ -574,6 +570,69 @@ func TestTheLockIsHeldFromTheMeasureToTheVolume(t *testing.T) {
 				t.Fatalf("deleted %v, want %v", got, roomID(2))
 			}
 		})
+	}
+}
+
+// A workspace that fits the budget is made without the lock, so another start
+// holding it, or a slow eviction, does not delay it.
+func TestAStartThatFitsDoesNotWaitForTheLock(t *testing.T) {
+	t.Parallel()
+	s, e := evictService(10 * testDisk)
+	seed(e, roomID(1), testDisk, roomRunning, time.Time{})
+	ctx := within(t)
+	id, err := s.Create(ctx, Spec{Image: "x", Workspace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	done := make(chan error, 1)
+	go func() { done <- s.workspaceVolume(ctx, id, Spec{Image: "x", Workspace: true}) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("workspaceVolume: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("a start that fits waited for the lock")
+	}
+	if _, ok := e.volumes[volumeName(id)]; !ok {
+		t.Error("the volume was not made")
+	}
+	if got := deleted(e); len(got) != 0 {
+		t.Errorf("deleted %v: a start that fits deletes nothing", got)
+	}
+}
+
+// A start that did not fit when it measured, and fits once it has the lock
+// because another freed the room, deletes nothing.
+func TestAStartThatFitsOnceItHasTheLockDeletesNothing(t *testing.T) {
+	t.Parallel()
+	s, e := evictService(2 * testDisk)
+	seed(e, roomID(1), testDisk, roomRunning, time.Time{})
+	seed(e, roomID(2), testDisk, roomStopped, epoch)
+	ctx := within(t)
+	id, err := s.Create(ctx, Spec{Image: "x", Workspace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	e.onSizes = func() {
+		// Between the first measure and the second, the stopped room is deleted.
+		if calls.Add(1) == 2 {
+			e.mu.Lock()
+			delete(e.volumes, volumeName(roomID(2)))
+			e.mu.Unlock()
+		}
+	}
+	if err := s.workspaceVolume(ctx, id, Spec{Image: "x", Workspace: true}); err != nil {
+		t.Fatalf("workspaceVolume: %v", err)
+	}
+	if got := deleted(e); len(got) != 0 || len(e.removed) != 0 {
+		t.Fatalf("deleted %v, removed %v: want nothing", got, e.removed)
+	}
+	if !whole(e, roomID(1)) {
+		t.Fatal("a running workspace was touched")
 	}
 }
 
