@@ -57,14 +57,11 @@ func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Linea
 			return nil, err
 		}
 		parts = append(parts, fmt.Sprintf("Your request to call %s (%s): %s", a.Tool, oneLine(a.Summary), said))
-		if len(attached) > 0 {
-			// As a turn's own calls attach theirs: named by the call, after
-			// what was said.
-			files = append(files, agent.Content{
-				Type: agent.ContentText,
-				Text: "Attached by " + a.Tool + " for call " + a.CallID + ", as its output, not the person's words:",
-			})
-			files = append(files, attached...)
+		// As a turn's own calls attach theirs: named by the call, after what
+		// was said.
+		call := agent.ToolCall{ID: a.CallID, Name: a.Tool}
+		if m, ok := agent.Attached(map[string][]agent.Content{call.ID: attached}, []agent.ToolCall{call}); ok {
+			files = append(files, m.Content...)
 		}
 		ids = append(ids, a.ID)
 	}

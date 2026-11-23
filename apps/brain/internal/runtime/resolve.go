@@ -92,9 +92,10 @@ type place struct{ msg, part int }
 
 // resolve fills the bytes of every attachment the request names and keeps
 // the files a tool attached whole, the newest first, up to eight files and
-// bytesPerRequest of them; older ones are said to be earlier files rather
-// than sent again. It copies what it changes, so the caller's messages,
-// which are the transcript, keep only the references and every file.
+// bytesPerRequest of them, text files among them; older ones are named as
+// earlier files rather than sent, and one past the bytes left is never read.
+// It copies what it changes, so the caller's messages, which are the
+// transcript, keep only the references and every file.
 func (r *resolving) resolve(ctx context.Context, req agent.Request) (agent.Request, int, error) {
 	var (
 		files []place
@@ -129,42 +130,59 @@ func (r *resolving) resolve(ctx context.Context, req agent.Request) (agent.Reque
 		}
 		msgs[p.msg].Content[p.part] = c
 	}
-	earlier := func(p place, name string) {
-		set(p, textPart(fmt.Sprintf("[%s: a file shown earlier, not sent again]", name)))
+	leftOut := func(p place, name string) {
+		set(p, textPart(fmt.Sprintf("[%s: an earlier file, not sent with this request]", name)))
 	}
 
-	sent, bytes := 0, 0
+	// counted is every file that went, text or not; sent, the ones that went
+	// as files, which a refusal names.
+	counted, sent, bytes := 0, 0, 0
 	for k := len(files) - 1; k >= 0; k-- {
 		p := files[k]
 		part := msgs[p.msg].Content[p.part]
-		if sent >= filesPerRequest {
-			earlier(p, part.Blob.Name)
+		name := part.Blob.Name
+		if counted >= filesPerRequest {
+			leftOut(p, name)
 			continue
 		}
 		if len(part.Blob.Data) == 0 {
 			var err error
-			if part, err = r.fetch(ctx, session, part.Blob); err != nil {
+			part, err = r.fetch(ctx, session, part.Blob, bytesPerRequest-bytes)
+			if errors.Is(err, errPastBytes) {
+				leftOut(p, name)
+				continue
+			}
+			if err != nil {
 				return req, 0, err
 			}
 		}
-		if part.Blob == nil {
-			// Read as text, or no longer there: said in a line of its own.
-			set(p, part)
+		size := len(part.Text)
+		if part.Blob != nil {
+			size = len(part.Blob.Data)
+		}
+		if bytes+size > bytesPerRequest {
+			leftOut(p, name)
 			continue
 		}
-		if bytes+len(part.Blob.Data) > bytesPerRequest {
-			earlier(p, part.Blob.Name)
-			continue
-		}
-		bytes += len(part.Blob.Data)
+		bytes += size
+		counted++
 		set(p, part)
-		sent++
+		if part.Blob != nil {
+			sent++
+		}
 	}
 	req.Messages = msgs
 	return req, sent, nil
 }
 
-func (r *resolving) fetch(ctx context.Context, session uuid.UUID, blob *agent.Blob) (agent.Content, error) {
+// errPastBytes is a file larger than what is left of a request's bytes, so
+// not read.
+var errPastBytes = errors.New("past the request's bytes")
+
+// fetch is the file blob names, read for one request, as a model is sent it:
+// a text file as its text. A file larger than room is errPastBytes, and is
+// never read from the object store.
+func (r *resolving) fetch(ctx context.Context, session uuid.UUID, blob *agent.Blob, room int) (agent.Content, error) {
 	id, err := uuid.Parse(strings.TrimPrefix(blob.Ref, attachmentRef))
 	if err != nil {
 		return agent.Content{}, fmt.Errorf("the file reference %q names no file", blob.Ref)
@@ -176,12 +194,16 @@ func (r *resolving) fetch(ctx context.Context, session uuid.UUID, blob *agent.Bl
 	if err != nil {
 		return agent.Content{}, fmt.Errorf("reading the file %s: %w", blob.Name, err)
 	}
+	text := bareType(row.MediaType) == "text/plain"
+	if size := row.SizeBytes; (text && min(size, maxTextBytes) > int64(room)) || (!text && size > int64(room)) {
+		return agent.Content{}, errPastBytes
+	}
 	data, err := r.objects.Get(ctx, row.TeamID, row.ObjectKey)
 	if err != nil {
 		return agent.Content{}, fmt.Errorf("reading the file %s: %w", blob.Name, err)
 	}
 
-	if bareType(row.MediaType) == "text/plain" {
+	if text {
 		return textPart(fileText(row.Filename, data)), nil
 	}
 	filled := *blob

@@ -84,19 +84,22 @@ the person's words.
 
 | What the tool returns | What the model gets |
 | --- | --- |
-| Text, or an embedded resource holding text | The text, in order |
+| Text | The text, in order |
 | A PNG, JPEG, GIF or WebP image, as an image block or an embedded blob | The image, up to 5 MiB |
 | A PDF as an embedded blob | The file, up to 10 MiB, named from its URI |
-| Plain text, SVG, JSON, CSV, YAML, XML, source code (any `text/` type, `+json`, `+xml`) | Its text, in the tool's own text under a line naming it, the first 100 KiB of UTF-8 |
+| An embedded resource holding text, or plain text, SVG, JSON, CSV, YAML, XML or source code as a blob (any `text/` type, `+json`, `+xml`) | Its text, in the tool's own text under a line naming it, the first 100 KiB of UTF-8 |
 | Anything else: audio, another image type, a zip, a resource link | A line saying what it was and why it is not passed |
 
 A file is attached only when its bytes are what the server says they are,
 and an empty one never is. Each file attached is named in the text too, as
-`[attached image-1.png: image/png, 220 KiB]`; a call attaches eight files
-and 10 MiB at most, and past that, or past a size, the file is a line saying
-so. A name comes from the last part of the URI's path, never its query or
-fragment, without control characters or brackets, and at most 100
-characters. A result marked `IsError` is its text alone: a file that came
+`[attached image-1.png: image/png, 220 KiB]`; a call passes on eight files
+and 10 MiB at most, text files among them, and past that, or past a size,
+the file is a line saying so. A name comes from the last part of the URI's
+path, never its query, its fragment or a password, without control
+characters, line separators or brackets, and at most 100 characters; an
+image's gets its type's extension when it has none. A media type that is
+not `type/subtype` is named as no type, and `image/jpg` is read as
+`image/jpeg`. An empty file is named as empty. A result marked `IsError` is its text alone: a file that came
 with it is named, never attached. Nothing is dropped without a word, since an
 empty answer reads to a model as a tool that did nothing, and it calls it
 again.
