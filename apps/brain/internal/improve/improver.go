@@ -21,6 +21,18 @@ import (
 //go:embed prompts/improver.md
 var improverPrompt string
 
+//go:embed prompts/efficiency.md
+var efficiencyPrompt string
+
+// systemFor is a pass's system prompt: the improver's, and for an
+// efficiency pass its own rules after. Each is fixed, so it stays cached.
+func systemFor(trigger string) string {
+	if trigger == triggerEfficiency {
+		return improverPrompt + "\n" + efficiencyPrompt
+	}
+	return improverPrompt
+}
+
 const (
 	triggerPattern = "pattern"
 	triggerDaily   = "daily"
@@ -98,6 +110,9 @@ type ImproverStore interface {
 	ListRunsUse(ctx context.Context, arg db.ListRunsUseParams) ([]db.ListRunsUseRow, error)
 	ListRecentPruneLooks(ctx context.Context, arg db.ListRecentPruneLooksParams) ([]string, error)
 	ListRunDigests(ctx context.Context, runID uuid.UUID) ([]db.RunDigest, error)
+	ListEfficiencyRuns(ctx context.Context, arg db.ListEfficiencyRunsParams) ([]db.ListEfficiencyRunsRow, error)
+	ListEfficiencyEvents(ctx context.Context, rootIDs []uuid.UUID) ([]db.ListEfficiencyEventsRow, error)
+	ListRunsCost(ctx context.Context, ids []uuid.UUID) ([]db.ListRunsCostRow, error)
 }
 
 // Improver runs passes: an agent's patterns read, and proposals written.
@@ -234,6 +249,14 @@ func leadPart(keys []string) (part, target string) {
 // patterns (or, with none, the agent's newest), then successes on the same
 // part to contrast.
 func (im *Improver) runsFor(ctx context.Context, plan plannedPass) ([]toRead, error) {
+	if plan.Trigger == triggerEfficiency {
+		// Chosen as the pass was planned, from what each run cost.
+		out := make([]toRead, len(plan.RunIDs))
+		for i, id := range plan.RunIDs {
+			out[i] = toRead{run: id}
+		}
+		return out, nil
+	}
 	var failures []toRead
 	for _, s := range plan.Keys {
 		k, ok := parseKey(s)
@@ -377,7 +400,7 @@ func (im *Improver) try(ctx context.Context, pass db.ImproverPass, settings db.G
 		t.watch(runCtx, events)
 	}()
 	res, err := im.runner.Run(runCtx, agent.Spec{
-		Model: model, Pattern: agent.PatternReAct, System: agent.System(improverPrompt),
+		Model: model, Pattern: agent.PatternReAct, System: agent.System(systemFor(pass.Trigger)),
 		Tools: t.tools(), MaxSteps: passSteps,
 	}, []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: m.text}}}}, im.judge.endpoint, events)
 	close(events)

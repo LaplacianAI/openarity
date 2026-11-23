@@ -17,10 +17,15 @@ const (
 	passWorkflow     = "openarity.improve.pass"
 	patternSweepFlow = "openarity.improve.pattern-sweep"
 	dailySweepFlow   = "openarity.improve.daily-sweep"
+	efficiencyFlow   = "openarity.improve.efficiency-sweep"
 	patternSchedule  = "improve-pattern-sweep"
 	dailySchedule    = "improve-daily-sweep"
+	efficiencySched  = "improve-efficiency-sweep"
 	patternCron      = "0 */10 * * * *"
 	dailyCron        = "0 30 3 * * *"
+	// Weekly, Sunday 04:00 UTC, after that day's daily sweep: a saving
+	// takes more runs to show than a failure does.
+	efficiencyCron = "0 0 4 * * 0"
 	// One pass at a time on a worker: each is a long model run nobody
 	// waits on.
 	passesPerWorker = 1
@@ -35,6 +40,7 @@ const (
 type Sweeps interface {
 	ListPatterns(ctx context.Context, arg db.ListPatternsParams) ([]db.ListPatternsRow, error)
 	ListImprovingAgents(ctx context.Context) ([]db.ListImprovingAgentsRow, error)
+	ListEfficiencyAgents(ctx context.Context) ([]db.ListEfficiencyAgentsRow, error)
 }
 
 // ImproverJob finds an agent's patterns and runs a pass on them.
@@ -60,11 +66,13 @@ func (j *ImproverJob) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	dbos.RegisterWorkflow(d, j.pass, dbos.WithWorkflowName(passWorkflow))
 	dbos.RegisterWorkflow(d, j.patternSweep, dbos.WithWorkflowName(patternSweepFlow))
 	dbos.RegisterWorkflow(d, j.dailySweep, dbos.WithWorkflowName(dailySweepFlow))
+	dbos.RegisterWorkflow(d, j.efficiencySweep, dbos.WithWorkflowName(efficiencyFlow))
 	j.dbos = d
 	// No backfill: a missed sweep finds the same work at the next.
 	return []dbos.ScheduleSpec{
 		{ScheduleName: patternSchedule, Schedule: patternCron, WorkflowName: patternSweepFlow, AutomaticBackfill: false},
 		{ScheduleName: dailySchedule, Schedule: dailyCron, WorkflowName: dailySweepFlow, AutomaticBackfill: false},
+		{ScheduleName: efficiencySched, Schedule: efficiencyCron, WorkflowName: efficiencyFlow, AutomaticBackfill: false},
 	}, nil
 }
 
@@ -119,6 +127,12 @@ func (j *ImproverJob) dailySweep(ctx dbos.Context, in dbos.ScheduledWorkflowInpu
 	})
 }
 
+func (j *ImproverJob) efficiencySweep(ctx dbos.Context, in dbos.ScheduledWorkflowInput) (string, error) {
+	return dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
+		return in.ScheduledTime.UTC().Format(time.RFC3339), j.sweepEfficiency(sctx, in.ScheduledTime)
+	})
+}
+
 // sweepPatterns fails the passes that were lost, then queues a pass for
 // each agent with a pattern over the bar, at most one an hour each.
 func (j *ImproverJob) sweepPatterns(ctx context.Context, now time.Time) error {
@@ -163,6 +177,58 @@ func (j *ImproverJob) sweepDaily(ctx context.Context, now time.Time) error {
 		}
 	}
 	return errors.Join(failed...)
+}
+
+// sweepEfficiency queues the efficiency passes the week's good runs call
+// for.
+func (j *ImproverJob) sweepEfficiency(ctx context.Context, now time.Time) error {
+	plans, err := j.efficiencyPlans(ctx)
+	failed := []error{err}
+	for _, p := range plans {
+		if err := j.enqueue(p, "improver:"+p.AgentID.String()+":efficiency:"+now.UTC().Format(idDay)); err != nil {
+			failed = append(failed, err)
+		}
+	}
+	return errors.Join(failed...)
+}
+
+// efficiencyPlans is an efficiency pass for each agent whose good runs call
+// for one. Quality comes first: an agent with a failure pattern over the
+// bar, a change waiting for a person, or one still watched or flagged is
+// left for the pattern pass, or alone. An agent that could not be read is
+// said in the error, and the rest still planned.
+func (j *ImproverJob) efficiencyPlans(ctx context.Context) ([]plannedPass, error) {
+	agents, err := j.sweeps.ListEfficiencyAgents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing agents for an efficiency pass: %w", err)
+	}
+	if len(agents) == 0 {
+		return nil, nil
+	}
+	// No back-off: a pattern held back after a pass ran out is still open.
+	patterns, err := j.sweeps.ListPatterns(ctx, db.ListPatternsParams{MinRuns: patternBar, BackOffHours: 0})
+	if err != nil {
+		return nil, fmt.Errorf("listing patterns: %w", err)
+	}
+	failing := map[uuid.UUID]bool{}
+	for _, p := range patterns {
+		failing[p.AgentID] = true
+	}
+	var plans []plannedPass
+	var failed []error
+	for _, a := range agents {
+		if failing[a.ID] {
+			continue
+		}
+		p, ok, err := j.improver.efficiencyPlan(ctx, a)
+		switch {
+		case err != nil:
+			failed = append(failed, err)
+		case ok:
+			plans = append(plans, p)
+		}
+	}
+	return plans, errors.Join(failed...)
 }
 
 func (j *ImproverJob) enqueue(p plannedPass, id string) error {

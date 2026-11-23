@@ -24,7 +24,8 @@ type passView struct {
 	PruneProposed []string `json:"prune_proposed"`
 	Status        string   `json:"status"`
 	// RunsSeen is how many judged runs a daily pass had since the agent's
-	// last pass; null for one a pattern started.
+	// last pass, or the good runs an efficiency pass was drawn from; null
+	// for one a pattern started.
 	RunsSeen *int32 `json:"runs_seen"`
 	// CutShort is a pass done before it finished: out of steps, tokens or
 	// time, improvement turned off, or its agent gone.

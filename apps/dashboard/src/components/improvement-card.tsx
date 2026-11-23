@@ -6,7 +6,7 @@
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Eye, TriangleAlert, UserRoundX } from "lucide-react";
+import { ArrowRight, Coins, Eye, Timer, TriangleAlert, UserRoundX } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { decideImprovement } from "@/api";
 import { ApiError } from "@/api/client";
@@ -31,7 +31,9 @@ import {
   MARK_WORDS,
   missingWrites,
   patternWords,
+  SAVES_WORDS,
   scopeWords,
+  timeWords,
   usualWords,
   watchHeadline,
 } from "@/lib/improvements";
@@ -178,9 +180,18 @@ function Change({ change }: { change: ImprovementChange }) {
  * rate, cost, the pattern it targeted, votes and what was applied beside it.
  * A flag is said in words and marked with an icon, never by colour alone.
  */
-function Watch({ watch }: { watch: ImprovementWatch }) {
+function Watch({
+  watch,
+  goal,
+  saves,
+}: {
+  watch: ImprovementWatch;
+  goal: Improvement["goal"];
+  saves: Improvement["saves"];
+}) {
   const flagged = watch.status === "flagged";
-  const cost = costWords(watch);
+  const cost = costWords(watch, goal);
+  const time = goal === "efficiency" ? timeWords(watch) : null;
   const pattern = patternWords(watch);
   const votes = watch.before.up + watch.before.down + watch.after.up + watch.after.down;
   return (
@@ -200,12 +211,13 @@ function Watch({ watch }: { watch: ImprovementWatch }) {
         ) : (
           <Eye aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span>{watchHeadline(watch)}</span>
+        <span>{watchHeadline(watch, saves)}</span>
       </p>
       {watch.status !== "watching" || watch.after.runs > 0 ? (
         <ul className="space-y-0.5 pl-5 text-muted-foreground">
           <li>{usualWords(watch)}</li>
           {cost ? <li>{cost}</li> : null}
+          {time ? <li>{time}</li> : null}
           {pattern ? <li>{pattern}</li> : null}
           {votes > 0 ? (
             <li>
@@ -300,6 +312,8 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
   const readable = item.runs.filter((r) => r.readable);
   const hidden = item.runs.length - readable.length;
   const decidedAt = item.status === "reverted" ? item.reverted_at : (item.decided_at ?? null);
+  // An efficiency change says what it aims to save, before what kind of change it is.
+  const saves = item.goal === "efficiency" ? (item.saves ?? []) : [];
 
   return (
     <div
@@ -331,8 +345,21 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
         </p>
       ) : null}
 
-      {item.marks.length > 0 || item.reaches.length > 0 ? (
+      {item.marks.length > 0 || item.reaches.length > 0 || saves.length > 0 ? (
         <ul aria-label="What kind of change" className="flex flex-wrap gap-1.5">
+          {saves.map((v) => {
+            const Icon = v === "cost" ? Coins : Timer;
+            return (
+              <li
+                key={v}
+                data-saves={v}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs shadow-[inset_0_0_0_1px_var(--sheet-edge)]"
+              >
+                <Icon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                {SAVES_WORDS[v]}
+              </li>
+            );
+          })}
           {item.marks.map((m) => (
             <li
               key={m}
@@ -367,7 +394,7 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
         ))}
       </div>
 
-      {item.watch ? <Watch watch={item.watch} /> : null}
+      {item.watch ? <Watch watch={item.watch} goal={item.goal} saves={item.saves} /> : null}
 
       {item.runs.length > 0 ? (
         <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">

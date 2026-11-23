@@ -13,10 +13,54 @@ import (
 
 const passesPermission = "improvement:approve"
 
-// triggerCell is why a pass ran: the patterns it was handed, or the daily one.
+// reasonWords are an efficiency pass's reasons in plain words, as the
+// dashboard says them.
+var reasonWords = map[string]string{
+	"repeated_call":  "the same call made twice",
+	"retried_error":  "a failed call made again",
+	"unused_tools":   "tools offered and left unused",
+	"near_step_cap":  "runs close to their step limit",
+	"long_tool_wait": "a long wait on a tool",
+	"spread":         "costly runs far above the usual",
+}
+
+// triggerCell is why a pass ran: the patterns it was handed, the weekly
+// efficiency sweep's reasons, or the daily one.
 func triggerCell(p *client.ImproverPass) string {
-	if p.Trigger == client.ImproverPassTriggerDaily {
+	switch p.Trigger {
+	case client.ImproverPassTriggerDaily:
 		return "daily"
+	case client.ImproverPassTriggerEfficiency:
+		why := "efficiency"
+		if p.RunsSeen != nil {
+			why += ", from " + strconv.Itoa(int(*p.RunsSeen)) + " good runs"
+		}
+		// Each reason as efficiency:<mark>[:<target>], any other signature
+		// left out as the dashboard does. A target is a tool's name from a
+		// run, and a mark the CLI does not know is the brain's, so each is
+		// made safe for the terminal.
+		var reasons []string
+		for _, s := range p.Signatures {
+			rest, ok := strings.CutPrefix(s, "efficiency:")
+			if !ok {
+				continue
+			}
+			mark, target, _ := strings.Cut(rest, ":")
+			r, known := reasonWords[mark]
+			if !known {
+				r = cli.Safe(strings.ReplaceAll(mark, "_", " "))
+			}
+			if target != "" {
+				r += " " + cli.Safe(target)
+			}
+			reasons = append(reasons, r)
+		}
+		if len(reasons) > 0 {
+			why += ": " + strings.Join(reasons, ", ")
+		}
+		return why
+	case client.ImproverPassTriggerPattern:
+		// Said below, with its signatures.
 	}
 	if len(p.Signatures) == 0 {
 		return "pattern"
@@ -72,8 +116,10 @@ func newPassesCmd(opts *cli.Options) *cobra.Command {
 		Use:   "passes <team>",
 		Short: "List the improver's passes: what ran, why, and what it proposed",
 		Long: "Newest first. A pass is one run of the improver over an agent, started\n" +
-			"either because a pattern recurred in enough runs (the pattern shown is\n" +
-			"part:target:cause) or by the daily pass. Each shows how many proposals it\n" +
+			"because a pattern recurred in enough runs (the pattern shown is\n" +
+			"part:target:cause), by the daily pass, or by the weekly efficiency pass\n" +
+			"(with the good runs it read and why: the same call made twice, costly\n" +
+			"runs far above the usual, and so on). Each shows how many proposals it\n" +
 			"made, how many the screen refused for carrying one run's specifics, and\n" +
 			"the tokens it cost, or why it failed. --agent keeps one agent's, by name\n" +
 			"or id; -o json carries the full record, including its report. A report\n" +

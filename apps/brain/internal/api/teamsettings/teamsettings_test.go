@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
@@ -99,7 +100,14 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		ImprovementPassTokens:  kept(p.ImprovementPassTokens, f.row, func(s db.TeamSetting) int32 { return s.ImprovementPassTokens }, 400_000),
 		ImprovementPassMinutes: kept(p.ImprovementPassMinutes, f.row, func(s db.TeamSetting) int16 { return s.ImprovementPassMinutes }, 20),
 		ImprovementDailyRuns:   kept(p.ImprovementDailyRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementDailyRuns }, 5),
-		UpdatedAt:              time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
+
+		ImprovementEfficiency:         keptBool(p.ImprovementEfficiency, f.row),
+		ImprovementEfficiencyRuns:     kept(p.ImprovementEfficiencyRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyRuns }, 20),
+		ImprovementEfficiencyDays:     kept(p.ImprovementEfficiencyDays, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyDays }, 14),
+		ImprovementEfficiencySpread:   kept(p.ImprovementEfficiencySpread, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencySpread }, 200),
+		ImprovementEfficiencyMarkRuns: kept(p.ImprovementEfficiencyMarkRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyMarkRuns }, 3),
+		ImprovementEfficiencyMargin:   kept(p.ImprovementEfficiencyMargin, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyMargin }, 1),
+		UpdatedAt:                     time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 
 		SandboxIdleMinutes:       p.SandboxIdleMinutes,
 		SandboxWorkspaceMemoryMb: p.SandboxWorkspaceMemoryMb,
@@ -1247,6 +1255,13 @@ type improveWire struct {
 	ImprovementPassMinutes int16      `json:"improvement_pass_minutes"`
 	ImprovementDailyRuns   int16      `json:"improvement_daily_runs"`
 	ImprovementSince       *time.Time `json:"improvement_since"`
+
+	ImprovementEfficiency         bool  `json:"improvement_efficiency"`
+	ImprovementEfficiencyRuns     int16 `json:"improvement_efficiency_runs"`
+	ImprovementEfficiencyDays     int16 `json:"improvement_efficiency_days"`
+	ImprovementEfficiencySpread   int16 `json:"improvement_efficiency_spread"`
+	ImprovementEfficiencyMarkRuns int16 `json:"improvement_efficiency_mark_runs"`
+	ImprovementEfficiencyMargin   int16 `json:"improvement_efficiency_margin"`
 }
 
 func decodeImprove(t *testing.T, rec *httptest.ResponseRecorder) improveWire {
@@ -1405,5 +1420,82 @@ func TestTheDefaultsIncludeTheSampleShare(t *testing.T) {
 	got := decodeImprove(t, e.call(t, e.member(), http.MethodGet, ""))
 	if got.ImprovementSampleShare != 10 || got.JudgeModel != nil || got.ImprovementSince != nil {
 		t.Errorf("defaults = %+v", got)
+	}
+}
+
+// keptBool is a nullable switch as the upsert keeps it: the request's when
+// sent, else the stored one, else off.
+func keptBool(v pgtype.Bool, row *db.TeamSetting) bool {
+	switch {
+	case v.Valid:
+		return v.Bool
+	case row != nil:
+		return row.ImprovementEfficiency
+	}
+	return false
+}
+
+// The efficiency pass's switch and numbers start at their defaults, are
+// saved and kept when left out, and each is refused outside its range with
+// its name, as mark runs above runs is; a refusal saves nothing.
+func TestTheEfficiencySettings(t *testing.T) {
+	e := newEnv()
+	got := decodeImprove(t, e.save(t, `{`+improveBase+`}`))
+	if got.ImprovementEfficiency || got.ImprovementEfficiencyRuns != 20 || got.ImprovementEfficiencyDays != 14 ||
+		got.ImprovementEfficiencySpread != 200 || got.ImprovementEfficiencyMarkRuns != 3 || got.ImprovementEfficiencyMargin != 1 {
+		t.Fatalf("a first save's efficiency settings = %+v", got)
+	}
+	got = decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_efficiency":true,"improvement_efficiency_runs":40,
+		"improvement_efficiency_days":21,"improvement_efficiency_spread":150,"improvement_efficiency_mark_runs":5,"improvement_efficiency_margin":0}`))
+	if !got.ImprovementEfficiency || got.ImprovementEfficiencyRuns != 40 || got.ImprovementEfficiencyDays != 21 ||
+		got.ImprovementEfficiencySpread != 150 || got.ImprovementEfficiencyMarkRuns != 5 || got.ImprovementEfficiencyMargin != 0 {
+		t.Fatalf("saved efficiency settings = %+v", got)
+	}
+	if got = decodeImprove(t, e.save(t, `{`+improveBase+`}`)); !got.ImprovementEfficiency || got.ImprovementEfficiencyRuns != 40 ||
+		got.ImprovementEfficiencyMargin != 0 {
+		t.Fatalf("left out, the efficiency settings became %+v", got)
+	}
+	saved := len(e.store.upserts)
+	for _, bad := range []struct{ body, name string }{
+		{`"improvement_efficiency_runs":9`, "improvement_efficiency_runs"},
+		{`"improvement_efficiency_runs":501`, "improvement_efficiency_runs"},
+		{`"improvement_efficiency_days":6`, "improvement_efficiency_days"},
+		{`"improvement_efficiency_days":61`, "improvement_efficiency_days"},
+		{`"improvement_efficiency_spread":124`, "improvement_efficiency_spread"},
+		{`"improvement_efficiency_spread":1001`, "improvement_efficiency_spread"},
+		{`"improvement_efficiency_mark_runs":1`, "improvement_efficiency_mark_runs"},
+		{`"improvement_efficiency_mark_runs":51`, "improvement_efficiency_mark_runs"},
+		{`"improvement_efficiency_margin":-1`, "improvement_efficiency_margin"},
+		{`"improvement_efficiency_margin":4`, "improvement_efficiency_margin"},
+		// Above the stored runs, and above the runs sent beside it.
+		{`"improvement_efficiency_mark_runs":41`, "improvement_efficiency_mark_runs"},
+		{`"improvement_efficiency_runs":10,"improvement_efficiency_mark_runs":11`, "must not be above improvement_efficiency_runs"},
+	} {
+		if rec := e.save(t, `{`+improveBase+`,`+bad.body+`}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), bad.name) {
+			t.Errorf("%s = %d %q, want 400 naming %s", bad.body, rec.Code, rec.Body, bad.name)
+		}
+	}
+	if len(e.store.upserts) != saved {
+		t.Error("refused efficiency settings were saved")
+	}
+	// Runs lowered alone under the stored mark runs is refused, not left to
+	// the database's check.
+	e.save(t, `{`+improveBase+`,"improvement_efficiency_mark_runs":15}`)
+	saved = len(e.store.upserts)
+	if rec := e.save(t, `{`+improveBase+`,"improvement_efficiency_runs":10}`); rec.Code != http.StatusBadRequest ||
+		!strings.Contains(rec.Body.String(), "improvement_efficiency_mark_runs") {
+		t.Errorf("runs under the stored mark runs = %d %q, want 400", rec.Code, rec.Body)
+	}
+	for _, bad := range []string{`"improvement_efficiency_spread":"200"`, `"improvement_efficiency_margin":1.5`, `"improvement_efficiency_spread":70000`, `"improvement_efficiency":"yes"`} {
+		if rec := e.save(t, `{`+improveBase+`,`+bad+`}`); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d %q, want 400", bad, rec.Code, rec.Body)
+		}
+	}
+	if len(e.store.upserts) != saved {
+		t.Error("a refused save was written")
+	}
+	// Held to the runs stored, 40, not the default: 30 is fine.
+	if got := decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_efficiency_mark_runs":30}`)); got.ImprovementEfficiencyMarkRuns != 30 {
+		t.Errorf("mark runs under the stored runs = %d, want 30", got.ImprovementEfficiencyMarkRuns)
 	}
 }

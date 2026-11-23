@@ -1,12 +1,12 @@
 -- name: CreateImprovementProposal :one
 INSERT INTO improvement_proposals (
     team_id, agent_id, skill_id, kind, why, hypothesis, scope, signature,
-    run_ids, outsider, marks, before, after, pass_id
+    run_ids, outsider, marks, before, after, pass_id, goal, saves
 ) VALUES (
     sqlc.arg(team_id), sqlc.arg(agent_id), sqlc.narg(skill_id), sqlc.arg(kind),
     sqlc.arg(why), sqlc.arg(hypothesis), sqlc.arg(scope), sqlc.narg(signature),
     sqlc.arg(run_ids), sqlc.arg(outsider), sqlc.arg(marks), sqlc.arg(before), sqlc.arg(after),
-    sqlc.narg(pass_id)
+    sqlc.narg(pass_id), sqlc.arg(goal), sqlc.arg(saves)::text[]
 ) RETURNING *;
 
 -- name: GetImprovementProposal :one

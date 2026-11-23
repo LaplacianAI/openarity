@@ -15,16 +15,53 @@ import { Time } from "@/components/facts";
 import { ErrorState } from "@/components/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, LoadMore, Mono } from "@/components/ui-bits";
-import { anyPassRunning, passOutcome, prunedWords, signatureWords } from "@/lib/improvements";
+import {
+  anyPassRunning,
+  efficiencyReason,
+  passOutcome,
+  prunedWords,
+  signatureWords,
+} from "@/lib/improvements";
 import { count } from "@/lib/runs";
 import { cn } from "@/lib/utils";
+
+/** "An efficiency pass, from 34 good runs: the same call made twice · crm__lookup". */
+function EfficiencyWhy({ pass }: { pass: ImproverPass }) {
+  // Each reason with the signature it came from, which a pass names once.
+  const reasons = pass.signatures.flatMap((sig) => {
+    const r = efficiencyReason(sig);
+    return r ? [{ sig, ...r }] : [];
+  });
+  return (
+    <>
+      {pass.runs_seen != null
+        ? `An efficiency pass, from ${count(pass.runs_seen, "good run")}`
+        : "An efficiency pass"}
+      {reasons.length > 0 ? ": " : null}
+      {reasons.map((r, i) => (
+        <Fragment key={r.sig}>
+          {i > 0 ? ", " : null}
+          {r.words}
+          {r.target ? (
+            <>
+              {" · "}
+              <Mono>{r.target}</Mono>
+            </>
+          ) : null}
+        </Fragment>
+      ))}
+    </>
+  );
+}
 
 /** "A pattern: tool · crm__close_ticket · misused tool", or "The daily pass, after 5 runs", and how many prune candidates it looked at. */
 function Why({ pass }: { pass: ImproverPass }) {
   const sigs = pass.signatures.map(signatureWords);
   return (
     <>
-      {pass.trigger === "daily" ? (
+      {pass.trigger === "efficiency" ? (
+        <EfficiencyWhy pass={pass} />
+      ) : pass.trigger === "daily" ? (
         pass.runs_seen != null ? (
           `The daily pass, after ${count(pass.runs_seen, "judged run")}`
         ) : (

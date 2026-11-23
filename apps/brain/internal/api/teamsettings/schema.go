@@ -76,6 +76,14 @@ type settings struct {
 	ImprovementPassMinutes int16 `json:"improvement_pass_minutes"`
 	// The judged runs an agent needs since its last pass for a daily pass.
 	ImprovementDailyRuns int16 `json:"improvement_daily_runs"`
+	// The efficiency pass, and its numbers. It runs only while
+	// improvement is on.
+	ImprovementEfficiency         bool  `json:"improvement_efficiency"`
+	ImprovementEfficiencyRuns     int16 `json:"improvement_efficiency_runs"`
+	ImprovementEfficiencyDays     int16 `json:"improvement_efficiency_days"`
+	ImprovementEfficiencySpread   int16 `json:"improvement_efficiency_spread"`
+	ImprovementEfficiencyMarkRuns int16 `json:"improvement_efficiency_mark_runs"`
+	ImprovementEfficiencyMargin   int16 `json:"improvement_efficiency_margin"`
 	// When the switch last went on; runs before it are never judged.
 	ImprovementSince    *time.Time `json:"improvement_since"`
 	CompactionMessages  int32      `json:"compaction_messages"`
@@ -149,7 +157,15 @@ type settingsRequest struct {
 	ImprovementPassMinutes *int16 `json:"improvement_pass_minutes"`
 	// The judged runs a daily pass waits for; left out keeps what is stored.
 	ImprovementDailyRuns *int16 `json:"improvement_daily_runs"`
-	CompactionMessages   int32  `json:"compaction_messages"`
+	// The efficiency pass and its numbers; each left out keeps what is
+	// stored.
+	ImprovementEfficiency         *bool  `json:"improvement_efficiency"`
+	ImprovementEfficiencyRuns     *int16 `json:"improvement_efficiency_runs"`
+	ImprovementEfficiencyDays     *int16 `json:"improvement_efficiency_days"`
+	ImprovementEfficiencySpread   *int16 `json:"improvement_efficiency_spread"`
+	ImprovementEfficiencyMarkRuns *int16 `json:"improvement_efficiency_mark_runs"`
+	ImprovementEfficiencyMargin   *int16 `json:"improvement_efficiency_margin"`
+	CompactionMessages            int32  `json:"compaction_messages"`
 	// Left out, the stored value stays, as a sandbox does.
 	CompactionTokensMin *int32  `json:"compaction_tokens_min"`
 	CompactionTokensMax *int32  `json:"compaction_tokens_max"`
