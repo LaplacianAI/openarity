@@ -498,6 +498,15 @@ func TestAnEfficiencyChangeThatSavedNothingIsFlagged(t *testing.T) {
 	if cost.saved(before, failedCheap) || quicker.saved(before, failedCheap) {
 		t.Error("failures that spent nothing counted as a saving")
 	}
+	// An after window with no good run says nothing of a saving, so is not
+	// flagged no saving; its bad runs are judged against the bar instead.
+	allBad := windowOf(slices.Repeat([]counted{{bad: true}}, 10))
+	if !cost.saved(before, allBad) || !quicker.saved(before, allBad) {
+		t.Error("an after window with no good run was judged on its saving")
+	}
+	if v := judgeWatch(baseline, before, allBad, cost); v.flag != flagWorse {
+		t.Errorf("ten bad runs after: %+v, want flagged worse", v)
+	}
 }
 
 // An efficiency change is flagged worse at the team's margin below the bar,
