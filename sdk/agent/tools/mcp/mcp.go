@@ -10,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -271,12 +272,37 @@ func readableAs(mediaType, name string, data []byte) file {
 		return file{kind: agent.ContentImage, mediaType: kind, name: name, data: data, limit: maxImageBytes, what: "an image"}
 	case kind == "application/pdf" || kind == "text/plain":
 		return file{kind: agent.ContentFile, mediaType: kind, name: name, data: data, limit: maxDocBytes, what: "a PDF or a text file"}
+	case textual(kind):
+		// SVG, JSON, CSV, source: text a model reads as text, so it goes in
+		// the tool's own text, where a large one is previewed as any long
+		// result is.
+		switch {
+		case len(data) > maxDocBytes:
+			return file{line: fmt.Sprintf("[%s: %s, %s, more than the %s text is passed up to]", name, kind, sizeOf(len(data)), sizeOf(maxDocBytes))}
+		case !utf8.Valid(data):
+			return file{line: fmt.Sprintf("[%s: %s, %s, which is not UTF-8 text]", name, kind, sizeOf(len(data)))}
+		}
+		return file{line: fmt.Sprintf("[%s: %s, %s]\n%s", name, kind, sizeOf(len(data)), data)}
 	default:
 		if kind == "" {
 			kind = "no type"
 		}
 		return file{line: fmt.Sprintf("[%s: %s, %s, which a model cannot read]", name, kind, sizeOf(len(data)))}
 	}
+}
+
+// textual is whether a type is text by its name: any text/ type, and the
+// structured formats written as text (JSON, XML, YAML, JavaScript, SVG).
+func textual(kind string) bool {
+	if strings.HasPrefix(kind, "text/") || strings.HasSuffix(kind, "+json") || strings.HasSuffix(kind, "+xml") {
+		return true
+	}
+	switch kind {
+	case "application/json", "application/xml", "application/yaml", "application/x-yaml",
+		"application/javascript", "application/x-javascript", "application/toml", "application/sql":
+		return true
+	}
+	return false
 }
 
 func bareType(mediaType string) string {
@@ -294,6 +320,8 @@ func extension(mediaType string) string {
 		return ".gif"
 	case "image/webp":
 		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
 	}
 	return ""
 }

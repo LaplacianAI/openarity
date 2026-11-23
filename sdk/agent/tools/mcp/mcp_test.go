@@ -432,10 +432,38 @@ func TestWhatCannotBePassedIsNamedNotAttached(t *testing.T) {
 	}{
 		"an image over 5 MB": {&sdk.ImageContent{Data: make([]byte, maxImageBytes+1), MIMEType: "image/png"}, "[image-1.png: image/png, 5.0 MB, more than the 5.0 MB an image is passed up to]"},
 		"a PDF over 10 MB":   {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://big.pdf", MIMEType: "application/pdf", Blob: make([]byte, maxDocBytes+1)}}, "[big.pdf: application/pdf, 10.0 MB, more than the 10.0 MB a PDF or a text file is passed up to]"},
-		"an SVG":             {&sdk.ImageContent{Data: []byte("<svg/>"), MIMEType: "image/svg+xml"}, "[image-1: image/svg+xml, 6 bytes, which a model cannot read]"},
 		"a zip":              {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a.zip", MIMEType: "application/zip", Blob: []byte{1}}}, "[a.zip: application/zip, 1 bytes, which a model cannot read]"},
 		"audio":              {&sdk.AudioContent{Data: []byte{1, 2}, MIMEType: "audio/wav"}, "[audio-1: audio/wav, 2 bytes, which a model here cannot hear]"},
 		"a link":             {&sdk.ResourceLink{URI: "https://x.example/r.csv", Name: "r.csv", MIMEType: "text/csv", Size: &size}, "[a link to r.csv: https://x.example/r.csv (text/csv, 2 KB), not fetched]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r, err := answer(t, false, tc.block)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if len(r.Attach) != 0 || r.Output != tc.want {
+				t.Errorf("attached %d, Output %q; want none, and %q", len(r.Attach), r.Output, tc.want)
+			}
+		})
+	}
+}
+
+// SVG, JSON, CSV and the like are text, and reach the model in the tool's
+// own text, each under a line naming it; nothing is attached.
+func TestATextLikeBlobIsPassedAsText(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		block sdk.Content
+		want  string
+	}{
+		"an SVG image": {&sdk.ImageContent{Data: []byte("<svg/>"), MIMEType: "image/svg+xml"}, "[image-1.svg: image/svg+xml, 6 bytes]\n<svg/>"},
+		"a JSON blob":  {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://r.json", MIMEType: "application/json", Blob: []byte(`{"a":1}`)}}, "[r.json: application/json, 7 bytes]\n{\"a\":1}"},
+		"a CSV blob":   {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://r.csv", MIMEType: "text/csv; charset=utf-8", Blob: []byte("a,b\n1,2")}}, "[r.csv: text/csv, 7 bytes]\na,b\n1,2"},
+		"a +json type": {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://p.json", MIMEType: "application/problem+json", Blob: []byte("{}")}}, "[p.json: application/problem+json, 2 bytes]\n{}"},
+		"not UTF-8":    {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://b.csv", MIMEType: "text/csv", Blob: []byte{0xff, 0xfe}}}, "[b.csv: text/csv, 2 bytes, which is not UTF-8 text]"},
+		"over 10 MB":   {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://big.json", MIMEType: "application/json", Blob: make([]byte, maxDocBytes+1)}}, "[big.json: application/json, 10.0 MB, more than the 10.0 MB text is passed up to]"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

@@ -86,7 +86,8 @@ the call that attached it, as any `ToolResult.Attach` is.
 | Text, or an embedded resource holding text | The text, in order |
 | An image (any but SVG), as an image block or an embedded blob | The image, up to 5 MB |
 | A PDF or plain text as an embedded blob | The file, up to 10 MB, named from its URI |
-| Anything else: audio, SVG, a zip, a resource link | A line saying what it was and why it is not passed |
+| SVG, JSON, CSV, YAML, XML, source code (any `text/` type, `+json`, `+xml`) | Its text, in the tool's own text under a line naming it, up to 10 MB of UTF-8 |
+| Anything else: audio, a zip, a resource link | A line saying what it was and why it is not passed |
 
 Each file attached is named in the text too, as
 `[attached image-1.png: image/png, 220 KB]`, and a call passes eight files at
