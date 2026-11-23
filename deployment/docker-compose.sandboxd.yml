@@ -55,6 +55,7 @@
 #   SANDBOXD_WORKSPACE_MEMORY=1610612736     # bytes, the most a workspace may have; default 1.5 GiB
 #   SANDBOXD_WORKSPACE_CPUS=1                # CPUs, the most a workspace may have; default one
 #   SANDBOXD_WORKSPACE_BYTES=536870912       # bytes, the most disk a workspace may have; default 512 MiB
+#   # A new workspace that does not fit deletes the stopped one stopped longest, of any team; running rooms never.
 #   SANDBOXD_DISK_BUDGET=8589934592          # bytes, every workspace's disk, stopped ones too; default 8 GiB
 #   SANDBOXD_IMAGES=ghcr.io/laplacianai/openarity-sandbox   # optional, the default
 #   SANDBOXD_PULL=ghcr.io/laplacianai/openarity-sandbox:latest   # optional
