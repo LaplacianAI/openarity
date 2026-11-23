@@ -3,6 +3,8 @@ package proposals
 import (
 	"slices"
 	"strings"
+
+	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
 // EfficiencyKinds are the kinds an efficiency change may be: those that can
@@ -16,8 +18,10 @@ var EfficiencyKinds = []Kind{
 
 // PlainestLoop is the one loop an efficiency change may move an agent to:
 // one model call a step, with no planning or review call beside it. Any
-// other loop may make more calls than the one it replaces.
-const PlainestLoop = "react"
+// other loop may make more calls than the one it replaces. A stored agent
+// always names its loop (harness.Validate refuses an empty one), so a move
+// to it is a real change.
+const PlainestLoop = string(agent.PatternReAct)
 
 // The marks an efficiency change may not carry: it makes a run do less,
 // never more, and never reaches further.
