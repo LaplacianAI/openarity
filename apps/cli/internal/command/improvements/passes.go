@@ -15,8 +15,15 @@ const passesPermission = "improvement:approve"
 
 // triggerCell is why a pass ran: the patterns it was handed, or the daily one.
 func triggerCell(p *client.ImproverPass) string {
-	if p.Trigger == client.ImproverPassTriggerDaily {
+	switch p.Trigger {
+	case client.ImproverPassTriggerDaily:
 		return "daily"
+	case client.ImproverPassTriggerEfficiency:
+		if p.RunsSeen != nil {
+			return "efficiency, from " + strconv.Itoa(int(*p.RunsSeen)) + " good runs"
+		}
+		return "efficiency"
+	case client.ImproverPassTriggerPattern:
 	}
 	if len(p.Signatures) == 0 {
 		return "pattern"

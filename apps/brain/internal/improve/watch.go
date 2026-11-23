@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -49,6 +50,7 @@ const (
 	flagWorse    = "worse"
 	flagCostlier = "costlier"
 	flagBoth     = "both"
+	flagNoSaving = "no_saving"
 
 	endedTooFew = "too_few_runs"
 )
@@ -76,7 +78,7 @@ func NewWatcher(s WatchStore, logger *slog.Logger) *Watcher {
 // counted is one judged run, good or bad, with what it cost.
 type counted struct {
 	bad, up, down, signature bool
-	spent                    int64
+	spent, workMS            int64
 	steps                    int32
 }
 
@@ -85,6 +87,10 @@ type window struct {
 	runs, bad, up, down, signature int16
 	spent                          []int64
 	steps                          []int64
+	// What its good runs spent and how long they worked: what an
+	// efficiency change is judged on, so a run that failed early and cheap
+	// is never counted as a saving.
+	goodSpent, goodWork []int64
 }
 
 func windowOf(rs []counted) window {
@@ -104,6 +110,9 @@ func windowOf(rs []counted) window {
 		}
 		w.spent = append(w.spent, r.spent)
 		w.steps = append(w.steps, int64(r.steps))
+		if !r.bad {
+			w.goodSpent, w.goodWork = append(w.goodSpent, r.spent), append(w.goodWork, r.workMS)
+		}
 	}
 	return w
 }
@@ -168,13 +177,55 @@ type verdict struct {
 	flag   string
 }
 
+// efficiencyRule is what more an efficiency change is held to: a bar
+// margin bad runs stricter, and the saving it named.
+type efficiencyRule struct {
+	on         bool
+	margin     int
+	cost, time bool
+}
+
+// ruleOf is the rule for a proposal, with its team's margin.
+func ruleOf(p db.ImprovementProposal, margin int16) efficiencyRule {
+	if p.Goal != proposals.GoalEfficiency {
+		return efficiencyRule{}
+	}
+	return efficiencyRule{
+		on: true, margin: int(margin),
+		cost: slices.Contains(p.Saves, proposals.SavesCost), time: slices.Contains(p.Saves, proposals.SavesTime),
+	}
+}
+
+// flagAt is the fewest bad runs that flag a change worse: the bar, less the
+// margin for an efficiency change, never fewer than one.
+func (r efficiencyRule) flagAt(k int) int {
+	if !r.on {
+		return k
+	}
+	return max(k-r.margin, 1)
+}
+
+// saved is whether every saving an efficiency change named shows in its
+// good runs: the median after below the median before. A window without
+// good runs to compare says nothing, so is not flagged.
+func (r efficiencyRule) saved(before, after window) bool {
+	below := func(b, a []int64) bool {
+		mb, okb := median(b)
+		ma, oka := median(a)
+		return !okb || !oka || ma < mb
+	}
+	return (!r.cost || below(before.goodSpent, after.goodSpent)) && (!r.time || below(before.goodWork, after.goodWork))
+}
+
 // judgeWatch decides a watch whose after window is full: flagged worse
 // when its bad runs reach the bar, costlier when its median cost passes
 // the baseline's 90th percentile without fewer bad runs than before, both,
-// or clear. Without a bar there is no history to judge against: clear.
-func judgeWatch(baseline, before, after window) verdict {
+// or clear. Without a bar there is no history to judge against: clear. An
+// efficiency change is flagged worse at its stricter bar, and, when it is
+// neither worse nor costlier, flagged no_saving when its saving did not show.
+func judgeWatch(baseline, before, after window, rule efficiencyRule) verdict {
 	k, ok := bar(int(baseline.bad), int(baseline.runs))
-	worse := ok && int(after.bad) >= k
+	worse := ok && int(after.bad) >= rule.flagAt(k)
 	costlier := false
 	if p90, ok := percentile(baseline.spent, 90); ok && baseline.runs >= baselineLeast {
 		if m, ok := median(after.spent); ok && m > p90 && after.bad >= before.bad {
@@ -188,6 +239,8 @@ func judgeWatch(baseline, before, after window) verdict {
 		return verdict{watchFlagged, flagWorse}
 	case costlier:
 		return verdict{watchFlagged, flagCostlier}
+	case rule.on && !rule.saved(before, after):
+		return verdict{watchFlagged, flagNoSaving}
 	}
 	return verdict{status: watchClear}
 }
@@ -244,7 +297,7 @@ func (w *Watcher) count(ctx context.Context, o db.TickOpenWatchesRow) error {
 			if e == Neither {
 				continue
 			}
-			out = append(out, counted{bad: e == Bad, up: r.Up > 0, down: r.Down > 0, signature: hasKey && r.HasSignature, spent: r.Spent, steps: r.Steps})
+			out = append(out, counted{bad: e == Bad, up: r.Up > 0, down: r.Down > 0, signature: hasKey && r.HasSignature, spent: r.Spent, workMS: r.WorkMs, steps: r.Steps})
 			at = append(at, r.CreatedAt)
 			if len(out) == n {
 				break
@@ -275,7 +328,8 @@ func (w *Watcher) count(ctx context.Context, o db.TickOpenWatchesRow) error {
 	if err != nil {
 		return fmt.Errorf("reading the changes beside proposal %s: %w", o.ProposalID, err)
 	}
-	progress := progressOf(o.ProposalID, baseline, before, after, hasKey, overlapping)
+	rule := ruleOf(p, o.EfficiencyMargin)
+	progress := progressOf(o.ProposalID, baseline, before, after, hasKey, overlapping, rule)
 	if err := w.store.SetWatchProgress(ctx, progress); err != nil {
 		return fmt.Errorf("recording proposal %s's watch: %w", o.ProposalID, err)
 	}
@@ -283,7 +337,7 @@ func (w *Watcher) count(ctx context.Context, o db.TickOpenWatchesRow) error {
 	finish := db.FinishImprovementWatchParams{ProposalID: o.ProposalID}
 	switch {
 	case after.runs >= WatchRuns:
-		v := judgeWatch(baseline, before, after)
+		v := judgeWatch(baseline, before, after, rule)
 		finish.Status = v.status
 		if v.flag != "" {
 			finish.Flag = &v.flag
@@ -307,7 +361,9 @@ func (w *Watcher) count(ctx context.Context, o db.TickOpenWatchesRow) error {
 }
 
 // progressOf is what the windows come to, as the watch row holds it.
-func progressOf(id uuid.UUID, baseline, before, after window, hasKey bool, overlapping []uuid.UUID) db.SetWatchProgressParams {
+// For an efficiency change the token medians are its good runs', what it is
+// judged on; work time is always the good runs'.
+func progressOf(id uuid.UUID, baseline, before, after window, hasKey bool, overlapping []uuid.UUID, rule efficiencyRule) db.SetWatchProgressParams {
 	p := db.SetWatchProgressParams{
 		ProposalID:   id,
 		BaselineRuns: baseline.runs, BaselineBad: baseline.bad,
@@ -316,11 +372,17 @@ func progressOf(id uuid.UUID, baseline, before, after window, hasKey bool, overl
 		Overlapping: orEmptyIDs(overlapping),
 	}
 	if k, ok := bar(int(baseline.bad), int(baseline.runs)); ok {
-		b := int16(k) //nolint:gosec // G115: at most WatchRuns + 1
+		b := int16(rule.flagAt(k)) //nolint:gosec // G115: at most WatchRuns + 1
 		p.Bar = &b
 	}
 	p.BeforeTokens = optional(median(before.spent))
 	p.AfterTokens = optional(median(after.spent))
+	if rule.on {
+		p.BeforeTokens = optional(median(before.goodSpent))
+		p.AfterTokens = optional(median(after.goodSpent))
+	}
+	p.BeforeWorkMs = optional(median(before.goodWork))
+	p.AfterWorkMs = optional(median(after.goodWork))
 	if baseline.runs >= baselineLeast {
 		p.BaselineP90 = optional(percentile(baseline.spent, 90))
 	}

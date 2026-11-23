@@ -534,6 +534,49 @@ describe("watching", () => {
     expect(await screen.findByRole("tab", { name: /Flagged/ })).toHaveTextContent("1 flagged");
   });
 
+  it("says what an efficiency change saves, and how its good runs went when it saved nothing", async () => {
+    const item = flagged({
+      goal: "efficiency",
+      saves: ["cost", "time"],
+      watch: {
+        status: "flagged",
+        flag: "no_saving",
+        needed: 10,
+        baseline_runs: 20,
+        baseline_bad: 2,
+        bar: 4,
+        before: { runs: 10, bad: 1, up: 0, down: 0, tokens: 18_400, steps: 9, work_ms: 41_000 },
+        after: { runs: 10, bad: 1, up: 0, down: 0, tokens: 19_000, steps: 9, work_ms: 65_000 },
+        overlapping: [],
+        started_at: "2026-11-01T00:00:00Z",
+      },
+    });
+    brain({ ...team(APPROVER), ...lists([item]) });
+    at("/ui/improvements?tab=flagged");
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    const kinds = within(card).getByRole("list", { name: "What kind of change" });
+    expect(within(kinds).getByText("Saves cost")).toBeInTheDocument();
+    expect(within(kinds).getByText("Saves time")).toBeInTheDocument();
+    const watch = within(card).getByRole("region", { name: "How it went" });
+    expect(watch).toHaveTextContent(
+      "Flagged, its good runs did not get cheaper or quicker, as it expected",
+    );
+    expect(watch).toHaveTextContent("Tokens a good run 18,400 → 19,000 · steps 9 → 9");
+    expect(watch).toHaveTextContent("Work time a good run 41 s → 1 min 5 s");
+  });
+
+  it("says nothing of savings on a quality change", async () => {
+    brain({ ...team(APPROVER), ...lists([flagged({ goal: "quality", saves: [] })]) });
+    at("/ui/improvements?tab=flagged");
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    expect(within(card).queryByText(/Saves (cost|time)/)).toBeNull();
+    expect(within(card).queryByText(/Work time/)).toBeNull();
+  });
+
   it("offers Clear flag beside Revert, and sends clear", async () => {
     const item = flagged();
     const seen = brain({ ...team(APPROVER), ...lists([item]), [DECIDE]: { body: item } });

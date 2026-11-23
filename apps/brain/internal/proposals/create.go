@@ -27,7 +27,19 @@ type Proposed struct {
 	After      Snapshot
 	// The improver pass that wrote it; nil for one written any other way.
 	PassID *uuid.UUID
+	// Goal is GoalQuality, the default, or GoalEfficiency, which names
+	// what it Saves: SavesCost, SavesTime or both.
+	Goal  string
+	Saves []string
 }
+
+// What a proposal is for.
+const (
+	GoalQuality    = "quality"
+	GoalEfficiency = "efficiency"
+	SavesCost      = "cost"
+	SavesTime      = "time"
+)
 
 // Create stores a proposal after holding it to its kind's rules. Its marks
 // are computed here, never taken from the caller.
@@ -39,6 +51,10 @@ func Create(ctx context.Context, q *db.Queries, n Proposed) (db.ImprovementPropo
 		return db.ImprovementProposal{}, refuse("scope is invariant or domain")
 	}
 	if err := Check(n.Kind, n.Before, n.After); err != nil {
+		return db.ImprovementProposal{}, err
+	}
+	goal, saves, err := goalOf(n)
+	if err != nil {
 		return db.ImprovementProposal{}, err
 	}
 	for _, s := range []*SkillState{n.Before.Skill, n.After.Skill} {
@@ -74,8 +90,34 @@ func Create(ctx context.Context, q *db.Queries, n Proposed) (db.ImprovementPropo
 		TeamID: n.TeamID, AgentID: n.AgentID, SkillID: n.SkillID, Kind: string(n.Kind),
 		Why: n.Why, Hypothesis: n.Hypothesis, Scope: n.Scope, Signature: n.Signature,
 		RunIds: runs, Outsider: n.Outsider, Marks: marks, Before: before, After: after,
-		PassID: n.PassID,
+		PassID: n.PassID, Goal: goal, Saves: saves,
 	})
+}
+
+// goalOf is a proposal's goal and what it saves, held together: a quality
+// change saves nothing, and an efficiency change names cost, time or both.
+func goalOf(n Proposed) (string, []string, error) {
+	switch n.Goal {
+	case "", GoalQuality:
+		if len(n.Saves) > 0 {
+			return "", nil, refuse("only an efficiency change names what it saves")
+		}
+		return GoalQuality, []string{}, nil
+	case GoalEfficiency:
+		saves := slices.Clone(n.Saves)
+		slices.Sort(saves)
+		saves = slices.Compact(saves)
+		if len(saves) == 0 {
+			return "", nil, refuse("an efficiency change names what it saves: cost, time or both")
+		}
+		for _, s := range saves {
+			if s != SavesCost && s != SavesTime {
+				return "", nil, refuse("%q is not something a change saves: cost or time", s)
+			}
+		}
+		return GoalEfficiency, saves, nil
+	}
+	return "", nil, refuse("%q is not a goal: quality or efficiency", n.Goal)
 }
 
 // AgentNow and SkillNow read a target's current state: what a proposal is

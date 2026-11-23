@@ -157,6 +157,24 @@ describe("a pass", () => {
     ).toBeTruthy();
   });
 
+  it("says an efficiency pass, the good runs it drew from, and each reason in words", async () => {
+    brain(
+      serve([
+        pass("p1", {
+          trigger: "efficiency",
+          signatures: ["efficiency:repeated_call:crm__lookup", "efficiency:spread"],
+          runs_seen: 34,
+        }),
+      ]),
+    );
+    at();
+    expect(
+      await screen.findByRole("button", {
+        name: /An efficiency pass, from 34 good runs: the same call made twice · crm__lookup, costly runs far above the usual/,
+      }),
+    ).toBeTruthy();
+  });
+
   it("marks each prune candidate as kept or proposed for removal", async () => {
     brain(
       serve([

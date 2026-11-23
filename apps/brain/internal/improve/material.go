@@ -79,11 +79,17 @@ func (im *Improver) material(ctx context.Context, pass db.ImproverPass) (materia
 	write("Its description", m.state.Agent.Description)
 	write("Its instructions", middle(m.state.Agent.Instructions, instructionsChars))
 	write("Its setup", m.setup()...)
-	if err := im.writePatterns(ctx, pass, &m, write); err != nil {
-		return m, err
-	}
-	if err := im.writeContrast(ctx, pass, &m, write); err != nil {
-		return m, err
+	if pass.Trigger == triggerEfficiency {
+		if err := im.writeEfficiency(ctx, pass, &m, write); err != nil {
+			return m, err
+		}
+	} else {
+		if err := im.writePatterns(ctx, pass, &m, write); err != nil {
+			return m, err
+		}
+		if err := im.writeContrast(ctx, pass, &m, write); err != nil {
+			return m, err
+		}
 	}
 	var rl []string
 	for _, id := range pass.RunIds {
@@ -180,7 +186,7 @@ func (im *Improver) writeRecord(ctx context.Context, pass db.ImproverPass, write
 		if r.Signature != nil {
 			sig = *r.Signature
 		}
-		rec = append(rec, fmt.Sprintf("%s %s (%s, %s%s): %s. Expected: %s", r.CreatedAt.UTC().Format(time.DateOnly), r.Kind, sig, r.Status, watched(r), r.Why, r.Hypothesis))
+		rec = append(rec, fmt.Sprintf("%s %s (%s, %s%s%s): %s. Expected: %s", r.CreatedAt.UTC().Format(time.DateOnly), r.Kind, sig, r.Status, saving(r.Goal, r.Saves), watched(r), r.Why, r.Hypothesis))
 	}
 	write("Its record", rec...)
 	elsewhere, err := im.store.ListTeamAppliedElsewhere(ctx, db.ListTeamAppliedElsewhereParams{
@@ -300,6 +306,9 @@ func watched(r db.ListAgentProposalRecordRow) string {
 		return *v
 	}
 	counts := fmt.Sprintf("%d of %d after, %d of %d before", n(r.WatchAfterBad), n(r.WatchAfterRuns), n(r.WatchBeforeBad), n(r.WatchBeforeRuns))
+	if r.Goal == proposals.GoalEfficiency {
+		counts += savedLine(r.WatchBeforeTokens, r.WatchAfterTokens, r.WatchBeforeWorkMs, r.WatchAfterWorkMs)
+	}
 	flagged := ""
 	if r.WatchFlag != nil {
 		flagged = ", flagged: " + *r.WatchFlag + ", " + counts
@@ -324,4 +333,30 @@ func watched(r db.ListAgentProposalRecordRow) string {
 		return ", watch ended: " + why
 	}
 	return ""
+}
+
+// saving is what an efficiency change aimed at: ", efficiency, saves
+// cost"; nothing for a quality change.
+func saving(goal string, saves []string) string {
+	if goal != proposals.GoalEfficiency {
+		return ""
+	}
+	return ", efficiency, saves " + strings.Join(saves, " and ")
+}
+
+// savedLine is what an efficiency change's good runs came to either side,
+// as far as the watch has counted: "; tokens a good run 18400 → 12900, work
+// 41.0 s → 33.0 s".
+func savedLine(beforeTokens, afterTokens, beforeWork, afterWork *int64) string {
+	var parts []string
+	if beforeTokens != nil && afterTokens != nil {
+		parts = append(parts, fmt.Sprintf("tokens a good run %d → %d", *beforeTokens, *afterTokens))
+	}
+	if beforeWork != nil && afterWork != nil {
+		parts = append(parts, fmt.Sprintf("work %s → %s", seconds(*beforeWork), seconds(*afterWork)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "; " + strings.Join(parts, ", ")
 }

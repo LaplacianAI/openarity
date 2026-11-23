@@ -6942,6 +6942,55 @@ components:
             The judged runs an agent needs since its last pass before the
             daily pass looks at it; one with fewer waits for more. 5 until
             set.
+        improvement_efficiency:
+          type: boolean
+          description: >-
+            Whether the weekly efficiency pass looks at agents whose runs go
+            well but whose costliest spend far more than the rest, and
+            proposes changes that make them cheaper or quicker. It runs only
+            while improvement is on. Off until set.
+        improvement_efficiency_runs:
+          type: integer
+          format: int32
+          minimum: 10
+          maximum: 500
+          description: >-
+            The good runs an agent needs within improvement_efficiency_days
+            before an efficiency pass looks at it. 20 until set.
+        improvement_efficiency_days:
+          type: integer
+          format: int32
+          minimum: 7
+          maximum: 60
+          description: The days of runs an efficiency pass counts and compares. 14 until set.
+        improvement_efficiency_spread:
+          type: integer
+          format: int32
+          minimum: 125
+          maximum: 1000
+          description: >-
+            How far the 90th percentile of an agent's good runs, in tokens or
+            work time, must sit above their median, in percent of it, before
+            an efficiency pass looks: 200 is twice. 200 until set.
+        improvement_efficiency_mark_runs:
+          type: integer
+          format: int32
+          minimum: 2
+          maximum: 50
+          description: >-
+            The good runs a waste mark (a repeated call, a retried error,
+            tools offered and left unused, a run near its step cap, a long
+            tool wait) must appear in before an efficiency pass looks; at
+            most improvement_efficiency_runs. 3 until set.
+        improvement_efficiency_margin:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 3
+          description: >-
+            How many bad runs fewer than the usual bar flag an applied
+            efficiency change worse; 0 is the usual bar. Read as each watch
+            is judged. 1 until set.
         improvement_since:
           type: string
           format: date-time
@@ -7216,6 +7265,39 @@ components:
           format: int32
           minimum: 1
           maximum: 100
+          description: Left out, the stored value stays.
+        improvement_efficiency:
+          type: boolean
+          description: Left out, the stored value stays.
+        improvement_efficiency_runs:
+          type: integer
+          format: int32
+          minimum: 10
+          maximum: 500
+          description: Left out, the stored value stays.
+        improvement_efficiency_days:
+          type: integer
+          format: int32
+          minimum: 7
+          maximum: 60
+          description: Left out, the stored value stays.
+        improvement_efficiency_spread:
+          type: integer
+          format: int32
+          minimum: 125
+          maximum: 1000
+          description: Left out, the stored value stays.
+        improvement_efficiency_mark_runs:
+          type: integer
+          format: int32
+          minimum: 2
+          maximum: 50
+          description: Left out, the stored value stays; never above the runs the save leaves.
+        improvement_efficiency_margin:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 3
           description: Left out, the stored value stays.
         compaction_messages:
           type: integer
@@ -7524,7 +7606,7 @@ components:
 
     Improvement:
       type: object
-      required: [id, kind, status, agent, why, hypothesis, scope, marks, reaches, changes, runs, outsider, created_at]
+      required: [id, kind, status, agent, why, hypothesis, scope, goal, saves, marks, reaches, changes, runs, outsider, created_at]
       properties:
         id:
           type: string
@@ -7553,6 +7635,16 @@ components:
         signature:
           type: string
           nullable: true
+        goal:
+          type: string
+          enum: [quality, efficiency]
+          description: Quality, for runs that went wrong, or efficiency, for good runs made cheaper or quicker
+        saves:
+          type: array
+          description: What an efficiency change aims to save; empty for a quality change
+          items:
+            type: string
+            enum: [cost, time]
         marks:
           type: array
           items:
@@ -7639,6 +7731,14 @@ components:
           type: integer
           nullable: true
           description: The median steps a run's tree took
+        work_ms:
+          type: integer
+          format: int64
+          nullable: true
+          description: >-
+            The median time its good runs worked, in milliseconds, leaving
+            out time spent waiting for a person's approval; null with none.
+            For an efficiency change, tokens is its good runs' median too.
         signature:
           type: integer
           nullable: true
@@ -7651,7 +7751,10 @@ components:
         measured against how much its runs usually vary. Flagged worse when
         the bad runs after reach the bar; flagged costlier when the median
         cost after passes the baseline's 90th percentile with no fewer bad
-        runs than before. A flag asks a person to look; nothing is reverted.
+        runs than before. An efficiency change is flagged worse at the team's
+        stricter bar, and flagged no_saving when the median tokens or work
+        time of its good runs, whichever it named, did not fall. A flag asks
+        a person to look; nothing is reverted.
       required: [status, needed, baseline_runs, baseline_bad, before, after, overlapping, started_at]
       properties:
         status:
@@ -7659,7 +7762,7 @@ components:
           enum: [watching, clear, flagged, cleared, ended]
         flag:
           type: string
-          enum: [worse, costlier, both]
+          enum: [worse, costlier, both, no_saving]
           nullable: true
         ended_why:
           type: string
@@ -7731,11 +7834,11 @@ components:
           $ref: "#/components/schemas/NamedRef"
         trigger:
           type: string
-          enum: [pattern, daily]
-          description: A signature recurred in enough runs, or the daily pass
+          enum: [pattern, daily, efficiency]
+          description: A signature recurred in enough runs, the daily pass, or the weekly efficiency pass
         signatures:
           type: array
-          description: The patterns it was given, part:target:cause
+          description: The patterns it was given, part:target:cause, or for an efficiency pass its reasons, efficiency:<mark>[:<target>]
           items:
             type: string
         pruned:
@@ -7752,7 +7855,10 @@ components:
           type: integer
           format: int32
           nullable: true
-          description: The judged runs a daily pass had since the agent's last pass; null for one a pattern started
+          description: >-
+            The judged runs a daily pass had since the agent's last pass, or
+            the good runs an efficiency pass was drawn from; null for one a
+            pattern started
         status:
           type: string
           enum: [running, done, failed]

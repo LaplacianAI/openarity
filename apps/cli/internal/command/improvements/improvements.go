@@ -74,6 +74,8 @@ type view struct {
 	Kind       string       `json:"kind" yaml:"kind"`
 	Status     string       `json:"status" yaml:"status"`
 	Scope      string       `json:"scope" yaml:"scope"`
+	Goal       string       `json:"goal" yaml:"goal"`
+	Saves      []string     `json:"saves" yaml:"saves"`
 	Marks      []string     `json:"marks" yaml:"marks"`
 	Why        string       `json:"why" yaml:"why"`
 	Hypothesis string       `json:"hypothesis" yaml:"hypothesis"`
@@ -125,6 +127,10 @@ func viewOf(p *client.Improvement) view {
 		DecidedBy: idOrNil(p.DecidedBy), DecidedAt: p.DecidedAt,
 		RevertedBy: idOrNil(p.RevertedBy), RevertedAt: p.RevertedAt, CreatedAt: p.CreatedAt,
 		PassID: idOrNil(p.PassID), Watch: watchOf(p.Watch),
+		Goal: string(p.Goal), Saves: make([]string, 0, len(p.Saves)),
+	}
+	for _, s := range p.Saves {
+		v.Saves = append(v.Saves, string(s))
 	}
 	if p.Skill != nil {
 		s := refOf(*p.Skill)
@@ -427,6 +433,9 @@ func printOne(opts *cli.Options, v view, did string) error {
 			}
 			table.Row("status", statusCell(opts, v.Status), "")
 			table.Row("scope", scopeText(v.Scope), "")
+			if len(v.Saves) > 0 {
+				table.Row("goal", "efficiency: saves "+strings.Join(v.Saves, " and "), "")
+			}
 			table.Row("marks", marksCell(v.Marks), "")
 			if len(v.Reaches) > 0 {
 				names := make([]string, 0, len(v.Reaches))
@@ -451,7 +460,7 @@ func printOne(opts *cli.Options, v view, did string) error {
 			if v.RevertedBy != nil {
 				table.Row("reverted by", *v.RevertedBy, "")
 			}
-			watchRows(opts, table, v.Watch)
+			watchRows(opts, table, v.Watch, v.Goal)
 			for i, r := range v.Runs {
 				label := ""
 				if i == 0 {

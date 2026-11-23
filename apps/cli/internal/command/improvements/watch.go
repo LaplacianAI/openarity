@@ -37,10 +37,11 @@ type sideView struct {
 	Tokens    *int64 `json:"tokens" yaml:"tokens"`
 	Steps     *int   `json:"steps" yaml:"steps"`
 	Signature *int   `json:"signature" yaml:"signature"`
+	WorkMS    *int64 `json:"work_ms" yaml:"work_ms"`
 }
 
 func sideOf(s client.ImprovementWatchSide) sideView {
-	return sideView{Runs: s.Runs, Bad: s.Bad, Up: s.Up, Down: s.Down, Tokens: s.Tokens, Steps: s.Steps, Signature: s.Signature}
+	return sideView{Runs: s.Runs, Bad: s.Bad, Up: s.Up, Down: s.Down, Tokens: s.Tokens, Steps: s.Steps, Signature: s.Signature, WorkMS: s.WorkMs}
 }
 
 func watchOf(w *client.ImprovementWatch) *watchView {
@@ -79,6 +80,8 @@ func flagWords(flag *string) string {
 		return "its runs cost more, with no fewer failures"
 	case "both":
 		return "its runs went worse and cost more"
+	case "no_saving":
+		return "its good runs did not get cheaper or quicker, as it said they would"
 	}
 	return cli.Safe(*flag)
 }
@@ -128,7 +131,7 @@ func medianInt(v *int) string {
 
 // watchRows prints the watch under the proposal: its state, the agent's
 // usual rate, cost, the targeted signature and the changes beside it.
-func watchRows(opts *cli.Options, table *printer.Table, w *watchView) {
+func watchRows(opts *cli.Options, table *printer.Table, w *watchView, goal string) {
 	if w == nil {
 		return
 	}
@@ -138,9 +141,18 @@ func watchRows(opts *cli.Options, table *printer.Table, w *watchView) {
 	}
 	table.Row("watch", line, "")
 	table.Row("usual", usual(w), "")
+	// An efficiency change is judged on its good runs, so its tokens are
+	// theirs.
+	a := "a run"
+	if goal == string(client.ImprovementGoalEfficiency) {
+		a = "a good run"
+	}
 	if w.Before.Tokens != nil || w.After.Tokens != nil {
-		table.Row("cost", fmt.Sprintf("tokens a run %s → %s, steps %s → %s",
-			median(w.Before.Tokens), median(w.After.Tokens), medianInt(w.Before.Steps), medianInt(w.After.Steps)), "")
+		table.Row("cost", fmt.Sprintf("tokens %s %s → %s, steps %s → %s",
+			a, median(w.Before.Tokens), median(w.After.Tokens), medianInt(w.Before.Steps), medianInt(w.After.Steps)), "")
+	}
+	if w.Before.WorkMS != nil || w.After.WorkMS != nil {
+		table.Row("time", fmt.Sprintf("work a good run %s → %s", secondsOf(w.Before.WorkMS), secondsOf(w.After.WorkMS)), "")
 	}
 	if w.Before.Signature != nil && w.After.Signature != nil {
 		table.Row("pattern", fmt.Sprintf("in %d of %d runs before, %d of %d after",
@@ -152,4 +164,12 @@ func watchRows(opts *cli.Options, table *printer.Table, w *watchView) {
 	if len(w.Overlapping) > 0 {
 		table.Row("beside", strings.Join(w.Overlapping, ", "), "")
 	}
+}
+
+// secondsOf is a work time in seconds, "—" for none.
+func secondsOf(ms *int64) string {
+	if ms == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f s", float64(*ms)/1000)
 }

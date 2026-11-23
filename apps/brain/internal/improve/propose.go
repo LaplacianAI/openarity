@@ -34,6 +34,7 @@ tool_note {server, tool, note}: an empty note removes it.
 limits {max_tokens?, max_steps?, steer_continuations?, token_budget?}.
 delegation {mode?: none, listed or team, add?: [agents], remove?: [agents]}.
 pattern {pattern}.
+On an efficiency pass, saves is cost, time or both, and only the kinds that make a run do less are taken.
 The answer says whether it was stored, or why not; a refusal can be corrected and proposed again.`
 
 var proposeSchema = schemaJSON(obj{
@@ -46,6 +47,10 @@ var proposeSchema = schemaJSON(obj{
 		"hypothesis": obj{"type": "string", "description": "what should change after it; at most 500 characters"},
 		"scope":      oneOfSet([]string{"invariant", "domain"}),
 		"edit":       obj{"type": "object", "description": "the change, in the kind's shape"},
+		"saves": obj{
+			"type": "array", "items": oneOfSet([]string{proposals.SavesCost, proposals.SavesTime}),
+			"description": "an efficiency pass only: what the change saves",
+		},
 	},
 	"required": []string{"kind", "signature", "runs", "why", "hypothesis", "scope", "edit"},
 })
@@ -58,6 +63,15 @@ type proposeArgs struct {
 	Hypothesis string          `json:"hypothesis"`
 	Scope      string          `json:"scope"`
 	Edit       json.RawMessage `json:"edit"`
+	Saves      []string        `json:"saves"`
+}
+
+// The kinds an efficiency pass may propose: those that can make a run do
+// less. A limit only lowered, a delegation only narrowed and a skill edit
+// without a script are held to that by their marks.
+var efficiencyKinds = []string{
+	"instructions", "tool_note", "tools_narrow", "skill_drop",
+	"limits", "delegation", "pattern", "skill_edit",
 }
 
 // refusal is a proposal the brain will not store, said to the model so it
@@ -141,6 +155,9 @@ func (t *passTools) proposeOnce(ctx context.Context, raw json.RawMessage) (uuid.
 	n.RunIDs, n.PassID, n.Outsider = runs, &t.pass.ID, t.material.outsider
 	sig := in.Signature
 	n.Signature = &sig
+	if t.pass.Trigger == triggerEfficiency {
+		n.Goal, n.Saves = proposals.GoalEfficiency, in.Saves
+	}
 	if err := proposals.Check(n.Kind, n.Before, n.After); err != nil {
 		return uuid.UUID{}, err
 	}
@@ -168,6 +185,9 @@ func (t *passTools) parse(raw json.RawMessage) (proposeArgs, []uuid.UUID, error)
 	case utf8.RuneCountInString(in.Why) > 1000 || utf8.RuneCountInString(in.Hypothesis) > 500:
 		return in, nil, refused("why is at most 1,000 characters and the hypothesis 500")
 	}
+	if err := t.efficiencyKind(in); err != nil {
+		return in, nil, err
+	}
 	if err := t.citesThisPass(in); err != nil {
 		return in, nil, err
 	}
@@ -183,6 +203,13 @@ func (t *passTools) parse(raw json.RawMessage) (proposeArgs, []uuid.UUID, error)
 // widens an agent after an outsider spoke in what the pass read, and one
 // change to a target a pass.
 func (t *passTools) guard(ctx context.Context, n proposals.Proposed) error {
+	if t.pass.Trigger == triggerEfficiency {
+		for _, m := range proposals.Marks(n.Kind, n.Before, n.After) {
+			if slices.Contains(widening, m) {
+				return refused("an efficiency change makes a run do less, and this one %s", strings.ReplaceAll(m, "_", " "))
+			}
+		}
+	}
 	if n.Outsider {
 		for _, m := range proposals.Marks(n.Kind, n.Before, n.After) {
 			if slices.Contains(widening, m) {
@@ -283,6 +310,25 @@ func (t *passTools) citesThisPass(in proposeArgs) error {
 		if err != nil || !t.material.runs[id] {
 			return refused("run %q is not one of the Runs to read", r)
 		}
+	}
+	return nil
+}
+
+// efficiencyKind holds a proposal to its pass's goal: an efficiency pass
+// proposes only the kinds that make a run do less and names what it saves;
+// any other pass names no saving.
+func (t *passTools) efficiencyKind(in proposeArgs) error {
+	if t.pass.Trigger != triggerEfficiency {
+		if len(in.Saves) > 0 {
+			return refused("saves is for an efficiency pass; this pass improves what went wrong")
+		}
+		return nil
+	}
+	if !slices.Contains(efficiencyKinds, in.Kind) {
+		return refused("an efficiency pass proposes only %s: %s could widen what the agent does", strings.Join(efficiencyKinds, ", "), in.Kind)
+	}
+	if len(in.Saves) == 0 {
+		return refused("an efficiency change says what it saves: cost, time or both")
 	}
 	return nil
 }
