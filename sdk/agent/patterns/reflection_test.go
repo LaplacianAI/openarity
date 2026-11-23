@@ -1041,3 +1041,118 @@ func TestAReviewCannotCloseItsOwnFence(t *testing.T) {
 		t.Errorf("the second ask is %q, want the quoted instruction inside the fence", added)
 	}
 }
+
+// systemOf is a request's system prompt as one string.
+func systemOf(r agent.Request) string {
+	var b strings.Builder
+	for _, c := range r.System {
+		b.WriteString(c.Text)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// The rewrite has no tools, so a review that asks for a lookup gets a
+// promise instead of an answer: the review is told so.
+func TestTheReviewIsToldTheRewriteHasNoTools(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeModel{turns: []turn{
+		answered(text("the draft")),
+		critiqued(false, ""),
+	}}
+	if _, err := Reflection(1).Run(t.Context(), agent.Input{
+		Spec: reflectSpec(), Messages: ask("hello"), Model: model,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := systemOf(model.calls[1]); !strings.Contains(got, "The rewrite that follows has no tools") ||
+		!strings.Contains(got, "not for the lookup") {
+		t.Errorf("the review's system prompt does not say the rewrite has no tools:\n%s", got)
+	}
+}
+
+// A rewrite once answered "I'll check … before rewriting" in place of a
+// finished report: it is told it cannot look anything up.
+func TestTheRewriteIsToldItCannotLookAnythingUp(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeModel{turns: []turn{
+		answered(text("the draft")),
+		critiqued(true, "check the default"),
+		answered(text("the rewrite")),
+	}}
+	if _, err := Reflection(1).Run(t.Context(), agent.Input{
+		Spec: reflectSpec(), Messages: ask("hello"), Model: model,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := systemOf(model.calls[2])
+	for _, want := range []string{"cannot look anything up", "never say you will check", "unverified", "the whole answer"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the rewrite's system prompt lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+// Every verdict is shown as reasoning, in the review's step, once: one that
+// lets the answer stand, one that asks for changes, and one written out
+// before it was submitted.
+func TestEveryReviewIsShownAsReasoning(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		turns []turn
+		want  string
+	}{
+		"the answer stands": {
+			turns: []turn{answered(text("the draft")), critiqued(false, "")},
+			want:  "Review: the answer stands.",
+		},
+		"asks for changes": {
+			turns: []turn{answered(text("the draft")), critiqued(true, "name the year"), answered(text("the rewrite"))},
+			want:  "Review: asks for changes. name the year",
+		},
+		"written out, then submitted": {
+			turns: []turn{
+				answered(text("the draft")), answered(text("it lacks the year")),
+				critiqued(true, "name the year"), answered(text("the rewrite")),
+			},
+			// Set apart from the review written out, which a trace gathers
+			// into the same piece of reasoning.
+			want: "\n\nReview: asks for changes. name the year",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			model := &fakeModel{turns: tc.turns}
+			events := make(chan agent.Event, 64)
+			_, err := Reflection(1).Run(t.Context(), agent.Input{
+				Spec: reflectSpec(), Messages: ask("hello"), Model: model, Events: events,
+			})
+			close(events)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			step, verdicts, at := 0, 0, 0
+			for e := range events {
+				switch ev := e.(type) {
+				case agent.StepEvent:
+					step = ev.Step
+				case agent.ReasoningEvent:
+					if strings.Contains(ev.Delta, "Review: ") {
+						verdicts++
+						at = step
+						if ev.Delta != tc.want {
+							t.Errorf("verdict = %q, want %q", ev.Delta, tc.want)
+						}
+					}
+				}
+			}
+			if verdicts != 1 || at != 2 {
+				t.Errorf("%d verdicts, the last in step %d; want one, in the review's step 2", verdicts, at)
+			}
+		})
+	}
+}

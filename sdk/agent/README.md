@@ -331,6 +331,13 @@ back with no text, the answer it was working on is returned and a
 when the plan it was given cannot be read, is longer than `MaxSteps` or was
 cut off. Only a cancelled run stops.
 
+Reflection's rewrite has no tools, so it can only rework what the run already
+found. The review is told so, and asks only for changes a rewrite can make;
+the rewrite is told it cannot look anything up, and says what is unverified
+rather than promising to check it. Every review's verdict is emitted as a
+`ReasoningEvent` ("Review: the answer stands." or "Review: asks for changes.
+…"), so a trace shows why an answer was rewritten.
+
 The review asks for its critique by name, `Request.MustCall`, which the
 OpenAI-compatible client sends as `tool_choice`. It is a hint: Claude refuses
 to be told which tool to call while it thinks, so a request refused as a bad

@@ -122,7 +122,8 @@ func TestEveryLoopStreamsItsAnswer(t *testing.T) {
 				callTool("c1", patterns.CritiqueToolName, `{"needs_refinement":true,"critique":"be exact"}`),
 				answer("Exact.", 1, 1),
 			},
-			"Draft.Exact.", "",
+			// The review's verdict is the pattern's working, recorded as reasoning.
+			"Draft.Exact.", "Review: asks for changes. be exact",
 		},
 	}
 	for loop, c := range cases {
