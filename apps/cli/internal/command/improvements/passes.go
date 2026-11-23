@@ -35,14 +35,20 @@ func triggerCell(p *client.ImproverPass) string {
 		if p.RunsSeen != nil {
 			why += ", from " + strconv.Itoa(int(*p.RunsSeen)) + " good runs"
 		}
-		// Each reason as efficiency:<mark>[:<target>]; a target is a tool's
-		// name from a run, so it is made safe for the terminal.
+		// Each reason as efficiency:<mark>[:<target>], any other signature
+		// left out as the dashboard does. A target is a tool's name from a
+		// run, and a mark the CLI does not know is the brain's, so each is
+		// made safe for the terminal.
 		var reasons []string
 		for _, s := range p.Signatures {
-			mark, target, _ := strings.Cut(strings.TrimPrefix(s, "efficiency:"), ":")
-			r, ok := reasonWords[mark]
+			rest, ok := strings.CutPrefix(s, "efficiency:")
 			if !ok {
-				r = strings.ReplaceAll(mark, "_", " ")
+				continue
+			}
+			mark, target, _ := strings.Cut(rest, ":")
+			r, known := reasonWords[mark]
+			if !known {
+				r = cli.Safe(strings.ReplaceAll(mark, "_", " "))
 			}
 			if target != "" {
 				r += " " + cli.Safe(target)

@@ -22,6 +22,12 @@ func TestEfficiencyIsSaidInWords(t *testing.T) {
 	if got := triggerCell(&client.ImproverPass{Trigger: client.ImproverPassTriggerEfficiency, Signatures: []string{"efficiency:new_mark"}}); got != "efficiency: new mark" {
 		t.Errorf("an unknown reason = %q, want its name in words", got)
 	}
+	if got := triggerCell(&client.ImproverPass{Trigger: client.ImproverPassTriggerEfficiency, Signatures: []string{"efficiency:odd\x1b[2J_mark"}}); strings.Contains(got, "\x1b") {
+		t.Errorf("an unknown reason = %q, want the escape made safe", got)
+	}
+	if got := triggerCell(&client.ImproverPass{Trigger: client.ImproverPassTriggerEfficiency, Signatures: []string{"tool:crm__lookup:timeout", "efficiency:spread"}}); got != "efficiency: costly runs far above the usual" {
+		t.Errorf("a pass with another signature = %q, want only its own reasons", got)
+	}
 	ms := int64(41_000)
 	if got := secondsOf(&ms); got != "41.0 s" {
 		t.Errorf("seconds = %q", got)
