@@ -124,6 +124,7 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	if err != nil {
 		return critique{}, err
 	}
+	wrote := strings.TrimSpace(resp.Message.Text()) != ""
 	if !ok {
 		// A model that thinks will not be told which tool to call, so the
 		// openaicompat client drops tool_choice and asks again without it, and
@@ -137,9 +138,10 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 			return critique{}, cancelled
 		}
 		withReview := append(slices.Clone(msgs), submitAgain(resp.Message.Text()))
-		if call, _, ok, err = reviewOnce(ctx, ask, review, withReview); err != nil {
+		if call, resp, ok, err = reviewOnce(ctx, ask, review, withReview); err != nil {
 			return critique{}, err
 		}
+		wrote = wrote || strings.TrimSpace(resp.Message.Text()) != ""
 		if !ok {
 			return critique{}, fmt.Errorf("%w, though asked twice", ErrNoCritique)
 		}
@@ -154,7 +156,13 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	}
 	// Shown whichever way it went, so a run whose answer stood can be told
 	// from one whose review was never read, and a rewrite explained.
-	in.Emit(ctx, agent.ReasoningEvent{Delta: reviewed(verdict)})
+	// After a review written out, a blank line: a trace gathers a step's
+	// reasoning into one piece, and the verdict must not run into it.
+	verdictText := reviewed(verdict)
+	if wrote {
+		verdictText = "\n\n" + verdictText
+	}
+	in.Emit(ctx, agent.ReasoningEvent{Delta: verdictText})
 	return verdict, nil
 }
 

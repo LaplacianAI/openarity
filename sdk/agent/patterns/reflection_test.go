@@ -1118,7 +1118,9 @@ func TestEveryReviewIsShownAsReasoning(t *testing.T) {
 				answered(text("the draft")), answered(text("it lacks the year")),
 				critiqued(true, "name the year"), answered(text("the rewrite")),
 			},
-			want: "Review: asks for changes. name the year",
+			// Set apart from the review written out, which a trace gathers
+			// into the same piece of reasoning.
+			want: "\n\nReview: asks for changes. name the year",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1139,7 +1141,7 @@ func TestEveryReviewIsShownAsReasoning(t *testing.T) {
 				case agent.StepEvent:
 					step = ev.Step
 				case agent.ReasoningEvent:
-					if strings.HasPrefix(ev.Delta, "Review: ") {
+					if strings.Contains(ev.Delta, "Review: ") {
 						verdicts++
 						at = step
 						if ev.Delta != tc.want {
