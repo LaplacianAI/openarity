@@ -402,6 +402,30 @@ func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error
 	return out.State.Running, err
 }
 
+// ContainerState reports whether the container is running and when it last
+// stopped. A container that never ran has the daemon's zero time, which is
+// returned as the zero time.Time. One that does not exist is an IsNotFound
+// error.
+func (c *Client) ContainerState(ctx context.Context, name string) (running bool, finishedAt time.Time, err error) {
+	var out struct {
+		State struct {
+			Running    bool
+			FinishedAt string
+		}
+	}
+	if err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(name)+"/json", nil, nil, &out); err != nil {
+		return false, time.Time{}, err
+	}
+	if out.State.FinishedAt == "" {
+		return out.State.Running, time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, out.State.FinishedAt)
+	if err != nil {
+		return false, time.Time{}, fmt.Errorf("the container's finish time %q: %w", out.State.FinishedAt, err)
+	}
+	return out.State.Running, t, nil
+}
+
 // VolumeSizes is the bytes each volume carrying the label holds, by name, as
 // the daemon measures them. The daemon walks every volume to answer, so it
 // is asked rarely.
