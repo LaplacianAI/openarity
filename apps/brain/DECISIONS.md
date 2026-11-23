@@ -683,8 +683,25 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   row, and decrypts it for that request only; a four-step run reads an image
   four times. Keeping bytes in the worker's memory between requests would
   save the reads and leave every file a run saw lingering in a process that
-  runs other teams' work. At most eight files go in one request, the newest;
-  images are read up to 5 MB and PDFs and text up to 10 MB.
+  runs other teams' work. At most eight files go in one request, the newest,
+  text files among them; images are read up to 5 MB and PDFs and text up to
+  10 MB, and a text file is sent as its first 100 KiB.
+- **Until F2, a tool's own files ride in the transcript.** An image or a
+  PDF an MCP tool returns, like a browser screenshot, reaches the model as
+  `Blob.Data`, so its bytes are saved in the run's transcript in Postgres,
+  outside the attachment encryption the rule above keeps. Anyone who can read
+  the `agent_messages` table can read them. That was chosen over holding MCP
+  files back until they can be stored, for one slice: F2, the next of the
+  sandboxes design's file slices (openarity-ideation,
+  `Specs/2026-11-18-sandboxes-design.md`), stores a tool's file as a
+  conversation attachment and leaves only its `attachment:<id>`; this ends
+  when it does. Meanwhile each call attaches eight files and 10 MiB at most
+  (images up to 5 MiB, PDFs up to 10 MiB; text goes in the tool's text, cut at
+  100 KiB), and each request, by the rule above, sends the newest eight of
+  every file it holds, inline, referenced or text, within 20 MiB; the rest
+  are named as earlier files, and one past the bytes left is never read.
+  Text a tool returns counts toward its call's eight files and 10 MiB too. The transcript keeps them all, so it grows by what
+  a run's tools attached.
 - **What Postgres cannot include in a transaction gets a tombstone, not a
   best-effort call.** A cascade does not reach a bucket or a secret store, and
   the two writes can never both be atomic. What is atomic is recording the

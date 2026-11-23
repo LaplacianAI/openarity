@@ -20,7 +20,8 @@ const (
 	ReadAttachmentToolName = "read_attachment"
 
 	// What a model is sent of a file: images up to 5 MB, a PDF or a text file
-	// up to 10 MB, and no more than eight files in one request.
+	// read up to 10 MB, a text file's first 100 KiB, and no more than eight
+	// files in one request, text files among them.
 	maxImageBytes   = 5 << 20
 	maxDocBytes     = 10 << 20
 	filesPerRequest = 8

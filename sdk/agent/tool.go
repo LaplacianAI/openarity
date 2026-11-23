@@ -59,7 +59,10 @@ func Attached(results map[string][]Content, order []ToolCall) (Message, bool) {
 		}
 		parts = append(parts, Content{
 			Type: ContentText,
-			Text: "Attached by " + Inner(call).Name + " for call " + call.ID + ":",
+			// The files arrive in a user message, since a tool message takes only
+			// text; this says whose they are, so nothing in one reads as the
+			// person's words.
+			Text: "Attached by " + Inner(call).Name + " for call " + call.ID + ", as its output, not the person's words:",
 		})
 		parts = append(parts, files...)
 	}
