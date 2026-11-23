@@ -1,6 +1,7 @@
 package docker_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/LaplacianAI/openarity/apps/sandbox/internal/docker"
 )
@@ -165,5 +167,78 @@ func TestPingFailsWhenNothingListens(t *testing.T) {
 	t.Parallel()
 	if err := docker.New("/nonexistent/docker.sock").Ping(t.Context()); err == nil {
 		t.Fatal("ping succeeded")
+	}
+}
+
+func TestContainerStateReportsRunningAndWhenItStopped(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		status       int
+		body         string
+		wantRunning  bool
+		wantFinished time.Time
+		wantErr      string // "notfound", or a part of the message
+	}{
+		{
+			name: "running", status: 200,
+			body:        `{"State":{"Running":true,"FinishedAt":"0001-01-01T00:00:00Z"}}`,
+			wantRunning: true,
+		},
+		{
+			name: "stopped", status: 200,
+			body:         `{"State":{"Running":false,"FinishedAt":"2026-11-20T10:15:30.123456789Z"}}`,
+			wantFinished: time.Date(2026, 11, 20, 10, 15, 30, 123456789, time.UTC),
+		},
+		{
+			name: "stopped, in another zone", status: 200,
+			body:         `{"State":{"Running":false,"FinishedAt":"2026-11-20T12:15:30+02:00"}}`,
+			wantFinished: time.Date(2026, 11, 20, 10, 15, 30, 0, time.UTC),
+		},
+		{
+			name: "never ran", status: 200,
+			body: `{"State":{"Running":false,"FinishedAt":"0001-01-01T00:00:00Z"}}`,
+		},
+		{
+			name: "no finish time", status: 200,
+			body: `{"State":{"Running":false}}`,
+		},
+		{
+			name: "not found", status: 404,
+			body: `{"message":"No such container: oa-sb-x"}`, wantErr: "notfound",
+		},
+		{
+			name: "a time that is not one", status: 200,
+			body: `{"State":{"Running":false,"FinishedAt":"yesterday"}}`, wantErr: "yesterday",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c, calls := daemon(t, func(call) (int, string) { return tt.status, tt.body })
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			running, finished, err := c.ContainerState(ctx, "oa-sb-x")
+			if got := calls()[0]; got.Method != "GET" || got.Path != "/v1.44/containers/oa-sb-x/json" {
+				t.Fatalf("%+v", got)
+			}
+			switch {
+			case tt.wantErr == "notfound":
+				if !docker.IsNotFound(err) {
+					t.Fatalf("err = %v, want not found", err)
+				}
+				return
+			case tt.wantErr != "":
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one naming %q", err, tt.wantErr)
+				}
+				return
+			case err != nil:
+				t.Fatal(err)
+			}
+			if running != tt.wantRunning || !finished.Equal(tt.wantFinished) || finished.IsZero() != tt.wantFinished.IsZero() {
+				t.Fatalf("running %v, finished %v; want %v, %v", running, finished, tt.wantRunning, tt.wantFinished)
+			}
+		})
 	}
 }
