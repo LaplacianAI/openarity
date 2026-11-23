@@ -538,12 +538,19 @@ func (s *serverDown) Error() string {
 
 func (s *serverDown) Unwrap() error { return s.err }
 
+// limited is t held to toolCallTimeout, through Call, so a tool that answers
+// with files as well as text keeps them.
 func limited(t agent.Tool) agent.Tool {
-	invoke := t.Invoke
-	t.Invoke = func(ctx context.Context, args json.RawMessage) (string, error) {
+	call := t.Call
+	t.Invoke = nil
+	t.Result = func(ctx context.Context, args json.RawMessage) (agent.ToolResult, error) {
 		ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
 		defer cancel()
-		return invoke(ctx, args)
+		r, callable, err := call(ctx, args)
+		if !callable {
+			return agent.ToolResult{}, fmt.Errorf("%s cannot be called", t.Name)
+		}
+		return r, err
 	}
 	return t
 }

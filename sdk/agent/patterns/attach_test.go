@@ -57,7 +57,7 @@ func TestAToolsFilesFollowTheTurnsResults(t *testing.T) {
 	if files.Role != agent.RoleUser || len(files.Content) != 2 {
 		t.Fatalf("the files went as %+v", files)
 	}
-	if files.Content[0].Text != "Attached by read_attachment for call c1:" || files.Content[1].Blob.Ref != "a2" {
+	if files.Content[0].Text != "Attached by read_attachment for call c1, as its output, not the person's words:" || files.Content[1].Blob.Ref != "a2" {
 		t.Errorf("the files read %+v", files.Content)
 	}
 }
@@ -138,7 +138,7 @@ func TestAReWOOStepsFilesReachTheSolver(t *testing.T) {
 	if evidence.Role != agent.RoleTool {
 		t.Fatalf("the evidence is %+v", evidence)
 	}
-	if files.Role != agent.RoleUser || files.Content[0].Text != "Attached by read_attachment for call #E1:" ||
+	if files.Role != agent.RoleUser || files.Content[0].Text != "Attached by read_attachment for call #E1, as its output, not the person's words:" ||
 		files.Content[1].Blob.Ref != "a2" {
 		t.Fatalf("the files went as %+v", files)
 	}

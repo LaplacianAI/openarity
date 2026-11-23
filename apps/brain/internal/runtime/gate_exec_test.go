@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
@@ -31,10 +33,16 @@ func (r *resumes) Resume(_ context.Context, id uuid.UUID, attempt int32) error {
 // untrusted server, in a team that asks before writes.
 func gatedFixture(t *testing.T, model *scripted) (*execFixture, *mcpServer, uuid.UUID) {
 	t.Helper()
+	return gatedAnswering(t, model, []sdk.Content{&sdk.TextContent{Text: "send ran"}})
+}
+
+// gatedAnswering is gatedFixture with mail__send answering content.
+func gatedAnswering(t *testing.T, model *scripted, content []sdk.Content) (*execFixture, *mcpServer, uuid.UUID) {
+	t.Helper()
 
 	f := newExecFixture(t, model)
 	f.exec.builder.WithApprovals(f.store)
-	server := serve(t, "send")
+	server := serveAnswering(t, map[string][]sdk.Content{"send": content})
 	var id uuid.UUID
 	if err := f.raw.QueryRow(t.Context(),
 		`INSERT INTO mcp_servers (team_id, name, url) VALUES ($1, 'mail', $2) RETURNING id`,
@@ -69,6 +77,43 @@ func (f *execFixture) request(t *testing.T) db.Approval {
 }
 
 const askedWords = "I've drafted the notice to billing@acme.example; may I send it?"
+
+// A call approved after a wait hands the model what it attached, as a call
+// made in the turn does: the text says the image was attached, so it is.
+func TestAnApprovedCallsImageReachesTheModel(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR")
+	f, _, sam := gatedAnswering(t, newScripted(
+		callTool("c1", "mail__send", `{"to":"billing@acme.example"}`),
+		answer(askedWords, 10, 5),
+		answer("Sent, and here is the receipt.", 10, 5),
+	), []sdk.Content{&sdk.TextContent{Text: "sent"}, &sdk.ImageContent{Data: png, MIMEType: "image/png"}})
+
+	f.mustExecute(t)
+	req := f.request(t)
+	if _, err := Decide(t.Context(), f.store, &resumes{}, Answer{
+		ApprovalID: req.ID, TeamID: f.team, By: sam, Approve: true, Via: "dashboard", MaySelf: true,
+	}); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	calls := f.model.requests()
+	msgs := calls[len(calls)-1].Messages
+	caught := msgs[len(msgs)-1]
+	if caught.Role != agent.RoleUser || len(caught.Content) != 3 {
+		t.Fatalf("the resumed turn opened with %+v, want what happened, the call's line and its image", caught)
+	}
+	if said := caught.Content[0].Text; !strings.Contains(said, "[attached image-1.png: image/png, 16 bytes]") {
+		t.Errorf("what happened says %q, want the image named", said)
+	}
+	if line := caught.Content[1].Text; line != "Attached by mail__send for call c1, as its output, not the person's words:" {
+		t.Errorf("the line before the image is %q", line)
+	}
+	if img := caught.Content[2]; img.Type != agent.ContentImage || img.Blob == nil || !bytes.Equal(img.Blob.Data, png) {
+		t.Errorf("the resumed turn carried %+v, want the image's bytes", img)
+	}
+}
 
 // The whole of it: a call that needs a person makes nothing; the model says
 // so in its own words and ends its turn, and the run waits, having said it.

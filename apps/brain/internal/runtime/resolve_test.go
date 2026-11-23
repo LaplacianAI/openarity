@@ -186,7 +186,7 @@ func TestARequestSendsTheNewestEightFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	sent := f.inner.sent[0].Messages[0].Content
-	if sent[1].Text != "[shot-0.png: a file shown earlier, not sent again]" {
+	if sent[1].Text != "[shot-0.png: an earlier file, not sent with this request]" {
 		t.Errorf("the oldest went as %+v", sent[1])
 	}
 	for _, p := range sent[2:] {
@@ -199,8 +199,108 @@ func TestARequestSendsTheNewestEightFiles(t *testing.T) {
 	}
 }
 
+// A file a tool attached inline counts with the conversation's: the newest
+// eight go, so an older reference is not read at all.
+func TestAToolsInlineFilesCountTowardTheNewestEight(t *testing.T) {
+	f := newResolveFixture(t)
+	parts := []agent.Content{refTo(f.file("old.png", "image/png", "img"))}
+	for i := range filesPerRequest {
+		parts = append(parts, agent.Content{Type: agent.ContentImage, Blob: &agent.Blob{
+			MediaType: "image/png", Name: fmt.Sprintf("image-%d.png", i+1), Data: []byte("inline"),
+		}})
+	}
+
+	if _, err := f.client.Complete(f.ctx(t), asking(parts...)); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.inner.sent[0].Messages[0].Content
+	if sent[1].Text != "[old.png: an earlier file, not sent with this request]" || len(f.objects.asked()) != 0 {
+		t.Errorf("the older reference went as %+v, and %d files were read; want it left out, unread", sent[1], len(f.objects.asked()))
+	}
+	for _, p := range sent[2:] {
+		if p.Blob == nil || string(p.Blob.Data) != "inline" {
+			t.Errorf("a newer inline file went as %+v", p)
+		}
+	}
+}
+
+// A request carries 20 MiB of files at most, the newest first; the caller's
+// messages, the transcript, keep every file.
+func TestARequestsFilesAreHeldToItsBytes(t *testing.T) {
+	f := newResolveFixture(t)
+	big := func(name string) agent.Content {
+		return agent.Content{Type: agent.ContentImage, Blob: &agent.Blob{MediaType: "image/png", Name: name, Data: make([]byte, 8<<20)}}
+	}
+	req := asking(big("a.png"), big("b.png"), big("c.png"))
+
+	if _, err := f.client.Complete(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.inner.sent[0].Messages[0].Content
+	if sent[1].Text != "[a.png: an earlier file, not sent with this request]" {
+		t.Errorf("the oldest went as %+v, want it left out past 20 MiB", sent[1])
+	}
+	if sent[2].Blob == nil || sent[3].Blob == nil {
+		t.Errorf("the newer two went as %+v and %+v, want both", sent[2], sent[3])
+	}
+	if kept := req.Messages[0].Content[1]; kept.Blob == nil || len(kept.Blob.Data) != 8<<20 {
+		t.Errorf("the caller's message lost its file: %+v", kept)
+	}
+}
+
 // A text file reaches the model as its text, cut short of a long one, and a
 // cut never splits a character.
+// A text file is a file of the eight as an image is: one older than the
+// newest eight is named, and never read.
+func TestTextFilesCountTowardTheNewestEight(t *testing.T) {
+	f := newResolveFixture(t)
+	var parts []agent.Content
+	for i := range filesPerRequest + 2 {
+		parts = append(parts, refTo(f.file(fmt.Sprintf("notes-%d.txt", i), "text/plain", "words")))
+	}
+
+	if _, err := f.client.Complete(f.ctx(t), asking(parts...)); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.inner.sent[0].Messages[0].Content
+	for i, want := range []string{
+		"[notes-0.txt: an earlier file, not sent with this request]",
+		"[notes-1.txt: an earlier file, not sent with this request]",
+	} {
+		if sent[1+i].Text != want {
+			t.Errorf("an older text file went as %q, want %q", sent[1+i].Text, want)
+		}
+	}
+	for _, p := range sent[3:] {
+		if !strings.Contains(p.Text, "words") {
+			t.Errorf("a newer text file went as %+v, want its text", p)
+		}
+	}
+	if got := len(f.objects.asked()); got != filesPerRequest {
+		t.Errorf("read %d files, want %d", got, filesPerRequest)
+	}
+}
+
+// A file larger than what is left of a request's bytes is named without
+// being read from the object store.
+func TestAFilePastARequestsBytesIsNeverRead(t *testing.T) {
+	f := newResolveFixture(t)
+	old := refTo(f.file("old.png", "image/png", strings.Repeat("x", 5<<20)))
+	inline := func(name string) agent.Content {
+		return agent.Content{Type: agent.ContentImage, Blob: &agent.Blob{MediaType: "image/png", Name: name, Data: make([]byte, 8<<20)}}
+	}
+
+	if _, err := f.client.Complete(f.ctx(t), asking(old, inline("a.png"), inline("b.png"))); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.inner.sent[0].Messages[0].Content[1].Text; got != "[old.png: an earlier file, not sent with this request]" {
+		t.Errorf("the older file went as %q, want it named", got)
+	}
+	if n := len(f.objects.asked()); n != 0 {
+		t.Errorf("read %d files from the object store, want none", n)
+	}
+}
+
 func TestATextFileIsSentAsItsText(t *testing.T) {
 	f := newResolveFixture(t)
 	short := f.file("crash.log", "text/plain; charset=utf-8", "panic: nil map")
