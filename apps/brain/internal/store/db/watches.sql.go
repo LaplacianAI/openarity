@@ -73,7 +73,7 @@ func (q *Queries) FinishImprovementWatch(ctx context.Context, arg FinishImprovem
 }
 
 const getImprovementWatch = `-- name: GetImprovementWatch :one
-SELECT proposal_id, team_id, agent_ids, started_at, status, flag, ended_why, on_seconds, last_swept_at, baseline_runs, baseline_bad, bar, before_runs, before_bad, before_up, before_down, after_runs, after_bad, after_up, after_down, before_tokens, after_tokens, baseline_p90, before_steps, after_steps, sig_before, sig_after, overlapping, finished_at, cleared_by, cleared_at FROM improvement_watches WHERE proposal_id = $1
+SELECT proposal_id, team_id, agent_ids, started_at, status, flag, ended_why, on_seconds, last_swept_at, baseline_runs, baseline_bad, bar, before_runs, before_bad, before_up, before_down, after_runs, after_bad, after_up, after_down, before_tokens, after_tokens, baseline_p90, before_steps, after_steps, sig_before, sig_after, overlapping, finished_at, cleared_by, cleared_at, before_work_ms, after_work_ms FROM improvement_watches WHERE proposal_id = $1
 `
 
 func (q *Queries) GetImprovementWatch(ctx context.Context, proposalID uuid.UUID) (ImprovementWatch, error) {
@@ -111,12 +111,14 @@ func (q *Queries) GetImprovementWatch(ctx context.Context, proposalID uuid.UUID)
 		&i.FinishedAt,
 		&i.ClearedBy,
 		&i.ClearedAt,
+		&i.BeforeWorkMs,
+		&i.AfterWorkMs,
 	)
 	return i, err
 }
 
 const listImprovementWatches = `-- name: ListImprovementWatches :many
-SELECT proposal_id, team_id, agent_ids, started_at, status, flag, ended_why, on_seconds, last_swept_at, baseline_runs, baseline_bad, bar, before_runs, before_bad, before_up, before_down, after_runs, after_bad, after_up, after_down, before_tokens, after_tokens, baseline_p90, before_steps, after_steps, sig_before, sig_after, overlapping, finished_at, cleared_by, cleared_at FROM improvement_watches WHERE proposal_id = ANY ($1::uuid[])
+SELECT proposal_id, team_id, agent_ids, started_at, status, flag, ended_why, on_seconds, last_swept_at, baseline_runs, baseline_bad, bar, before_runs, before_bad, before_up, before_down, after_runs, after_bad, after_up, after_down, before_tokens, after_tokens, baseline_p90, before_steps, after_steps, sig_before, sig_after, overlapping, finished_at, cleared_by, cleared_at, before_work_ms, after_work_ms FROM improvement_watches WHERE proposal_id = ANY ($1::uuid[])
 `
 
 // The watches of a page of proposals.
@@ -161,6 +163,8 @@ func (q *Queries) ListImprovementWatches(ctx context.Context, ids []uuid.UUID) (
 			&i.FinishedAt,
 			&i.ClearedBy,
 			&i.ClearedAt,
+			&i.BeforeWorkMs,
+			&i.AfterWorkMs,
 		); err != nil {
 			return nil, err
 		}
@@ -248,6 +252,7 @@ SELECT r.id, r.created_at, o.verdict,
           FROM runs t WHERE t.root_run_id = r.id)::bigint AS spent,
        (SELECT count(*) FROM run_events e JOIN runs t ON t.id = e.run_id
           WHERE t.root_run_id = r.id AND e.kind = 'step')::int AS steps,
+       run_work_ms(r.id)::bigint AS work_ms,
        EXISTS (SELECT 1 FROM run_digests d
                WHERE d.run_id = r.id AND d.agent_id = ANY ($1::uuid[])
                  AND d.part = $2::text AND d.target = $3::text
@@ -282,13 +287,14 @@ type ListWatchRunsRow struct {
 	Down         int32
 	Spent        int64
 	Steps        int32
+	WorkMs       int64
 	HasSignature bool
 }
 
 // Judged top-level runs whose trees reach the watched agents, either side of
 // when the change was applied: before newest first, after oldest first. Each
 // with its verdict and votes, what its tree spent (a cached token as a
-// tenth, as the budget counts) and its steps, and whether a digest of it
+// tenth, as the budget counts), its steps and how long it worked, and whether a digest of it
 // carries the targeted signature.
 func (q *Queries) ListWatchRuns(ctx context.Context, arg ListWatchRunsParams) ([]ListWatchRunsRow, error) {
 	rows, err := q.db.Query(ctx, listWatchRuns,
@@ -316,6 +322,7 @@ func (q *Queries) ListWatchRuns(ctx context.Context, arg ListWatchRunsParams) ([
 			&i.Down,
 			&i.Spent,
 			&i.Steps,
+			&i.WorkMs,
 			&i.HasSignature,
 		); err != nil {
 			return nil, err
@@ -338,9 +345,10 @@ UPDATE improvement_watches SET
     before_tokens = $12, after_tokens = $13,
     baseline_p90 = $14,
     before_steps = $15, after_steps = $16,
-    sig_before = $17, sig_after = $18,
-    overlapping = $19::uuid[]
-WHERE proposal_id = $20 AND status = 'watching'
+    before_work_ms = $17, after_work_ms = $18,
+    sig_before = $19, sig_after = $20,
+    overlapping = $21::uuid[]
+WHERE proposal_id = $22 AND status = 'watching'
 `
 
 type SetWatchProgressParams struct {
@@ -360,6 +368,8 @@ type SetWatchProgressParams struct {
 	BaselineP90  *int64
 	BeforeSteps  *int32
 	AfterSteps   *int32
+	BeforeWorkMs *int64
+	AfterWorkMs  *int64
 	SigBefore    *int16
 	SigAfter     *int16
 	Overlapping  []uuid.UUID
@@ -385,6 +395,8 @@ func (q *Queries) SetWatchProgress(ctx context.Context, arg SetWatchProgressPara
 		arg.BaselineP90,
 		arg.BeforeSteps,
 		arg.AfterSteps,
+		arg.BeforeWorkMs,
+		arg.AfterWorkMs,
 		arg.SigBefore,
 		arg.SigAfter,
 		arg.Overlapping,
@@ -428,45 +440,49 @@ WITH page AS MATERIALIZED (
         last_swept_at = now()
     FROM page
     WHERE w.proposal_id = page.proposal_id AND w.status = 'watching'
-    RETURNING w.proposal_id, w.team_id, w.agent_ids, w.started_at, w.status, w.flag, w.ended_why, w.on_seconds, w.last_swept_at, w.baseline_runs, w.baseline_bad, w.bar, w.before_runs, w.before_bad, w.before_up, w.before_down, w.after_runs, w.after_bad, w.after_up, w.after_down, w.before_tokens, w.after_tokens, w.baseline_p90, w.before_steps, w.after_steps, w.sig_before, w.sig_after, w.overlapping, w.finished_at, w.cleared_by, w.cleared_at
+    RETURNING w.proposal_id, w.team_id, w.agent_ids, w.started_at, w.status, w.flag, w.ended_why, w.on_seconds, w.last_swept_at, w.baseline_runs, w.baseline_bad, w.bar, w.before_runs, w.before_bad, w.before_up, w.before_down, w.after_runs, w.after_bad, w.after_up, w.after_down, w.before_tokens, w.after_tokens, w.baseline_p90, w.before_steps, w.after_steps, w.sig_before, w.sig_after, w.overlapping, w.finished_at, w.cleared_by, w.cleared_at, w.before_work_ms, w.after_work_ms
 )
-SELECT t.proposal_id, t.team_id, t.agent_ids, t.started_at, t.status, t.flag, t.ended_why, t.on_seconds, t.last_swept_at, t.baseline_runs, t.baseline_bad, t.bar, t.before_runs, t.before_bad, t.before_up, t.before_down, t.after_runs, t.after_bad, t.after_up, t.after_down, t.before_tokens, t.after_tokens, t.baseline_p90, t.before_steps, t.after_steps, t.sig_before, t.sig_after, t.overlapping, t.finished_at, t.cleared_by, t.cleared_at, EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = t.team_id AND ts.improvement)::bool AS improving
+SELECT t.proposal_id, t.team_id, t.agent_ids, t.started_at, t.status, t.flag, t.ended_why, t.on_seconds, t.last_swept_at, t.baseline_runs, t.baseline_bad, t.bar, t.before_runs, t.before_bad, t.before_up, t.before_down, t.after_runs, t.after_bad, t.after_up, t.after_down, t.before_tokens, t.after_tokens, t.baseline_p90, t.before_steps, t.after_steps, t.sig_before, t.sig_after, t.overlapping, t.finished_at, t.cleared_by, t.cleared_at, t.before_work_ms, t.after_work_ms, EXISTS (SELECT 1 FROM team_settings ts WHERE ts.team_id = t.team_id AND ts.improvement)::bool AS improving,
+       COALESCE((SELECT ts.improvement_efficiency_margin FROM team_settings ts WHERE ts.team_id = t.team_id), 1)::smallint AS efficiency_margin
 FROM ticked t
 `
 
 type TickOpenWatchesRow struct {
-	ProposalID   uuid.UUID
-	TeamID       uuid.UUID
-	AgentIds     []uuid.UUID
-	StartedAt    time.Time
-	Status       string
-	Flag         *string
-	EndedWhy     *string
-	OnSeconds    int32
-	LastSweptAt  *time.Time
-	BaselineRuns int16
-	BaselineBad  int16
-	Bar          *int16
-	BeforeRuns   int16
-	BeforeBad    int16
-	BeforeUp     int16
-	BeforeDown   int16
-	AfterRuns    int16
-	AfterBad     int16
-	AfterUp      int16
-	AfterDown    int16
-	BeforeTokens *int64
-	AfterTokens  *int64
-	BaselineP90  *int64
-	BeforeSteps  *int32
-	AfterSteps   *int32
-	SigBefore    *int16
-	SigAfter     *int16
-	Overlapping  []uuid.UUID
-	FinishedAt   *time.Time
-	ClearedBy    *uuid.UUID
-	ClearedAt    *time.Time
-	Improving    bool
+	ProposalID       uuid.UUID
+	TeamID           uuid.UUID
+	AgentIds         []uuid.UUID
+	StartedAt        time.Time
+	Status           string
+	Flag             *string
+	EndedWhy         *string
+	OnSeconds        int32
+	LastSweptAt      *time.Time
+	BaselineRuns     int16
+	BaselineBad      int16
+	Bar              *int16
+	BeforeRuns       int16
+	BeforeBad        int16
+	BeforeUp         int16
+	BeforeDown       int16
+	AfterRuns        int16
+	AfterBad         int16
+	AfterUp          int16
+	AfterDown        int16
+	BeforeTokens     *int64
+	AfterTokens      *int64
+	BaselineP90      *int64
+	BeforeSteps      *int32
+	AfterSteps       *int32
+	SigBefore        *int16
+	SigAfter         *int16
+	Overlapping      []uuid.UUID
+	FinishedAt       *time.Time
+	ClearedBy        *uuid.UUID
+	ClearedAt        *time.Time
+	BeforeWorkMs     *int64
+	AfterWorkMs      *int64
+	Improving        bool
+	EfficiencyMargin int16
 }
 
 // One page of open watches not swept in the last minute, the least
@@ -474,6 +490,8 @@ type TickOpenWatchesRow struct {
 // pages end once it has been round them all (sweeps are ten minutes apart). Each counts the time since its last sweep toward its
 // 30 days, but only while its team has improvement on; a watch in a team
 // with it off is marked swept and not counted, and comes back with on false.
+// Each comes with its team's margin for an efficiency change, read as it is
+// judged.
 func (q *Queries) TickOpenWatches(ctx context.Context, pageSize int32) ([]TickOpenWatchesRow, error) {
 	rows, err := q.db.Query(ctx, tickOpenWatches, pageSize)
 	if err != nil {
@@ -515,7 +533,10 @@ func (q *Queries) TickOpenWatches(ctx context.Context, pageSize int32) ([]TickOp
 			&i.FinishedAt,
 			&i.ClearedBy,
 			&i.ClearedAt,
+			&i.BeforeWorkMs,
+			&i.AfterWorkMs,
 			&i.Improving,
+			&i.EfficiencyMargin,
 		); err != nil {
 			return nil, err
 		}

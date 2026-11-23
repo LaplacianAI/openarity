@@ -2,6 +2,7 @@ package improvements
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ type watchView struct {
 	FinishedAt   *time.Time `json:"finished_at" yaml:"finished_at"`
 	ClearedBy    *string    `json:"cleared_by" yaml:"cleared_by"`
 	ClearedAt    *time.Time `json:"cleared_at" yaml:"cleared_at"`
+	// saves is what the change aimed to save, from the proposal: what a
+	// no_saving flag is said by. Printed with the proposal, not here.
+	saves []string
 }
 
 type sideView struct {
@@ -37,10 +41,11 @@ type sideView struct {
 	Tokens    *int64 `json:"tokens" yaml:"tokens"`
 	Steps     *int   `json:"steps" yaml:"steps"`
 	Signature *int   `json:"signature" yaml:"signature"`
+	WorkMS    *int64 `json:"work_ms" yaml:"work_ms"`
 }
 
 func sideOf(s client.ImprovementWatchSide) sideView {
-	return sideView{Runs: s.Runs, Bad: s.Bad, Up: s.Up, Down: s.Down, Tokens: s.Tokens, Steps: s.Steps, Signature: s.Signature}
+	return sideView{Runs: s.Runs, Bad: s.Bad, Up: s.Up, Down: s.Down, Tokens: s.Tokens, Steps: s.Steps, Signature: s.Signature, WorkMS: s.WorkMs}
 }
 
 func watchOf(w *client.ImprovementWatch) *watchView {
@@ -67,8 +72,9 @@ func watchOf(w *client.ImprovementWatch) *watchView {
 	return v
 }
 
-// flagWords is why a change was flagged, in words.
-func flagWords(flag *string) string {
+// flagWords is why a change was flagged, in words; a change that saved
+// nothing by what it aimed to save.
+func flagWords(flag *string, saves []string) string {
 	if flag == nil {
 		return ""
 	}
@@ -79,6 +85,23 @@ func flagWords(flag *string) string {
 		return "its runs cost more, with no fewer failures"
 	case "both":
 		return "its runs went worse and cost more"
+	case "no_saving":
+		var aim []string
+		if slices.Contains(saves, "cost") {
+			aim = append(aim, "cheaper")
+		}
+		if slices.Contains(saves, "time") {
+			aim = append(aim, "quicker")
+		}
+		// Flagged when any one saving it named is missing, so both named
+		// reads "both", not as if each failed.
+		switch len(aim) {
+		case 0:
+			aim = []string{"cheaper or quicker"}
+		case 2:
+			aim = []string{"both cheaper and quicker"}
+		}
+		return "its good runs did not get " + aim[0] + ", as it said they would"
 	}
 	return cli.Safe(*flag)
 }
@@ -92,9 +115,9 @@ func watchLine(w *watchView) string {
 	case "clear":
 		return "clear: " + counts
 	case "flagged":
-		return "flagged, " + flagWords(w.Flag) + ": " + counts
+		return "flagged, " + flagWords(w.Flag, w.saves) + ": " + counts
 	case "cleared":
-		return "flagged (" + flagWords(w.Flag) + "), then cleared: " + counts
+		return "flagged (" + flagWords(w.Flag, w.saves) + "), then cleared: " + counts
 	case "ended":
 		if w.EndedWhy != nil && *w.EndedWhy == "reverted" {
 			return fmt.Sprintf("ended when reverted: %d of %d runs counted", w.After.Runs, w.Needed)
@@ -128,7 +151,7 @@ func medianInt(v *int) string {
 
 // watchRows prints the watch under the proposal: its state, the agent's
 // usual rate, cost, the targeted signature and the changes beside it.
-func watchRows(opts *cli.Options, table *printer.Table, w *watchView) {
+func watchRows(opts *cli.Options, table *printer.Table, w *watchView, goal string) {
 	if w == nil {
 		return
 	}
@@ -138,9 +161,18 @@ func watchRows(opts *cli.Options, table *printer.Table, w *watchView) {
 	}
 	table.Row("watch", line, "")
 	table.Row("usual", usual(w), "")
+	// An efficiency change is judged on its good runs, so its tokens are
+	// theirs.
+	a := "a run"
+	if goal == string(client.ImprovementGoalEfficiency) {
+		a = "a good run"
+	}
 	if w.Before.Tokens != nil || w.After.Tokens != nil {
-		table.Row("cost", fmt.Sprintf("tokens a run %s → %s, steps %s → %s",
-			median(w.Before.Tokens), median(w.After.Tokens), medianInt(w.Before.Steps), medianInt(w.After.Steps)), "")
+		table.Row("cost", fmt.Sprintf("tokens %s %s → %s, steps %s → %s",
+			a, median(w.Before.Tokens), median(w.After.Tokens), medianInt(w.Before.Steps), medianInt(w.After.Steps)), "")
+	}
+	if w.Before.WorkMS != nil || w.After.WorkMS != nil {
+		table.Row("time", fmt.Sprintf("work a good run %s → %s", secondsOf(w.Before.WorkMS), secondsOf(w.After.WorkMS)), "")
 	}
 	if w.Before.Signature != nil && w.After.Signature != nil {
 		table.Row("pattern", fmt.Sprintf("in %d of %d runs before, %d of %d after",
@@ -152,4 +184,12 @@ func watchRows(opts *cli.Options, table *printer.Table, w *watchView) {
 	if len(w.Overlapping) > 0 {
 		table.Row("beside", strings.Join(w.Overlapping, ", "), "")
 	}
+}
+
+// secondsOf is a work time in seconds, "—" for none.
+func secondsOf(ms *int64) string {
+	if ms == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f s", float64(*ms)/1000)
 }

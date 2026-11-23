@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	browserpkg "github.com/LaplacianAI/openarity/apps/brain/internal/browser"
@@ -31,6 +32,12 @@ const (
 	defaultPassMinutes = 20
 	// A daily pass waits for five judged runs since the agent's last pass.
 	defaultDailyRuns = 5
+	// The efficiency pass's numbers, approved in the I5 design.
+	defaultEfficiencyRuns     = 20
+	defaultEfficiencyDays     = 14
+	defaultEfficiencySpread   = 200
+	defaultEfficiencyMarkRuns = 3
+	defaultEfficiencyMargin   = 1
 	// The brain's line before teams could set it, kept for a team that
 	// never saved its settings.
 	defaultCompactionTokensMin = 50_000
@@ -169,6 +176,12 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	p.ImprovementDailyPasses = req.ImprovementDailyPasses
 	p.ImprovementPassTokens, p.ImprovementPassMinutes = req.ImprovementPassTokens, req.ImprovementPassMinutes
 	p.ImprovementDailyRuns = req.ImprovementDailyRuns
+	if req.ImprovementEfficiency != nil {
+		p.ImprovementEfficiency = pgtype.Bool{Bool: *req.ImprovementEfficiency, Valid: true}
+	}
+	p.ImprovementEfficiencyRuns = req.ImprovementEfficiencyRuns
+	p.ImprovementEfficiencyDays, p.ImprovementEfficiencySpread = req.ImprovementEfficiencyDays, req.ImprovementEfficiencySpread
+	p.ImprovementEfficiencyMarkRuns, p.ImprovementEfficiencyMargin = req.ImprovementEfficiencyMarkRuns, req.ImprovementEfficiencyMargin
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	lifecycle(&p, req.Sandbox, stored)
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
@@ -404,11 +417,19 @@ func view(row db.TeamSetting, hub *hubRef) settings {
 		ImprovementPassMinutes: row.ImprovementPassMinutes,
 		ImprovementDailyRuns:   row.ImprovementDailyRuns,
 		ImprovementSince:       row.ImprovementSince,
-		CompactionMessages:     row.CompactionMessages,
-		CompactionTokensMin:    row.CompactionTokensMin,
-		CompactionTokensMax:    row.CompactionTokensMax,
-		Hub:                    hub,
-		UpdatedAt:              &row.UpdatedAt,
+
+		ImprovementEfficiency:         row.ImprovementEfficiency,
+		ImprovementEfficiencyRuns:     row.ImprovementEfficiencyRuns,
+		ImprovementEfficiencyDays:     row.ImprovementEfficiencyDays,
+		ImprovementEfficiencySpread:   row.ImprovementEfficiencySpread,
+		ImprovementEfficiencyMarkRuns: row.ImprovementEfficiencyMarkRuns,
+		ImprovementEfficiencyMargin:   row.ImprovementEfficiencyMargin,
+
+		CompactionMessages:  row.CompactionMessages,
+		CompactionTokensMin: row.CompactionTokensMin,
+		CompactionTokensMax: row.CompactionTokensMax,
+		Hub:                 hub,
+		UpdatedAt:           &row.UpdatedAt,
 	}
 	if row.ModelName != nil && row.ModelMaxTokens != nil {
 		s.Model = &modelRef{Name: *row.ModelName, MaxTokens: *row.ModelMaxTokens, Temperature: row.ModelTemperature}
@@ -429,9 +450,15 @@ func defaults() settings {
 		ImprovementPassTokens:  defaultPassTokens,
 		ImprovementPassMinutes: defaultPassMinutes,
 		ImprovementDailyRuns:   defaultDailyRuns,
-		CompactionMessages:     defaultCompaction,
-		CompactionTokensMin:    defaultCompactionTokensMin,
-		CompactionTokensMax:    defaultCompactionTokensMax,
+
+		ImprovementEfficiencyRuns:     defaultEfficiencyRuns,
+		ImprovementEfficiencyDays:     defaultEfficiencyDays,
+		ImprovementEfficiencySpread:   defaultEfficiencySpread,
+		ImprovementEfficiencyMarkRuns: defaultEfficiencyMarkRuns,
+		ImprovementEfficiencyMargin:   defaultEfficiencyMargin,
+		CompactionMessages:            defaultCompaction,
+		CompactionTokensMin:           defaultCompactionTokensMin,
+		CompactionTokensMax:           defaultCompactionTokensMax,
 	}
 }
 

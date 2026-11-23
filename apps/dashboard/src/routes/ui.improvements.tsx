@@ -232,7 +232,7 @@ function Improvements() {
                     : tab === "applied"
                       ? "No proposed change has been applied."
                       : tab === "flagged"
-                        ? "An applied change is watched over its agent's next ten judged runs. One whose runs went clearly worse than usual, or cost more with no fewer failures, appears here for someone to clear or revert."
+                        ? "An applied change is watched over its agent's next ten judged runs. One whose runs went clearly worse than usual, or cost more with no fewer failures, appears here for someone to clear or revert, as does a change meant to save whose good runs did not get cheaper or quicker."
                         : "No proposed change has been rejected, reverted or withdrawn."
               }
             />

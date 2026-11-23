@@ -93,23 +93,26 @@ func (q *Queries) DeleteRunFeedback(ctx context.Context, arg DeleteRunFeedbackPa
 const getImprovementSettings = `-- name: GetImprovementSettings :one
 SELECT improvement, improvement_sample_share, improvement_daily_passes,
        improvement_pass_tokens, improvement_pass_minutes,
+       improvement_efficiency, improvement_efficiency_margin,
        model_name, model_max_tokens, model_temperature,
        judge_model_name, judge_model_max_tokens, judge_model_temperature
 FROM team_settings WHERE team_id = $1
 `
 
 type GetImprovementSettingsRow struct {
-	Improvement            bool
-	ImprovementSampleShare int16
-	ImprovementDailyPasses int16
-	ImprovementPassTokens  int32
-	ImprovementPassMinutes int16
-	ModelName              *string
-	ModelMaxTokens         *int32
-	ModelTemperature       *float64
-	JudgeModelName         *string
-	JudgeModelMaxTokens    *int32
-	JudgeModelTemperature  *float64
+	Improvement                 bool
+	ImprovementSampleShare      int16
+	ImprovementDailyPasses      int16
+	ImprovementPassTokens       int32
+	ImprovementPassMinutes      int16
+	ImprovementEfficiency       bool
+	ImprovementEfficiencyMargin int16
+	ModelName                   *string
+	ModelMaxTokens              *int32
+	ModelTemperature            *float64
+	JudgeModelName              *string
+	JudgeModelMaxTokens         *int32
+	JudgeModelTemperature       *float64
 }
 
 // What a check needs of the team: whether it is still on, which model
@@ -123,6 +126,8 @@ func (q *Queries) GetImprovementSettings(ctx context.Context, teamID uuid.UUID) 
 		&i.ImprovementDailyPasses,
 		&i.ImprovementPassTokens,
 		&i.ImprovementPassMinutes,
+		&i.ImprovementEfficiency,
+		&i.ImprovementEfficiencyMargin,
 		&i.ModelName,
 		&i.ModelMaxTokens,
 		&i.ModelTemperature,

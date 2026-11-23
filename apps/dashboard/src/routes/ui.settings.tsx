@@ -32,6 +32,7 @@ import type {
 } from "@/api/types";
 import { Choice, type ChoiceGroup, chosen, Segments } from "@/components/choices";
 import { DeleteTeamDialog } from "@/components/delete-team-dialog";
+import { EfficiencyFields } from "@/components/efficiency-settings";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
 import { ErrorState } from "@/components/states";
@@ -40,6 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SwitchField } from "@/components/ui/switch";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
+import { Unit } from "@/components/unit-input";
 import { LeaveGuard } from "@/components/unsaved";
 import { NO_MODEL } from "@/lib/ask";
 import {
@@ -57,6 +59,12 @@ import {
   TOKENS,
   tidied,
 } from "@/lib/compaction";
+import {
+  type EfficiencyDraft,
+  efficiencyDraftOf,
+  efficiencyRequest,
+  spreadOf,
+} from "@/lib/efficiency-settings";
 import { cn } from "@/lib/utils";
 import { waitWords } from "@/lib/wait";
 
@@ -238,7 +246,7 @@ function DangerZone({ teamId, teamName }: { teamId: string; teamName: string }) 
   );
 }
 
-export type SettingsDraft = {
+export type SettingsDraft = EfficiencyDraft & {
   modelOn: boolean;
   modelName: string;
   maxTokens: string;
@@ -324,6 +332,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     passTokens: grouped(s.improvement_pass_tokens ?? 400_000),
     passMinutes: String(s.improvement_pass_minutes ?? 20),
     dailyRuns: String(s.improvement_daily_runs ?? 5),
+    ...efficiencyDraftOf(s),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -372,6 +381,12 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
     "passTokens",
     "passMinutes",
     "dailyRuns",
+    "efficiency",
+    "effRuns",
+    "effDays",
+    "effSpread",
+    "effMarkRuns",
+    "effMargin",
   ],
 };
 
@@ -393,17 +408,31 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
   "passTokens",
   "passMinutes",
   "dailyRuns",
+  "effRuns",
+  "effDays",
+  "effMarkRuns",
+]);
+
+/** The efficiency pass's numbers: hidden, and never sent, while it is off. */
+const EFF_NUMBERS: ReadonlySet<keyof SettingsDraft> = new Set([
+  "effRuns",
+  "effDays",
+  "effSpread",
+  "effMarkRuns",
+  "effMargin",
 ]);
 
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
   const base = draftOf(stored);
   const changed = FIELDS[group].some((f) =>
-    LIFE_SET.has(f)
+    LIFE_SET.has(f) || (EFF_NUMBERS.has(f) && !d.efficiency)
       ? false
-      : BY_VALUE.has(f)
-        ? (parseWhole(d[f] as string) ?? d[f]) !== (parseWhole(base[f] as string) ?? base[f])
-        : !same(d[f], base[f]),
+      : f === "effSpread"
+        ? spreadOf(d.effSpread) !== spreadOf(base.effSpread)
+        : BY_VALUE.has(f)
+          ? (parseWhole(d[f] as string) ?? d[f]) !== (parseWhole(base[f] as string) ?? base[f])
+          : !same(d[f], base[f]),
   );
   // A workspace's times and size are compared by what they mean: a size
   // typed and then put back to the provider's is no change.
@@ -621,7 +650,9 @@ function improvementRequest(
     }
     out.improvement_daily_runs = runs;
   }
-  return out;
+  const efficiency = efficiencyRequest(d, base);
+  if (typeof efficiency === "string") return efficiency;
+  return { ...out, ...efficiency };
 }
 
 /** What the page starts a size from when the team has none of its own. */
@@ -979,45 +1010,6 @@ function Notice({ children }: { children: ReactNode }) {
   );
 }
 
-/** A number with its unit after it, muted, and figures that line up. */
-function Unit({
-  id,
-  unit,
-  value,
-  onChange,
-  decimal,
-  ...aria
-}: {
-  id: string;
-  unit: string;
-  value: string;
-  onChange: (next: string) => void;
-  decimal?: boolean;
-  "aria-label"?: string;
-  "aria-describedby"?: string;
-  "aria-invalid"?: boolean;
-}) {
-  return (
-    <div className="relative w-full max-w-40">
-      <Input
-        id={id}
-        inputMode={decimal ? "decimal" : "numeric"}
-        autoComplete="off"
-        className="pr-20 tabular-nums"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        {...aria}
-      />
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
-      >
-        {unit}
-      </span>
-    </div>
-  );
-}
-
 /** One group: what it decides, its fields, and its own Save. */
 function Section({
   title,
@@ -1152,7 +1144,7 @@ function CompactionSection({
       <Field
         label="Messages before a run compacts"
         htmlFor={COMPACTION_IDS.messages}
-        hint={`${grouped(MESSAGES.min)} to ${grouped(MESSAGES.max)}.`}
+        hint={`Once a run's conversation is this many messages long, its earlier turns are folded into a summary. ${grouped(MESSAGES.min)} to ${grouped(MESSAGES.max)}.`}
         error={said("messages")}
       >
         <Input
@@ -1324,6 +1316,10 @@ function SettingsForm({
   const [problem, setProblem] = useState<{ group: Group; text: string } | null>(null);
   const [pending, setPending] = useState<Group | null>(null);
   const [saved, setSaved] = useState<Group | null>(null);
+  // Once a save of the improvement section is refused, each efficiency
+  // field shows its own error until a save goes through: fixing one clears
+  // only that one's.
+  const [effChecked, setEffChecked] = useState(false);
 
   const set = (group: Group, patch: Partial<SettingsDraft>) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -1353,6 +1349,7 @@ function SettingsForm({
     const body = groupRequest(group, draft, stored);
     if (typeof body === "string") {
       setProblem({ group, text: body });
+      if (group === "improvement") setEffChecked(true);
       return;
     }
     setPending(group);
@@ -1369,6 +1366,7 @@ function SettingsForm({
         return out;
       });
       setSaved(group);
+      if (group === "improvement") setEffChecked(false);
     } catch (err) {
       setProblem({ group, text: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -1397,19 +1395,28 @@ function SettingsForm({
       >
         <SwitchField
           label="Use a model"
+          description="The model is what the hub and the team's built-in agents think with. Without one they cannot answer."
           checked={draft.modelOn}
           onCheckedChange={(modelOn) => set("model", { modelOn })}
         />
         {draft.modelOn ? (
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Model" htmlFor="settings-model" hint="As the model gateway names it.">
+            <Field
+              label="Model"
+              htmlFor="settings-model"
+              hint="Its name exactly as your model gateway lists it."
+            >
               <Input
                 id="settings-model"
                 value={draft.modelName}
                 onChange={(e) => set("model", { modelName: e.target.value })}
               />
             </Field>
-            <Field label="Max tokens" htmlFor="settings-max-tokens">
+            <Field
+              label="Max tokens"
+              htmlFor="settings-max-tokens"
+              hint="The longest reply the model may write in one go. A token is about three quarters of a word."
+            >
               <Input
                 id="settings-max-tokens"
                 inputMode="numeric"
@@ -1420,7 +1427,7 @@ function SettingsForm({
             <Field
               label="Temperature"
               htmlFor="settings-temperature"
-              hint="0 to 2; empty for the model's own."
+              hint="How varied its wording is: 0 is the most predictable, 2 the most varied. Leave empty for the model's own."
             >
               <Input
                 id="settings-temperature"
@@ -1439,7 +1446,7 @@ function SettingsForm({
 
       <Section
         title="The hub"
-        about="Every message reaches the hub first. Leave empty for the built-in orchestrator."
+        about="Every message to the team reaches the hub first, and the hub answers it or hands the work to the agent best placed to. Leave empty for the built-in orchestrator, which does this for you."
         {...props("hub")}
       >
         {draft.hub === null ? <p className="text-sm">The built-in orchestrator</p> : null}
@@ -1476,7 +1483,11 @@ function SettingsForm({
         about="Where the team's agents search the web, when they are given it."
         {...props("search")}
       >
-        <Field label="Provider" htmlFor="settings-provider">
+        <Field
+          label="Provider"
+          htmlFor="settings-provider"
+          hint="The search service an agent uses when it looks something up on the web. Off turns web search off for every agent."
+        >
           <Choice
             id="settings-provider"
             value={draft.provider}
@@ -1713,7 +1724,7 @@ function SettingsForm({
                 <Field
                   label="Judge's model name"
                   htmlFor="settings-judge-model"
-                  hint="As the model gateway names it."
+                  hint="Its name exactly as your model gateway lists it."
                 >
                   <Input
                     id="settings-judge-model"
@@ -1721,7 +1732,11 @@ function SettingsForm({
                     onChange={(e) => set("improvement", { judgeName: e.target.value })}
                   />
                 </Field>
-                <Field label="Judge's max tokens" htmlFor="settings-judge-max-tokens">
+                <Field
+                  label="Judge's max tokens"
+                  htmlFor="settings-judge-max-tokens"
+                  hint="The longest answer the judge may write about one run. A verdict is a few sentences."
+                >
                   <Input
                     id="settings-judge-max-tokens"
                     inputMode="numeric"
@@ -1732,7 +1747,7 @@ function SettingsForm({
                 <Field
                   label="Judge's temperature"
                   htmlFor="settings-judge-temperature"
-                  hint="0 to 2; empty for the model's own."
+                  hint="0 to 2; low keeps its verdicts steady. Leave empty for the model's own."
                 >
                   <Input
                     id="settings-judge-temperature"
@@ -1824,6 +1839,11 @@ function SettingsForm({
                 />
               </Field>
             </div>
+            <EfficiencyFields
+              draft={draft}
+              onChange={(patch) => set("improvement", patch)}
+              showProblems={effChecked}
+            />
           </>
         ) : null}
       </Section>

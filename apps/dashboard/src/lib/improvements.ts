@@ -229,16 +229,37 @@ export function waitingFinding(
   return `${n} ${verb} for approval${tail}.`;
 }
 
-/** Why a watch flagged its change, in words. */
-export function flagWords(flag: ImprovementWatch["flag"]): string {
+/**
+ * Why a watch flagged its change, in words. A change that saved nothing is
+ * said by what it aimed to save: cheaper, quicker, or both.
+ */
+export function flagWords(
+  flag: ImprovementWatch["flag"],
+  saves: Improvement["saves"] = [],
+): string {
   if (flag === "worse") return "its runs went worse";
   if (flag === "costlier") return "its runs cost more, with no fewer failures";
   if (flag === "both") return "its runs went worse and cost more";
+  if (flag === "no_saving") {
+    // Flagged when any one saving it named is missing, so both named reads
+    // "both", not as if each failed.
+    const cost = saves?.includes("cost");
+    const time = saves?.includes("time");
+    const aim =
+      cost && time
+        ? "both cheaper and quicker"
+        : cost
+          ? "cheaper"
+          : time
+            ? "quicker"
+            : "cheaper or quicker";
+    return `its good runs did not get ${aim}, as it expected`;
+  }
   return "";
 }
 
 /** "Flagged, its runs went worse: 7 of 10 went wrong after, 2 of 10 before." */
-export function watchHeadline(w: ImprovementWatch): string {
+export function watchHeadline(w: ImprovementWatch, saves: Improvement["saves"] = []): string {
   const counts = `${w.after.bad} of ${w.after.runs} went wrong after, ${w.before.bad} of ${w.before.runs} before`;
   switch (w.status) {
     case "watching":
@@ -246,9 +267,9 @@ export function watchHeadline(w: ImprovementWatch): string {
     case "clear":
       return `Clear: ${counts}`;
     case "flagged":
-      return `Flagged, ${flagWords(w.flag)}: ${counts}`;
+      return `Flagged, ${flagWords(w.flag, saves)}: ${counts}`;
     case "cleared":
-      return `Flagged (${flagWords(w.flag)}), then cleared: ${counts}`;
+      return `Flagged (${flagWords(w.flag, saves)}), then cleared: ${counts}`;
     case "ended":
       return w.ended_why === "reverted"
         ? `Ended when reverted: ${w.after.runs} of ${w.needed} runs counted`
@@ -266,12 +287,60 @@ export function usualWords(w: ImprovementWatch): string {
 
 const tokensNumber = new Intl.NumberFormat("en-US");
 
-/** "Tokens a run 1,000 → 1,200 · steps 4 → 5", or null with nothing counted. */
-export function costWords(w: ImprovementWatch): string | null {
+/**
+ * "Tokens a run 1,000 → 1,200 · steps 4 → 5", or null with nothing counted.
+ * An efficiency change is judged on its good runs, so its tokens are said as
+ * theirs.
+ */
+export function costWords(w: ImprovementWatch, goal?: Improvement["goal"]): string | null {
   const n = (v: number | null | undefined) =>
     v === null || v === undefined ? "—" : tokensNumber.format(v);
   if (w.before.tokens == null && w.after.tokens == null) return null;
-  return `Tokens a run ${n(w.before.tokens)} → ${n(w.after.tokens)} · steps ${n(w.before.steps)} → ${n(w.after.steps)}`;
+  const a = goal === "efficiency" ? "a good run" : "a run";
+  return `Tokens ${a} ${n(w.before.tokens)} → ${n(w.after.tokens)} · steps ${n(w.before.steps)} → ${n(w.after.steps)}`;
+}
+
+/** "41 s", "1 min 5 s", or "—" for none. */
+export function workTime(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const rest = s % 60;
+  return rest === 0 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 60)} min ${rest} s`;
+}
+
+/** "Work time a good run 41 s → 33 s", leaving out waits for a person, or null with neither side counted. */
+export function timeWords(w: ImprovementWatch): string | null {
+  if (w.before.work_ms == null && w.after.work_ms == null) return null;
+  return `Work time a good run ${workTime(w.before.work_ms)} → ${workTime(w.after.work_ms)}`;
+}
+
+/** What an efficiency change aims to save, in words: "Saves cost", "Saves time". */
+export const SAVES_WORDS: Record<"cost" | "time", string> = {
+  cost: "Saves cost",
+  time: "Saves time",
+};
+
+/** The waste marks and the spread an efficiency pass is started by, in words. */
+const REASON_WORDS: Record<string, string> = {
+  repeated_call: "the same call made twice",
+  retried_error: "a failed call made again",
+  unused_tools: "tools offered and left unused",
+  near_step_cap: "runs close to their step limit",
+  long_tool_wait: "a long wait on a tool",
+  spread: "costly runs far above the usual",
+};
+
+/** "efficiency:repeated_call:crm__lookup" as its words and tool; null for any other signature. */
+export function efficiencyReason(signature: string): { words: string; target: string } | null {
+  if (!signature.startsWith("efficiency:")) return null;
+  const rest = signature.slice("efficiency:".length);
+  const i = rest.indexOf(":");
+  const name = i < 0 ? rest : rest.slice(0, i);
+  return {
+    words: REASON_WORDS[name] ?? name.replace(/_/g, " "),
+    target: i < 0 ? "" : rest.slice(i + 1),
+  };
 }
 
 /** "The pattern it targeted: in 3 of 10 runs before, 0 of 10 after", or null for a removal. */

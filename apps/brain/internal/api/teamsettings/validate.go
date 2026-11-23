@@ -30,6 +30,17 @@ const (
 	maxPassMinutes = 25
 	maxDailyRuns   = 100
 
+	// The efficiency pass's ranges, approved in the I5 design.
+	minEfficiencyRuns     = 10
+	maxEfficiencyRuns     = 500
+	minEfficiencyDays     = 7
+	maxEfficiencyDays     = 60
+	minEfficiencySpread   = 125
+	maxEfficiencySpread   = 1000
+	minEfficiencyMarkRuns = 2
+	maxEfficiencyMarkRuns = 50
+	maxEfficiencyMargin   = 3
+
 	minCompaction = 10
 	maxCompaction = 10000
 	// Below this a run would compact almost every step: a compaction keeps
@@ -64,6 +75,9 @@ func validate(req settingsRequest, stored *db.TeamSetting, allow func(netip.Addr
 	}
 	if n := req.ImprovementDailyRuns; n != nil && (*n < 1 || *n > maxDailyRuns) {
 		return fmt.Errorf("improvement_daily_runs must be between 1 and %d", maxDailyRuns)
+	}
+	if err := checkEfficiency(req, stored); err != nil {
+		return err
 	}
 	if req.CompactionMessages < minCompaction || req.CompactionMessages > maxCompaction {
 		return fmt.Errorf("compaction_messages must be between %d and %d", minCompaction, maxCompaction)
@@ -350,6 +364,41 @@ func checkTemplate(s sandboxRequest) error {
 		return errors.New("sandbox.template is for e2b; the brain chooses every other provider's image")
 	case len(*s.Template) > maxTemplateBytes || !templateName.MatchString(*s.Template):
 		return fmt.Errorf("sandbox.template must be an E2B template name, such as openarity-sandbox, at most %d bytes", maxTemplateBytes)
+	}
+	return nil
+}
+
+// checkEfficiency holds each efficiency number a request sends to its
+// range, and the mark runs a save leaves to at most the runs it leaves, so a
+// request that changes one is held to the other as stored.
+func checkEfficiency(req settingsRequest, stored *db.TeamSetting) error {
+	for _, v := range []struct {
+		name     string
+		value    *int16
+		min, max int16
+	}{
+		{"improvement_efficiency_runs", req.ImprovementEfficiencyRuns, minEfficiencyRuns, maxEfficiencyRuns},
+		{"improvement_efficiency_days", req.ImprovementEfficiencyDays, minEfficiencyDays, maxEfficiencyDays},
+		{"improvement_efficiency_spread", req.ImprovementEfficiencySpread, minEfficiencySpread, maxEfficiencySpread},
+		{"improvement_efficiency_mark_runs", req.ImprovementEfficiencyMarkRuns, minEfficiencyMarkRuns, maxEfficiencyMarkRuns},
+		{"improvement_efficiency_margin", req.ImprovementEfficiencyMargin, 0, maxEfficiencyMargin},
+	} {
+		if v.value != nil && (*v.value < v.min || *v.value > v.max) {
+			return fmt.Errorf("%s must be between %d and %d", v.name, v.min, v.max)
+		}
+	}
+	runs, marks := int16(defaultEfficiencyRuns), int16(defaultEfficiencyMarkRuns)
+	if stored != nil {
+		runs, marks = stored.ImprovementEfficiencyRuns, stored.ImprovementEfficiencyMarkRuns
+	}
+	if req.ImprovementEfficiencyRuns != nil {
+		runs = *req.ImprovementEfficiencyRuns
+	}
+	if req.ImprovementEfficiencyMarkRuns != nil {
+		marks = *req.ImprovementEfficiencyMarkRuns
+	}
+	if marks > runs {
+		return fmt.Errorf("improvement_efficiency_mark_runs, %d, must not be above improvement_efficiency_runs, %d", marks, runs)
 	}
 	return nil
 }

@@ -29,6 +29,7 @@ LIMIT sqlc.arg('page_size');
 -- name: GetImprovementSettings :one
 SELECT improvement, improvement_sample_share, improvement_daily_passes,
        improvement_pass_tokens, improvement_pass_minutes,
+       improvement_efficiency, improvement_efficiency_margin,
        model_name, model_max_tokens, model_temperature,
        judge_model_name, judge_model_max_tokens, judge_model_temperature
 FROM team_settings WHERE team_id = $1;

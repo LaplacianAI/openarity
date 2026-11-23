@@ -18,6 +18,10 @@ type side struct {
 	// Medians per run; null with no runs.
 	Tokens *int64 `json:"tokens"`
 	Steps  *int32 `json:"steps"`
+	// The median work time of its good runs, in milliseconds, leaving out
+	// time spent waiting for a person; null with none. For an efficiency
+	// change Tokens is its good runs' median too: what it is judged on.
+	WorkMS *int64 `json:"work_ms"`
 	// Runs carrying the targeted signature; null for a removal.
 	Signature *int16 `json:"signature"`
 }
@@ -49,11 +53,11 @@ func watchViewOf(w db.ImprovementWatch) *watchView {
 		BaselineRuns: w.BaselineRuns, BaselineBad: w.BaselineBad, Bar: w.Bar, BaselineP90: w.BaselineP90,
 		Before: side{
 			Runs: w.BeforeRuns, Bad: w.BeforeBad, Up: w.BeforeUp, Down: w.BeforeDown,
-			Tokens: w.BeforeTokens, Steps: w.BeforeSteps, Signature: w.SigBefore,
+			Tokens: w.BeforeTokens, Steps: w.BeforeSteps, WorkMS: w.BeforeWorkMs, Signature: w.SigBefore,
 		},
 		After: side{
 			Runs: w.AfterRuns, Bad: w.AfterBad, Up: w.AfterUp, Down: w.AfterDown,
-			Tokens: w.AfterTokens, Steps: w.AfterSteps, Signature: w.SigAfter,
+			Tokens: w.AfterTokens, Steps: w.AfterSteps, WorkMS: w.AfterWorkMs, Signature: w.SigAfter,
 		},
 		Overlapping: w.Overlapping, StartedAt: w.StartedAt, FinishedAt: w.FinishedAt,
 		ClearedBy: w.ClearedBy, ClearedAt: w.ClearedAt,

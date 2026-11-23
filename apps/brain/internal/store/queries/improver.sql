@@ -227,9 +227,12 @@ SELECT EXISTS (SELECT 1 FROM run_digests
 -- An agent's own record: its newest proposals.
 -- name: ListAgentProposalRecord :many
 SELECT p.id, p.kind, p.signature, p.status, p.why, p.hypothesis, p.created_at, p.decided_at, p.reverted_at,
+       p.goal, p.saves,
        w.status AS watch, w.flag AS watch_flag, w.ended_why AS watch_ended,
        w.before_runs AS watch_before_runs, w.before_bad AS watch_before_bad,
-       w.after_runs AS watch_after_runs, w.after_bad AS watch_after_bad
+       w.after_runs AS watch_after_runs, w.after_bad AS watch_after_bad,
+       w.before_tokens AS watch_before_tokens, w.after_tokens AS watch_after_tokens,
+       w.before_work_ms AS watch_before_work_ms, w.after_work_ms AS watch_after_work_ms
 FROM improvement_proposals p
 LEFT JOIN improvement_watches w ON w.proposal_id = p.id
 WHERE p.agent_id = sqlc.arg(agent_id)
