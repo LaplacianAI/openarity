@@ -129,8 +129,8 @@ func TestANewWorkspacePastTheDiskBudgetIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = s.Start(t.Context(), id, []string{"sandbox", "workspace"})
-	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "stopped workspaces keep theirs") {
-		t.Fatalf("err = %v, want ErrBusy saying stopped workspaces hold the disk", err)
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "could not free enough") {
+		t.Fatalf("err = %v, want ErrBusy saying deleting stopped workspaces could not free enough", err)
 	}
 	if _, ok := e.containers[containerName(id)]; ok {
 		t.Fatal("a container was made past the disk budget")

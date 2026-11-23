@@ -221,7 +221,12 @@ system daemon (openarity, CI deploys here)     rootless daemon (sandboxd)
    Only running rooms count against the memory budget: a conversation's
    workspace stops when its last run ends, keeping its files in a volume.
    Every volume together is held to `SANDBOXD_DISK_BUDGET` (default 8 GiB);
-   set it to what the disk can spare. A workspace's own most is
+   set it to what the disk can spare. When a new workspace needs disk the
+   budget does not have, sandboxd deletes the stopped workspace room stopped
+   longest, then the next, until it fits, across teams; running rooms are
+   never touched, and if stopped rooms cannot free enough the create is still
+   refused as busy. A deleted room's next resume is not found, so the brain
+   replaces it. A workspace's own most is
    `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS` and
    `SANDBOXD_WORKSPACE_BYTES` (1.5 GiB, one CPU and 512 MiB by default); the
    compose file passes each of these through, and every other setting it

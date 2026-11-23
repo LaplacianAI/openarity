@@ -42,7 +42,8 @@ with `/workspace` as it was left. A room left running, such as one whose run
 is waiting for a person's approval, stops after the team's idle minutes, or
 `OPENARITY_SANDBOX_IDLE` (thirty minutes by default) when the team has set
 none. A stopped room is deleted with its files after the team's keep hours,
-24 unless the team sets otherwise, from 1 to 720:
+24 unless the team sets otherwise, from 1 to 720, or sooner on sandboxd when
+its disk budget is spent (see [Size](#size)):
 
 ```sh
 oa teams settings set platform --keep-stopped-hours 72 --stop-idle-minutes 15
@@ -122,15 +123,17 @@ files of the old one. With none set, the provider's size is used:
 | E2B | Its template's, 2 CPUs and 2 GB | A template built at it in the team's account; new workspaces wait a few minutes for it, and a size the team's E2B plan refuses shows as a failed build in Settings. Disk is the free space E2B makes room for, best effort |
 
 sandboxd's disk is a soft cap: it measures every 30 seconds and stops a room
-past its size. A stopped room keeps its disk until its keep hours end, and
-every room's disk together is held to `SANDBOXD_DISK_BUDGET` (8 GiB by
-default). A new room is let in while what the rooms hold now, plus its own disk
-(512 MiB unless the team set a size), fits: at the defaults, about sixteen workspaces that filled their
-disk. When stopped rooms fill it, a new room is refused as busy, and the
-error says the disk is held by stopped workspaces, until one is deleted: size
-the budget for the teams' keep hours, or lower them. Making room by deleting
-the longest-stopped workspace is
-[#281](https://github.com/LaplacianAI/openarity/issues/281).
+past its size. Every room's disk together, stopped rooms' too, is held to
+`SANDBOXD_DISK_BUDGET` (8 GiB by default). A new room is let in while what the
+rooms hold now, plus its own disk (512 MiB unless the team set a size), fits:
+at the defaults, about sixteen workspaces that filled their disk. When it does
+not fit, sandboxd deletes the stopped workspace stopped longest, then the
+next, until it does; running rooms are never touched. If the stopped rooms
+cannot free enough, the new room is still refused as busy. The next call of a
+deleted workspace's conversation gets a new room, and the agent is told its
+earlier files are gone. sandboxd does not know teams, so the workspace it
+deletes may be another team's. A team that needs its files kept should keep
+the budget large, or its state elsewhere.
 
 Upgrading sandboxd: a workspace room made before stopping existed has no
 volume for `/workspace`, so its files would not survive a stop. Delete such
@@ -172,7 +175,8 @@ grants it.
 
 ## Not built
 
-- **Files outlive the room** only until its keep hours end. Saving
+- **Files outlive the room** only until its keep hours end, or sooner on
+  sandboxd when its disk budget is spent. Saving
   `/workspace` somewhere longer-lived comes later.
 - **A granted skill's scripts** are not yet copied into the room.
 - **A file in the room cannot yet be sent** to the person or read as an

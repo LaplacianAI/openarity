@@ -47,7 +47,12 @@ ask for a size up to `SANDBOXD_WORKSPACE_MEMORY`, `SANDBOXD_WORKSPACE_CPUS`
 and `SANDBOXD_WORKSPACE_BYTES` (the disk), and is refused with `422` past
 them. Disk is a soft cap: every 30 seconds sandboxd measures the volumes and
 stops a room past its disk, and every volume together is held to
-`SANDBOXD_DISK_BUDGET` (default 8 GiB).
+`SANDBOXD_DISK_BUDGET` (default 8 GiB). When a new workspace needs disk the
+budget does not have, sandboxd deletes the stopped workspace room stopped
+longest, then the next, until it fits; running rooms are never touched. If the
+stopped rooms cannot free enough, the create is still refused with `503`. A
+deleted room's next resume is not found, so the brain replaces it. Sandboxd
+does not know teams, so this applies across them.
 
 ## Build and test
 
