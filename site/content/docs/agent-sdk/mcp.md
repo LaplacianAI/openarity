@@ -105,10 +105,45 @@ empty answer reads to a model as a tool that did nothing, and it calls it
 again.
 
 The limits are exported, `MaxImageBytes`, `MaxDocBytes`, `MaxTextBytes`,
-`FilesPerCall` and `BytesPerCall`. The bytes travel in the transcript, as
-`Blob.Data`, and every later request sends them again: a caller that keeps
-transcripts should move them out, to a `Blob.Ref` it can fetch, and a caller
-with long runs should send only the newest of them.
+`FilesPerCall` and `BytesPerCall`. Without a keeper, the bytes travel in the
+transcript, as `Blob.Data`, and every later request sends them again.
+
+### Keeping a tool's files
+
+Set `Server.Keep` to a `Keeper` and every file a tool returns, readable or
+not, is handed to it before the model sees anything: an image, audio, an
+embedded blob, and text embedded as text. The keeper stores the file and
+says how to name it:
+
+```go
+type Keeper interface {
+	Keep(ctx context.Context, f mcp.File) (mcp.Kept, error)
+}
+
+// File{Tool, Name, MediaType, Data}: MediaType is what the server declared.
+// Kept{ID, Ref}: the id the model is told, and the Ref a Blob carries.
+```
+
+The result then holds no file's bytes. Each file's line carries its id, and
+an image or a PDF the model may see is attached as a `Blob` with the keeper's
+`Ref` and no `Data`, for a `ModelClient` that fetches it per request:
+
+```text
+[attached shot.png: image/png, 220 KiB, file 1f2e…]
+[report.csv: text/csv, 2.0 MiB, the first 100 KiB, file 77c1…]
+<the first 100 KiB>
+[bundle.zip: application/zip, 12.0 MiB, which a model cannot read, file 3d4e…]
+[huge.zip: application/zip, 31.0 MiB, more than the 25.0 MiB a tool's file is kept up to]
+[a.png: image/png, 1.0 MiB, which could not be kept]
+```
+
+Which files the model may see, and how, is as without a keeper; a text file
+is kept whole and shown cut. A call keeps eight files at most, and each up to
+`MaxKeptBytes`, 25 MiB. A keeper that returns an error does not fail the call:
+the tool's work is done, so its text stands and the file is named as not
+kept. The keeper's error is never shown to the model, since it may name a
+store; log it there. The call's id is on the context, `agent.ToolCallID(ctx)`,
+for a keeper that records which call returned a file.
 
 ## The tool list is read once
 

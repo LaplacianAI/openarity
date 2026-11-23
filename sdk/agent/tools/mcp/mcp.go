@@ -26,6 +26,9 @@ type Server struct {
 	URL        string
 	HTTPClient *http.Client
 	Bare       bool
+	// Keep, when set, is handed every file the server's tools return, and
+	// the model is shown each by the Ref it gives, never by its bytes.
+	Keep Keeper
 }
 
 type Session struct {
@@ -121,7 +124,7 @@ func convert(s Server, live *sdk.ClientSession, t *sdk.Tool) (agent.Tool, error)
 		Description: t.Description,
 		Schema:      schemaOf(t),
 		Result: func(ctx context.Context, args json.RawMessage) (agent.ToolResult, error) {
-			return call(ctx, live, remote, args)
+			return call(ctx, live, s.Keep, name, remote, args)
 		},
 	}, nil
 }
@@ -134,7 +137,7 @@ func schemaOf(t *sdk.Tool) json.RawMessage {
 	return raw
 }
 
-func call(ctx context.Context, live *sdk.ClientSession, name string, args json.RawMessage) (agent.ToolResult, error) {
+func call(ctx context.Context, live *sdk.ClientSession, keep Keeper, tool, name string, args json.RawMessage) (agent.ToolResult, error) {
 	arguments := map[string]any{}
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &arguments); err != nil {
@@ -155,7 +158,7 @@ func call(ctx context.Context, live *sdk.ClientSession, name string, args json.R
 		return agent.ToolResult{}, errors.New(text)
 	}
 	// Every file attached is named in the text, so empty text is no answer.
-	out := resultOf(res)
+	out := resultOf(ctx, keep, tool, res)
 	if out.Output == "" {
 		out.Output = "the tool returned no text content"
 	}
@@ -200,8 +203,9 @@ func textOf(res *sdk.CallToolResult) string {
 // images and PDFs it returned attached, each named in the text too; the text
 // files it returned in the text, under a line naming each; and a line for
 // each file a model cannot be passed, saying what it was and why. Text files
-// count toward a call's files and bytes as attached ones do.
-func resultOf(res *sdk.CallToolResult) agent.ToolResult {
+// count toward a call's files and bytes as attached ones do. With keep, every
+// file is kept and named by its id, and the bytes of none are in the result.
+func resultOf(ctx context.Context, keep Keeper, tool string, res *sdk.CallToolResult) agent.ToolResult {
 	var (
 		out   agent.ToolResult
 		lines []string
@@ -217,6 +221,17 @@ func resultOf(res *sdk.CallToolResult) agent.ToolResult {
 			continue
 		}
 		seen++
+		if keep != nil {
+			if file, ok := fileOf(c, seen); ok {
+				file.Tool = tool
+				line, part := kept(ctx, keep, file, c, seen, &files)
+				if part != nil {
+					out.Attach = append(out.Attach, *part)
+				}
+				lines = append(lines, line)
+				continue
+			}
+		}
 		f, note := fileIn(c, seen)
 		switch {
 		case f == nil:

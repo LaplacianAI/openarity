@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1138,5 +1140,161 @@ func TestAPageThatFailsIsNotSilentlyTruncated(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "raw") {
 		t.Errorf("the error does not name the server: %v", err)
+	}
+}
+
+// fakeKeeper keeps every file it is handed, as k1, k2 and on, or refuses
+// each with err.
+type fakeKeeper struct {
+	mu    sync.Mutex
+	files []File
+	calls []string
+	err   error
+}
+
+func (k *fakeKeeper) Keep(ctx context.Context, f File) (Kept, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.err != nil {
+		return Kept{}, k.err
+	}
+	k.files = append(k.files, f)
+	k.calls = append(k.calls, agent.ToolCallID(ctx))
+	id := fmt.Sprintf("k%d", len(k.files))
+	return Kept{ID: id, Ref: "kept:" + id}, nil
+}
+
+// answerKept is the tool's answer of blocks, through a server whose files go
+// to keep.
+func answerKept(t *testing.T, keep Keeper, blocks ...sdk.Content) (agent.ToolResult, error) {
+	t.Helper()
+	url := serve(t, tool{
+		name: "get",
+		handler: func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			return &sdk.CallToolResult{Content: blocks}, nil
+		},
+	})
+	ctx := agent.WithToolCallID(t.Context(), "call-1")
+	return result(t, connect(t, Server{Name: "s", URL: url, Keep: keep}), "s__get")(ctx, json.RawMessage(`{}`))
+}
+
+// With a keeper, every file is kept, readable or not, and named by its id;
+// what the model is shown holds the keeper's Ref and never the bytes.
+func TestWithAKeeperEveryFileIsKeptAndNamedByItsID(t *testing.T) {
+	t.Parallel()
+
+	k := &fakeKeeper{}
+	r, err := answerKept(t, k,
+		&sdk.TextContent{Text: "done"},
+		&sdk.ImageContent{Data: pngBytes, MIMEType: "image/png"},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/lease.pdf", MIMEType: "application/pdf", Blob: pdfBytes}},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/bundle.zip", MIMEType: "application/zip", Blob: []byte("PK\x03\x04zip")}},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/n.csv", MIMEType: "text/csv", Blob: []byte("a,b")}},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/log", Text: "embedded"}},
+		&sdk.AudioContent{Data: []byte("ID3x"), MIMEType: "audio/mpeg"},
+		&sdk.ResourceLink{URI: "x://a/far", Name: "far"},
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	want := strings.Join([]string{
+		"done",
+		"[attached image-1.png: image/png, 16 bytes, file k1]",
+		"[attached lease.pdf: application/pdf, 15 bytes, file k2]",
+		"[bundle.zip: application/zip, 7 bytes, which a model cannot read, file k3]",
+		"[n.csv: text/csv, 3 bytes, file k4]\na,b",
+		"[log: no type, 8 bytes, file k5]\nembedded",
+		"[audio-6: audio/mpeg, 4 bytes, which a model here cannot hear, file k6]",
+		"[a link to far: x://a/far (no type), not fetched]",
+	}, "\n")
+	if r.Output != want {
+		t.Errorf("Output =\n%s\nwant\n%s", r.Output, want)
+	}
+	if len(k.files) != 6 {
+		t.Fatalf("kept %d files, want 6", len(k.files))
+	}
+	if f := k.files[2]; f.Tool != "s__get" || f.Name != "bundle.zip" || f.MediaType != "application/zip" || string(f.Data) != "PK\x03\x04zip" {
+		t.Errorf("the zip was kept as %+v", f)
+	}
+	if k.calls[0] != "call-1" {
+		t.Errorf("the keeper saw call %q, want the call's id", k.calls[0])
+	}
+	if len(r.Attach) != 2 {
+		t.Fatalf("attached %d, want the image and the PDF", len(r.Attach))
+	}
+	for i, ref := range []string{"kept:k1", "kept:k2"} {
+		if b := r.Attach[i].Blob; b.Ref != ref || len(b.Data) != 0 {
+			t.Errorf("attached %d has Ref %q and %d bytes, want %q and none", i, b.Ref, len(b.Data), ref)
+		}
+	}
+}
+
+// A file a keeper cannot take is named and never kept or attached: past the
+// call's eight, over MaxKeptBytes, or refused by the keeper. A refusal keeps
+// the call's text and leaves the keeper's error out of the line.
+func TestWhatAKeeperDoesNotKeepIsNamed(t *testing.T) {
+	t.Parallel()
+
+	var blocks []sdk.Content
+	for range FilesPerCall + 1 {
+		blocks = append(blocks, &sdk.ImageContent{Data: jpegBytes, MIMEType: "image/jpeg"})
+	}
+	k := &fakeKeeper{}
+	r, err := answerKept(t, k, blocks...)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if len(k.files) != FilesPerCall || !strings.HasSuffix(r.Output, "[image-9.jpg: image/jpeg, 11 bytes, past the 8 files a call passes on]") {
+		t.Errorf("kept %d, Output ends %q; want 8 kept and the ninth named", len(k.files), r.Output[max(0, len(r.Output)-70):])
+	}
+
+	k = &fakeKeeper{}
+	r, err = answerKept(t, k, &sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/big.zip", MIMEType: "application/zip", Blob: make([]byte, MaxKeptBytes+1)}})
+	if err != nil || len(k.files) != 0 || r.Output != "[big.zip: application/zip, 25.0 MiB, more than the 25.0 MiB a tool's file is kept up to]" {
+		t.Errorf("over the limit: kept %d, Output %q, err %v", len(k.files), r.Output, err)
+	}
+
+	k = &fakeKeeper{err: errors.New("bucket s3://secret is down")}
+	r, err = answerKept(t, k, &sdk.TextContent{Text: "sent"}, &sdk.ImageContent{Data: pngBytes, MIMEType: "image/png"})
+	if err != nil || len(r.Attach) != 0 || r.Output != "sent\n[image-1.png: image/png, 16 bytes, which could not be kept]" {
+		t.Errorf("refused: attached %d, Output %q, err %v", len(r.Attach), r.Output, err)
+	}
+}
+
+// A file kept at MaxKeptBytes exactly is kept.
+func TestAFileAtTheKeptLimitIsKept(t *testing.T) {
+	t.Parallel()
+
+	k := &fakeKeeper{}
+	if _, err := answerKept(t, k, &sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/z", MIMEType: "application/zip", Blob: make([]byte, MaxKeptBytes)}}); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if len(k.files) != 1 {
+		t.Errorf("kept %d, want the file at the limit", len(k.files))
+	}
+}
+
+// A file kept is shown as F1 shows it: a mislabelled image is kept and named,
+// never attached; a text file over MaxTextBytes is kept whole and shown cut.
+func TestAKeptFileIsShownAsF1ShowsIt(t *testing.T) {
+	t.Parallel()
+
+	k := &fakeKeeper{}
+	long := strings.Repeat("x", MaxTextBytes+10)
+	r, err := answerKept(t, k,
+		&sdk.ImageContent{Data: pdfBytes, MIMEType: "image/png"},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/big.txt", MIMEType: "text/plain", Blob: []byte(long)}},
+	)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if len(r.Attach) != 0 {
+		t.Errorf("attached %+v, want none", r.Attach)
+	}
+	if !strings.HasPrefix(r.Output, "[image-1.png: said to be image/png, but its bytes are application/pdf, file k1]\n[big.txt: text/plain, 100 KiB, the first 100 KiB, file k2]\n") {
+		t.Errorf("Output starts %q", r.Output[:min(160, len(r.Output))])
+	}
+	if len(k.files) != 2 || len(k.files[1].Data) != len(long) {
+		t.Errorf("kept %d files, the text %d bytes; want 2, the text whole", len(k.files), len(k.files[1].Data))
 	}
 }
