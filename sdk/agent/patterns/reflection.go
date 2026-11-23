@@ -152,7 +152,19 @@ func (l reflection) reflect(ctx context.Context, in agent.Input, msgs []agent.Me
 	if verdict.NeedsRefinement && verdict.Critique == "" {
 		return critique{}, fmt.Errorf("%w: it asked for changes without saying which", ErrNoCritique)
 	}
+	// Shown whichever way it went, so a run whose answer stood can be told
+	// from one whose review was never read, and a rewrite explained.
+	in.Emit(ctx, agent.ReasoningEvent{Delta: reviewed(verdict)})
 	return verdict, nil
+}
+
+// reviewed is a verdict as a trace shows it: the pattern's working, so
+// reasoning, never the answer.
+func reviewed(v critique) string {
+	if !v.NeedsRefinement {
+		return "Review: the answer stands."
+	}
+	return "Review: asks for changes. " + v.Critique
 }
 
 // reviewOnce makes one reviewing call and records what it used. A reply cut
@@ -264,7 +276,10 @@ var reflecting = agent.Content{
 	Text: "Judge the assistant's last answer against what was asked. Look for claims that are " +
 		"wrong, requirements that went unanswered, and reasoning that does not hold. Being " +
 		"agreeable is not useful here, and neither is inventing faults in an answer that is " +
-		"already right. Then call " + CritiqueToolName + " once.",
+		"already right. The rewrite that follows has no tools: it can only rework the answer " +
+		"from what this conversation already holds. So ask only for changes it can make that " +
+		"way; where the answer rests on something nobody has looked up, ask for it to say so, " +
+		"not for the lookup. Then call " + CritiqueToolName + " once.",
 }
 
 // submitNow follows a reflecting turn that wrote its review rather than
@@ -278,5 +293,9 @@ const submitFresh = "Judge the answer above now: call " + CritiqueToolName + " w
 var refining = agent.Content{
 	Type: agent.ContentText,
 	Text: "Rewrite your previous answer to address the critique. Keep what was already right; " +
-		"change only what the critique identifies. Do not mention the critique or the rewrite.",
+		"change only what the critique identifies. You have no tools in this step and cannot " +
+		"look anything up, so never say you will check, look into or come back to something: " +
+		"where the critique asks for what you do not know, say in the answer that it is " +
+		"unverified. Reply with the whole answer, not a note about it. Do not mention the " +
+		"critique or the rewrite.",
 }

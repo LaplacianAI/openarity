@@ -128,7 +128,7 @@ func TestALoopsWorkingIsReasoning(t *testing.T) {
 				}(),
 				thinking(answered(text("Exact.")), nil, "Exact."),
 			},
-			[]string{"t:Draft.", "r:Too vague.", "t:Exact."},
+			[]string{"t:Draft.", "r:Too vague.", "r:Review: asks for changes. be exact", "t:Exact."},
 		},
 	}
 	for name, c := range cases {
