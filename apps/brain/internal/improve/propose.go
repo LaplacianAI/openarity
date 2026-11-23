@@ -34,7 +34,7 @@ tool_note {server, tool, note}: an empty note removes it.
 limits {max_tokens?, max_steps?, steer_continuations?, token_budget?}.
 delegation {mode?: none, listed or team, add?: [agents], remove?: [agents]}.
 pattern {pattern}.
-On an efficiency pass, saves is cost, time or both, and only the kinds that make a run do less are taken; a pattern only to react.
+On an efficiency pass, saves is cost, time or both, and only the kinds that make a run do less are taken; a pattern only from plan or reflection to react.
 The answer says whether it was stored, or why not; a refusal can be corrected and proposed again.`
 
 var proposeSchema = schemaJSON(obj{

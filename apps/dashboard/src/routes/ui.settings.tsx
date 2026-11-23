@@ -413,11 +413,20 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
   "effMarkRuns",
 ]);
 
+/** The efficiency pass's numbers: hidden, and never sent, while it is off. */
+const EFF_NUMBERS: ReadonlySet<keyof SettingsDraft> = new Set([
+  "effRuns",
+  "effDays",
+  "effSpread",
+  "effMarkRuns",
+  "effMargin",
+]);
+
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
   const base = draftOf(stored);
   const changed = FIELDS[group].some((f) =>
-    LIFE_SET.has(f)
+    LIFE_SET.has(f) || (EFF_NUMBERS.has(f) && !d.efficiency)
       ? false
       : f === "effSpread"
         ? spreadOf(d.effSpread) !== spreadOf(base.effSpread)
@@ -1307,6 +1316,10 @@ function SettingsForm({
   const [problem, setProblem] = useState<{ group: Group; text: string } | null>(null);
   const [pending, setPending] = useState<Group | null>(null);
   const [saved, setSaved] = useState<Group | null>(null);
+  // Once a save of the improvement section is refused, each efficiency
+  // field shows its own error until a save goes through: fixing one clears
+  // only that one's.
+  const [effChecked, setEffChecked] = useState(false);
 
   const set = (group: Group, patch: Partial<SettingsDraft>) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -1336,6 +1349,7 @@ function SettingsForm({
     const body = groupRequest(group, draft, stored);
     if (typeof body === "string") {
       setProblem({ group, text: body });
+      if (group === "improvement") setEffChecked(true);
       return;
     }
     setPending(group);
@@ -1352,6 +1366,7 @@ function SettingsForm({
         return out;
       });
       setSaved(group);
+      if (group === "improvement") setEffChecked(false);
     } catch (err) {
       setProblem({ group, text: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -1827,7 +1842,7 @@ function SettingsForm({
             <EfficiencyFields
               draft={draft}
               onChange={(patch) => set("improvement", patch)}
-              showProblems={problem?.group === "improvement"}
+              showProblems={effChecked}
             />
           </>
         ) : null}

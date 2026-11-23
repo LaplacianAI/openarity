@@ -728,15 +728,23 @@ func printEfficiency(table *printer.Table, opts *cli.Options, s *client.TeamSett
 	if p := s.ImprovementEfficiencySpread; p != nil {
 		spread = strconv.FormatFloat(float64(*p)/100, 'g', -1, 64) + "×"
 	}
-	strict := "watched as strictly as any change"
-	if m := s.ImprovementEfficiencyMargin; m != nil && *m == 1 {
-		strict = "flagged worse 1 bad run sooner"
-	} else if m != nil && *m > 1 {
-		strict = "flagged worse " + strconv.Itoa(int(*m)) + " bad runs sooner"
-	}
 	table.Row(label("efficiency pass"), value("on, weekly · "+n(s.ImprovementEfficiencyRuns)+" good runs in "+
 		n(s.ImprovementEfficiencyDays)+" days · costliest "+spread+" the usual, or a waste mark in "+
-		n(s.ImprovementEfficiencyMarkRuns)+" runs · "+strict))
+		n(s.ImprovementEfficiencyMarkRuns)+" runs · "+strictWords(s.ImprovementEfficiencyMargin)))
+}
+
+// strictWords says how much sooner an efficiency change is flagged worse:
+// by the margin, or "?" from a brain that sent none.
+func strictWords(m *int32) string {
+	switch {
+	case m == nil:
+		return "flagged worse ? bad runs sooner"
+	case *m == 0:
+		return "watched as strictly as any change"
+	case *m == 1:
+		return "flagged worse 1 bad run sooner"
+	}
+	return "flagged worse " + strconv.Itoa(int(*m)) + " bad runs sooner"
 }
 
 // printJudge prints nothing for a brain that predates the judge, which sends

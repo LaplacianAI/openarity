@@ -561,7 +561,7 @@ describe("watching", () => {
     expect(within(kinds).getByText("Saves time")).toBeInTheDocument();
     const watch = within(card).getByRole("region", { name: "How it went" });
     expect(watch).toHaveTextContent(
-      "Flagged, its good runs did not get cheaper and quicker, as it expected",
+      "Flagged, its good runs did not get both cheaper and quicker, as it expected",
     );
     expect(watch).toHaveTextContent("Tokens a good run 18,400 → 19,000 · steps 9 → 9");
     expect(watch).toHaveTextContent("Work time a good run 41 s → 1 min 5 s");

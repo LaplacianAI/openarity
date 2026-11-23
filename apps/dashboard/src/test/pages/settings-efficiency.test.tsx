@@ -119,6 +119,15 @@ describe("the request", () => {
     expect(isDirty("improvement", { ...draftOf(EFFICIENT), effSpread: "3" }, EFFICIENT)).toBe(true);
   });
 
+  it("is not dirty for numbers edited while the pass is off, which are never sent", () => {
+    expect(isDirty("improvement", { ...draftOf(ON), effRuns: "40", effMargin: "3" }, ON)).toBe(
+      false,
+    );
+    expect(isDirty("improvement", { ...draftOf(ON), efficiency: true, effRuns: "40" }, ON)).toBe(
+      true,
+    );
+  });
+
   it.each([
     [{ effRuns: "9" }, /Good runs needed: a whole number from 10 to 500/],
     [{ effRuns: "501" }, /10 to 500/],
@@ -175,6 +184,38 @@ describe("the page", () => {
     expect(
       within(section()).queryByRole("switch", { name: "Also make good runs cheaper and faster" }),
     ).toBeNull();
+  });
+
+  it("keeps each field's error after a refused save until that field is fixed", async () => {
+    at(EFFICIENT);
+    await screen.findByRole("region", { name: "Improvement" });
+    const runs = within(section()).getByLabelText("Good runs needed");
+    const days = within(section()).getByLabelText("Days to look back");
+    await userEvent.clear(runs);
+    await userEvent.type(runs, "5");
+    await userEvent.clear(days);
+    await userEvent.type(days, "3");
+    expect(runs).not.toHaveAttribute("aria-invalid", "true");
+    await userEvent.click(within(section()).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(runs).toHaveAttribute("aria-invalid", "true"));
+    expect(days).toHaveAttribute("aria-invalid", "true");
+
+    await userEvent.clear(runs);
+    await userEvent.type(runs, "40");
+    expect(runs).not.toHaveAttribute("aria-invalid", "true");
+    expect(days).toHaveAttribute("aria-invalid", "true");
+
+    // A save that goes through puts them away: a new mistake waits for Save.
+    await userEvent.clear(days);
+    await userEvent.type(days, "21");
+    await userEvent.click(within(section()).getByRole("button", { name: "Save" }));
+    await within(section()).findByText(/Saved/);
+    await userEvent.clear(within(section()).getByLabelText("Days to look back"));
+    await userEvent.type(within(section()).getByLabelText("Days to look back"), "3");
+    expect(within(section()).getByLabelText("Days to look back")).not.toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
   });
 
   it("saves what was typed, and a refused value sends nothing", async () => {

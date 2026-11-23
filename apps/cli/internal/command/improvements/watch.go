@@ -93,10 +93,15 @@ func flagWords(flag *string, saves []string) string {
 		if slices.Contains(saves, "time") {
 			aim = append(aim, "quicker")
 		}
-		if len(aim) == 0 {
+		// Flagged when any one saving it named is missing, so both named
+		// reads "both", not as if each failed.
+		switch len(aim) {
+		case 0:
 			aim = []string{"cheaper or quicker"}
+		case 2:
+			aim = []string{"both cheaper and quicker"}
 		}
-		return "its good runs did not get " + strings.Join(aim, " and ") + ", as it said they would"
+		return "its good runs did not get " + aim[0] + ", as it said they would"
 	}
 	return cli.Safe(*flag)
 }

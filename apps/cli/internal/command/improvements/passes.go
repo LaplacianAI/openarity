@@ -13,7 +13,19 @@ import (
 
 const passesPermission = "improvement:approve"
 
-// triggerCell is why a pass ran: the patterns it was handed, or the daily one.
+// reasonWords are an efficiency pass's reasons in plain words, as the
+// dashboard says them.
+var reasonWords = map[string]string{
+	"repeated_call":  "the same call made twice",
+	"retried_error":  "a failed call made again",
+	"unused_tools":   "tools offered and left unused",
+	"near_step_cap":  "runs close to their step limit",
+	"long_tool_wait": "a long wait on a tool",
+	"spread":         "costly runs far above the usual",
+}
+
+// triggerCell is why a pass ran: the patterns it was handed, the weekly
+// efficiency sweep's reasons, or the daily one.
 func triggerCell(p *client.ImproverPass) string {
 	switch p.Trigger {
 	case client.ImproverPassTriggerDaily:
@@ -28,7 +40,10 @@ func triggerCell(p *client.ImproverPass) string {
 		var reasons []string
 		for _, s := range p.Signatures {
 			mark, target, _ := strings.Cut(strings.TrimPrefix(s, "efficiency:"), ":")
-			r := strings.ReplaceAll(mark, "_", " ")
+			r, ok := reasonWords[mark]
+			if !ok {
+				r = strings.ReplaceAll(mark, "_", " ")
+			}
 			if target != "" {
 				r += " " + cli.Safe(target)
 			}
@@ -95,8 +110,10 @@ func newPassesCmd(opts *cli.Options) *cobra.Command {
 		Use:   "passes <team>",
 		Short: "List the improver's passes: what ran, why, and what it proposed",
 		Long: "Newest first. A pass is one run of the improver over an agent, started\n" +
-			"either because a pattern recurred in enough runs (the pattern shown is\n" +
-			"part:target:cause) or by the daily pass. Each shows how many proposals it\n" +
+			"because a pattern recurred in enough runs (the pattern shown is\n" +
+			"part:target:cause), by the daily pass, or by the weekly efficiency pass\n" +
+			"(with the good runs it read and why: the same call made twice, costly\n" +
+			"runs far above the usual, and so on). Each shows how many proposals it\n" +
 			"made, how many the screen refused for carrying one run's specifics, and\n" +
 			"the tokens it cost, or why it failed. --agent keeps one agent's, by name\n" +
 			"or id; -o json carries the full record, including its report. A report\n" +

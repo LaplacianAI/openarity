@@ -81,3 +81,22 @@ func TestTheEfficiencySettingsOutOfRangeRefuseBeforeSending(t *testing.T) {
 		})
 	}
 }
+
+// The margin says how much sooner an efficiency change is flagged, and a
+// brain that sent none is shown as unknown, not as the strictest.
+func TestTheMarginIsSaidInWords(t *testing.T) {
+	m := func(v int32) *int32 { return &v }
+	for _, tc := range []struct {
+		margin *int32
+		want   string
+	}{
+		{nil, "flagged worse ? bad runs sooner"},
+		{m(0), "watched as strictly as any change"},
+		{m(1), "flagged worse 1 bad run sooner"},
+		{m(2), "flagged worse 2 bad runs sooner"},
+	} {
+		if got := strictWords(tc.margin); got != tc.want {
+			t.Errorf("margin %v: %q, want %q", tc.margin, got, tc.want)
+		}
+	}
+}

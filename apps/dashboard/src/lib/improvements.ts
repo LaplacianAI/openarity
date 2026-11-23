@@ -241,13 +241,19 @@ export function flagWords(
   if (flag === "costlier") return "its runs cost more, with no fewer failures";
   if (flag === "both") return "its runs went worse and cost more";
   if (flag === "no_saving") {
-    const aim = [
-      saves?.includes("cost") ? "cheaper" : null,
-      saves?.includes("time") ? "quicker" : null,
-    ]
-      .filter(Boolean)
-      .join(" and ");
-    return `its good runs did not get ${aim || "cheaper or quicker"}, as it expected`;
+    // Flagged when any one saving it named is missing, so both named reads
+    // "both", not as if each failed.
+    const cost = saves?.includes("cost");
+    const time = saves?.includes("time");
+    const aim =
+      cost && time
+        ? "both cheaper and quicker"
+        : cost
+          ? "cheaper"
+          : time
+            ? "quicker"
+            : "cheaper or quicker";
+    return `its good runs did not get ${aim}, as it expected`;
   }
   return "";
 }

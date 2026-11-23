@@ -16,15 +16,34 @@ func TestEfficiencyIsSaidInWords(t *testing.T) {
 		Signatures: []string{"efficiency:repeated_call:crm__lookup", "efficiency:spread", "efficiency:long_tool_wait:x\x1b[2Jy"},
 	}
 	got := triggerCell(p)
-	if !strings.HasPrefix(got, "efficiency, from 34 good runs: repeated call crm__lookup, spread, long tool wait ") || strings.Contains(got, "\x1b") {
+	if !strings.HasPrefix(got, "efficiency, from 34 good runs: the same call made twice crm__lookup, costly runs far above the usual, a long wait on a tool ") || strings.Contains(got, "\x1b") {
 		t.Errorf("trigger = %q, want the reasons in words and the escape made safe", got)
 	}
-	flag := "no_saving"
-	if got := flagWords(&flag, []string{"time"}); !strings.Contains(got, "did not get quicker,") {
-		t.Errorf("flag = %q", got)
+	if got := triggerCell(&client.ImproverPass{Trigger: client.ImproverPassTriggerEfficiency, Signatures: []string{"efficiency:new_mark"}}); got != "efficiency: new mark" {
+		t.Errorf("an unknown reason = %q, want its name in words", got)
 	}
 	ms := int64(41_000)
 	if got := secondsOf(&ms); got != "41.0 s" {
 		t.Errorf("seconds = %q", got)
+	}
+}
+
+// "No saving" says what the change aimed at, from the proposal's saves
+// carried to its watch.
+func TestNoSavingFollowsWhatWasAimedAt(t *testing.T) {
+	flag := client.ImprovementWatchFlag("no_saving")
+	for _, tc := range []struct {
+		saves []client.ImprovementSaves
+		want  string
+	}{
+		{[]client.ImprovementSaves{"cost"}, "did not get cheaper,"},
+		{[]client.ImprovementSaves{"time"}, "did not get quicker,"},
+		{[]client.ImprovementSaves{"cost", "time"}, "did not get both cheaper and quicker,"},
+		{nil, "did not get cheaper or quicker,"},
+	} {
+		v := viewOf(&client.Improvement{Saves: tc.saves, Watch: &client.ImprovementWatch{Status: "flagged", Flag: &flag}})
+		if got := flagWords(v.Watch.Flag, v.Watch.saves); !strings.Contains(got, tc.want) {
+			t.Errorf("saves %v: %q, want %q", tc.saves, got, tc.want)
+		}
 	}
 }
