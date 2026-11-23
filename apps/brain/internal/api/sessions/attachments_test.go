@@ -20,7 +20,7 @@ import (
 func seedAttachment(f *fixture, filename, mediaType string, body []byte) db.Attachment {
 	row := db.Attachment{
 		ID:         uuid.New(),
-		MessageID:  f.store.messages[0].ID,
+		MessageID:  &f.store.messages[0].ID,
 		SessionID:  f.sessionID,
 		ObjectKey:  "teams/" + f.teamID.String() + "/objects/" + uuid.NewString(),
 		KeyVersion: 1,
@@ -64,7 +64,7 @@ func TestListingASessionsAttachments(t *testing.T) {
 		t.Fatalf("%d items, want 1", len(page.Items))
 	}
 	got := page.Items[0]
-	if got.ID != row.ID || got.MessageID != row.MessageID {
+	if got.ID != row.ID || got.MessageID != *row.MessageID {
 		t.Errorf("item = %+v", got)
 	}
 	if got.Filename != "label.png" || got.MediaType != "image/png" || got.SizeBytes != 3 {
@@ -91,6 +91,10 @@ func TestListingAttachmentsIsScopedToTheSession(t *testing.T) {
 	}
 	if got := f.store.attachmentListArgs[0].SessionID; got != f.sessionID {
 		t.Errorf("listed session %s, want %s", got, f.sessionID)
+	}
+	// A tool's file has no message, and every file listed here names one.
+	if !f.store.attachmentListArgs[0].PeopleOnly {
+		t.Error("listed a tool's files too, which have no message to name")
 	}
 }
 

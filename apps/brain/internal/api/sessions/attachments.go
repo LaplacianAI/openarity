@@ -45,7 +45,7 @@ func (h *handler) listAttachments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db.ListAttachmentsBySessionParams{SessionID: session.ID, PageSize: limit + 1}
+	params := db.ListAttachmentsBySessionParams{SessionID: session.ID, PeopleOnly: true, PageSize: limit + 1}
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
 		var c attachmentCursor
 		if !api.DecodeCursor(w, raw, &c) {
@@ -68,7 +68,8 @@ func (h *handler) listAttachments(w http.ResponseWriter, r *http.Request) {
 		},
 		func(row db.Attachment) attachment {
 			return attachment{
-				ID: row.ID, MessageID: row.MessageID, Filename: row.Filename,
+				// people_only: every row listed has its message.
+				ID: row.ID, MessageID: *row.MessageID, Filename: row.Filename,
 				MediaType: row.MediaType, SizeBytes: row.SizeBytes,
 				CreatedAt: row.CreatedAt,
 			}

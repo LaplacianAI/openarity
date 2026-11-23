@@ -49,6 +49,9 @@ func newRunJob(
 		newFetch(searchClient, net.DefaultResolver)).
 		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, discoverer, runtime.Loops())}).
 		WithApprovals(dbStore).
+		// A tool's file is kept as its conversation's attachment, sealed
+		// as a person's is, so a transcript never holds its bytes.
+		WithToolFiles(runtime.ToolFiles{Store: dbStore, Objects: attachments, Logger: logger}).
 		WithBrowsers(newBrowsers(secretStore, searchClient, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)

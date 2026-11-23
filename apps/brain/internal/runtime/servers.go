@@ -17,7 +17,9 @@ import (
 // reached, and one that is down fails the call that needed it rather than
 // the run.
 type runServers struct {
-	b      *Builder
+	b *Builder
+	// keeper keeps the files the run's tools return, or is nil.
+	keeper mcp.Keeper
 	mu     sync.Mutex
 	open   []*mcp.Session
 	closed bool
@@ -68,7 +70,7 @@ func (l *lazyServer) opened(ctx context.Context) (*mcp.Session, error) {
 		return l.session, nil
 	}
 
-	live, err := l.run.b.connect(ctx, l.server)
+	live, err := l.run.b.connect(ctx, l.server, l.run.keeper)
 	if err != nil {
 		return nil, err
 	}

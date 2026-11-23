@@ -16,7 +16,7 @@ import (
 
 func attachedFile(session uuid.UUID, name, mediaType string, size int64) db.Attachment {
 	return db.Attachment{
-		ID: uuid.New(), SessionID: session, TeamID: uuid.New(), MessageID: uuid.New(),
+		ID: uuid.New(), SessionID: session, TeamID: uuid.New(), MessageID: new(uuid.New()),
 		ObjectKey: "k-" + name, MediaType: mediaType, SizeBytes: size, Filename: name,
 		CreatedAt: time.Date(2026, 11, 14, 9, 12, 0, 0, time.UTC),
 	}
@@ -104,6 +104,36 @@ func TestAttachmentsListsTheConversationsFiles(t *testing.T) {
 	}
 	if g := got.Files[1]; g.Filename != "invoice.pdf" || g.MediaType != "application/pdf" || g.Size != "2.5 MB" || g.Sent != "2026-11-14T09:12:00Z" {
 		t.Errorf("the PDF is listed as %+v", g)
+	}
+}
+
+// A file a tool returned is listed with a person's, each saying who it came
+// from, and the runtime asks for both.
+func TestAttachmentsSaysWhoEachFileCameFrom(t *testing.T) {
+	shot := attachedFile(uuid.Nil, "screen.png", "image/png", 10)
+	bundle := attachedFile(uuid.Nil, "bundle.zip", "application/zip", 10)
+	bundle.MessageID, bundle.RunID, bundle.Tool, bundle.CallID = nil, new(uuid.New()), new("mail__fetch"), new("c1")
+	f, built := fileFixture(t, shot, bundle)
+
+	out, err := tool(t, built, AttachmentsToolName).Invoke(t.Context(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Files []listedFile `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	from := map[string]string{}
+	for _, g := range got.Files {
+		from[g.Filename] = g.From
+	}
+	if from["screen.png"] != "a person" || from["bundle.zip"] != "the tool mail__fetch" {
+		t.Errorf("listed from %v, want the person's and the tool's", from)
+	}
+	if f.store.peopleOnly {
+		t.Error("the runtime asked for people's files alone, and would never list a tool's")
 	}
 }
 

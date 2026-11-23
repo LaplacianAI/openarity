@@ -68,10 +68,35 @@ type Builder struct {
 	approvals      ApprovalStore
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
+	// files keeps what a run's MCP tools return; without it a tool's files
+	// ride in the transcript, as the SDK passes them with no keeper.
+	files *ToolFiles
+	// large is the worker's one slot for reading a large MCP answer.
+	large chan struct{}
 }
 
 func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps) *Builder {
-	return &Builder{store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch, connectTimeout: connectTimeout}
+	return &Builder{
+		store: s, objects: o, mcp: m, graph: g, search: search, fetch: fetch,
+		connectTimeout: connectTimeout, large: make(chan struct{}, 1),
+	}
+}
+
+// WithToolFiles keeps the files a run's MCP tools return as its
+// conversation's attachments, so its transcript names them and never holds
+// their bytes.
+func (b *Builder) WithToolFiles(f ToolFiles) *Builder {
+	b.files = &f
+	return b
+}
+
+// keeperFor is what keeps run's tool files, or nil when none are kept: an
+// interface holding a nil *keeper would not be nil.
+func (b *Builder) keeperFor(run db.Run) mcp.Keeper {
+	if b.files == nil {
+		return nil
+	}
+	return b.files.keeperFor(run)
 }
 
 // WithRegistry lets builder runs look MCP servers up. Without one, they have
@@ -142,7 +167,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if err != nil {
 		return Built{}, err
 	}
-	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b}, answerable: map[string]agent.Tool{}}
+	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b, keeper: b.keeperFor(run)}, answerable: map[string]agent.Tool{}}
 	built.Spec.Session = session
 	gates, err := b.policyFor(ctx, run, settings, built.Spec.Pattern, l)
 	if err != nil {
@@ -502,16 +527,21 @@ func reserved(name string, r reservedFor) bool {
 	return false
 }
 
-func (b *Builder) connect(ctx context.Context, s db.McpServer) (*mcp.Session, error) {
+func (b *Builder) connect(ctx context.Context, s db.McpServer, keep mcp.Keeper) (*mcp.Session, error) {
 	address, client, err := b.mcp.Reach(ctx, s)
 	if err != nil {
 		return nil, fmt.Errorf("the MCP server %q: %w", s.Name, err)
+	}
+	if client == nil {
+		client = &http.Client{}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, b.connectTimeout)
 	defer cancel()
 
-	live, err := mcp.Connect(ctx, mcp.Server{Name: s.Name, URL: address, HTTPClient: client, Bare: s.Bare})
+	live, err := mcp.Connect(ctx, mcp.Server{
+		Name: s.Name, URL: address, HTTPClient: cappedClient(client, b.large), Bare: s.Bare, Keep: keep,
+	})
 	if err != nil {
 		return nil, &serverDown{name: s.Name, err: err}
 	}

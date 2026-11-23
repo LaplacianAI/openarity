@@ -8,7 +8,7 @@ RETURNING *;
 
 -- name: ListAttachmentsByMessage :many
 SELECT * FROM attachments
-WHERE message_id = $1
+WHERE message_id = sqlc.arg('message_id')::uuid
 ORDER BY created_at, id;
 
 -- Everything a session has accumulated, which is what an agent reads to
@@ -21,9 +21,13 @@ ORDER BY created_at, id;
 -- sessions: a page boundary has to be a total order, and created_at repeats
 -- when several files arrive on one delivery.
 --
+-- people_only leaves out the files a run's tools returned, which have no
+-- message: the API lists a person's files by the message that sent them.
+--
 -- name: ListAttachmentsBySession :many
 SELECT * FROM attachments
 WHERE session_id = sqlc.arg('session_id')
+  AND (NOT sqlc.arg('people_only')::bool OR message_id IS NOT NULL)
   AND (NOT sqlc.arg('use_cursor')::bool
    OR (created_at, id) < (sqlc.arg('after_created_at')::timestamptz, sqlc.arg('after_id')::uuid))
 ORDER BY created_at DESC, id DESC
@@ -37,3 +41,18 @@ LIMIT sqlc.arg('page_size');
 -- name: GetAttachmentInSession :one
 SELECT * FROM attachments
 WHERE id = $1 AND session_id = $2;
+
+-- A file a tool returned, kept for the conversation its run is in. Its
+-- source is the run's call, so it has no message; the run and the session
+-- are named as a pair, so a run of another session cannot be.
+--
+-- name: CreateToolAttachment :one
+INSERT INTO attachments (
+    session_id, team_id, run_id, tool, call_id,
+    object_key, key_version, media_type, size_bytes, filename
+)
+VALUES (
+    sqlc.arg('session_id'), sqlc.arg('team_id'), sqlc.arg('run_id'), sqlc.arg('tool'), sqlc.arg('call_id'),
+    sqlc.arg('object_key'), 1, sqlc.arg('media_type'), sqlc.arg('size_bytes'), sqlc.arg('filename')
+)
+RETURNING *;

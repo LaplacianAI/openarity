@@ -39,7 +39,7 @@ func attachment(
 	t.Helper()
 
 	return db.CreateAttachmentParams{
-		MessageID:  messageID,
+		MessageID:  &messageID,
 		SessionID:  sessionID,
 		TeamID:     scalar[uuid.UUID](t, s, `SELECT team_id FROM sessions WHERE id = $1`, sessionID),
 		ObjectKey:  key,
@@ -232,8 +232,8 @@ func TestListAttachmentsByMessage(t *testing.T) {
 		t.Fatalf("got %d attachments, want 2", len(rows))
 	}
 	for _, row := range rows {
-		if row.MessageID != messageID {
-			t.Errorf("attachment %s belongs to message %s", row.ID, row.MessageID)
+		if row.MessageID == nil || *row.MessageID != messageID {
+			t.Errorf("attachment %s belongs to message %v", row.ID, row.MessageID)
 		}
 	}
 }
@@ -331,7 +331,7 @@ func TestTheDatabaseRefusesWhatTheColumnsCannotMean(t *testing.T) {
 		// The composite key replaced the single-column reference, so this is
 		// the constraint that refuses an unknown message now.
 		"a message that does not exist": {
-			func(a *db.CreateAttachmentParams) { a.MessageID = uuid.New() },
+			func(a *db.CreateAttachmentParams) { a.MessageID = new(uuid.New()) },
 			"attachments_message_in_session",
 		},
 		"a session the message is not in": {
