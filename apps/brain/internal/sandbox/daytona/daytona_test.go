@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -320,7 +321,9 @@ func TestCreateThatNeverStartsGivesUpAndDeletes(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want a deadline", err)
 	}
-	if got := f.paths(); got[len(got)-1] != "DELETE /api/sandbox/sb-1" {
+	// The poll the deadline cancelled can reach the fake after the DELETE,
+	// so the DELETE is looked for, not taken to be the last call.
+	if got := f.paths(); !slices.Contains(got, "DELETE /api/sandbox/sb-1") {
 		t.Errorf("calls = %v, want the room deleted", got)
 	}
 }
