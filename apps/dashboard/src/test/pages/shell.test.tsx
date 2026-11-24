@@ -69,15 +69,14 @@ describe("the navigation on a wide screen", () => {
           .getAllByRole("link")
           .map((a) => a.textContent),
       ]);
+    // Home stands alone, first, with no group or heading of its own.
+    expect(within(nav).getAllByRole("link")[0]).toHaveAccessibleName("Home");
     expect(groups).toEqual([
-      [null, ["Home"]],
       ["Needs you", ["Sender approvals", "Tool approvals", "Improvements"]],
       ["Work", ["Runs", "Sessions"]],
       ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint", "Graph"]],
       ["Team", ["Team settings", "Teams"]],
     ]);
-    // Home stands alone: its group has no heading of its own.
-    expect(within(nav).queryByText("Home", { selector: "span[aria-hidden]" })).toBeNull();
   });
 
   it("counts the changes waiting for an approver", async () => {
@@ -166,6 +165,27 @@ describe("the navigation on a phone", () => {
     ).toEqual(["Home", "Runs", expect.stringMatching(/^Sender approvals/)]);
     expect(within(bar).getByRole("button", { name: "More" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main" })).toBeNull();
+  });
+
+  // Tool approvals and Improvements are only under More, so More says when
+  // something waits there.
+  it("marks More while something waits on a screen only it reaches", async () => {
+    widths(false, false);
+    shell(0, ["agent:write", "improvement:approve"], {
+      "GET /teams/{id}/improvements": { body: { items: [{ id: "p1" }] } },
+    });
+    const bar = await screen.findByRole("navigation", { name: "Quick" });
+    expect(
+      await within(bar).findByRole("button", { name: "More, something waits there" }),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves More plain while nothing waits there", async () => {
+    widths(false, false);
+    const seen = shell(3);
+    const bar = await screen.findByRole("navigation", { name: "Quick" });
+    await waitFor(() => expect(seen.some((s) => s.path.endsWith("/summary"))).toBe(true));
+    expect(within(bar).getByRole("button", { name: "More" })).toBeInTheDocument();
   });
 
   it("opens every screen and the account from More", async () => {

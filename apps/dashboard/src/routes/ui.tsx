@@ -40,7 +40,6 @@ import {
   useCommandKey,
 } from "@/components/command-palette";
 import { Mark } from "@/components/mark";
-import { SETTINGS_PAGES } from "@/components/settings/shell";
 import { SignIn } from "@/components/sign-in";
 import { Count } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -69,6 +68,7 @@ import {
   useNotifySwitch,
   useWaitingTitle,
 } from "@/lib/notify";
+import { SETTINGS_PAGES } from "@/lib/settings-pages";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -120,7 +120,8 @@ const DELETED_TEAMS: NavItem = {
 /** The count beside a navigation entry that has one, by its path. */
 type Badges = Readonly<Record<string, string | null>>;
 
-type NavGroup = { label: string; items: readonly NavItem[] };
+/** A group of the navigation; one with no label (Home) stands alone, with no heading. */
+type NavGroup = { label?: string; items: readonly NavItem[] };
 
 /**
  * The navigation, grouped by the job a screen is for rather than the noun it
@@ -131,7 +132,7 @@ type NavGroup = { label: string; items: readonly NavItem[] };
  */
 export function navGroups(superAdmin: boolean): readonly NavGroup[] {
   return [
-    { label: "", items: [HOME] },
+    { items: [HOME] },
     { label: "Needs you", items: [APPROVALS, REQUESTS, IMPROVEMENTS] },
     { label: "Work", items: [RUNS, SESSIONS] },
     {
@@ -490,11 +491,10 @@ function Nav({
   return (
     <nav aria-label="Main" className="flex flex-col gap-4">
       {groups.map((g) => (
-        // biome-ignore lint/a11y/useSemanticElements: a fieldset is for form controls, and these are links
         <div
-          key={g.label || "start"}
-          role="group"
-          aria-label={g.label || undefined}
+          key={g.label ?? "start"}
+          // A labelled group is named; Home, alone, is not a group at all.
+          {...(g.label ? { role: "group", "aria-label": g.label } : {})}
           className="flex flex-col gap-0.5"
         >
           {rail ? (
@@ -706,6 +706,12 @@ function QuickBar({
     pathname,
   );
   const inMore = !quick.some((q) => q.to === active);
+  // Something waits on a screen only More reaches (Tool approvals,
+  // Improvements): More carries the dot the bar has no room to.
+  const moreWaiting = groups
+    .flatMap((g) => g.items)
+    .filter((i) => !quick.some((q) => q.to === i.to))
+    .some((i) => waiting[i.to]);
   const who = usePrincipal();
   const { theme, toggle } = useTheme();
   return (
@@ -751,8 +757,17 @@ function QuickBar({
               inMore ? "font-medium text-foreground" : "text-muted-foreground",
             )}
           >
-            <Ellipsis aria-hidden className={cn("size-5", inMore && "text-primary")} />
+            <span className="relative">
+              <Ellipsis aria-hidden className={cn("size-5", inMore && "text-primary")} />
+              {moreWaiting ? (
+                <span
+                  aria-hidden
+                  className="absolute -top-1 -right-1.5 size-2 rounded-full bg-waiting"
+                />
+              ) : null}
+            </span>
             More
+            {moreWaiting ? <span className="sr-only">, something waits there</span> : null}
           </button>
         </DialogPrimitive.Trigger>
         <DialogPrimitive.Portal>

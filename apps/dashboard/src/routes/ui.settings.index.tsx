@@ -14,5 +14,5 @@ export const Route = createFileRoute("/ui/settings/")({
 function SettingsIndex() {
   const tablet = useMediaQuery("(min-width: 48rem)");
   if (tablet) return <Navigate to="/ui/settings/general" replace />;
-  return <SettingsShell page={null}>{() => null}</SettingsShell>;
+  return <SettingsShell page={null} />;
 }

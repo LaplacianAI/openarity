@@ -87,5 +87,3 @@ export function Section({
 }
 
 export type SectionProps = Omit<Parameters<typeof Section>[0], "title" | "about" | "children">;
-
-/** The ids of the fields, in the order a Save that stops focuses them. */

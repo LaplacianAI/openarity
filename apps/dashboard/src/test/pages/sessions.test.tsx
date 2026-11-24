@@ -857,7 +857,8 @@ describe("the run switcher", () => {
     expect(screen.getByRole("button", { name: "Newer run" })).toBeDisabled();
   });
 
-  it("loads older runs from the last run's older step", async () => {
+  // The older run is on a page not read yet: one press reads it and goes there.
+  it("reads the next page from the last run's older step, and goes to the older run", async () => {
     const seen = listed({
       [RUNS]: (s) =>
         s.path.includes("cursor=older")
@@ -865,14 +866,15 @@ describe("the run switcher", () => {
           : { body: { items: [run("r2", "second-agent", "succeeded")], next_cursor: "older" } },
       [EVENTS]: () => ({ stream: chunks(END) }),
     });
-    await open("?tab=runs");
+    const router = await open("?tab=runs");
 
     await userEvent.click(await screen.findByRole("button", { name: "Older run" }));
     await waitFor(() => expect(seen.some((s) => s.path.endsWith("/runs?cursor=older"))).toBe(true));
-    expect(await screen.findByRole("link", { name: "Older run" })).toHaveAttribute(
-      "href",
-      expect.stringContaining("run=r1"),
-    );
+    await waitFor(() => expect(router.state.location.search).toEqual({ tab: "runs", run: "r1" }));
+    expect(
+      await within(pane()).findByRole("heading", { level: 2, name: "first-agent" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Older run" })).toBeDisabled();
   });
 });
 

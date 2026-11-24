@@ -68,6 +68,18 @@ describe("the command palette", () => {
     expect(screen.queryByRole("dialog", { name: "Go to" })).toBeNull();
   });
 
+  it("finds each page of the team's settings by its name", async () => {
+    open();
+    await screen.findByRole("navigation", { name: "Main" });
+
+    await userEvent.keyboard("{Meta>}k{/Meta}");
+    const palette = await screen.findByRole("dialog", { name: "Go to" });
+    await userEvent.type(within(palette).getByRole("combobox"), "tools");
+
+    const options = await within(palette).findAllByRole("option");
+    expect(options.map((o) => o.textContent)).toContain("Team settings: ToolsScreen");
+  });
+
   it("moves through what it found with the arrow keys, and opens a session's own page", async () => {
     const router = open();
     await screen.findByRole("navigation", { name: "Main" });

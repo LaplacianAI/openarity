@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDown, ChevronRight, Loader2, Paperclip } from "lucide-react";
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   downloadAttachment,
@@ -37,6 +37,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui-bits";
 import { awaitsReply } from "@/lib/conversation";
+import { useFollowEnd } from "@/lib/follow-end";
 import { fileSize } from "@/lib/format";
 import { useMediaQuery } from "@/lib/media";
 import { sessionName } from "@/lib/sessions";
@@ -304,7 +305,10 @@ function Conversation({
   };
   const files = attachments.data?.pages.flatMap((p) => p.items) ?? [];
   const body = useRef<HTMLDivElement>(null);
-  const follow = useFollowEnd(body, c, pane);
+  // The scroller changes with the layout: this pane, the sheet from a tablet
+  // up, or the window on a phone.
+  const tablet = useMediaQuery("(min-width: 48rem)");
+  const follow = useFollowEnd(body, c, pane ? "pane" : tablet ? "sheet" : "window");
   const feedbackOn = useCanGiveFeedback(teamId);
   const writing = (
     <Writing
@@ -416,90 +420,6 @@ function Conversation({
       {writing}
     </section>
   );
-}
-
-/** How close to the end of what scrolls still counts as reading the end. */
-const AT_END_PX = 96;
-
-/**
- * What scrolls the conversation: the nearest element around it marked as
- * scrolling (its own pane, or the sheet on a tablet), else the window, as on a
- * phone.
- */
-function scrollerOf(el: HTMLElement | null): HTMLElement | null {
-  return el?.closest<HTMLElement>("[data-scroller]") ?? null;
-}
-
-const endOf = (el: HTMLElement | null) =>
-  el ? el.scrollHeight : document.documentElement.scrollHeight;
-
-function atEndOf(el: HTMLElement | null): boolean {
-  return el
-    ? el.clientHeight + el.scrollTop >= el.scrollHeight - AT_END_PX
-    : window.innerHeight + window.scrollY >= endOf(null) - AT_END_PX;
-}
-
-const topOf = (el: HTMLElement | null) => (el ? el.scrollTop : window.scrollY);
-
-function toEnd(el: HTMLElement | null) {
-  if (el) el.scrollTop = el.scrollHeight;
-  else window.scrollTo({ top: endOf(null) });
-}
-
-/**
- * Keeps the end of the conversation in view while the reader is at it: what
- * arrives scrolls into sight, at once, since it arrives many times a minute.
- * A reader who scrolled up to read is left where they are, and told there is
- * more below. Only a move up leaves the end: by the time the page's own
- * scroll to the end is heard, more may have arrived under it. Only what holds the conversation is scrolled, so the run beside
- * it stays where it is. `where` changes when the layout does, and the hook
- * listens to the new scroller.
- */
-function useFollowEnd(ref: RefObject<HTMLElement | null>, changed: unknown, where: unknown) {
-  const atEnd = useRef(true);
-  const lastTop = useRef(0);
-  const [behind, setBehind] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new layout has a new scroller
-  useEffect(() => {
-    const el = scrollerOf(ref.current);
-    const target: HTMLElement | Window = el ?? window;
-    lastTop.current = topOf(el);
-    const read = () => {
-      const top = topOf(el);
-      if (top < lastTop.current - 1) atEnd.current = atEndOf(el);
-      else if (atEndOf(el)) atEnd.current = true;
-      lastTop.current = top;
-      if (atEnd.current) setBehind(false);
-    };
-    target.addEventListener("scroll", read, { passive: true });
-    // What is shown can grow after it arrived (an answer laid out, the
-    // buttons under it read), and the pane can shrink (the composer comes in
-    // under it): either way a reader at the end stays there.
-    const grew =
-      typeof ResizeObserver === "function" && ref.current
-        ? new ResizeObserver(() => {
-            if (atEnd.current) toEnd(el);
-          })
-        : null;
-    if (grew && ref.current) grew.observe(ref.current);
-    if (grew && el) grew.observe(el);
-    return () => {
-      target.removeEventListener("scroll", read);
-      grew?.disconnect();
-    };
-  }, [ref, where]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs for each change to what is shown
-  useLayoutEffect(() => {
-    if (atEnd.current) toEnd(scrollerOf(ref.current));
-    else setBehind(true);
-  }, [changed]);
-  return {
-    behind,
-    jump: () => {
-      toEnd(scrollerOf(ref.current));
-      setBehind(false);
-    },
-  };
 }
 
 /**
@@ -674,7 +594,9 @@ function Runs({
         chosen={chosen}
         hasMore={Boolean(runs.hasNextPage)}
         loadingMore={runs.isFetchingNextPage}
-        onLoadMore={() => void runs.fetchNextPage()}
+        onLoadMore={async () =>
+          (await runs.fetchNextPage()).data?.pages.flatMap((p) => p.items) ?? []
+        }
       />
 
       {/* Keyed on the run, so another run opens at its top. */}

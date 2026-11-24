@@ -14,48 +14,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
 import { NO_MODEL } from "@/lib/ask";
 import { useMediaQuery } from "@/lib/media";
+import { SETTINGS_PAGES, type SettingsPage, type SettingsPageId } from "@/lib/settings-pages";
 import type { Group } from "@/lib/team-settings";
 import { cn } from "@/lib/utils";
 
 export const WRITE = "team:settings";
-
-export type SettingsPageId = "general" | "tools" | "approvals" | "improvement";
-
-type SettingsPage = {
-  id: SettingsPageId;
-  to: `/ui/settings/${SettingsPageId}`;
-  label: string;
-  /** What the page decides, in a line: said in the phone's list. */
-  about: string;
-};
-
-/** The pages of the team's settings, in the order they are listed. */
-export const SETTINGS_PAGES: readonly SettingsPage[] = [
-  {
-    id: "general",
-    to: "/ui/settings/general",
-    label: "General",
-    about: "The model, the hub, and when a long run is compacted.",
-  },
-  {
-    id: "tools",
-    to: "/ui/settings/tools",
-    label: "Tools",
-    about: "Web search, where commands run, and the browser.",
-  },
-  {
-    id: "approvals",
-    to: "/ui/settings/approvals",
-    label: "Approvals",
-    about: "Which tool calls wait for a person, and the rules that decide.",
-  },
-  {
-    id: "improvement",
-    to: "/ui/settings/improvement",
-    label: "Improvement",
-    about: "Whether agents propose changes to themselves, and how they are checked.",
-  },
-];
 
 /** The settings groups each page holds; Approvals keeps its own. */
 export const PAGE_GROUPS: Record<SettingsPageId, readonly Group[]> = {
@@ -179,7 +142,8 @@ export function SettingsShell({
   children,
 }: {
   page: SettingsPageId | null;
-  children: (ready: Ready) => ReactNode;
+  /** The page's body, once the team is known; none for the list of pages. */
+  children?: (ready: Ready) => ReactNode;
 }) {
   const { teamId, teams } = useCurrentTeam();
   const teamName = teams.find((t) => t.id === teamId)?.name;
@@ -191,7 +155,7 @@ export function SettingsShell({
   const desk = useMediaQuery("(min-width: 64rem)");
   const label = SETTINGS_PAGES.find((p) => p.id === page)?.label;
 
-  const body = teamId ? (
+  const body = !children ? null : teamId ? (
     children({ teamId, canWrite, settings })
   ) : (
     <EmptyState title="No team" body="Join or create a team to see its settings." />

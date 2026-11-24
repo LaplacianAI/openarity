@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronDown, ChevronsUpDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import type { Run } from "@/api/types";
@@ -19,6 +19,15 @@ import { cn } from "@/lib/utils";
 /** What a run spent, as its row in the list says it. */
 function tokensOf(run: Run): string {
   return `${(run.input_tokens + run.output_tokens).toLocaleString("en-US")} tokens`;
+}
+
+/** The address of one of the session's runs, kept as the page's other search. */
+function runSearch(id: string) {
+  return <T extends Record<string, unknown>>(prev: T) => ({
+    ...prev,
+    tab: "runs" as const,
+    run: id,
+  });
 }
 
 /**
@@ -43,9 +52,11 @@ export function RunSwitcher({
   chosen: Run | undefined;
   hasMore: boolean;
   loadingMore: boolean;
-  onLoadMore: () => void;
+  /** Reads the next page; resolves to every run read so far, newest first. */
+  onLoadMore: () => Promise<readonly Run[]>;
 }) {
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
   const at = chosen ? rows.findIndex((r) => r.id === chosen.id) : -1;
   const newer = at > 0 ? rows[at - 1] : undefined;
   const older = at >= 0 && at < rows.length - 1 ? rows[at + 1] : undefined;
@@ -57,7 +68,7 @@ export function RunSwitcher({
         <Link
           to="/ui/sessions/$sessionId"
           params={{ sessionId }}
-          search={(prev) => ({ ...prev, tab: "runs", run: run.id })}
+          search={runSearch(run.id)}
           replace
           resetScroll={false}
           aria-label={label}
@@ -116,7 +127,7 @@ export function RunSwitcher({
               <Link
                 to="/ui/sessions/$sessionId"
                 params={{ sessionId }}
-                search={(prev) => ({ ...prev, tab: "runs", run: r.id })}
+                search={runSearch(r.id)}
                 replace
                 resetScroll={false}
                 data-run={r.id}
@@ -148,7 +159,7 @@ export function RunSwitcher({
                 onSelect={(e) => {
                   // Stays open, so the runs it brings can be chosen.
                   e.preventDefault();
-                  onLoadMore();
+                  void onLoadMore();
                 }}
                 className="justify-center text-muted-foreground"
               >
@@ -167,7 +178,20 @@ export function RunSwitcher({
           aria-label="Older run"
           title="Older run"
           disabled={loadingMore}
-          onClick={onLoadMore}
+          onClick={async () => {
+            // The older run is on the page not read yet: read it, then go.
+            const all = await onLoadMore();
+            const next = all[at + 1];
+            if (next) {
+              await navigate({
+                to: "/ui/sessions/$sessionId",
+                params: { sessionId },
+                search: runSearch(next.id),
+                replace: true,
+                resetScroll: false,
+              });
+            }
+          }}
         >
           <ChevronDown aria-hidden className="size-4" />
         </Button>

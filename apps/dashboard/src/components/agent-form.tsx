@@ -103,7 +103,7 @@ function NoSandbox() {
       <span className="min-w-0">
         This team has no sandbox yet, so the workspace waits until one is chosen.{" "}
         <Link
-          to="/ui/settings/general"
+          to="/ui/settings/tools"
           className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
         >
           Choose a sandbox in team settings
