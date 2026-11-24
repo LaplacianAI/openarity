@@ -21,7 +21,6 @@ import { Route as UiComposeRouteImport } from './routes/ui.compose'
 import { Route as UiGraphRouteImport } from './routes/ui.graph'
 import { Route as UiImprovementsRouteImport } from './routes/ui.improvements'
 import { Route as UiRequestsRouteImport } from './routes/ui.requests'
-import { Route as UiSettingsRouteImport } from './routes/ui.settings'
 import { Route as UiAgentsIndexRouteImport } from './routes/ui.agents.index'
 import { Route as UiAgentsAgentIdRouteImport } from './routes/ui.agents.$agentId'
 import { Route as UiAgentsNewRouteImport } from './routes/ui.agents.new'
@@ -30,6 +29,11 @@ import { Route as UiRunsIndexRouteImport } from './routes/ui.runs.index'
 import { Route as UiServersIndexRouteImport } from './routes/ui.servers.index'
 import { Route as UiSessionsIndexRouteImport } from './routes/ui.sessions.index'
 import { Route as UiSessionsSessionIdRouteImport } from './routes/ui.sessions.$sessionId'
+import { Route as UiSettingsIndexRouteImport } from './routes/ui.settings.index'
+import { Route as UiSettingsApprovalsRouteImport } from './routes/ui.settings.approvals'
+import { Route as UiSettingsGeneralRouteImport } from './routes/ui.settings.general'
+import { Route as UiSettingsImprovementRouteImport } from './routes/ui.settings.improvement'
+import { Route as UiSettingsToolsRouteImport } from './routes/ui.settings.tools'
 import { Route as UiSkillsIndexRouteImport } from './routes/ui.skills.index'
 import { Route as UiTeamsIndexRouteImport } from './routes/ui.teams.index'
 import { Route as UiTeamsDeletedRouteImport } from './routes/ui.teams.deleted'
@@ -94,11 +98,6 @@ const UiRequestsRoute = UiRequestsRouteImport.update({
   path: '/requests',
   getParentRoute: () => UiRoute,
 } as any)
-const UiSettingsRoute = UiSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => UiRoute,
-} as any)
 const UiAgentsIndexRoute = UiAgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
@@ -139,6 +138,31 @@ const UiSessionsSessionIdRoute = UiSessionsSessionIdRouteImport.update({
   path: '/sessions/$sessionId',
   getParentRoute: () => UiRoute,
 } as any)
+const UiSettingsIndexRoute = UiSettingsIndexRouteImport.update({
+  id: '/settings/',
+  path: '/settings/',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSettingsApprovalsRoute = UiSettingsApprovalsRouteImport.update({
+  id: '/settings/approvals',
+  path: '/settings/approvals',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSettingsGeneralRoute = UiSettingsGeneralRouteImport.update({
+  id: '/settings/general',
+  path: '/settings/general',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSettingsImprovementRoute = UiSettingsImprovementRouteImport.update({
+  id: '/settings/improvement',
+  path: '/settings/improvement',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSettingsToolsRoute = UiSettingsToolsRouteImport.update({
+  id: '/settings/tools',
+  path: '/settings/tools',
+  getParentRoute: () => UiRoute,
+} as any)
 const UiSkillsIndexRoute = UiSkillsIndexRouteImport.update({
   id: '/skills/',
   path: '/skills/',
@@ -167,17 +191,21 @@ export interface FileRoutesByFullPath {
   '/ui/graph': typeof UiGraphRoute
   '/ui/improvements': typeof UiImprovementsRoute
   '/ui/requests': typeof UiRequestsRoute
-  '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
   '/ui/agents/new': typeof UiAgentsNewRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
+  '/ui/settings/approvals': typeof UiSettingsApprovalsRoute
+  '/ui/settings/general': typeof UiSettingsGeneralRoute
+  '/ui/settings/improvement': typeof UiSettingsImprovementRoute
+  '/ui/settings/tools': typeof UiSettingsToolsRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/runs/': typeof UiRunsIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
+  '/ui/settings/': typeof UiSettingsIndexRoute
   '/ui/skills/': typeof UiSkillsIndexRoute
   '/ui/teams/': typeof UiTeamsIndexRoute
 }
@@ -192,17 +220,21 @@ export interface FileRoutesByTo {
   '/ui/graph': typeof UiGraphRoute
   '/ui/improvements': typeof UiImprovementsRoute
   '/ui/requests': typeof UiRequestsRoute
-  '/ui/settings': typeof UiSettingsRoute
   '/ui': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
   '/ui/agents/new': typeof UiAgentsNewRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
+  '/ui/settings/approvals': typeof UiSettingsApprovalsRoute
+  '/ui/settings/general': typeof UiSettingsGeneralRoute
+  '/ui/settings/improvement': typeof UiSettingsImprovementRoute
+  '/ui/settings/tools': typeof UiSettingsToolsRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents': typeof UiAgentsIndexRoute
   '/ui/channels': typeof UiChannelsIndexRoute
   '/ui/runs': typeof UiRunsIndexRoute
   '/ui/servers': typeof UiServersIndexRoute
   '/ui/sessions': typeof UiSessionsIndexRoute
+  '/ui/settings': typeof UiSettingsIndexRoute
   '/ui/skills': typeof UiSkillsIndexRoute
   '/ui/teams': typeof UiTeamsIndexRoute
 }
@@ -219,17 +251,21 @@ export interface FileRoutesById {
   '/ui/graph': typeof UiGraphRoute
   '/ui/improvements': typeof UiImprovementsRoute
   '/ui/requests': typeof UiRequestsRoute
-  '/ui/settings': typeof UiSettingsRoute
   '/ui/': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
   '/ui/agents/new': typeof UiAgentsNewRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
+  '/ui/settings/approvals': typeof UiSettingsApprovalsRoute
+  '/ui/settings/general': typeof UiSettingsGeneralRoute
+  '/ui/settings/improvement': typeof UiSettingsImprovementRoute
+  '/ui/settings/tools': typeof UiSettingsToolsRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/runs/': typeof UiRunsIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
+  '/ui/settings/': typeof UiSettingsIndexRoute
   '/ui/skills/': typeof UiSkillsIndexRoute
   '/ui/teams/': typeof UiTeamsIndexRoute
 }
@@ -247,17 +283,21 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/improvements'
     | '/ui/requests'
-    | '/ui/settings'
     | '/ui/'
     | '/ui/agents/$agentId'
     | '/ui/agents/new'
     | '/ui/sessions/$sessionId'
+    | '/ui/settings/approvals'
+    | '/ui/settings/general'
+    | '/ui/settings/improvement'
+    | '/ui/settings/tools'
     | '/ui/teams/deleted'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/runs/'
     | '/ui/servers/'
     | '/ui/sessions/'
+    | '/ui/settings/'
     | '/ui/skills/'
     | '/ui/teams/'
   fileRoutesByTo: FileRoutesByTo
@@ -272,17 +312,21 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/improvements'
     | '/ui/requests'
-    | '/ui/settings'
     | '/ui'
     | '/ui/agents/$agentId'
     | '/ui/agents/new'
     | '/ui/sessions/$sessionId'
+    | '/ui/settings/approvals'
+    | '/ui/settings/general'
+    | '/ui/settings/improvement'
+    | '/ui/settings/tools'
     | '/ui/teams/deleted'
     | '/ui/agents'
     | '/ui/channels'
     | '/ui/runs'
     | '/ui/servers'
     | '/ui/sessions'
+    | '/ui/settings'
     | '/ui/skills'
     | '/ui/teams'
   id:
@@ -298,17 +342,21 @@ export interface FileRouteTypes {
     | '/ui/graph'
     | '/ui/improvements'
     | '/ui/requests'
-    | '/ui/settings'
     | '/ui/'
     | '/ui/agents/$agentId'
     | '/ui/agents/new'
     | '/ui/sessions/$sessionId'
+    | '/ui/settings/approvals'
+    | '/ui/settings/general'
+    | '/ui/settings/improvement'
+    | '/ui/settings/tools'
     | '/ui/teams/deleted'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/runs/'
     | '/ui/servers/'
     | '/ui/sessions/'
+    | '/ui/settings/'
     | '/ui/skills/'
     | '/ui/teams/'
   fileRoutesById: FileRoutesById
@@ -404,13 +452,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiRequestsRouteImport
       parentRoute: typeof UiRoute
     }
-    '/ui/settings': {
-      id: '/ui/settings'
-      path: '/settings'
-      fullPath: '/ui/settings'
-      preLoaderRoute: typeof UiSettingsRouteImport
-      parentRoute: typeof UiRoute
-    }
     '/ui/agents/': {
       id: '/ui/agents/'
       path: '/agents'
@@ -467,6 +508,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiSessionsSessionIdRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/settings/': {
+      id: '/ui/settings/'
+      path: '/settings'
+      fullPath: '/ui/settings/'
+      preLoaderRoute: typeof UiSettingsIndexRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/settings/approvals': {
+      id: '/ui/settings/approvals'
+      path: '/settings/approvals'
+      fullPath: '/ui/settings/approvals'
+      preLoaderRoute: typeof UiSettingsApprovalsRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/settings/general': {
+      id: '/ui/settings/general'
+      path: '/settings/general'
+      fullPath: '/ui/settings/general'
+      preLoaderRoute: typeof UiSettingsGeneralRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/settings/improvement': {
+      id: '/ui/settings/improvement'
+      path: '/settings/improvement'
+      fullPath: '/ui/settings/improvement'
+      preLoaderRoute: typeof UiSettingsImprovementRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/settings/tools': {
+      id: '/ui/settings/tools'
+      path: '/settings/tools'
+      fullPath: '/ui/settings/tools'
+      preLoaderRoute: typeof UiSettingsToolsRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/skills/': {
       id: '/ui/skills/'
       path: '/skills'
@@ -501,17 +577,21 @@ interface UiRouteChildren {
   UiGraphRoute: typeof UiGraphRoute
   UiImprovementsRoute: typeof UiImprovementsRoute
   UiRequestsRoute: typeof UiRequestsRoute
-  UiSettingsRoute: typeof UiSettingsRoute
   UiIndexRoute: typeof UiIndexRoute
   UiAgentsAgentIdRoute: typeof UiAgentsAgentIdRoute
   UiAgentsNewRoute: typeof UiAgentsNewRoute
   UiSessionsSessionIdRoute: typeof UiSessionsSessionIdRoute
+  UiSettingsApprovalsRoute: typeof UiSettingsApprovalsRoute
+  UiSettingsGeneralRoute: typeof UiSettingsGeneralRoute
+  UiSettingsImprovementRoute: typeof UiSettingsImprovementRoute
+  UiSettingsToolsRoute: typeof UiSettingsToolsRoute
   UiTeamsDeletedRoute: typeof UiTeamsDeletedRoute
   UiAgentsIndexRoute: typeof UiAgentsIndexRoute
   UiChannelsIndexRoute: typeof UiChannelsIndexRoute
   UiRunsIndexRoute: typeof UiRunsIndexRoute
   UiServersIndexRoute: typeof UiServersIndexRoute
   UiSessionsIndexRoute: typeof UiSessionsIndexRoute
+  UiSettingsIndexRoute: typeof UiSettingsIndexRoute
   UiSkillsIndexRoute: typeof UiSkillsIndexRoute
   UiTeamsIndexRoute: typeof UiTeamsIndexRoute
 }
@@ -526,17 +606,21 @@ const UiRouteChildren: UiRouteChildren = {
   UiGraphRoute: UiGraphRoute,
   UiImprovementsRoute: UiImprovementsRoute,
   UiRequestsRoute: UiRequestsRoute,
-  UiSettingsRoute: UiSettingsRoute,
   UiIndexRoute: UiIndexRoute,
   UiAgentsAgentIdRoute: UiAgentsAgentIdRoute,
   UiAgentsNewRoute: UiAgentsNewRoute,
   UiSessionsSessionIdRoute: UiSessionsSessionIdRoute,
+  UiSettingsApprovalsRoute: UiSettingsApprovalsRoute,
+  UiSettingsGeneralRoute: UiSettingsGeneralRoute,
+  UiSettingsImprovementRoute: UiSettingsImprovementRoute,
+  UiSettingsToolsRoute: UiSettingsToolsRoute,
   UiTeamsDeletedRoute: UiTeamsDeletedRoute,
   UiAgentsIndexRoute: UiAgentsIndexRoute,
   UiChannelsIndexRoute: UiChannelsIndexRoute,
   UiRunsIndexRoute: UiRunsIndexRoute,
   UiServersIndexRoute: UiServersIndexRoute,
   UiSessionsIndexRoute: UiSessionsIndexRoute,
+  UiSettingsIndexRoute: UiSettingsIndexRoute,
   UiSkillsIndexRoute: UiSkillsIndexRoute,
   UiTeamsIndexRoute: UiTeamsIndexRoute,
 }

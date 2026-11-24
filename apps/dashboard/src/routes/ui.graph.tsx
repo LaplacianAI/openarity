@@ -638,7 +638,7 @@ function Canvas({
   }, [ready, selected, graph]);
 
   return (
-    <div className="relative h-[calc(100dvh-15rem)] min-h-[440px] overflow-hidden rounded-md border border-border bg-card">
+    <div className="relative h-[calc(100dvh-16rem)] min-h-[440px] overflow-hidden rounded-md border border-border bg-card">
       <div ref={host} className="absolute inset-0" data-testid="graph-canvas" />
       {failed ? (
         <p className="absolute inset-0 flex items-center justify-center p-6 text-sm text-destructive">
@@ -796,7 +796,7 @@ function Selection({
       ) : null}
       {node.id === BUILT_IN_HUB ? (
         <Link
-          to="/ui/settings"
+          to="/ui/settings/general"
           className="inline-block text-primary underline-offset-4 hover:underline"
         >
           Choose the hub in team settings

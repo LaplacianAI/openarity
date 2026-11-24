@@ -13,6 +13,9 @@ const router = createRouter({
   routeTree,
   defaultPreload: "intent",
   scrollRestoration: true,
+  // From a tablet up the sheet scrolls, not the window: a new page opens at
+  // the sheet's top, and Back finds it where it was.
+  scrollToTopSelectors: ['[data-scroll-restoration-id="sheet"]'],
 });
 
 declare module "@tanstack/react-router" {
