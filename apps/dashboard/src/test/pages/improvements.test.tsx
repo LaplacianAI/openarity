@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { Improvement } from "@/api/types";
@@ -631,6 +631,14 @@ describe("tried on past runs", () => {
     status: "done" as const,
     original,
     replayed,
+    outcome:
+      original === "bad"
+        ? replayed === "good"
+          ? ("fixed" as const)
+          : ("still_bad" as const)
+        : replayed === "good"
+          ? ("kept" as const)
+          : ("broke" as const),
     request: `request ${id}`,
     withheld: false,
     diverged: false,
@@ -640,6 +648,41 @@ describe("tried on past runs", () => {
     before: { tokens: 18_400, steps: 9, work_ms: 41_000 },
     after: { tokens: 12_000, steps: 5, work_ms: 20_000 },
     ...extra,
+  });
+
+  it("reads a change again while it is being tried, until its tries are done", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let finished = false;
+    const trying = proposal("p1", {
+      replay: {
+        status: "trying",
+        runs: [
+          runOf("r1", "bad", "good"),
+          { ...runOf("r2", "good", "good"), status: "queued", outcome: null, after: null },
+        ],
+      },
+    });
+    const done = proposal("p1", {
+      replay: { status: "done", runs: [runOf("r1", "bad", "good"), runOf("r2", "good", "good")] },
+    });
+    brain({
+      ...team(APPROVER),
+      ...agents,
+      [LIST]: () => ({ body: { items: [finished ? done : trying] } }),
+    });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    const region = () => within(card).getByRole("region", { name: "Tried on past runs" });
+    expect(region()).toHaveTextContent("Trying on past runs… 1 of 2 tried");
+
+    finished = true;
+    await vi.advanceTimersByTimeAsync(6_000);
+    await waitFor(() => expect(region()).toHaveTextContent("Tried on 2 past runs"));
   });
 
   it("says how a waiting change fared, warns when one that went well now goes wrong, and shows a try's steps", async () => {
@@ -676,11 +719,10 @@ describe("tried on past runs", () => {
     const card = (await screen.findByText(/Closed the ticket/)).closest(
       "[data-improvement]",
     ) as HTMLElement;
-    expect(
-      within(within(card).getByRole("list", { name: "What kind of change" })).getByText(
-        "Worse on past runs",
-      ),
-    ).toBeInTheDocument();
+    // A result, beside the status: not among the kinds of change.
+    expect(within(card).getByText("Worse on past runs")).toBeInTheDocument();
+    const kinds = within(card).queryByRole("list", { name: "What kind of change" });
+    expect(kinds?.textContent ?? "").not.toContain("Worse on past runs");
     const tried = within(card).getByRole("region", { name: "Tried on past runs" });
     expect(tried).toHaveTextContent(
       "Tried on 3 past runs: 1 that went wrong now done · 1 that went well still do · 1 that went well now go wrong",

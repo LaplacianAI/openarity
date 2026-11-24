@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/proposals"
@@ -24,11 +27,14 @@ type CandidateReads interface {
 }
 
 // candidate is the store a replay is built from: the proposing agent as the
-// proposal would leave it, everything else as it is. It never writes; the
-// stored agent, its grants and its skills are untouched by a replay.
+// proposal would leave it, everything else as it is, and the conversation
+// as it was when the past run began. It never writes; the stored agent, its
+// grants and its skills are untouched by a replay. It reads the tried
+// skill's files too, as the runtime's Objects.
 type candidate struct {
 	runtime.BuildStore
 	reads   CandidateReads
+	objects runtime.Objects
 	teamID  uuid.UUID
 	agentID uuid.UUID
 	// agent is the agent as tried; nil reads it as stored.
@@ -39,23 +45,28 @@ type candidate struct {
 	skillID  uuid.UUID
 	skill    *proposals.SkillState
 	newSkill bool
-	// before cuts the conversation's history to what was said before the
-	// past run began.
-	before int64
-	// texts are the tried skill's files that are not stored, by the key its
-	// file rows name them with.
-	texts map[string]string
+	// before cuts the conversation's history, and filesBefore its files, to
+	// what was there before the past run began.
+	before      int64
+	filesBefore time.Time
 }
 
-// candidateOf is the store for trying p's after on its agent.
-func candidateOf(base runtime.BuildStore, reads CandidateReads, p db.ImprovementProposal, before int64) (*candidate, error) {
+// candidateOf is the store for trying p's after on its agent, in run's
+// conversation as it was when run began at seq before.
+func candidateOf(base runtime.BuildStore, reads CandidateReads, objects runtime.Objects,
+	p db.ImprovementProposal, run db.Run, before int64,
+) (*candidate, error) {
 	var after proposals.Snapshot
 	if err := json.Unmarshal(p.After, &after); err != nil {
 		return nil, fmt.Errorf("reading proposal %s's change: %w", p.ID, err)
 	}
+	began := run.CreatedAt
+	if run.StartedAt != nil {
+		began = *run.StartedAt
+	}
 	c := &candidate{
-		BuildStore: base, reads: reads, teamID: p.TeamID, agentID: p.AgentID,
-		agent: after.Agent, skill: after.Skill, before: before, texts: map[string]string{},
+		BuildStore: base, reads: reads, objects: objects, teamID: p.TeamID, agentID: p.AgentID,
+		agent: after.Agent, skill: after.Skill, before: before, filesBefore: began,
 	}
 	switch {
 	case after.Skill == nil:
@@ -79,6 +90,8 @@ func (c *candidate) GetAgent(ctx context.Context, id uuid.UUID) (db.Agent, error
 	if err != nil {
 		return db.Agent{}, fmt.Errorf("reading the tried agent: %w", err)
 	}
+	// Every column Columns gives but the team and the kind, which a change
+	// does not move: TestEveryTriedColumnIsCopied fails on one left out.
 	row.Name, row.Description, row.Instructions = p.Name, p.Description, p.Instructions
 	row.ModelName, row.MaxTokens, row.Temperature = p.ModelName, p.MaxTokens, p.Temperature
 	row.Pattern, row.MaxSteps, row.SteerContinuations = p.Pattern, p.MaxSteps, p.SteerContinuations
@@ -215,10 +228,10 @@ func (c *candidate) ListSkillFiles(ctx context.Context, skillID uuid.UUID) ([]db
 		row := db.SkillFile{SkillID: skillID, TeamID: c.teamID, Path: f.Path, Sha256: sha, MediaType: f.MediaType}
 		switch kept, ok := stored[f.Path+"\x00"+f.SHA256]; {
 		case f.Text != nil:
-			// Not stored until the change is applied: read from its text.
-			row.ObjectKey = "replay/" + skillID.String() + "/" + f.SHA256
+			// Not stored until the change is applied: Get reads it from its
+			// text.
+			row.ObjectKey = triedKey(skillID, f.SHA256)
 			row.Size = int64(len(*f.Text))
-			c.texts[row.ObjectKey] = *f.Text
 		case ok:
 			row = kept
 		default:
@@ -233,4 +246,41 @@ func (c *candidate) ListSkillFiles(ctx context.Context, skillID uuid.UUID) ([]db
 func (c *candidate) ListSessionHistory(ctx context.Context, arg db.ListSessionHistoryParams) ([]db.ListSessionHistoryRow, error) {
 	arg.Before = min(arg.Before, c.before)
 	return c.BuildStore.ListSessionHistory(ctx, arg)
+}
+
+// triedKey names a tried skill's file that is not stored: no stored key
+// begins so.
+func triedKey(skillID uuid.UUID, sha string) string { return "replay/" + skillID.String() + "/" + sha }
+
+// Get reads a tried skill's file that is not stored from the proposal's
+// text, and any other object from the store.
+func (c *candidate) Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error) {
+	if c.skill != nil && strings.HasPrefix(key, "replay/") {
+		for _, f := range c.skill.Files {
+			if f.Text != nil && key == triedKey(c.skillID, f.SHA256) {
+				return []byte(*f.Text), nil
+			}
+		}
+		return nil, fmt.Errorf("the tried skill has no file %s", key)
+	}
+	return c.objects.Get(ctx, teamID, key)
+}
+
+// ListAttachmentsBySession lists only the files sent before the past run
+// began.
+func (c *candidate) ListAttachmentsBySession(ctx context.Context, arg db.ListAttachmentsBySessionParams) ([]db.Attachment, error) {
+	if !arg.UseCursor || !arg.AfterCreatedAt.Before(c.filesBefore) {
+		arg.UseCursor, arg.AfterCreatedAt, arg.AfterID = true, c.filesBefore, uuid.Nil
+	}
+	return c.BuildStore.ListAttachmentsBySession(ctx, arg)
+}
+
+// GetAttachmentInSession reads a file only when it was sent before the past
+// run began: one sent since is not there.
+func (c *candidate) GetAttachmentInSession(ctx context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error) {
+	row, err := c.BuildStore.GetAttachmentInSession(ctx, arg)
+	if err == nil && !row.CreatedAt.Before(c.filesBefore) {
+		return db.Attachment{}, pgx.ErrNoRows
+	}
+	return row, err
 }

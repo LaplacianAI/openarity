@@ -16,15 +16,25 @@ import (
 
 // The state of a proposal's tries on past runs, as a whole.
 const (
-	// replayOff: it was never tried, as its team had trying off when it was
-	// proposed.
+	// replayOff: it was never tried, as its team had trying off when its
+	// runs would have been chosen.
 	replayOff = "off"
 	// replayTrying: a try is still to run.
 	replayTrying = "trying"
 	// replayDone: at least one try came to an outcome.
 	replayDone = "done"
-	// replayNone: none could be tried, or every try failed.
+	// replayNone: none of its runs could be tried, or every try failed.
 	replayNone = "none"
+)
+
+// What a try made of a past run, decided once here so every reader tells
+// it the same way.
+const (
+	outcomeFixed    = "fixed"     // it went wrong, and now goes well
+	outcomeKept     = "kept"      // it went well, and still does
+	outcomeBroke    = "broke"     // it went well, and now goes wrong
+	outcomeStillBad = "still_bad" // it went wrong, and still does
+	outcomeUnclear  = "unclear"   // the try came to no outcome that could be told
 )
 
 // replayView is how a proposal fared on past runs before it was decided.
@@ -52,6 +62,9 @@ type replayRunView struct {
 	Error    *string `json:"error"`
 	Original string  `json:"original"`
 	Replayed *string `json:"replayed"`
+	// Outcome is the run's outcome beside the try's, for a try that is
+	// done; nil for any other.
+	Outcome  *string `json:"outcome"`
 	Verdict  *string `json:"verdict"`
 	Why      *string `json:"why"`
 	Request  *string `json:"request"`
@@ -69,7 +82,11 @@ type replayRunView struct {
 }
 
 // replays reads the tries of a page's proposals at once, by proposal.
-func (h *handler) replays(r *http.Request, u *auth.User, teamID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]*replayView, error) {
+func (h *handler) replays(r *http.Request, u *auth.User, teamID uuid.UUID, proposals []db.ImprovementProposal) (map[uuid.UUID]*replayView, error) {
+	ids := make([]uuid.UUID, len(proposals))
+	for i, p := range proposals {
+		ids[i] = p.ID
+	}
 	rows, err := h.reads.ListProposalReplays(r.Context(), ids)
 	if err != nil {
 		return nil, err
@@ -79,8 +96,10 @@ func (h *handler) replays(r *http.Request, u *auth.User, teamID uuid.UUID, ids [
 		return nil, err
 	}
 	out := make(map[uuid.UUID]*replayView, len(ids))
-	for _, id := range ids {
-		out[id] = &replayView{Status: replayOff, Runs: []replayRunView{}}
+	chosen := make(map[uuid.UUID]bool, len(ids))
+	for _, p := range proposals {
+		out[p.ID] = &replayView{Status: replayOff, Runs: []replayRunView{}}
+		chosen[p.ID] = p.ReplayChosenAt != nil
 	}
 	for _, row := range rows {
 		v := out[row.ProposalID]
@@ -89,8 +108,8 @@ func (h *handler) replays(r *http.Request, u *auth.User, teamID uuid.UUID, ids [
 		}
 		v.Runs = append(v.Runs, replayRunOf(row, readable[row.SourceRunID]))
 	}
-	for _, v := range out {
-		v.Status = replayStatus(v.Runs)
+	for id, v := range out {
+		v.Status = replayStatus(v.Runs, chosen[id])
 	}
 	return out, nil
 }
@@ -128,9 +147,17 @@ func replayRunOf(row db.ListProposalReplaysRow, session *uuid.UUID) replayRunVie
 	}
 	if row.Status == "done" {
 		v.After = &replayCost{Tokens: row.Spent, Steps: row.Steps, WorkMS: row.WorkMs}
+		o := outcomeOf(row.Original, row.Replayed)
+		v.Outcome = &o
 	}
 	if session == nil {
+		// What failed may quote the conversation: only that it failed is
+		// said.
 		v.Withheld = true
+		if v.Error != nil {
+			withheld := "the try failed"
+			v.Error = &withheld
+		}
 		return v
 	}
 	request := row.Request
@@ -138,8 +165,28 @@ func replayRunOf(row db.ListProposalReplaysRow, session *uuid.UUID) replayRunVie
 	return v
 }
 
-func replayStatus(runs []replayRunView) string {
+func outcomeOf(original string, replayed *string) string {
+	switch {
+	case replayed == nil || (*replayed != "good" && *replayed != "bad"):
+		return outcomeUnclear
+	case original == "bad" && *replayed == "good":
+		return outcomeFixed
+	case original == "good" && *replayed == "good":
+		return outcomeKept
+	case original == "good":
+		return outcomeBroke
+	default:
+		return outcomeStillBad
+	}
+}
+
+// replayStatus is a proposal's tries as a whole. One with none was either
+// proposed while trying was off, or had none of its runs fit to try.
+func replayStatus(runs []replayRunView, chosen bool) string {
 	if len(runs) == 0 {
+		if chosen {
+			return replayNone
+		}
 		return replayOff
 	}
 	done := false
@@ -158,8 +205,8 @@ func replayStatus(runs []replayRunView) string {
 }
 
 // withReplay adds a proposal's tries to its view.
-func (h *handler) withReplay(r *http.Request, u *auth.User, v *view, teamID uuid.UUID) error {
-	byID, err := h.replays(r, u, teamID, []uuid.UUID{v.ID})
+func (h *handler) withReplay(r *http.Request, u *auth.User, v *view, p db.ImprovementProposal) error {
+	byID, err := h.replays(r, u, p.TeamID, []db.ImprovementProposal{p})
 	if err != nil {
 		return err
 	}

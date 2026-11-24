@@ -33,6 +33,7 @@ type replayRunView struct {
 	Error    *string   `json:"error" yaml:"error"`
 	Original string    `json:"original" yaml:"original"`
 	Replayed *string   `json:"replayed" yaml:"replayed"`
+	Outcome  *string   `json:"outcome" yaml:"outcome"`
 	Verdict  *string   `json:"verdict" yaml:"verdict"`
 	Why      *string   `json:"why" yaml:"why"`
 	Request  *string   `json:"request" yaml:"request"`
@@ -62,6 +63,10 @@ func replayOf(r *client.ImprovementReplay) *replayView {
 			s := string(*run.Replayed)
 			rv.Replayed = &s
 		}
+		if run.Outcome != nil {
+			o := string(*run.Outcome)
+			rv.Outcome = &o
+		}
 		if run.After != nil {
 			rv.After = &costView{Tokens: run.After.Tokens, Steps: run.After.Steps, WorkMS: run.After.WorkMs}
 		}
@@ -70,32 +75,49 @@ func replayOf(r *client.ImprovementReplay) *replayView {
 	return v
 }
 
+// What a done try made of its run, as the brain decides it.
+const (
+	outcomeFixed    = string(client.Fixed)
+	outcomeKept     = string(client.Kept)
+	outcomeBroke    = string(client.Broke)
+	outcomeStillBad = string(client.StillBad)
+)
+
 // outcomeWords is what a try came to beside its run: "now done" for one
 // that went wrong and now goes well, "now goes wrong" for the reverse.
 func outcomeWords(r replayRunView) string {
-	switch {
-	case r.Status == "queued" || r.Status == "trying":
+	switch r.Status {
+	case "queued", "trying":
 		return "still to try"
-	case r.Status == "skipped":
+	case "skipped":
 		return "not tried"
-	case r.Status == "failed":
+	case "failed":
 		return "the try failed"
-	case r.Replayed == nil || *r.Replayed == "cant_tell":
-		return "could not tell"
-	case r.Original == "bad" && *r.Replayed == "good":
-		return "went wrong, now done"
-	case r.Original == "bad":
-		return "went wrong, still does"
-	case *r.Replayed == "good":
-		return "went well, still does"
 	}
-	return "went well, now goes wrong"
+	switch outcome(r) {
+	case outcomeFixed:
+		return "went wrong, now done"
+	case outcomeStillBad:
+		return "went wrong, still does"
+	case outcomeKept:
+		return "went well, still does"
+	case outcomeBroke:
+		return "went well, now goes wrong"
+	}
+	return "could not tell"
+}
+
+func outcome(r replayRunView) string {
+	if r.Outcome == nil {
+		return ""
+	}
+	return *r.Outcome
 }
 
 // worse is whether a run that went well goes wrong with the change.
 func (v *replayView) worse() bool {
 	for _, r := range v.Runs {
-		if r.Status == "done" && r.Original == "good" && r.Replayed != nil && *r.Replayed == "bad" {
+		if outcome(r) == outcomeBroke {
 			return true
 		}
 	}
@@ -103,45 +125,42 @@ func (v *replayView) worse() bool {
 }
 
 // summary is the tries in one line: "tried on 4 past runs: 2 that went
-// wrong now done · 2 that went well still do".
+// wrong now done · 2 that went well still do"; while some are still to run,
+// how many of them are done.
 func (v *replayView) summary() string {
-	switch v.Status {
-	case "off":
-		return "not tried: trying on past runs was off when it was proposed"
-	case "trying":
-		return "trying on past runs…"
-	case "none":
-		return "could not be tried on past runs"
-	}
-	var fixed, stillBad, stillGood, broke, unsure, tried int
+	tried, total := 0, 0
+	counts := map[string]int{}
 	for _, r := range v.Runs {
+		if r.Status != "skipped" {
+			total++
+		}
 		if r.Status != "done" {
 			continue
 		}
 		tried++
-		switch outcomeWords(r) {
-		case "went wrong, now done":
-			fixed++
-		case "went wrong, still does":
-			stillBad++
-		case "went well, still does":
-			stillGood++
-		case "went well, now goes wrong":
-			broke++
-		default:
-			unsure++
+		counts[outcome(r)]++
+	}
+	switch v.Status {
+	case "off":
+		return "not tried: trying on past runs was off"
+	case "trying":
+		if tried > 0 {
+			return fmt.Sprintf("trying on past runs… %d of %d tried", tried, total)
 		}
+		return "trying on past runs…"
+	case "none":
+		return "none of its past runs could be tried"
 	}
 	var parts []string
 	for _, p := range []struct {
 		n    int
 		what string
 	}{
-		{fixed, "that went wrong now done"},
-		{stillBad, "that went wrong still do"},
-		{stillGood, "that went well still do"},
-		{broke, "that went well now go wrong"},
-		{unsure, "could not tell"},
+		{counts[outcomeFixed], "that went wrong now done"},
+		{counts[outcomeStillBad], "that went wrong still do"},
+		{counts[outcomeKept], "that went well still do"},
+		{counts[outcomeBroke], "that went well now go wrong"},
+		{tried - counts[outcomeFixed] - counts[outcomeStillBad] - counts[outcomeKept] - counts[outcomeBroke], "could not tell"},
 	} {
 		if p.n > 0 {
 			parts = append(parts, strconv.Itoa(p.n)+" "+p.what)
@@ -170,7 +189,8 @@ func costLine(r replayRunView) string {
 // replayRows prints the tries under a proposal: the summary, then one row a
 // past run.
 func replayRows(opts *cli.Options, table *printer.Table, v *replayView) {
-	if v == nil {
+	// A team that has trying off sees nothing of it.
+	if v == nil || v.Status == "off" {
 		return
 	}
 	head := v.summary()

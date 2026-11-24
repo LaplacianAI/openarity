@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -75,7 +76,19 @@ type world struct {
 	agent    uuid.UUID
 	runner   *fakeRunner
 	judge    *fakeJudge
+	objects  objectsByKey
 	replays  *Replays
+}
+
+// objectsByKey is a store of objects by key, for skill files.
+type objectsByKey map[string]string
+
+func (o objectsByKey) Get(_ context.Context, _ uuid.UUID, key string) ([]byte, error) {
+	v, ok := o[key]
+	if !ok {
+		return nil, fmt.Errorf("no object %s", key)
+	}
+	return []byte(v), nil
 }
 
 func newWorld(t *testing.T) *world {
@@ -114,7 +127,9 @@ func newWorld(t *testing.T) *world {
 	w.exec(t, `INSERT INTO team_settings (team_id, model_name, model_max_tokens, improvement, improvement_since,
 		improvement_replay)
 		VALUES ($1, 'team/model', 2000, true, now() - interval '30 days', true)`, w.team)
-	w.replays = New(s, w.sessions, w.runner, w.judge)
+	w.objects = objectsByKey{"objects/kept": "kept"}
+	w.replays = New(s, w.objects, w.sessions, w.runner, w.judge)
+	w.replays.pause = 0
 	return w
 }
 
@@ -304,10 +319,38 @@ func TestNothingIsChosenWithReplayOffOrDecided(t *testing.T) {
 	if err := w.replays.Choose(t.Context(), p, w.team); err != nil || len(w.tried(t, p)) != 0 {
 		t.Errorf("with replay off: %v, %v", err, w.tried(t, p))
 	}
+	if w.chosen(t, p) {
+		t.Error("a proposal chosen for with replay off reads as one none could be tried")
+	}
 	w.exec(t, `UPDATE team_settings SET improvement_replay = true WHERE team_id = $1`, w.team)
 	w.exec(t, `UPDATE improvement_proposals SET status = 'rejected', decided_at = now() WHERE id = $1`, p)
 	if err := w.replays.Choose(t.Context(), p, w.team); err != nil || len(w.tried(t, p)) != 0 {
 		t.Errorf("decided: %v, %v", err, w.tried(t, p))
+	}
+	if !w.chosen(t, p) {
+		t.Error("a proposal decided before its runs were chosen is not told from one proposed with replay off")
+	}
+}
+
+func (w *world) chosen(t *testing.T, proposal uuid.UUID) bool {
+	t.Helper()
+	var at *time.Time
+	w.scan(t, &at, `SELECT replay_chosen_at FROM improvement_proposals WHERE id = $1`, proposal)
+	return at != nil
+}
+
+// A proposal none of whose runs fit is marked chosen, with no tries: told
+// apart from one proposed with replay off.
+func TestAProposalWithNoRunToTryIsMarked(t *testing.T) {
+	w := newWorld(t)
+	// Its one run's outcome could not be told, so there is nothing to
+	// compare a try with, and the agent has no good run.
+	p := w.proposal(t, w.past(t, w.session(t), "1 hour", "cant_tell"))
+	if err := w.replays.Choose(t.Context(), p, w.team); err != nil || len(w.tried(t, p)) != 0 {
+		t.Fatalf("choose: %v, %v", err, w.tried(t, p))
+	}
+	if !w.chosen(t, p) {
+		t.Error("not marked chosen")
 	}
 }
 
@@ -440,9 +483,15 @@ func TestTriesStop(t *testing.T) {
 			if !Stopped(first) {
 				t.Fatalf("try = %v, want the tries stopped", first)
 			}
-			for _, r := range w.tried(t, p)[len(w.tried(t, p))-1:] {
+			for i, r := range w.tried(t, p) {
+				if tc.why == whyDailyCap && i == 0 {
+					if r.status != "done" {
+						t.Errorf("the day's try %+v, want done", r)
+					}
+					continue
+				}
 				if r.status != "skipped" || r.skipWhy == nil || *r.skipWhy != tc.why {
-					t.Errorf("tried %+v, want skipped: %s", r, tc.why)
+					t.Errorf("tried %d %+v, want skipped: %s", i, r, tc.why)
 				}
 			}
 			if queued, _ := w.replays.Queued(t.Context(), p); len(queued) != 0 {
@@ -490,6 +539,176 @@ func TestATryReadsOnlyThePast(t *testing.T) {
 	for _, r := range rows {
 		if r.Seq >= 5 {
 			t.Errorf("read message %d, said after the run began", r.Seq)
+		}
+	}
+}
+
+// Two workers starting a team's tries at once cannot both take the last of
+// the day: the count and the claim hold the team's lock.
+func TestTheDailyCapHoldsAcrossWorkers(t *testing.T) {
+	w := newWorld(t)
+	var runs []uuid.UUID
+	for i := range 6 {
+		runs = append(runs, w.past(t, w.session(t), fmt.Sprintf("%d hours", i+1), "not_done"))
+	}
+	var rows []db.StartReplayParams
+	for _, run := range runs {
+		p := w.proposal(t, run)
+		if err := w.replays.Choose(t.Context(), p, w.team); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, db.StartReplayParams{ProposalID: p, SourceRunID: run, TeamID: w.team, Since: midnight(time.Now()), Daily: 1})
+	}
+	var wg sync.WaitGroup
+	started := make([]int64, len(rows))
+	errs := make([]error, len(rows))
+	for i, row := range rows {
+		wg.Go(func() { started[i], errs[i] = w.store.ClaimReplay(t.Context(), row) })
+	}
+	wg.Wait()
+	total := int64(0)
+	for i := range rows {
+		if errs[i] != nil {
+			t.Fatal(errs[i])
+		}
+		total += started[i]
+	}
+	if total != 1 {
+		t.Errorf("%d tries began, want the day's one", total)
+	}
+}
+
+// failingFinish fails its first FinishReplay.
+type failingFinish struct {
+	Store
+	mu     sync.Mutex
+	failed bool
+}
+
+func (f *failingFinish) FinishReplay(ctx context.Context, arg db.FinishReplayParams) error {
+	f.mu.Lock()
+	first := !f.failed
+	f.failed = true
+	f.mu.Unlock()
+	if first {
+		return errors.New("the store blinked")
+	}
+	return f.Store.FinishReplay(ctx, arg)
+}
+
+// A write that fails once is made again, and the model is not run again for
+// it.
+func TestAFailedWriteDoesNotRunTheModelAgain(t *testing.T) {
+	w := newWorld(t)
+	run := w.past(t, w.session(t), "1 hour", "not_done")
+	p := w.proposal(t, run)
+	if err := w.replays.Choose(t.Context(), p, w.team); err != nil {
+		t.Fatal(err)
+	}
+	w.replays.store = &failingFinish{Store: w.store}
+	if err := w.replays.Try(t.Context(), p, w.team, run); err != nil {
+		t.Fatalf("try: %v", err)
+	}
+	if n := w.runner.tries(); n != 1 {
+		t.Errorf("the model ran %d times, want once", n)
+	}
+	if got := w.tried(t, p); len(got) != 1 || got[0].status != "done" {
+		t.Errorf("tried %+v, want done", got)
+	}
+}
+
+// A try whose error came back is failed, whatever it was at, so it is not
+// left trying.
+func TestAFailedTryIsNotLeftTrying(t *testing.T) {
+	w := newWorld(t)
+	run := w.past(t, w.session(t), "1 hour", "not_done")
+	p := w.proposal(t, run)
+	if err := w.replays.Choose(t.Context(), p, w.team); err != nil {
+		t.Fatal(err)
+	}
+	w.exec(t, `UPDATE improvement_replays SET status = 'trying', started_at = now() WHERE proposal_id = $1`, p)
+	if err := w.replays.Fail(t.Context(), p, run, errors.New("lost the store")); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.tried(t, p); len(got) != 1 || got[0].status != "failed" {
+		t.Errorf("tried %+v, want failed", got)
+	}
+}
+
+// A run's calls are read past one page of its events.
+func TestEveryPageOfARunsEventsIsRead(t *testing.T) {
+	w := newWorld(t)
+	run := w.past(t, w.session(t), "1 hour", "done")
+	w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload)
+		SELECT $1, 1000 + g, 'step', '{"step":1}' FROM generate_series(1, $2::int) g`, run, eventsPage)
+	w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload) VALUES
+		($1, 5000, 'tool_call', '{"id":"late","name":"crm__lookup","arguments":"{}"}'),
+		($1, 5001, 'tool_result', '{"id":"late","name":"crm__lookup","output":"found"}')`, run)
+	got, err := w.replays.recorded(t.Context(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 || got[len(got)-1].Output != "found" {
+		t.Errorf("recorded %+v; want the call past the first page", got)
+	}
+}
+
+func TestClipKeepsWholeRunes(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"abc", 5, "abc"},
+		{"abcdef", 3, "abc"},
+		{"aé", 2, "a"},            // é is two bytes: not cut inside
+		{"a\xffbcd", 3, "a\xffb"}, // a bad byte mid-text keeps what follows
+	} {
+		if got := clip(tc.in, tc.n); got != tc.want {
+			t.Errorf("clip(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+		}
+	}
+}
+
+func TestATraceKeepsHowALongTryBegan(t *testing.T) {
+	calls := make([]runtime.Served, 400)
+	for i := range calls {
+		calls[i] = runtime.Served{Name: fmt.Sprintf("c%d", i), How: runtime.ServedRecorded, Output: strings.Repeat("x", 1000)}
+	}
+	b := traceOf(calls)
+	var kept []runtime.Served
+	if err := json.Unmarshal(b, &kept); err != nil || len(b) > traceBytes || len(kept) == 0 || kept[0].Name != "c0" {
+		t.Errorf("kept %d calls in %d bytes (%v)", len(kept), len(b), err)
+	}
+	if string(traceOf(nil)) != "null" && string(traceOf(nil)) != "[]" {
+		t.Errorf("no calls = %s", traceOf(nil))
+	}
+}
+
+func TestAJudgeReadsHowEachCallWasServed(t *testing.T) {
+	lines := judgeTrace(runtime.Replayed{Tools: []string{"crm__lookup", "mail__send"}, Calls: []runtime.Served{
+		{Name: "crm__lookup", How: runtime.ServedRecorded, Arguments: "{}", Output: "Ada"},
+		{Name: "mail__send", How: runtime.ServedNotMade, Arguments: "{}"},
+	}})
+	want := []string{
+		"the agent started with tools [crm__lookup, mail__send]",
+		"  the agent calls crm__lookup({}) [as in the past run]",
+		"  crm__lookup returned: Ada",
+		"  the agent calls mail__send({}) [not made in the replay]",
+	}
+	if !slices.Equal(lines, want) {
+		t.Errorf("trace %q, want %q", lines, want)
+	}
+}
+
+func TestAReplayInputIsProposalAndTeam(t *testing.T) {
+	p, team := uuid.New(), uuid.New()
+	if gp, gt, err := parseInput(input(p, team)); err != nil || gp != p || gt != team {
+		t.Errorf("parse = %v, %v, %v", gp, gt, err)
+	}
+	for _, bad := range []string{"", "nope", uuid.NewString(), "x:" + uuid.NewString()} {
+		if _, _, err := parseInput(bad); err == nil {
+			t.Errorf("parseInput(%q) took it", bad)
 		}
 	}
 }

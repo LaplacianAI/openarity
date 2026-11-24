@@ -135,12 +135,14 @@ margin applies to changes still being watched.
 
 With **Try each change on past runs first** on (off until a team turns it on),
 each proposal is tried on a few of its agent's past runs before anyone decides
-on it: half the runs it is meant to fix, half recent runs that went well, one a
-conversation. A try acts on nothing. A call the past run made, with the same
+on it: half the runs it was proposed from, half recent runs that went well, one
+a conversation. A try acts on nothing. A call the past run made, with the same
 arguments, gets the result it got then; a new call runs for real only when it
-only reads (a web search or fetch, the graph, the conversation before the run,
-a trusted server's read-only tool); anything else is skipped, and the try says
-it went a different way. The judge decides each try as it decided the run. The
+only reads (the graph, the conversation and its files as they were before the
+run, a trusted server's read-only tool, and a web search or fetch when a member
+was there for the run; for a guest's run, or one nobody was there for, the web
+is skipped too); anything else is skipped, and the try says it went a different
+way. The judge decides each try as it decided the run. The
 card's **Tried on past runs** block shows each run before and after, with its
 tokens, steps and time, and the steps of a try behind **See the steps**;
 **Worse on past runs** marks a change under which a run that went well now goes

@@ -332,6 +332,16 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
           {item.skill ? ` of ${item.skill.name}` : ""} · {scopeWords(item.scope)}
         </span>
         {item.status !== "waiting" ? <StatusPill status={item.status} /> : null}
+        {worse ? (
+          // What trying it came to, not a kind of change: beside its status.
+          <span
+            data-worse
+            className="inline-flex items-center gap-1 self-center rounded-full px-2 py-0.5 text-xs text-warning shadow-[inset_0_0_0_1px_var(--sheet-edge)]"
+          >
+            <TriangleAlert aria-hidden className="size-3 shrink-0" />
+            Worse on past runs
+          </span>
+        ) : null}
         {decidedAt ? (
           <time dateTime={decidedAt} className="text-xs text-muted-foreground">
             {absoluteTime(decidedAt)}
@@ -348,17 +358,8 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
         </p>
       ) : null}
 
-      {item.marks.length > 0 || item.reaches.length > 0 || saves.length > 0 || worse ? (
+      {item.marks.length > 0 || item.reaches.length > 0 || saves.length > 0 ? (
         <ul aria-label="What kind of change" className="flex flex-wrap gap-1.5">
-          {worse ? (
-            <li
-              data-worse
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs text-warning shadow-[inset_0_0_0_1px_var(--sheet-edge)]"
-            >
-              <TriangleAlert aria-hidden className="size-3 shrink-0" />
-              Worse on past runs
-            </li>
-          ) : null}
           {saves.map((v) => {
             const Icon = v === "cost" ? Coins : Timer;
             return (

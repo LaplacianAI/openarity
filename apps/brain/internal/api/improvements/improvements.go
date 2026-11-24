@@ -204,7 +204,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	for _, w := range watches {
 		byID[w.ProposalID] = w
 	}
-	tried, err := h.replays(r, u, teamID, ids)
+	tried, err := h.replays(r, u, teamID, page.Items)
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to read the improvements' tries on past runs", err)
 		return
@@ -241,7 +241,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to read the improvement's watch", err)
 		return
 	}
-	if err := h.withReplay(r, u, &v, row.TeamID); err != nil {
+	if err := h.withReplay(r, u, &v, row); err != nil {
 		api.Fail(w, h.logger, u, "failed to read the improvement's tries on past runs", err)
 		return
 	}

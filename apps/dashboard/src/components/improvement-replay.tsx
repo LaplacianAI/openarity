@@ -14,6 +14,15 @@ import {
 } from "@/lib/improvements";
 import { cn } from "@/lib/utils";
 
+/** How much of a call's output a step shows. */
+const OUTPUT_SHOWN = 200;
+
+/** s cut to n characters (never inside one), with an ellipsis when it was cut. */
+function clipped(s: string, n: number): string {
+  const chars = Array.from(s);
+  return chars.length <= n ? s : `${chars.slice(0, n).join("")}…`;
+}
+
 const TONE = {
   good: "text-success",
   bad: "text-warning",
@@ -56,7 +65,10 @@ function Steps({
                 {c.error ? (
                   <span className="text-muted-foreground"> · {c.error}</span>
                 ) : c.output ? (
-                  <span className="text-muted-foreground"> · {c.output.slice(0, 200)}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    · {clipped(c.output, OUTPUT_SHOWN)}
+                  </span>
                 ) : null}
               </span>
             </li>
@@ -93,7 +105,7 @@ function Run({
     >
       <p className="flex flex-wrap items-baseline gap-x-2">
         <span className={cn("font-medium", TONE[outcome.tone])}>{outcome.words}</span>
-        <span className="min-w-0 truncate text-foreground">
+        <span className="min-w-0 truncate text-foreground" title={run.request ?? undefined}>
           {run.request ?? "A conversation you cannot read"}
         </span>
       </p>

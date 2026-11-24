@@ -3,6 +3,16 @@ import { describe, expect, it } from "vitest";
 import type { ImprovementReplay, ImprovementReplayRun } from "@/api/types";
 import { replayCost, replayOutcome, replaySummary, replayWorse } from "@/lib/improvements";
 
+/** The outcome the brain gives a done try, as its fixtures carry it. */
+function outcomeOf(
+  original: "good" | "bad",
+  replayed: ImprovementReplayRun["replayed"],
+): ImprovementReplayRun["outcome"] {
+  if (replayed !== "good" && replayed !== "bad") return "unclear";
+  if (original === "bad") return replayed === "good" ? "fixed" : "still_bad";
+  return replayed === "good" ? "kept" : "broke";
+}
+
 function tried(
   original: "good" | "bad",
   replayed: ImprovementReplayRun["replayed"],
@@ -14,6 +24,7 @@ function tried(
     status: "done",
     original,
     replayed,
+    outcome: extra.status && extra.status !== "done" ? null : outcomeOf(original, replayed),
     withheld: false,
     diverged: false,
     recorded: 1,
@@ -76,8 +87,22 @@ describe("the tries", () => {
   it.each([
     ["off", "Not tried on past runs"],
     ["trying", "Trying on past runs…"],
-    ["none", "Could not be tried on past runs"],
+    ["none", "None of its past runs could be tried"],
   ] as const)("say %s", (status, words) => {
     expect(replaySummary({ status, runs: [] })).toMatch(words);
+  });
+
+  it("say how many are tried while some are still to run", () => {
+    expect(
+      replaySummary({
+        status: "trying",
+        runs: [
+          tried("bad", "good"),
+          tried("good", null, { status: "trying" }),
+          tried("good", null, { status: "queued" }),
+          tried("bad", null, { status: "skipped" }),
+        ],
+      }),
+    ).toBe("Trying on past runs… 1 of 3 tried");
   });
 });

@@ -24,7 +24,7 @@ export function ReplayFields({
     <div className="space-y-4 border-t border-rule pt-4">
       <SwitchField
         label="Try each change on past runs first"
-        description="Before you decide on a proposed change, it is tried on a few of this agent's past runs and judged the same way its real runs are, so you can see whether it would have helped. Nothing is sent or changed while it is tried: a step the past run took gets the answer it got then, a new look-up runs for real, and anything that would change or send something is skipped. Each past run tried costs about as many tokens as the run did."
+        description="Before you decide on a proposed change, it is tried on a few of this agent's past runs and judged the same way its real runs are, so you can see whether it would have helped. Nothing is sent or changed while it is tried: a step the past run took gets the answer it got then, a new look-up runs for real, and anything that would change or send something is skipped. A web search counts as a look-up only when a member was there for the past run; for a guest's run, or one nobody was there for, it is skipped too. Each past run tried costs about as many tokens as the run did, plus a little to judge it."
         checked={draft.replay}
         onCheckedChange={(replay) => onChange({ replay })}
       />
@@ -33,7 +33,7 @@ export function ReplayFields({
           <Field
             label="Past runs to try it on"
             htmlFor="settings-replay-runs"
-            hint={`Half are runs the change is meant to fix, half recent runs that went well, so you see both what it fixes and what it might break. More runs tell you more and cost more. From ${REPLAY.runs.min} to ${REPLAY.runs.max}.`}
+            hint={`Half are the runs the change was proposed from, half recent runs that went well, so you see both what it fixes and what it might break. More runs tell you more and cost more. From ${REPLAY.runs.min} to ${REPLAY.runs.max}.`}
             error={problems.replayRuns}
           >
             <Input
@@ -48,7 +48,7 @@ export function ReplayFields({
           <Field
             label="Tokens for one try"
             htmlFor="settings-replay-tokens"
-            hint="The most one try may spend. A try that needs more is stopped and counted as “could not tell”, so a change that makes runs run away cannot run up the bill. From 20,000 to 1,000,000."
+            hint={`The most one try may spend, checked after each step, so the step that crosses it still finishes. A try that needs more is stopped and counted as “could not tell”, so a change that makes runs run away cannot run up the bill. Judging the try is not counted here. From ${REPLAY.tokens.min.toLocaleString("en-US")} to ${REPLAY.tokens.max.toLocaleString("en-US")}.`}
             error={problems.replayTokens}
           >
             <Unit

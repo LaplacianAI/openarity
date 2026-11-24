@@ -1206,6 +1206,9 @@ export type ImprovementReplay = {
 /** What a run spent: tokens (a cached one as a tenth), steps, time working. */
 export type ImprovementReplayCost = { tokens: number; steps: number; work_ms: number };
 
+/** What a done try made of its run: went wrong and now goes well, and so on. */
+export type ImprovementReplayOutcome = "fixed" | "kept" | "broke" | "still_bad" | "unclear";
+
 /** One past run a change was tried on, beside what the run did itself. */
 export type ImprovementReplayRun = {
   run: { id: string; readable: boolean; session_id?: string };
@@ -1215,6 +1218,8 @@ export type ImprovementReplayRun = {
   error?: string | null;
   original: "good" | "bad";
   replayed?: "good" | "bad" | "cant_tell" | null;
+  /** The run's outcome beside the try's, once it is done; the brain decides it. */
+  outcome?: ImprovementReplayOutcome | null;
   verdict?: string | null;
   why?: string | null;
   /** What the run was asked; null, with withheld, for a conversation the reader cannot read. */

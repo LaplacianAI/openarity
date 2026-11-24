@@ -14,8 +14,11 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/blueprints"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/mcpregistry"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -25,43 +28,62 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent/stores/postgres"
 )
 
-func newRunJob(
-	cfg *config.Config, logger *slog.Logger,
-	dbStore *store.Store, secretStore secrets.Store, graphDeps *runtime.GraphDeps,
-) (*runtime.Job, error) {
+// runDeps are what a run is built and run with, made once a worker: the
+// runs and the replays share them, and so one keeper of the team's rooms.
+type runDeps struct {
+	attachments *objects.Encrypted
+	clients     agent.ClientFactory
+	runner      *agent.Runner
+	search      *runtime.SearchDeps
+	fetch       *runtime.FetchDeps
+	searchHTTP  *http.Client
+	discoverer  *discovery.Discoverer
+	rooms       *keeper.Keeper
+	endpoint    agent.Endpoint
+}
+
+func newRunDeps(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store) (*runDeps, error) {
 	attachments, err := newAttachmentStore(cfg, secretStore, logger)
 	if err != nil {
 		return nil, err
 	}
-
 	// Each request carries the bytes of the files its transcript names.
 	clients := runtime.Resolving(openaicompat.Factory(), dbStore, attachments)
 	runner, err := agent.New(clients, runtime.Patterns()...)
 	if err != nil {
 		return nil, fmt.Errorf("building the agent runner: %w", err)
 	}
-
 	searchClient := websearch.NewClient(reachable(cfg.MCPPrivateNetworks))
-	search := &runtime.SearchDeps{Secrets: secretStore, New: newSearchers(searchClient)}
 	discoverer := newDiscoverer(cfg, secretStore, dbStore)
-	rooms := runCommandsInRooms(discoverer, cfg, logger, dbStore, secretStore)
-	builder := runtime.NewBuilder(dbStore, attachments, discoverer, graphDeps, search,
-		newFetch(searchClient, net.DefaultResolver)).
-		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, discoverer, runtime.Loops())}).
+	return &runDeps{
+		attachments: attachments, clients: clients, runner: runner,
+		search:     &runtime.SearchDeps{Secrets: secretStore, New: newSearchers(searchClient)},
+		fetch:      newFetch(searchClient, net.DefaultResolver),
+		searchHTTP: searchClient, discoverer: discoverer,
+		rooms:    runCommandsInRooms(discoverer, cfg, logger, dbStore, secretStore),
+		endpoint: agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey},
+	}, nil
+}
+
+func newRunJob(
+	cfg *config.Config, logger *slog.Logger,
+	dbStore *store.Store, secretStore secrets.Store, graphDeps *runtime.GraphDeps, d *runDeps,
+) (*runtime.Job, error) {
+	builder := runtime.NewBuilder(dbStore, d.attachments, d.discoverer, graphDeps, d.search, d.fetch).
+		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, d.discoverer, runtime.Loops())}).
 		WithApprovals(dbStore).
-		WithBrowsers(newBrowsers(secretStore, searchClient, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
+		WithBrowsers(newBrowsers(secretStore, d.searchHTTP, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)
 	}
-	if ws := newWorkspaces(rooms, cfg); ws != nil {
+	if ws := newWorkspaces(d.rooms, cfg); ws != nil {
 		builder.WithWorkspaces(ws)
 	}
-	endpoint := agent.Endpoint{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
-	streamer, err := agent.New(clients, runtime.StreamingPatterns()...)
+	streamer, err := agent.New(d.clients, runtime.StreamingPatterns()...)
 	if err != nil {
 		return nil, fmt.Errorf("building the streaming agent runner: %w", err)
 	}
-	executor := runtime.NewExecutor(dbStore, builder, runner, endpoint, postgres.New(dbStore.Pool()), logger).
+	executor := runtime.NewExecutor(dbStore, builder, d.runner, d.endpoint, postgres.New(dbStore.Pool()), logger).
 		WithStreaming(streamer)
 
 	return runtime.RunJob(executor, dbStore, logger), nil

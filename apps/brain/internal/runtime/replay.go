@@ -13,19 +13,52 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
+	"github.com/LaplacianAI/openarity/sdk/agent/stores/memory"
 )
 
 // A replay runs a past run again on a harness that is not yet the agent's,
 // to see what a proposed change would have done to it. It acts on nothing:
 // a call the past run made, with the same arguments, gets what it got then;
-// a call it never made runs only when it reads what has not moved on since;
-// anything else is not made. It writes no run, event, message or reply, and
+// a call it never made runs only when it only reads; anything else is not
+// made. It writes no run, event, message or reply, and
 // asks no person anything: what came of it is returned, for the caller to
 // keep.
 
 // Recorded is a call a past run made, and what it returned.
 type Recorded struct {
 	Name, Arguments, Output, Error string
+}
+
+// RecordedOf is what a run's calls returned, from its events oldest first:
+// each call with the result its id names. A call with no result is left
+// out, as there is nothing to serve back. Read here, beside where the
+// events are written, so the two cannot drift.
+func RecordedOf(events []db.RunEvent) ([]Recorded, error) {
+	results := map[string]toolResultPayload{}
+	var calls []toolCallPayload
+	for _, e := range events {
+		switch e.Kind {
+		case "tool_call":
+			var c toolCallPayload
+			if err := json.Unmarshal(e.Payload, &c); err != nil {
+				return nil, fmt.Errorf("reading call event %d: %w", e.Seq, err)
+			}
+			calls = append(calls, c)
+		case "tool_result":
+			var r toolResultPayload
+			if err := json.Unmarshal(e.Payload, &r); err != nil {
+				return nil, fmt.Errorf("reading result event %d: %w", e.Seq, err)
+			}
+			results[r.ID] = r
+		}
+	}
+	out := make([]Recorded, 0, len(calls))
+	for _, c := range calls {
+		if r, ok := results[c.ID]; ok {
+			out = append(out, Recorded{Name: c.Name, Arguments: c.Arguments, Output: r.Output, Error: r.Error})
+		}
+	}
+	return out, nil
 }
 
 // How a replay served a call.
@@ -77,8 +110,8 @@ var (
 // the world: no approvals, workspaces, browsers or delegates, whose tools a
 // replay holds as stand-ins.
 type Replayer struct {
-	objects  Objects
 	mcp      MCPClients
+	roles    MemberRoles
 	graph    *GraphDeps
 	search   *SearchDeps
 	fetch    *FetchDeps
@@ -87,20 +120,20 @@ type Replayer struct {
 	now      func() time.Time
 }
 
-func NewReplayer(o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps,
+// NewReplayer replays with roles telling who each past run acted for.
+func NewReplayer(m MCPClients, roles MemberRoles, g *GraphDeps, search *SearchDeps, fetch *FetchDeps,
 	r *agent.Runner, endpoint agent.Endpoint,
 ) *Replayer {
-	return &Replayer{objects: o, mcp: m, graph: g, search: search, fetch: fetch, runner: r, endpoint: endpoint, now: time.Now}
+	return &Replayer{mcp: m, roles: roles, graph: g, search: search, fetch: fetch, runner: r, endpoint: endpoint, now: time.Now}
 }
 
 // ReplayInput is one past run to replay, and the harness to replay it on.
 type ReplayInput struct {
-	// Store answers the agent's reads with the harness being tried.
-	Store BuildStore
-	// Texts are the files of a skill being tried that are not stored yet,
-	// by the object key Store names them with.
-	Texts map[string]string
-	Run   db.Run
+	// Store answers the agent's reads with the harness being tried, and
+	// Objects reads the files of its skills as tried.
+	Store   BuildStore
+	Objects Objects
+	Run     db.Run
 	// Messages are the run's transcript up to and including the message it
 	// was started with.
 	Messages []agent.Message
@@ -113,13 +146,14 @@ type ReplayInput struct {
 func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error) {
 	run, msgs, lim := in.Run, in.Messages, in.Limits
 	b := &Builder{
-		store: in.Store, objects: textObjects{texts: in.Texts, inner: p.objects},
+		store: in.Store, objects: in.Objects, roles: p.roles,
 		mcp: p.mcp, graph: p.graph, search: p.search, fetch: p.fetch,
 		connectTimeout: connectTimeout, replay: true,
 	}
 	// Built as the past run was, under an id of its own that names no row.
 	run.ID = uuid.New()
-	session, err := agent.Open("replay:"+run.ID.String(), &memoryStore{msgs: map[string][]agent.Message{}})
+	// The transcript is kept in memory: nothing of it is saved.
+	session, err := agent.Open("replay:"+run.ID.String(), memory.New())
 	if err != nil {
 		return Replayed{}, err
 	}
@@ -130,12 +164,16 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 	defer built.Close()
 	built.Spec = forChannel(run, built.Spec)
 
+	out := Replayed{Tools: heldNames(built.Spec)}
+	// reads is by name: two tools of one name could make a write a read.
+	if dup := duplicate(out.Tools); dup != "" {
+		return Replayed{}, fmt.Errorf("the run holds two tools named %s, so a replay cannot tell them apart", dup)
+	}
 	r := newReplaying(in.Recorded, built.reads)
 	built.Spec.Tools = r.wrapAll(built.Spec.Tools)
 	if built.Spec.Discovery != nil {
 		built.Spec.Discovery.Tools = r.wrapAll(built.Spec.Discovery.Tools)
 	}
-	out := Replayed{Tools: heldNames(built.Spec)}
 
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
@@ -144,6 +182,8 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 		runCtx, cancel = context.WithTimeoutCause(runCtx, lim.Time, ErrReplayTime)
 		defer cancel()
 	}
+	// The token cap is checked as each step's usage arrives, so the step
+	// that crosses it is finished first: a try may spend one step more.
 	events := make(chan agent.Event, 16)
 	watched := make(chan struct{})
 	var spent int
@@ -159,9 +199,13 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 		}
 	}()
 	start := p.now()
-	res, err := p.runner.Run(withSession(runCtx, run.SessionID), built.Spec, msgs, p.endpoint, events)
-	close(events)
-	<-watched
+	res, err := func() (agent.Result, error) {
+		defer func() {
+			close(events)
+			<-watched
+		}()
+		return p.runner.Run(withSession(runCtx, run.SessionID), built.Spec, msgs, p.endpoint, events)
+	}()
 	out.Elapsed = p.now().Sub(start)
 	out.Output, out.Usage, out.Steps, out.Calls = res.Output, res.Usage, res.Steps, r.served()
 	if err != nil {
@@ -172,6 +216,17 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 		return out, err
 	}
 	return out, nil
+}
+
+func duplicate(names []string) string {
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		if seen[n] {
+			return n
+		}
+		seen[n] = true
+	}
+	return ""
 }
 
 func heldNames(s agent.Spec) []string {
@@ -205,12 +260,12 @@ func newReplaying(recorded []Recorded, reads map[string]bool) *replaying {
 	return r
 }
 
-func callKey(name, args string) string { return name + "\x00" + Canonical(args) }
+func callKey(name, args string) string { return name + "\x00" + canonical(args) }
 
-// Canonical is a call's arguments as one text however they were written:
+// canonical is a call's arguments as one text however they were written:
 // object keys in order, no space between, numbers as they were sent. Text
 // that is not JSON is kept as it is, trimmed.
-func Canonical(args string) string {
+func canonical(args string) string {
 	d := json.NewDecoder(strings.NewReader(args))
 	d.UseNumber()
 	var v any
@@ -260,13 +315,13 @@ func (r *replaying) wrapAll(ts []agent.Tool) []agent.Tool {
 }
 
 // wrap serves a tool's calls in a replay. A tool that is not a read cannot
-// be made at all: its own calls are replaced before anything else, so no
-// mistake in the matching can reach what it would act on.
+// be made at all: its own call is not kept, so no mistake in the matching
+// can reach what it would act on.
 func (r *replaying) wrap(t agent.Tool) agent.Tool {
 	read := r.reads[t.Name]
-	live := t
-	if !read {
-		live = refusing(t, notMade)
+	var live func(ctx context.Context, args json.RawMessage) (agent.ToolResult, bool, error)
+	if read {
+		live = t.Call
 	}
 	t.Invoke = nil
 	t.Result = func(ctx context.Context, args json.RawMessage) (agent.ToolResult, error) {
@@ -277,11 +332,11 @@ func (r *replaying) wrap(t agent.Tool) agent.Tool {
 			}
 			return agent.ToolResult{Output: c.Output}, nil
 		}
-		if !read {
+		if live == nil {
 			r.note(Served{Name: t.Name, How: ServedNotMade, Arguments: string(args), Error: notMade})
 			return agent.ToolResult{}, toModel(notMade)
 		}
-		res, ok, err := live.Call(ctx, args)
+		res, ok, err := live(ctx, args)
 		if !ok {
 			err = fmt.Errorf("%s cannot be called", t.Name)
 		}
@@ -304,40 +359,3 @@ func browserStandIns() []agent.Tool {
 	}
 	return out
 }
-
-// textObjects reads a candidate skill's files that are not stored yet from
-// their text, and every other object from the store.
-type textObjects struct {
-	texts map[string]string
-	inner Objects
-}
-
-func (o textObjects) Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error) {
-	if t, ok := o.texts[key]; ok {
-		return []byte(t), nil
-	}
-	return o.inner.Get(ctx, teamID, key)
-}
-
-// memoryStore keeps a replay's transcript in memory: nothing of it is saved.
-type memoryStore struct {
-	mu   sync.Mutex
-	msgs map[string][]agent.Message
-}
-
-func (m *memoryStore) Save(_ context.Context, session string, msgs []agent.Message) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.msgs[session] = append([]agent.Message(nil), msgs...)
-	return nil
-}
-
-func (m *memoryStore) Messages(_ context.Context, session string) ([]agent.Message, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]agent.Message(nil), m.msgs[session]...), nil
-}
-
-func (m *memoryStore) AddSteer(context.Context, string, string) error { return nil }
-
-func (m *memoryStore) TakeSteers(context.Context, string) ([]string, error) { return nil, nil }

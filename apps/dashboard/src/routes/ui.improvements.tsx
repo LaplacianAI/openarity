@@ -32,6 +32,9 @@ type ImprovementsSearch = {
 
 const TABS: Tab[] = ["waiting", "applied", "flagged", "closed", "passes"];
 
+/** How often a list with a change still being tried is read again. */
+const TRYING_POLL_MS = 5_000;
+
 export const Route = createFileRoute("/ui/improvements")({
   // The tab, the agent and the words searched for, in the URL so a view of
   // what was rejected for one agent can be linked and survives a reload.
@@ -108,6 +111,11 @@ function Improvements() {
     initialPageParam: null as string | null,
     getNextPageParam: nextCursorOf,
     enabled: Boolean(teamId) && !perms.isPending && !passes,
+    // A change being tried on past runs is read again until its tries are done.
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((p) => p.items.some((i) => i.replay?.status === "trying"))
+        ? TRYING_POLL_MS
+        : false,
   });
   const rows = list.data?.pages.flatMap((p) => p.items) ?? [];
 

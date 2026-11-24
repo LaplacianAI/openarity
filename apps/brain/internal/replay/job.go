@@ -94,14 +94,25 @@ func (j *Job) replay(ctx dbos.Context, in string) (string, error) {
 		return in, err
 	}
 	for _, runID := range runs {
+		// Run once: a try is a whole run on the model, and Try makes its own
+		// reads and writes again.
 		_, err := dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
 			return runID.String(), j.replays.Try(sctx, proposalID, teamID, runID)
-		}, storeStep("try "+runID.String())...)
+		}, dbos.WithStepName("try "+runID.String()))
 		if Stopped(err) {
 			return in, nil
 		}
 		if err != nil {
-			return in, err
+			if ctx.Err() != nil {
+				// The worker is stopping: the try is picked up again.
+				return in, err
+			}
+			// Not left trying: the try failed, and the next is tried.
+			if _, ferr := dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
+				return runID.String(), j.replays.Fail(sctx, proposalID, runID, err)
+			}, storeStep("fail "+runID.String())...); ferr != nil {
+				return in, errors.Join(err, ferr)
+			}
 		}
 	}
 	return in, nil

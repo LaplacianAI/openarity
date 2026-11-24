@@ -1541,6 +1541,11 @@ func TestTheReplaySettings(t *testing.T) {
 		{`"improvement_replay_minutes":31`, "improvement_replay_minutes"},
 		{`"improvement_replay_daily":0`, "improvement_replay_daily"},
 		{`"improvement_replay_daily":501`, "improvement_replay_daily"},
+		// Past what keeps it: refused with its range, not as a body that
+		// cannot be read.
+		{`"improvement_replay_runs":40000`, "improvement_replay_runs"},
+		{`"improvement_replay_minutes":40000`, "improvement_replay_minutes"},
+		{`"improvement_replay_daily":40000`, "improvement_replay_daily"},
 	} {
 		if rec := e.save(t, `{`+improveBase+`,`+bad.body+`}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), bad.name) {
 			t.Errorf("%s = %d %q, want 400 naming %s", bad.body, rec.Code, rec.Body, bad.name)

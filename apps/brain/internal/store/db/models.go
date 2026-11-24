@@ -200,30 +200,31 @@ type GraphOutbox struct {
 }
 
 type ImprovementProposal struct {
-	ID          uuid.UUID
-	TeamID      uuid.UUID
-	AgentID     uuid.UUID
-	SkillID     *uuid.UUID
-	Kind        string
-	Status      string
-	Why         string
-	Hypothesis  string
-	Scope       string
-	Signature   *string
-	RunIds      []uuid.UUID
-	Outsider    bool
-	Marks       []string
-	Before      []byte
-	After       []byte
-	CreatedAt   time.Time
-	DecidedBy   *uuid.UUID
-	DecidedAt   *time.Time
-	RevertedBy  *uuid.UUID
-	RevertedAt  *time.Time
-	WithdrawnBy *uuid.UUID
-	PassID      *uuid.UUID
-	Goal        string
-	Saves       []string
+	ID             uuid.UUID
+	TeamID         uuid.UUID
+	AgentID        uuid.UUID
+	SkillID        *uuid.UUID
+	Kind           string
+	Status         string
+	Why            string
+	Hypothesis     string
+	Scope          string
+	Signature      *string
+	RunIds         []uuid.UUID
+	Outsider       bool
+	Marks          []string
+	Before         []byte
+	After          []byte
+	CreatedAt      time.Time
+	DecidedBy      *uuid.UUID
+	DecidedAt      *time.Time
+	RevertedBy     *uuid.UUID
+	RevertedAt     *time.Time
+	WithdrawnBy    *uuid.UUID
+	PassID         *uuid.UUID
+	Goal           string
+	Saves          []string
+	ReplayChosenAt *time.Time
 }
 
 type ImprovementReplay struct {
@@ -249,6 +250,9 @@ type ImprovementReplay struct {
 	JudgeTokens       int64
 	Steps             int32
 	WorkMs            int64
+	OriginalSpent     int64
+	OriginalSteps     int32
+	OriginalWorkMs    int64
 	Answer            *string
 	Trace             []byte
 	CreatedAt         time.Time

@@ -46,6 +46,11 @@ CREATE TABLE improvement_replays (
     judge_tokens  bigint   NOT NULL DEFAULT 0,
     steps         integer  NOT NULL DEFAULT 0,
     work_ms       bigint   NOT NULL DEFAULT 0,
+    -- What the past run spent itself, kept when it was chosen: it is
+    -- finished, so this does not change, and a list need not add it up.
+    original_spent   bigint  NOT NULL DEFAULT 0,
+    original_steps   integer NOT NULL DEFAULT 0,
+    original_work_ms bigint  NOT NULL DEFAULT 0,
     answer        text,
     trace         jsonb    NOT NULL DEFAULT '[]',
     created_at    timestamptz NOT NULL DEFAULT now(),
@@ -64,6 +69,11 @@ CREATE TABLE improvement_replays (
     CONSTRAINT improvement_replays_trace_size     CHECK (octet_length(trace::text) <= 262144)
 );
 
+-- When a proposal's past runs were chosen, with trying on: a proposal with
+-- this set and no tries is one none of whose runs could be tried, told apart
+-- from one proposed while trying was off.
+ALTER TABLE improvement_proposals ADD COLUMN replay_chosen_at timestamptz;
+
 -- A team's tries today, for its daily cap.
 CREATE INDEX improvement_replays_team_started ON improvement_replays (team_id, started_at)
     WHERE started_at IS NOT NULL;
@@ -72,6 +82,8 @@ CREATE INDEX improvement_replays_team_started ON improvement_replays (team_id, s
 SET LOCAL lock_timeout = '3s';
 
 DROP TABLE improvement_replays;
+
+ALTER TABLE improvement_proposals DROP COLUMN replay_chosen_at;
 
 ALTER TABLE team_settings
     DROP CONSTRAINT team_settings_replay_daily_range,

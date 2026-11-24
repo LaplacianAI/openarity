@@ -109,14 +109,18 @@ func newJobs(
 	judging := newImproveJob(cfg, logger, dbStore)
 	templates := keeper.TemplatesJob(newTemplates(cfg, logger, dbStore, secretStore))
 	watching := improve.NewWatchJob(improve.NewWatcher(dbStore, logger))
+	deps, err := newRunDeps(cfg, logger, dbStore, secretStore)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if cfg.EmbeddingModel == "" {
 		logger.WarnContext(ctx, "EMBEDDING_MODEL is not set, so the graph is not being projected or searched")
-		runs, err := newRunJob(cfg, logger, dbStore, secretStore, nil)
+		runs, err := newRunJob(cfg, logger, dbStore, secretStore, nil, deps)
 		if err != nil {
 			return nil, nil, err
 		}
-		improving, replaying, err := newImprovingJobs(cfg, logger, dbStore, secretStore, nil)
+		improving, replaying, err := newImprovingJobs(cfg, logger, dbStore, secretStore, nil, deps)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -128,12 +132,12 @@ func newJobs(
 		return nil, nil, err
 	}
 	graphDeps := &runtime.GraphDeps{Search: g, Embed: embedder, Store: dbStore}
-	runs, err := newRunJob(cfg, logger, dbStore, secretStore, graphDeps)
+	runs, err := newRunJob(cfg, logger, dbStore, secretStore, graphDeps, deps)
 	if err != nil {
 		closeGraph()
 		return nil, nil, err
 	}
-	improving, replaying, err := newImprovingJobs(cfg, logger, dbStore, secretStore, graphDeps)
+	improving, replaying, err := newImprovingJobs(cfg, logger, dbStore, secretStore, graphDeps, deps)
 	if err != nil {
 		closeGraph()
 		return nil, nil, err
@@ -149,12 +153,9 @@ func newJobs(
 // proposal whose tries cannot be queued is still stored; it is shown without
 // them.
 func newImprovingJobs(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, secretStore secrets.Store,
-	graphDeps *runtime.GraphDeps,
+	graphDeps *runtime.GraphDeps, deps *runDeps,
 ) (*improve.ImproverJob, *replay.Job, error) {
-	replaying, err := newReplayJob(cfg, logger, dbStore, secretStore, graphDeps)
-	if err != nil {
-		return nil, nil, err
-	}
+	replaying := newReplayJob(logger, dbStore, graphDeps, deps)
 	improving, err := newImproverJob(cfg, logger, dbStore, secretStore, func(ctx context.Context, proposalID, teamID uuid.UUID) {
 		if err := replaying.Enqueue(ctx, proposalID, teamID); err != nil {
 			logger.WarnContext(ctx, "a proposal's tries on past runs could not be queued",

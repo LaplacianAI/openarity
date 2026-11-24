@@ -5,6 +5,7 @@ import type {
   ImprovementKind,
   ImprovementMark,
   ImprovementReplay,
+  ImprovementReplayOutcome,
   ImprovementReplayRun,
   ImprovementWatch,
   ImproverPass,
@@ -354,49 +355,52 @@ export function patternWords(w: ImprovementWatch): string | null {
 /** What a try on a past run came to, beside the run itself, and how it reads. */
 export type ReplayOutcome = { words: string; tone: "good" | "bad" | "neutral" };
 
+const OUTCOME_WORDS: Record<ImprovementReplayOutcome, ReplayOutcome & { phrase: string }> = {
+  fixed: { words: "Went wrong, now done", tone: "good", phrase: "that went wrong now done" },
+  still_bad: {
+    words: "Went wrong, still does",
+    tone: "neutral",
+    phrase: "that went wrong still do",
+  },
+  kept: { words: "Went well, still does", tone: "neutral", phrase: "that went well still do" },
+  broke: { words: "Went well, now goes wrong", tone: "bad", phrase: "that went well now go wrong" },
+  unclear: { words: "Could not tell", tone: "neutral", phrase: "could not tell" },
+};
+
 export function replayOutcome(r: ImprovementReplayRun): ReplayOutcome {
   if (r.status === "queued" || r.status === "trying")
     return { words: "Still to try", tone: "neutral" };
   if (r.status === "skipped") return { words: "Not tried", tone: "neutral" };
   if (r.status === "failed") return { words: "The try failed", tone: "neutral" };
-  if (!r.replayed || r.replayed === "cant_tell")
-    return { words: "Could not tell", tone: "neutral" };
-  if (r.original === "bad") {
-    return r.replayed === "good"
-      ? { words: "Went wrong, now done", tone: "good" }
-      : { words: "Went wrong, still does", tone: "neutral" };
-  }
-  return r.replayed === "good"
-    ? { words: "Went well, still does", tone: "neutral" }
-    : { words: "Went well, now goes wrong", tone: "bad" };
+  const { words, tone } = OUTCOME_WORDS[r.outcome ?? "unclear"];
+  return { words, tone };
 }
 
 /** Whether a run that went well goes wrong with the change. */
 export function replayWorse(r: ImprovementReplay | null | undefined): boolean {
-  return !!r?.runs.some((x) => replayOutcome(x).tone === "bad");
+  return !!r?.runs.some((x) => x.outcome === "broke");
 }
 
 /** The tries in one line: "Tried on 4 past runs: 2 that went wrong now done · 2 that went well still do". */
 export function replaySummary(r: ImprovementReplay): string {
-  if (r.status === "off") return "Not tried on past runs: trying was off when it was proposed";
-  if (r.status === "trying") return "Trying on past runs…";
-  if (r.status === "none") return "Could not be tried on past runs";
   const done = r.runs.filter((x) => x.status === "done");
-  const tally = new Map<string, number>();
-  for (const x of done) {
-    const w = replayOutcome(x).words;
-    tally.set(w, (tally.get(w) ?? 0) + 1);
+  if (r.status === "off") return "Not tried on past runs: trying was off";
+  if (r.status === "trying") {
+    const total = r.runs.filter((x) => x.status !== "skipped").length;
+    return done.length > 0
+      ? `Trying on past runs… ${done.length} of ${total} tried`
+      : "Trying on past runs…";
   }
-  const phrases: [string, string][] = [
-    ["Went wrong, now done", "that went wrong now done"],
-    ["Went wrong, still does", "that went wrong still do"],
-    ["Went well, still does", "that went well still do"],
-    ["Went well, now goes wrong", "that went well now go wrong"],
-    ["Could not tell", "could not tell"],
-  ];
-  const parts = phrases
-    .filter(([k]) => tally.has(k))
-    .map(([k, phrase]) => `${tally.get(k)} ${phrase}`);
+  if (r.status === "none") return "None of its past runs could be tried";
+  const tally = new Map<ImprovementReplayOutcome, number>();
+  for (const x of done) {
+    const o = x.outcome ?? "unclear";
+    tally.set(o, (tally.get(o) ?? 0) + 1);
+  }
+  const order: ImprovementReplayOutcome[] = ["fixed", "still_bad", "kept", "broke", "unclear"];
+  const parts = order
+    .filter((o) => tally.has(o))
+    .map((o) => `${tally.get(o)} ${OUTCOME_WORDS[o].phrase}`);
   return `Tried on ${count(done.length, "past run")}: ${parts.join(" · ")}`;
 }
 

@@ -41,27 +41,48 @@ SELECT id FROM (
 ORDER BY created_at DESC
 LIMIT sqlc.arg(page_size);
 
+-- What the past run spent itself is kept with the row: the run is finished,
+-- so it does not change, and a list need not add it up again.
 -- name: InsertReplay :exec
 INSERT INTO improvement_replays (proposal_id, team_id, source_run_id, position, chosen, original,
-                                 status, skip_why, finished_at)
-VALUES (sqlc.arg(proposal_id), sqlc.arg(team_id), sqlc.arg(source_run_id), sqlc.arg(position),
-        sqlc.arg(chosen), sqlc.arg(original), sqlc.arg(status), sqlc.narg(skip_why),
-        CASE WHEN sqlc.arg(status)::text = 'skipped' THEN now() END)
+                                 status, skip_why, finished_at, original_spent, original_steps, original_work_ms)
+SELECT sqlc.arg(proposal_id), sqlc.arg(team_id), r.id, sqlc.arg(position),
+       sqlc.arg(chosen), sqlc.arg(original), sqlc.arg(status), sqlc.narg(skip_why),
+       CASE WHEN sqlc.arg(status)::text = 'skipped' THEN now() END,
+       (SELECT coalesce(sum(run_spent(t.input_tokens, t.cached_input_tokens, t.output_tokens)), 0)
+          FROM runs t WHERE t.root_run_id = r.id)::bigint,
+       (SELECT count(*) FROM run_events e JOIN runs t ON t.id = e.run_id
+          WHERE t.root_run_id = r.id AND e.kind = 'step')::int,
+       run_work_ms(r.id)::bigint
+FROM runs r WHERE r.id = sqlc.arg(source_run_id) AND r.team_id = sqlc.arg(team_id)
 ON CONFLICT (proposal_id, source_run_id) DO NOTHING;
+
+-- Choosing ran with trying on: a proposal with this set and no tries is one
+-- none of whose runs could be tried.
+-- name: MarkReplayChosen :exec
+UPDATE improvement_proposals SET replay_chosen_at = coalesce(replay_chosen_at, now())
+WHERE id = sqlc.arg(id) AND team_id = sqlc.arg(team_id);
 
 -- name: ListQueuedReplays :many
 SELECT source_run_id FROM improvement_replays
 WHERE proposal_id = $1 AND status IN ('queued', 'trying')
 ORDER BY position;
 
--- A try begins, unless the team has used its tries for the day: the count
--- and the claim are one statement, so two workers cannot both take the last.
+-- Held until the transaction ends: two workers counting a team's tries for
+-- the day at once would each miss the other's claim, not yet committed.
+-- name: LockReplayTries :exec
+SELECT pg_advisory_xact_lock(hashtext('improvement_replays'), hashtext(sqlc.arg(team_id)::uuid::text));
+
+-- A try begins, unless the team has used its tries for the day. Run after
+-- LockReplayTries, in its transaction. A try begun before, whose worker
+-- stopped, begins again without counting twice.
 -- name: StartReplay :execrows
 UPDATE improvement_replays SET status = 'trying', started_at = now()
 WHERE proposal_id = sqlc.arg(proposal_id)::uuid AND source_run_id = sqlc.arg(source_run_id)::uuid
+  AND team_id = sqlc.arg(team_id)::uuid
   AND status IN ('queued', 'trying')
   AND (SELECT count(*) FROM improvement_replays d
-       WHERE d.team_id = improvement_replays.team_id AND d.started_at >= sqlc.arg(since)::timestamptz
+       WHERE d.team_id = sqlc.arg(team_id)::uuid AND d.started_at >= sqlc.arg(since)::timestamptz
          AND NOT (d.proposal_id = sqlc.arg(proposal_id)::uuid AND d.source_run_id = sqlc.arg(source_run_id)::uuid))
       < sqlc.arg(daily)::int;
 
@@ -82,11 +103,6 @@ SET status = 'failed', error = sqlc.arg(error), input_tokens = sqlc.arg(input_to
 WHERE proposal_id = sqlc.arg(proposal_id) AND source_run_id = sqlc.arg(source_run_id)
   AND status IN ('queued', 'trying');
 
--- name: SkipReplay :exec
-UPDATE improvement_replays SET status = 'skipped', skip_why = sqlc.arg(skip_why), finished_at = now()
-WHERE proposal_id = sqlc.arg(proposal_id) AND source_run_id = sqlc.arg(source_run_id)
-  AND status IN ('queued', 'trying');
-
 -- Every try of a proposal still to run is skipped, saying why.
 -- name: SkipQueuedReplays :exec
 UPDATE improvement_replays SET status = 'skipped', skip_why = sqlc.arg(skip_why), finished_at = now()
@@ -100,11 +116,7 @@ SELECT p.proposal_id, p.source_run_id, p.position, p.chosen, p.status, p.skip_wh
        p.judge_tokens, p.steps, p.work_ms,
        p.started_at, p.finished_at,
        r.input AS request, r.session_id,
-       (SELECT coalesce(sum(run_spent(t.input_tokens, t.cached_input_tokens, t.output_tokens)), 0)
-          FROM runs t WHERE t.root_run_id = r.id)::bigint AS original_spent,
-       (SELECT count(*) FROM run_events e JOIN runs t ON t.id = e.run_id
-          WHERE t.root_run_id = r.id AND e.kind = 'step')::int AS original_steps,
-       run_work_ms(r.id)::bigint AS original_work_ms
+       p.original_spent, p.original_steps, p.original_work_ms
 FROM improvement_replays p
 JOIN runs r ON r.id = p.source_run_id
 WHERE p.proposal_id = ANY (sqlc.arg(proposal_ids)::uuid[])

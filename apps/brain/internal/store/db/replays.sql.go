@@ -94,7 +94,7 @@ func (q *Queries) FinishReplay(ctx context.Context, arg FinishReplayParams) erro
 }
 
 const getProposalReplay = `-- name: GetProposalReplay :one
-SELECT p.proposal_id, p.team_id, p.source_run_id, p.position, p.chosen, p.status, p.skip_why, p.error, p.original, p.replayed, p.verdict, p.why, p.diverged, p.recorded, p.live, p.not_made, p.input_tokens, p.cached_input_tokens, p.output_tokens, p.judge_tokens, p.steps, p.work_ms, p.answer, p.trace, p.created_at, p.started_at, p.finished_at, r.session_id, r.input AS request FROM improvement_replays p
+SELECT p.proposal_id, p.team_id, p.source_run_id, p.position, p.chosen, p.status, p.skip_why, p.error, p.original, p.replayed, p.verdict, p.why, p.diverged, p.recorded, p.live, p.not_made, p.input_tokens, p.cached_input_tokens, p.output_tokens, p.judge_tokens, p.steps, p.work_ms, p.original_spent, p.original_steps, p.original_work_ms, p.answer, p.trace, p.created_at, p.started_at, p.finished_at, r.session_id, r.input AS request FROM improvement_replays p
 JOIN runs r ON r.id = p.source_run_id
 WHERE p.team_id = $1 AND p.proposal_id = $2
   AND p.source_run_id = $3
@@ -129,6 +129,9 @@ type GetProposalReplayRow struct {
 	JudgeTokens       int64
 	Steps             int32
 	WorkMs            int64
+	OriginalSpent     int64
+	OriginalSteps     int32
+	OriginalWorkMs    int64
 	Answer            *string
 	Trace             []byte
 	CreatedAt         time.Time
@@ -164,6 +167,9 @@ func (q *Queries) GetProposalReplay(ctx context.Context, arg GetProposalReplayPa
 		&i.JudgeTokens,
 		&i.Steps,
 		&i.WorkMs,
+		&i.OriginalSpent,
+		&i.OriginalSteps,
+		&i.OriginalWorkMs,
 		&i.Answer,
 		&i.Trace,
 		&i.CreatedAt,
@@ -220,34 +226,42 @@ func (q *Queries) GetRunStartedSeq(ctx context.Context, runID uuid.UUID) (int64,
 
 const insertReplay = `-- name: InsertReplay :exec
 INSERT INTO improvement_replays (proposal_id, team_id, source_run_id, position, chosen, original,
-                                 status, skip_why, finished_at)
-VALUES ($1, $2, $3, $4,
-        $5, $6, $7, $8,
-        CASE WHEN $7::text = 'skipped' THEN now() END)
+                                 status, skip_why, finished_at, original_spent, original_steps, original_work_ms)
+SELECT $1, $2, r.id, $3,
+       $4, $5, $6, $7,
+       CASE WHEN $6::text = 'skipped' THEN now() END,
+       (SELECT coalesce(sum(run_spent(t.input_tokens, t.cached_input_tokens, t.output_tokens)), 0)
+          FROM runs t WHERE t.root_run_id = r.id)::bigint,
+       (SELECT count(*) FROM run_events e JOIN runs t ON t.id = e.run_id
+          WHERE t.root_run_id = r.id AND e.kind = 'step')::int,
+       run_work_ms(r.id)::bigint
+FROM runs r WHERE r.id = $8 AND r.team_id = $2
 ON CONFLICT (proposal_id, source_run_id) DO NOTHING
 `
 
 type InsertReplayParams struct {
 	ProposalID  uuid.UUID
 	TeamID      uuid.UUID
-	SourceRunID uuid.UUID
 	Position    int16
 	Chosen      string
 	Original    string
 	Status      string
 	SkipWhy     *string
+	SourceRunID uuid.UUID
 }
 
+// What the past run spent itself is kept with the row: the run is finished,
+// so it does not change, and a list need not add it up again.
 func (q *Queries) InsertReplay(ctx context.Context, arg InsertReplayParams) error {
 	_, err := q.db.Exec(ctx, insertReplay,
 		arg.ProposalID,
 		arg.TeamID,
-		arg.SourceRunID,
 		arg.Position,
 		arg.Chosen,
 		arg.Original,
 		arg.Status,
 		arg.SkipWhy,
+		arg.SourceRunID,
 	)
 	return err
 }
@@ -364,11 +378,7 @@ SELECT p.proposal_id, p.source_run_id, p.position, p.chosen, p.status, p.skip_wh
        p.judge_tokens, p.steps, p.work_ms,
        p.started_at, p.finished_at,
        r.input AS request, r.session_id,
-       (SELECT coalesce(sum(run_spent(t.input_tokens, t.cached_input_tokens, t.output_tokens)), 0)
-          FROM runs t WHERE t.root_run_id = r.id)::bigint AS original_spent,
-       (SELECT count(*) FROM run_events e JOIN runs t ON t.id = e.run_id
-          WHERE t.root_run_id = r.id AND e.kind = 'step')::int AS original_steps,
-       run_work_ms(r.id)::bigint AS original_work_ms
+       p.original_spent, p.original_steps, p.original_work_ms
 FROM improvement_replays p
 JOIN runs r ON r.id = p.source_run_id
 WHERE p.proposal_id = ANY ($1::uuid[])
@@ -625,6 +635,34 @@ func (q *Queries) ListReplayRuns(ctx context.Context, arg ListReplayRunsParams) 
 	return items, nil
 }
 
+const lockReplayTries = `-- name: LockReplayTries :exec
+SELECT pg_advisory_xact_lock(hashtext('improvement_replays'), hashtext($1::uuid::text))
+`
+
+// Held until the transaction ends: two workers counting a team's tries for
+// the day at once would each miss the other's claim, not yet committed.
+func (q *Queries) LockReplayTries(ctx context.Context, teamID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockReplayTries, teamID)
+	return err
+}
+
+const markReplayChosen = `-- name: MarkReplayChosen :exec
+UPDATE improvement_proposals SET replay_chosen_at = coalesce(replay_chosen_at, now())
+WHERE id = $1 AND team_id = $2
+`
+
+type MarkReplayChosenParams struct {
+	ID     uuid.UUID
+	TeamID uuid.UUID
+}
+
+// Choosing ran with trying on: a proposal with this set and no tries is one
+// none of whose runs could be tried.
+func (q *Queries) MarkReplayChosen(ctx context.Context, arg MarkReplayChosenParams) error {
+	_, err := q.db.Exec(ctx, markReplayChosen, arg.ID, arg.TeamID)
+	return err
+}
+
 const skipQueuedReplays = `-- name: SkipQueuedReplays :exec
 UPDATE improvement_replays SET status = 'skipped', skip_why = $1, finished_at = now()
 WHERE proposal_id = $2 AND status IN ('queued', 'trying')
@@ -641,46 +679,33 @@ func (q *Queries) SkipQueuedReplays(ctx context.Context, arg SkipQueuedReplaysPa
 	return err
 }
 
-const skipReplay = `-- name: SkipReplay :exec
-UPDATE improvement_replays SET status = 'skipped', skip_why = $1, finished_at = now()
-WHERE proposal_id = $2 AND source_run_id = $3
-  AND status IN ('queued', 'trying')
-`
-
-type SkipReplayParams struct {
-	SkipWhy     *string
-	ProposalID  uuid.UUID
-	SourceRunID uuid.UUID
-}
-
-func (q *Queries) SkipReplay(ctx context.Context, arg SkipReplayParams) error {
-	_, err := q.db.Exec(ctx, skipReplay, arg.SkipWhy, arg.ProposalID, arg.SourceRunID)
-	return err
-}
-
 const startReplay = `-- name: StartReplay :execrows
 UPDATE improvement_replays SET status = 'trying', started_at = now()
 WHERE proposal_id = $1::uuid AND source_run_id = $2::uuid
+  AND team_id = $3::uuid
   AND status IN ('queued', 'trying')
   AND (SELECT count(*) FROM improvement_replays d
-       WHERE d.team_id = improvement_replays.team_id AND d.started_at >= $3::timestamptz
+       WHERE d.team_id = $3::uuid AND d.started_at >= $4::timestamptz
          AND NOT (d.proposal_id = $1::uuid AND d.source_run_id = $2::uuid))
-      < $4::int
+      < $5::int
 `
 
 type StartReplayParams struct {
 	ProposalID  uuid.UUID
 	SourceRunID uuid.UUID
+	TeamID      uuid.UUID
 	Since       time.Time
 	Daily       int32
 }
 
-// A try begins, unless the team has used its tries for the day: the count
-// and the claim are one statement, so two workers cannot both take the last.
+// A try begins, unless the team has used its tries for the day. Run after
+// LockReplayTries, in its transaction. A try begun before, whose worker
+// stopped, begins again without counting twice.
 func (q *Queries) StartReplay(ctx context.Context, arg StartReplayParams) (int64, error) {
 	result, err := q.db.Exec(ctx, startReplay,
 		arg.ProposalID,
 		arg.SourceRunID,
+		arg.TeamID,
 		arg.Since,
 		arg.Daily,
 	)

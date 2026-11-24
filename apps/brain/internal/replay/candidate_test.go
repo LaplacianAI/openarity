@@ -3,8 +3,10 @@ package replay
 import (
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,7 +21,7 @@ func (w *world) candidateFor(t *testing.T, after proposals.Snapshot, skill *uuid
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := candidateOf(w.store, w.store, db.ImprovementProposal{ID: uuid.New(), TeamID: w.team, AgentID: w.agent, SkillID: skill, After: raw}, 1<<62)
+	c, err := candidateOf(w.store, w.store, w.objects, db.ImprovementProposal{ID: uuid.New(), TeamID: w.team, AgentID: w.agent, SkillID: skill, After: raw}, db.Run{CreatedAt: time.Now()}, 1<<62)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +106,17 @@ func TestACandidateTriesASkillEdit(t *testing.T) {
 	if err != nil || len(files) != 2 {
 		t.Fatalf("files %+v, %v", files, err)
 	}
-	if files[0].ObjectKey != "objects/kept" || c.texts[files[1].ObjectKey] != text {
-		t.Errorf("files %+v, texts %v", files, c.texts)
+	if files[0].ObjectKey != "objects/kept" {
+		t.Errorf("files %+v", files)
+	}
+	// The tried file reads from its text; the kept one from the store.
+	for key, want := range map[string]string{files[1].ObjectKey: text, files[0].ObjectKey: "kept"} {
+		if b, err := c.Get(t.Context(), w.team, key); err != nil || string(b) != want {
+			t.Errorf("Get(%s) = %q, %v; want %q", key, b, err, want)
+		}
+	}
+	if _, err := c.Get(t.Context(), w.team, "replay/"+skill.String()+"/dddd"); err == nil {
+		t.Error("a tried key the skill has no file for was read")
 	}
 	var body string
 	w.scan(t, &body, `SELECT body FROM skills WHERE id = $1`, skill)
@@ -129,4 +140,65 @@ func TestACompactedConversationIsNotTried(t *testing.T) {
 	if len(got) != 1 || got[0].status != "skipped" || got[0].skipWhy == nil || *got[0].skipWhy != "its conversation was compacted since it began, so it cannot be rebuilt as it was" {
 		t.Errorf("tried %+v", got)
 	}
+}
+
+// Every column an agent is made with but its team and kind reaches the tried
+// agent: a new one that GetAgent does not copy fails here.
+func TestEveryTriedColumnIsCopied(t *testing.T) {
+	copied := map[string]bool{
+		"Name": true, "Description": true, "Instructions": true, "ModelName": true, "MaxTokens": true,
+		"Temperature": true, "Pattern": true, "MaxSteps": true, "SteerContinuations": true,
+		"OutputSchema": true, "Parser": true, "ParserModelName": true, "ParserMaxTokens": true,
+		"ParserTemperature": true, "TokenBudget": true, "Delegation": true, "Web": true,
+		"Browser": true, "Workspace": true,
+		// Not moved by a change.
+		"TeamID": true, "Kind": true,
+	}
+	ty := reflect.TypeFor[db.CreateAgentParams]()
+	for i := range ty.NumField() {
+		if !copied[ty.Field(i).Name] {
+			t.Errorf("CreateAgentParams.%s is not copied to the tried agent", ty.Field(i).Name)
+		}
+	}
+}
+
+// The files a replay can list and read are those sent before the past run
+// began.
+func TestACandidateSeesOnlyFilesSentBeforeTheRun(t *testing.T) {
+	w := newWorld(t)
+	began := time.Now().Add(-time.Hour)
+	session, before, after := w.sessionWithFiles(t, began)
+	c, err := candidateOf(w.store, w.store, w.objects, db.ImprovementProposal{ID: uuid.New(), TeamID: w.team, AgentID: w.agent, After: []byte(`{}`)},
+		db.Run{CreatedAt: began.Add(-time.Minute), StartedAt: &began}, 1<<62)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := c.ListAttachmentsBySession(t.Context(), db.ListAttachmentsBySessionParams{SessionID: session, PageSize: 10})
+	if err != nil || len(rows) != 1 || rows[0].ID != before {
+		t.Errorf("listed %+v, %v; want only the file sent before", rows, err)
+	}
+	if _, err := c.GetAttachmentInSession(t.Context(), db.GetAttachmentInSessionParams{ID: after, SessionID: session}); err == nil {
+		t.Error("a file sent after the run began was read")
+	}
+	if _, err := c.GetAttachmentInSession(t.Context(), db.GetAttachmentInSessionParams{ID: before, SessionID: session}); err != nil {
+		t.Errorf("the file sent before: %v", err)
+	}
+}
+
+// sessionWithFiles is a conversation with one file sent an hour before
+// began and one sent after it.
+func (w *world) sessionWithFiles(t *testing.T, began time.Time) (session, before, after uuid.UUID) {
+	t.Helper()
+	session = w.session(t)
+	var msg uuid.UUID
+	w.scan(t, &msg, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, sender_name)
+		VALUES ($1, $2, $3, $4, 'files', 'Asha') RETURNING id`, w.channel, session, w.user, uuid.NewString())
+	for _, f := range []struct {
+		id *uuid.UUID
+		at time.Time
+	}{{&before, began.Add(-time.Hour)}, {&after, began.Add(time.Minute)}} {
+		w.scan(t, f.id, `INSERT INTO attachments (message_id, session_id, team_id, object_key, media_type, size_bytes, filename, created_at)
+			VALUES ($1, $2, $3, $4, 'text/plain', 1, 'a.txt', $5) RETURNING id`, msg, session, w.team, uuid.NewString(), f.at)
+	}
+	return session, before, after
 }

@@ -41,14 +41,14 @@ func newReplayFixture(t *testing.T, turns ...turn) *replayFixture {
 		t.Fatal(err)
 	}
 	// No graph: the tools are sent, and a test sees each by its name.
-	f.replayer = NewReplayer(f.objects, f.clients, nil, nil, nil, runner, agent.Endpoint{})
+	f.replayer = NewReplayer(f.clients, roles{}, nil, nil, nil, runner, agent.Endpoint{})
 	return f
 }
 
 func (f *replayFixture) replay(t *testing.T, recorded ...Recorded) Replayed {
 	t.Helper()
 	out, err := f.replayer.Replay(t.Context(), ReplayInput{
-		Store: f.store, Run: f.run, Recorded: recorded,
+		Store: f.store, Objects: f.objects, Run: f.run, Recorded: recorded,
 		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "find the customer"}}}},
 	})
 	if err != nil {
@@ -170,7 +170,7 @@ func TestATriedToolThatIsNotAReadCannotBeMade(t *testing.T) {
 func TestAReplayIsStoppedAtItsTokens(t *testing.T) {
 	f := newReplayFixture(t, callTool("1", "crm__lookup", `{"id":1}`), answer("done", 10, 5))
 	out, err := f.replayer.Replay(t.Context(), ReplayInput{
-		Store: f.store, Run: f.run, Limits: ReplayLimits{Tokens: 10},
+		Store: f.store, Objects: f.objects, Run: f.run, Limits: ReplayLimits{Tokens: 10},
 		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "go"}}}},
 	})
 	if err != nil || !errors.Is(out.Over, ErrReplayTokens) {
@@ -182,25 +182,11 @@ func TestAReplayIsStoppedAtItsTokens(t *testing.T) {
 func TestAReplayIsStoppedAtItsTime(t *testing.T) {
 	f := newReplayFixture(t, blocked())
 	out, err := f.replayer.Replay(t.Context(), ReplayInput{
-		Store: f.store, Run: f.run, Limits: ReplayLimits{Time: 50 * time.Millisecond},
+		Store: f.store, Objects: f.objects, Run: f.run, Limits: ReplayLimits{Time: 50 * time.Millisecond},
 		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "go"}}}},
 	})
 	if err != nil || !errors.Is(out.Over, ErrReplayTime) {
 		t.Errorf("replay = %+v, %v; want stopped at its time", out.Over, err)
-	}
-}
-
-// A skill's file not stored yet is read from its text; any other from the
-// store.
-func TestATriedSkillFileIsReadFromItsText(t *testing.T) {
-	inner := &fakeObjects{data: map[string]string{"k1": "stored"}}
-	o := textObjects{texts: map[string]string{"replay/x": "tried"}, inner: inner}
-	team := uuid.New()
-	if b, err := o.Get(t.Context(), team, "replay/x"); err != nil || string(b) != "tried" {
-		t.Errorf("tried file = %q, %v", b, err)
-	}
-	if b, err := o.Get(t.Context(), team, "k1"); err != nil || string(b) != "stored" {
-		t.Errorf("stored file = %q, %v", b, err)
 	}
 }
 
@@ -210,11 +196,95 @@ func TestCanonicalArgumentsAreOneText(t *testing.T) {
 		{`{"n":12345678901234567890}`, `{"n": 12345678901234567890}`},
 		{`not json`, `  not json `},
 	} {
-		if Canonical(tc.a) != Canonical(tc.b) {
-			t.Errorf("%q and %q differ: %q, %q", tc.a, tc.b, Canonical(tc.a), Canonical(tc.b))
+		if canonical(tc.a) != canonical(tc.b) {
+			t.Errorf("%q and %q differ: %q, %q", tc.a, tc.b, canonical(tc.a), canonical(tc.b))
 		}
 	}
-	if Canonical(`{"a":1}`) == Canonical(`{"a":2}`) {
+	if canonical(`{"a":1}`) == canonical(`{"a":2}`) {
 		t.Error("different arguments read alike")
+	}
+}
+
+// roles is a team in which the run's person holds what perms says.
+type roles struct{ perms []string }
+
+func (roles) FindTeamMember(context.Context, db.FindTeamMemberParams) (string, error) {
+	return "member", nil
+}
+
+func (r roles) ListRolePermissions(context.Context, string) ([]string, error) { return r.perms, nil }
+
+// The web is a read in a replay only for a past run a person who may
+// approve their own calls was there for: for a guest's, or a run nobody was
+// there for, a fetch carries data out unseen, so it is not made.
+func TestAReplayReachesTheWebOnlyAsThePastRunsPersonWould(t *testing.T) {
+	member := uuid.New()
+	for _, tc := range []struct {
+		name       string
+		user       *uuid.UUID
+		perms      []string
+		unattended bool
+		read       bool
+	}{
+		{"a member who was there", &member, []string{"approval:self"}, false, true},
+		{"a member's unattended run", &member, []string{"approval:self"}, true, false},
+		{"a guest", &member, nil, false, false},
+		{"nobody", nil, []string{"approval:self"}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWebFixture("none", "")
+			w.asAgent(true)
+			w.builder.replay, w.builder.roles = true, roles{perms: tc.perms}
+			w.run.UserID, w.run.Unattended = tc.user, tc.unattended
+
+			got := w.build(t)
+
+			if len(toolsNamed(got, WebFetchToolName)) != 1 {
+				t.Fatal("web_fetch is not held as the agent holds it")
+			}
+			if got.reads[WebFetchToolName] != tc.read {
+				t.Errorf("web_fetch read = %v, want %v", got.reads[WebFetchToolName], tc.read)
+			}
+		})
+	}
+}
+
+// Two tools of one name could make a write read as a read: the replay is
+// refused rather than guessed at.
+func TestAReplayRefusesTwoToolsOfOneName(t *testing.T) {
+	if d := duplicate([]string{"a", "b", "a"}); d != "a" {
+		t.Errorf("duplicate = %q, want a", d)
+	}
+	if d := duplicate([]string{"a", "b"}); d != "" {
+		t.Errorf("duplicate = %q, want none", d)
+	}
+}
+
+// A replayed hub holds its delegate tool as a stand-in, as any agent does.
+func TestAReplayedHubHoldsItsDelegateAsAStandIn(t *testing.T) {
+	f := newFixture()
+	f.builder.replay = true
+	f.store.others = 1
+	f.run.Hub = true
+
+	tool, ok, err := f.builder.delegateFor(t.Context(), f.agent, f.run, Lineage{})
+	if err != nil || !ok || tool.Name != DelegateToolName {
+		t.Fatalf("delegate = %q, %v, %v; want the stand-in", tool.Name, ok, err)
+	}
+}
+
+// A call is read with the result its id names; one with no result is left
+// out, and an event that cannot be read fails the reading.
+func TestARunsCallsAreReadFromItsEvents(t *testing.T) {
+	got, err := RecordedOf([]db.RunEvent{
+		{Seq: 1, Kind: "tool_call", Payload: []byte(`{"id":"a","name":"crm__lookup","arguments":"{}"}`)},
+		{Seq: 2, Kind: "tool_call", Payload: []byte(`{"id":"b","name":"mail__send","arguments":"{}"}`)},
+		{Seq: 3, Kind: "tool_result", Payload: []byte(`{"id":"a","name":"crm__lookup","output":"Ada"}`)},
+	})
+	if err != nil || len(got) != 1 || got[0] != (Recorded{Name: "crm__lookup", Arguments: "{}", Output: "Ada"}) {
+		t.Errorf("recorded %+v, %v", got, err)
+	}
+	if _, err := RecordedOf([]db.RunEvent{{Seq: 1, Kind: "tool_call", Payload: []byte(`{`)}}); err == nil {
+		t.Error("an unreadable event was passed over")
 	}
 }

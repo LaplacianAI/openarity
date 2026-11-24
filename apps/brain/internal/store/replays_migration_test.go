@@ -6,8 +6,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// addReplays is 20261206090000_add_replays.sql.
-const addReplays = 20261206090000
+// addReplays is 20261207090000_add_replays.sql.
+const addReplays = 20261207090000
 
 // A saved team starts with trying off at the defaults, each number held to
 // its range; a try's row holds to its shape; the Down drops both.

@@ -253,60 +253,61 @@ function DangerZone({ teamId, teamName }: { teamId: string; teamName: string }) 
   );
 }
 
-export type SettingsDraft = EfficiencyDraft &
-  ReplayDraft & {
-    modelOn: boolean;
-    modelName: string;
-    maxTokens: string;
-    temperature: string;
-    provider: SearchProvider;
-    url: string;
-    key: string;
-    dropKey: boolean;
-    sandbox: SandboxProvider;
-    sandboxURL: string;
-    /** E2B only; empty for the default template. */
-    sandboxTemplate: string;
-    /** Typed only; the stored key is never read back. */
-    sandboxKey: string;
-    /** Whether workspaces get the team's own size, not the provider's. */
-    sizeCustom: boolean;
-    /** Memory and disk in GB, CPUs whole, as typed. */
-    sizeMemory: string;
-    sizeCPUs: string;
-    sizeDisk: string;
-    /** Whether a workspace left running stops after the team's own time, not the deployment's. */
-    idleOwn: boolean;
-    idleMinutes: string;
-    keepHours: string;
-    browser: BrowserProvider;
-    browserURL: string;
-    /** Typed only; the stored key is never read back. */
-    browserKey: string;
-    /** A self-hosted browser only: reach it with no key. */
-    dropBrowserKey: boolean;
-    improvement: boolean;
-    /** Whether runs are judged on a model of their own, not the team's. */
-    judgeOn: boolean;
-    judgeName: string;
-    judgeMaxTokens: string;
-    judgeTemperature: string;
-    /** The share of good runs studied, as typed. */
-    sampleShare: string;
-    /** The most improver passes in a day, as typed. */
-    dailyPasses: string;
-    /** What one try at a pass may spend, as typed. */
-    passTokens: string;
-    passMinutes: string;
-    /** The judged runs a daily pass waits for, as typed. */
-    dailyRuns: string;
-    /** Messages, and the token lines, as typed: compared by value. */
-    compaction: string;
-    tokensMin: string;
-    tokensMax: string;
-    /** The chosen hub agent; null for the built-in orchestrator. */
-    hub: Picked | null;
-  };
+type DraftFields = EfficiencyDraft & {
+  modelOn: boolean;
+  modelName: string;
+  maxTokens: string;
+  temperature: string;
+  provider: SearchProvider;
+  url: string;
+  key: string;
+  dropKey: boolean;
+  sandbox: SandboxProvider;
+  sandboxURL: string;
+  /** E2B only; empty for the default template. */
+  sandboxTemplate: string;
+  /** Typed only; the stored key is never read back. */
+  sandboxKey: string;
+  /** Whether workspaces get the team's own size, not the provider's. */
+  sizeCustom: boolean;
+  /** Memory and disk in GB, CPUs whole, as typed. */
+  sizeMemory: string;
+  sizeCPUs: string;
+  sizeDisk: string;
+  /** Whether a workspace left running stops after the team's own time, not the deployment's. */
+  idleOwn: boolean;
+  idleMinutes: string;
+  keepHours: string;
+  browser: BrowserProvider;
+  browserURL: string;
+  /** Typed only; the stored key is never read back. */
+  browserKey: string;
+  /** A self-hosted browser only: reach it with no key. */
+  dropBrowserKey: boolean;
+  improvement: boolean;
+  /** Whether runs are judged on a model of their own, not the team's. */
+  judgeOn: boolean;
+  judgeName: string;
+  judgeMaxTokens: string;
+  judgeTemperature: string;
+  /** The share of good runs studied, as typed. */
+  sampleShare: string;
+  /** The most improver passes in a day, as typed. */
+  dailyPasses: string;
+  /** What one try at a pass may spend, as typed. */
+  passTokens: string;
+  passMinutes: string;
+  /** The judged runs a daily pass waits for, as typed. */
+  dailyRuns: string;
+  /** Messages, and the token lines, as typed: compared by value. */
+  compaction: string;
+  tokensMin: string;
+  tokensMax: string;
+  /** The chosen hub agent; null for the built-in orchestrator. */
+  hub: Picked | null;
+};
+
+export type SettingsDraft = DraftFields & ReplayDraft;
 
 export function draftOf(s: TeamSettings): SettingsDraft {
   return {

@@ -7815,9 +7815,10 @@ components:
       description: |
         How the change fared on a few of its agent's past runs, tried before
         anyone decided on it. status is off when it was never tried (its team
-        had trying off when it was proposed), trying while a try is still to
-        run, done once one came to an outcome, and none when none could be
-        tried or every try failed. Shown, never acted on: the approver decides.
+        had trying off when its runs would have been chosen), trying while a
+        try is still to run, done once one came to an outcome, and none when
+        none of its runs could be tried or every try failed. Shown, never
+        acted on: the approver decides.
       required: [status, runs]
       properties:
         status:
@@ -7881,6 +7882,7 @@ components:
         error:
           type: string
           nullable: true
+          description: Why the try failed; to a caller who may not read the run, only that it did
         original:
           type: string
           enum: [good, bad]
@@ -7890,6 +7892,15 @@ components:
           enum: [good, bad, cant_tell]
           nullable: true
           description: How the try went; null until it is done
+        outcome:
+          type: string
+          enum: [fixed, kept, broke, still_bad, unclear]
+          nullable: true
+          description: |
+            The run's outcome beside the try's, once the try is done: fixed
+            (went wrong, now goes well), kept (went well, still does), broke
+            (went well, now goes wrong), still_bad, or unclear (the try's
+            outcome could not be told). Null until the try is done.
         verdict:
           type: string
           nullable: true

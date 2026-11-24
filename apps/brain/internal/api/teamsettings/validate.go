@@ -378,23 +378,29 @@ func checkTemplate(s sandboxRequest) error {
 
 // checkReplay holds each replay number a request sends to its range.
 func checkReplay(req settingsRequest) error {
-	for _, v := range []struct {
-		name     string
-		value    *int16
-		min, max int16
-	}{
-		{"improvement_replay_runs", req.ImprovementReplayRuns, 1, maxReplayRuns},
-		{"improvement_replay_minutes", req.ImprovementReplayMinutes, 1, maxReplayMinutes},
-		{"improvement_replay_daily", req.ImprovementReplayDaily, 1, maxReplayDaily},
-	} {
+	for _, v := range replayRanges(req) {
 		if v.value != nil && (*v.value < v.min || *v.value > v.max) {
 			return fmt.Errorf("%s must be between %d and %d", v.name, v.min, v.max)
 		}
 	}
-	if n := req.ImprovementReplayTokens; n != nil && (*n < minReplayTokens || *n > maxReplayTokens) {
-		return fmt.Errorf("improvement_replay_tokens must be between %d and %d", minReplayTokens, maxReplayTokens)
-	}
 	return nil
+}
+
+type replayRange struct {
+	name     string
+	value    *int32
+	min, max int32
+}
+
+// replayRanges are the replay numbers a request may send, with their ranges:
+// the migration's checks and the API's description hold the same.
+func replayRanges(req settingsRequest) []replayRange {
+	return []replayRange{
+		{"improvement_replay_runs", req.ImprovementReplayRuns, 1, maxReplayRuns},
+		{"improvement_replay_tokens", req.ImprovementReplayTokens, minReplayTokens, maxReplayTokens},
+		{"improvement_replay_minutes", req.ImprovementReplayMinutes, 1, maxReplayMinutes},
+		{"improvement_replay_daily", req.ImprovementReplayDaily, 1, maxReplayDaily},
+	}
 }
 
 // checkEfficiency holds each efficiency number a request sends to its

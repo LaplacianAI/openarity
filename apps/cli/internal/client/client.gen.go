@@ -840,6 +840,33 @@ func (e ImprovementReplayRunOriginal) Valid() bool {
 	}
 }
 
+// Defines values for ImprovementReplayRunOutcome.
+const (
+	Broke    ImprovementReplayRunOutcome = "broke"
+	Fixed    ImprovementReplayRunOutcome = "fixed"
+	Kept     ImprovementReplayRunOutcome = "kept"
+	StillBad ImprovementReplayRunOutcome = "still_bad"
+	Unclear  ImprovementReplayRunOutcome = "unclear"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayRunOutcome enum.
+func (e ImprovementReplayRunOutcome) Valid() bool {
+	switch e {
+	case Broke:
+		return true
+	case Fixed:
+		return true
+	case Kept:
+		return true
+	case StillBad:
+		return true
+	case Unclear:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImprovementReplayRunReplayed.
 const (
 	ImprovementReplayRunReplayedBad      ImprovementReplayRunReplayed = "bad"
@@ -2782,9 +2809,10 @@ type ImprovementPage struct {
 
 // ImprovementReplay How the change fared on a few of its agent's past runs, tried before
 // anyone decided on it. status is off when it was never tried (its team
-// had trying off when it was proposed), trying while a try is still to
-// run, done once one came to an outcome, and none when none could be
-// tried or every try failed. Shown, never acted on: the approver decides.
+// had trying off when its runs would have been chosen), trying while a
+// try is still to run, done once one came to an outcome, and none when
+// none of its runs could be tried or every try failed. Shown, never
+// acted on: the approver decides.
 type ImprovementReplay struct {
 	Runs   []ImprovementReplayRun  `json:"runs" yaml:"runs"`
 	Status ImprovementReplayStatus `json:"status" yaml:"status"`
@@ -2827,7 +2855,9 @@ type ImprovementReplayRun struct {
 	Chosen ImprovementReplayRunChosen `json:"chosen" yaml:"chosen"`
 
 	// Diverged The try came to a call the run never made that was not a read, and it was not made
-	Diverged   bool       `json:"diverged" yaml:"diverged"`
+	Diverged bool `json:"diverged" yaml:"diverged"`
+
+	// Error Why the try failed; to a caller who may not read the run, only that it did
 	Error      *string    `json:"error,omitempty" yaml:"error,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
 
@@ -2837,6 +2867,12 @@ type ImprovementReplayRun struct {
 
 	// Original How the run itself went, 👍 and 👎 counted
 	Original ImprovementReplayRunOriginal `json:"original" yaml:"original"`
+
+	// Outcome The run's outcome beside the try's, once the try is done: fixed
+	// (went wrong, now goes well), kept (went well, still does), broke
+	// (went well, now goes wrong), still_bad, or unclear (the try's
+	// outcome could not be told). Null until the try is done.
+	Outcome *ImprovementReplayRunOutcome `json:"outcome,omitempty" yaml:"outcome,omitempty"`
 
 	// Recorded Calls given what the run's same call got
 	Recorded int32 `json:"recorded" yaml:"recorded"`
@@ -2862,6 +2898,12 @@ type ImprovementReplayRunChosen string
 
 // ImprovementReplayRunOriginal How the run itself went, 👍 and 👎 counted
 type ImprovementReplayRunOriginal string
+
+// ImprovementReplayRunOutcome The run's outcome beside the try's, once the try is done: fixed
+// (went wrong, now goes well), kept (went well, still does), broke
+// (went well, now goes wrong), still_bad, or unclear (the try's
+// outcome could not be told). Null until the try is done.
+type ImprovementReplayRunOutcome string
 
 // ImprovementReplayRunReplayed How the try went; null until it is done
 type ImprovementReplayRunReplayed string

@@ -9,10 +9,10 @@ import (
 )
 
 const tried = `,"replay":{"status":"done","runs":[
-  {"run":{"id":"` + runA + `","readable":true},"chosen":"cited","status":"done","original":"bad","replayed":"good",
+  {"run":{"id":"` + runA + `","readable":true},"chosen":"cited","status":"done","original":"bad","replayed":"good","outcome":"fixed",
    "request":"refund order 42","withheld":false,"diverged":true,"recorded":2,"live":0,"not_made":1,
    "before":{"tokens":18400,"steps":9,"work_ms":41000},"after":{"tokens":12000,"steps":5,"work_ms":20000}},
-  {"run":{"id":"` + runB + `","readable":false},"chosen":"good","status":"done","original":"good","replayed":"bad",
+  {"run":{"id":"` + runB + `","readable":false},"chosen":"good","status":"done","original":"good","replayed":"bad","outcome":"broke",
    "request":null,"withheld":true,"diverged":false,"recorded":3,"live":1,"not_made":0,
    "before":{"tokens":9000,"steps":4,"work_ms":10000},"after":{"tokens":9500,"steps":4,"work_ms":11000}},
   {"run":{"id":"` + userID + `","readable":true},"chosen":"cited","status":"skipped","original":"bad",
@@ -45,11 +45,36 @@ func TestShowSaysHowAProposalFaredOnPastRuns(t *testing.T) {
 
 func TestTheReplaySummaryNamesEachState(t *testing.T) {
 	for status, want := range map[string]string{
-		"off": "not tried: trying on past runs was off", "trying": "trying on past runs…", "none": "could not be tried",
+		"off": "not tried: trying on past runs was off", "trying": "trying on past runs…", "none": "none of its past runs could be tried",
 	} {
 		if got := (&replayView{Status: status}).summary(); !strings.HasPrefix(got, want) {
 			t.Errorf("%s = %q, want %q", status, got, want)
 		}
+	}
+}
+
+// While some tries are still to run, the summary says how many are done.
+func TestTheReplaySummaryCountsTriesWhileTrying(t *testing.T) {
+	fixed := "fixed"
+	v := &replayView{Status: "trying", Runs: []replayRunView{
+		{Status: "done", Outcome: &fixed}, {Status: "trying"}, {Status: "queued"}, {Status: "skipped"},
+	}}
+	if got, want := v.summary(), "trying on past runs… 1 of 3 tried"; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
+
+// A team with trying off sees no line for it under a proposal.
+func TestShowSaysNothingOfTriesWithReplayOff(t *testing.T) {
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/improvements/{proposalID}": {Status: http.StatusOK, Body: proposal("waiting", `,"replay":{"status":"off","runs":[]}`)},
+	}))
+	out, err := clitest.Execute(t, commands, "improvements", "show", "platform", propID)
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if strings.Contains(out, "past runs") {
+		t.Errorf("replay off printed a line for it:\n%s", out)
 	}
 }
 

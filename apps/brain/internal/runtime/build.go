@@ -54,18 +54,21 @@ type MCPClients interface {
 }
 
 type Builder struct {
-	store          BuildStore
-	objects        Objects
-	mcp            MCPClients
-	graph          *GraphDeps
-	search         *SearchDeps
-	fetch          *FetchDeps
-	browsers       *BrowserDeps
-	workspaces     *WorkspaceDeps
-	delegates      *DelegateDeps
-	workshop       Workshop
-	registry       Registry
-	approvals      ApprovalStore
+	store      BuildStore
+	objects    Objects
+	mcp        MCPClients
+	graph      *GraphDeps
+	search     *SearchDeps
+	fetch      *FetchDeps
+	browsers   *BrowserDeps
+	workspaces *WorkspaceDeps
+	delegates  *DelegateDeps
+	workshop   Workshop
+	registry   Registry
+	approvals  ApprovalStore
+	// roles tells a replay who the past run acted for; a run reads it from
+	// its policy.
+	roles          MemberRoles
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 	// replay builds a past run again for a replay (replay.go): the tools a
@@ -103,10 +106,11 @@ type Built struct {
 	// request records, as it is before the gate: what a resume makes once
 	// the call is approved.
 	answerable map[string]agent.Tool
-	// reads is every tool, by its name in the run, that only reads what has
-	// not moved on since: a trusted server's read-only tool, the web, the
-	// graph, the conversation's history and files. A replay runs these live
-	// and no other.
+	// reads is every tool, by its name in the run, that only reads: a
+	// trusted server's read-only tool, the web for a person who is there,
+	// the graph, and the conversation's history and files, which a replay's
+	// store cuts to before the past run began. A replay runs these live and
+	// no other.
 	reads map[string]bool
 }
 
@@ -250,14 +254,20 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 
 	if web {
+		actor, err := b.actorFor(ctx, run, gates)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
+		// Reaching the internet is a read for a person who is there, and a
+		// write for a guest or a run nobody is present for.
+		egress := approval.ClassFor(approval.Egress, actor)
 		tools, unavailable := b.webTools(ctx, run.TeamID, settings)
 		built.Unavailable = append(built.Unavailable, unavailable...)
 		for _, t := range tools {
-			// Reaching the internet is a read for a person who is there, and a
-			// write for a guest or a run nobody is present for.
 			built.answerable[t.Name] = t
-			built.reads[t.Name] = true
-			gated, refused := gates.gate(t, target{name: t.Name, class: approval.ClassFor(approval.Egress, gates.actorOf())})
+			built.reads[t.Name] = egress == approval.Read
+			gated, refused := gates.gate(t, target{name: t.Name, class: egress})
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)
 				continue

@@ -189,8 +189,9 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	if req.ImprovementReplay != nil {
 		p.ImprovementReplay = pgtype.Bool{Bool: *req.ImprovementReplay, Valid: true}
 	}
-	p.ImprovementReplayRuns, p.ImprovementReplayTokens = req.ImprovementReplayRuns, req.ImprovementReplayTokens
-	p.ImprovementReplayMinutes, p.ImprovementReplayDaily = req.ImprovementReplayMinutes, req.ImprovementReplayDaily
+	// Held to their ranges by checkReplay, so each fits what keeps it.
+	p.ImprovementReplayRuns, p.ImprovementReplayTokens = narrow(req.ImprovementReplayRuns), req.ImprovementReplayTokens
+	p.ImprovementReplayMinutes, p.ImprovementReplayDaily = narrow(req.ImprovementReplayMinutes), narrow(req.ImprovementReplayDaily)
 	p.SandboxProvider, p.SandboxUrl, p.SandboxTemplate, p.SandboxSecretID = box.provider, box.url, box.template, box.secretID
 	lifecycle(&p, req.Sandbox, stored)
 	p.BrowserProvider, p.BrowserUrl, p.BrowserSecretID = web.provider, web.url, web.secretID
@@ -521,4 +522,13 @@ func sizeOf(row db.TeamSetting) *size {
 		return nil
 	}
 	return &size{MemoryMB: *row.SandboxWorkspaceMemoryMb, CPUs: *row.SandboxWorkspaceCpus, DiskMB: *row.SandboxWorkspaceDiskMb}
+}
+
+// narrow is a number checked to fit a smallint, as one; nil stays nil.
+func narrow(n *int32) *int16 {
+	if n == nil {
+		return nil
+	}
+	v := int16(*n) //nolint:gosec // checked to its range first
+	return &v
 }
