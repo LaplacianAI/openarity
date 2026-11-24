@@ -168,6 +168,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # goose refuses a migration numbered before one a database has already
+      # applied, so a pull request's new migrations must sort after its base's
+      # newest. #295's sorted before #294's, which staging had applied, and
+      # every deploy after it failed.
+      - name: New migrations sort after the base's
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          scripts/migrations-after.sh "$BASE_SHA"
+
       # SeaweedFS is a step rather than a service container because it needs
       # `server -s3` as its command, and a service container can set the
       # image, the environment and docker options but never the command.
