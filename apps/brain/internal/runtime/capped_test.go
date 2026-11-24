@@ -217,6 +217,10 @@ func TestNoBytePastTheLineIsReadWithoutTheSlot(t *testing.T) {
 // A Close while a read waits for the slot leaves the slot free once the
 // read gives up: the waiting read either takes it before Close, which gives
 // it back, or after, and sees the body closed.
+//
+// A smoke check, not a guard of the single critical section in Close: the
+// interleaving that leaked the slot, a take between a release and closed,
+// cannot be forced from here, and Close in two sections passes this test.
 func TestClosingAnAnswerThatWaitsForTheSlotFreesIt(t *testing.T) {
 	t.Parallel()
 	srv := sized(t)
