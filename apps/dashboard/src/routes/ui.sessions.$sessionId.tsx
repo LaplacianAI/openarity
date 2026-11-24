@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDown, ChevronRight, Loader2, Paperclip } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   downloadAttachment,
@@ -26,17 +26,18 @@ import { Composer } from "@/components/composer";
 import { ConversationView } from "@/components/conversation-view";
 import { Time } from "@/components/facts";
 import { saveDownload } from "@/components/file-chip";
-import { isLive, RunDetail, RunStatus } from "@/components/run-detail";
+import { isLive, RunDetail } from "@/components/run-detail";
 import { RunFeedbackControls, useCanGiveFeedback } from "@/components/run-feedback";
-import { HandedTo } from "@/components/run-table";
+import { RunSwitcher } from "@/components/run-switcher";
 import { useSessionStream } from "@/components/session-stream";
 import { ErrorState } from "@/components/states";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { EmptyState, LoadMore } from "@/components/ui-bits";
+import { EmptyState } from "@/components/ui-bits";
 import { awaitsReply } from "@/lib/conversation";
+import { useFollowEnd } from "@/lib/follow-end";
 import { fileSize } from "@/lib/format";
 import { useMediaQuery } from "@/lib/media";
 import { sessionName } from "@/lib/sessions";
@@ -136,11 +137,20 @@ function SessionPage() {
       runs={runs}
       selected={search.run ?? null}
       onChanged={() => runs.refetch()}
+      pane={sideBySide}
     />
   ) : null;
 
   return (
-    <div className="space-y-6">
+    // Side by side, the page fills the sheet and each half scrolls on its
+    // own: what arrives in the conversation never moves the run beside it.
+    <div
+      data-fills-sheet={sideBySide && teamId ? "" : undefined}
+      className={cn(
+        "space-y-6",
+        sideBySide && teamId && "flex h-full min-h-0 flex-col space-y-0 gap-6",
+      )}
+    >
       <header className="space-y-2">
         <nav aria-label="Breadcrumb">
           <ol className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
@@ -190,14 +200,14 @@ function SessionPage() {
       {!teamId ? (
         <EmptyState title="No team" body="Join or create a team to see its sessions." />
       ) : sideBySide ? (
-        <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-start gap-8">
-          <section aria-labelledby="conversation" className="space-y-3">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-8">
+          <section aria-labelledby="conversation" className="flex min-h-0 flex-col gap-3">
             <h2 id="conversation" className="text-base font-medium">
               Conversation
             </h2>
-            <Conversation teamId={teamId} sessionId={sessionId} session={s} runs={runs} />
+            <Conversation teamId={teamId} sessionId={sessionId} session={s} runs={runs} pane />
           </section>
-          <section aria-labelledby="runs" className="space-y-3">
+          <section aria-labelledby="runs" className="flex min-h-0 flex-col gap-3">
             <h2 id="runs" className="flex items-center gap-2 text-base font-medium">
               Runs
               {runs.isSuccess ? (
@@ -254,11 +264,14 @@ function Conversation({
   sessionId,
   session,
   runs,
+  pane = false,
 }: {
   teamId: string;
   sessionId: string;
   session: Session | null;
   runs: RunsQuery;
+  /** A pane of its own, which scrolls by itself with the composer under it. */
+  pane?: boolean;
 }) {
   const stream = useSessionStream(teamId, sessionId);
   const c = stream.conversation;
@@ -291,143 +304,122 @@ function Conversation({
     }
   };
   const files = attachments.data?.pages.flatMap((p) => p.items) ?? [];
-  const follow = useFollowBottom(c);
+  const body = useRef<HTMLDivElement>(null);
+  // The scroller changes with the layout: this pane, the sheet from a tablet
+  // up, or the window on a phone.
+  const tablet = useMediaQuery("(min-width: 48rem)");
+  const follow = useFollowEnd(body, c, pane ? "pane" : tablet ? "sheet" : "window");
   const feedbackOn = useCanGiveFeedback(teamId);
+  const writing = (
+    <Writing
+      teamId={teamId}
+      sessionId={sessionId}
+      session={session}
+      me={me}
+      behind={follow.behind}
+      onJump={follow.jump}
+      pane={pane}
+    />
+  );
 
   return (
-    <section aria-label="Messages" className="space-y-4">
-      {stream.failed !== null ? (
-        <ErrorState
-          what="the conversation"
-          error={stream.failed}
-          onRetry={stream.retry}
-          retrying={false}
-        />
-      ) : stream.loading ? (
-        <div className="space-y-3" role="status" aria-label="Loading messages">
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-4/5" />
-        </div>
-      ) : c.order.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing has been said here.</p>
-      ) : (
-        <ConversationView
-          teamId={teamId}
-          conversation={c}
-          sessionId={sessionId}
-          rows={runs.data?.pages.flatMap((p) => p.items) ?? []}
-          people={{ nameOf, me }}
-          afterRun={(id) =>
-            // A delegate's run is not the answer; only the run a person's message got is rated.
-            feedbackOn && c.runs[id]?.parent === null && c.runs[id]?.status === "succeeded" ? (
-              <RunFeedbackControls teamId={teamId} sessionId={sessionId} runId={id} />
-            ) : null
-          }
-          files={{
-            open: (f) => void download(f),
-            load: (f) => downloadAttachment(teamId, sessionId, f.id),
-          }}
-        />
-      )}
-      {stream.reconnecting ? (
-        <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Loader2 aria-hidden className="size-3 animate-spin" />
-          The connection dropped. Following the conversation again…
-        </p>
-      ) : null}
-
-      {attachments.isError ? (
-        <ErrorState
-          what="the attachments"
-          error={attachments.error}
-          onRetry={() => attachments.refetch()}
-          retrying={attachments.isRefetching}
-        />
-      ) : files.length > 0 ? (
-        <section aria-label="Attachments" className="space-y-2 pt-2">
-          <h3 className="text-sm font-medium">Attachments</h3>
-          <ul className="divide-y divide-rule rounded-lg bg-card text-sm">
-            {files.map((f) => (
-              <li key={f.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                <button
-                  type="button"
-                  className="inline-flex min-w-0 items-center gap-2 truncate rounded text-left underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-                  aria-label={`Download ${f.filename}`}
-                  onClick={() => void download(f)}
-                >
-                  <Paperclip aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{f.filename}</span>
-                </button>
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {f.media_type} · {fileSize(f.size_bytes)}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {failed ? (
-            <p role="alert" className="text-xs text-destructive">
-              {failed}
+    <section aria-label="Messages" className={pane ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
+      <div
+        data-scroller={pane ? "" : undefined}
+        className={pane ? "min-h-0 flex-1 overflow-y-auto pr-3" : undefined}
+      >
+        <div ref={body} className="space-y-4">
+          {stream.failed !== null ? (
+            <ErrorState
+              what="the conversation"
+              error={stream.failed}
+              onRetry={stream.retry}
+              retrying={false}
+            />
+          ) : stream.loading ? (
+            <div className="space-y-3" role="status" aria-label="Loading messages">
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-14 w-4/5" />
+            </div>
+          ) : c.order.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing has been said here.</p>
+          ) : (
+            <ConversationView
+              teamId={teamId}
+              conversation={c}
+              sessionId={sessionId}
+              rows={runs.data?.pages.flatMap((p) => p.items) ?? []}
+              people={{ nameOf, me }}
+              afterRun={(id) =>
+                // A delegate's run is not the answer; only the run a person's message got is rated.
+                feedbackOn && c.runs[id]?.parent === null && c.runs[id]?.status === "succeeded" ? (
+                  <RunFeedbackControls teamId={teamId} sessionId={sessionId} runId={id} />
+                ) : null
+              }
+              files={{
+                open: (f) => void download(f),
+                load: (f) => downloadAttachment(teamId, sessionId, f.id),
+              }}
+            />
+          )}
+          {stream.reconnecting ? (
+            <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 aria-hidden className="size-3 animate-spin" />
+              The connection dropped. Following the conversation again…
             </p>
           ) : null}
-          {attachments.hasNextPage ? (
-            <Button
-              variant="outline"
-              size="sm"
-              loading={attachments.isFetchingNextPage}
-              onClick={() => attachments.fetchNextPage()}
-            >
-              More attachments
-            </Button>
-          ) : null}
-        </section>
-      ) : null}
 
-      <Writing
-        teamId={teamId}
-        sessionId={sessionId}
-        session={session}
-        me={me}
-        behind={follow.behind}
-        onJump={follow.jump}
-      />
+          {attachments.isError ? (
+            <ErrorState
+              what="the attachments"
+              error={attachments.error}
+              onRetry={() => attachments.refetch()}
+              retrying={attachments.isRefetching}
+            />
+          ) : files.length > 0 ? (
+            <section aria-label="Attachments" className="space-y-2 pt-2">
+              <h3 className="text-sm font-medium">Attachments</h3>
+              <ul className="divide-y divide-rule rounded-lg bg-card text-sm">
+                {files.map((f) => (
+                  <li key={f.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <button
+                      type="button"
+                      className="inline-flex min-w-0 items-center gap-2 truncate rounded text-left underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                      aria-label={`Download ${f.filename}`}
+                      onClick={() => void download(f)}
+                    >
+                      <Paperclip aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{f.filename}</span>
+                    </button>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {f.media_type} · {fileSize(f.size_bytes)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {failed ? (
+                <p role="alert" className="text-xs text-destructive">
+                  {failed}
+                </p>
+              ) : null}
+              {attachments.hasNextPage ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  loading={attachments.isFetchingNextPage}
+                  onClick={() => attachments.fetchNextPage()}
+                >
+                  More attachments
+                </Button>
+              ) : null}
+            </section>
+          ) : null}
+        </div>
+      </div>
+
+      {writing}
     </section>
   );
-}
-
-const pageEnd = () => document.documentElement.scrollHeight;
-
-/** How close to the end of the page still counts as reading the end. */
-const AT_END_PX = 96;
-
-/**
- * Keeps the end of the conversation in view while the reader is at it: what
- * arrives scrolls into sight, at once, since it arrives many times a minute.
- * A reader who scrolled up to read is left where they are, and told there is
- * more below.
- */
-function useFollowBottom(changed: unknown) {
-  const atEnd = useRef(true);
-  const [behind, setBehind] = useState(false);
-  useEffect(() => {
-    const read = () => {
-      atEnd.current = window.innerHeight + window.scrollY >= pageEnd() - AT_END_PX;
-      if (atEnd.current) setBehind(false);
-    };
-    window.addEventListener("scroll", read, { passive: true });
-    return () => window.removeEventListener("scroll", read);
-  }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs for each change to what is shown
-  useLayoutEffect(() => {
-    if (atEnd.current) window.scrollTo({ top: pageEnd() });
-    else setBehind(true);
-  }, [changed]);
-  return {
-    behind,
-    jump: () => {
-      window.scrollTo({ top: pageEnd() });
-      setBehind(false);
-    },
-  };
 }
 
 /**
@@ -442,6 +434,7 @@ function Writing({
   me,
   behind,
   onJump,
+  pane = false,
 }: {
   teamId: string;
   sessionId: string;
@@ -449,6 +442,8 @@ function Writing({
   me: string | null;
   behind: boolean;
   onJump: () => void;
+  /** Under its own pane, outside what scrolls, so it need not stick. */
+  pane?: boolean;
 }) {
   const canWrite = usePermissions(teamId).can(RUN_WRITE);
   const channels = useQuery({
@@ -463,7 +458,13 @@ function Writing({
   const mine = onDashboard && session.user_id === me;
 
   return (
-    <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 -mx-4 space-y-2 border-t border-rule bg-sheet px-4 pt-3 pb-3 md:bottom-0 md:-mx-0 md:px-0">
+    <div
+      className={
+        pane
+          ? "shrink-0 space-y-2 border-t border-rule bg-sheet pt-3"
+          : "sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 -mx-4 space-y-2 border-t border-rule bg-sheet px-4 pt-3 pb-3 md:bottom-0 md:-mx-0 md:px-0"
+      }
+    >
       {behind ? (
         <div className="flex justify-center">
           <Button variant="outline" size="sm" onClick={onJump}>
@@ -518,9 +519,8 @@ const RUN_WRITE = "run:write";
 type RunsQuery = UseInfiniteQueryResult<InfiniteData<Page<Run>, unknown>, Error>;
 
 /**
- * Every run started in the session on the left, newest first, and the chosen
- * one on the right — the newest unless the URL names another. On a narrow
- * screen the two stack, list first.
+ * The session's runs: a switcher over the chosen one, which is the newest
+ * unless the URL names another, and that run's trace under it.
  */
 function Runs({
   teamId,
@@ -528,12 +528,15 @@ function Runs({
   runs,
   selected,
   onChanged,
+  pane = false,
 }: {
   teamId: string;
   sessionId: string;
   runs: RunsQuery;
   selected: string | null;
   onChanged: () => void;
+  /** A pane of its own: the switcher stays, and the run scrolls under it. */
+  pane?: boolean;
 }) {
   const canCancel = usePermissions(teamId).can(RUN_WRITE);
   const rows = runs.data?.pages.flatMap((p) => p.items) ?? [];
@@ -584,28 +587,25 @@ function Runs({
   }
 
   return (
-    <div className="space-y-6">
-      <nav aria-label="Runs" className="rounded-lg bg-card">
-        <ul className="max-h-64 divide-y divide-rule overflow-y-auto rounded-lg">
-          {rows.map((r) => (
-            <li key={r.id}>
-              <RunLink sessionId={sessionId} run={r} current={r.id === chosenId} />
-            </li>
-          ))}
-        </ul>
-        {runs.hasNextPage ? (
-          <div className="border-t border-rule px-3 pb-3">
-            <LoadMore
-              hasMore
-              loading={runs.isFetchingNextPage}
-              onClick={() => runs.fetchNextPage()}
-              loadedLabel={`${rows.length} run${rows.length === 1 ? "" : "s"} loaded`}
-            />
-          </div>
-        ) : null}
-      </nav>
+    <div className={pane ? "flex min-h-0 flex-1 flex-col gap-4" : "space-y-6"}>
+      <RunSwitcher
+        sessionId={sessionId}
+        rows={rows}
+        chosen={chosen}
+        hasMore={Boolean(runs.hasNextPage)}
+        loadingMore={runs.isFetchingNextPage}
+        onLoadMore={async () =>
+          (await runs.fetchNextPage()).data?.pages.flatMap((p) => p.items) ?? []
+        }
+      />
 
-      <div data-testid="run-pane">
+      {/* Keyed on the run, so another run opens at its top. */}
+      <div
+        key={chosenId ?? "none"}
+        data-testid="run-pane"
+        data-scroller={pane ? "" : undefined}
+        className={pane ? "min-h-0 flex-1 overflow-y-auto pr-3" : undefined}
+      >
         {chosen && chosen.session_id === sessionId ? (
           <RunDetail teamId={teamId} run={chosen} canCancel={canCancel} onChanged={changed} />
         ) : chosen ? (
@@ -625,34 +625,5 @@ function Runs({
         )}
       </div>
     </div>
-  );
-}
-
-function RunLink({ sessionId, run, current }: { sessionId: string; run: Run; current: boolean }) {
-  const total = run.input_tokens + run.output_tokens;
-  return (
-    <Link
-      to="/ui/sessions/$sessionId"
-      params={{ sessionId }}
-      search={{ tab: "runs", run: run.id }}
-      aria-current={current ? "page" : undefined}
-      data-run={run.id}
-      className={cn(
-        "flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px]",
-        current ? "bg-sheet shadow-[inset_0_0_0_1px_var(--color-primary)]" : "hover:bg-sheet/60",
-      )}
-    >
-      <span className="min-w-0 flex-1">
-        <span data-agent className="block truncate text-sm font-medium">
-          {run.agent}
-        </span>
-        <HandedTo run={run} />
-      </span>
-      <RunStatus status={run.status} />
-      <span className="flex basis-full gap-3 text-xs text-muted-foreground tabular-nums sm:basis-auto">
-        <span className="sm:w-24 sm:text-right">{total.toLocaleString("en-US")} tokens</span>
-        <Time iso={run.created_at} className="sm:w-16 sm:text-right" />
-      </span>
-    </Link>
   );
 }

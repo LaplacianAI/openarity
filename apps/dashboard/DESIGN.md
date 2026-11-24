@@ -238,9 +238,9 @@ Warm graphite paper with a single cool teal: BRAND's Spectral palette, copied in
 
 ## Layout
 
-**The frame.** The shell has three layouts, chosen by width. From 1280px it is a two-column, two-row grid: a 228px sidebar spanning both rows, grouped by job (Work, Build, Understand, Team), a 48px top bar, and the sheet in the remaining cell, inset 8px from the window's right and bottom edges. From 768px to 1279px the sidebar folds to a 56px rail of icons, each named in a tooltip, with a dot on Approvals while someone waits. The sidebar or rail and the top bar share the frame's ground with no line between them. Inside the sheet, content is padded 24px; below 768px the sheet is the whole screen, padded 16px across and 20px down, the top bar becomes a sticky 48px strip with the mark, the team picker and search, and a bar is fixed to the bottom.
+**The frame.** The shell has three layouts, chosen by width. From 1280px it is a two-column, two-row grid: a 228px sidebar spanning both rows, grouped by job (Home alone, then Needs you, Work, Build, Team), a 48px top bar, and the sheet in the remaining cell, inset 8px from the window's right and bottom edges. From 768px to 1279px the sidebar folds to a 56px rail of icons, each named in a tooltip, with a dot on each queue while something waits. The sidebar or rail and the top bar share the frame's ground with no line between them. From 768px the sheet scrolls, never the window, so the sidebar and top bar stay where they are. Inside the sheet, content is padded 24px; below 768px the sheet is the whole screen, padded 16px across and 20px down, the top bar becomes a sticky 48px strip with the mark, the team picker and search, and a bar is fixed to the bottom.
 
-**The reference screen.** A title row (breadcrumb, headline, a status line of state, kind and times joined by middle dots), then two halves. At 1280px and wider they sit side by side, conversation on the left (two fifths) and the run on the right (three fifths), 32px apart. Narrower, they stack behind a line of tabs (Conversation, Runs) that the URL remembers.
+**The reference screen.** A title row (breadcrumb, headline, a status line of state, kind and times joined by middle dots), then two halves. At 1280px and wider they sit side by side, conversation on the left (two fifths) and the run on the right (three fifths), 32px apart, and fill the sheet: each half scrolls on its own, the conversation with its composer under it and the run with its switcher over it, so what arrives in one never moves the other. Narrower, they stack behind a line of tabs (Conversation, Runs) that the URL remembers.
 
 **The finding.** A finished run's title is followed by one line in full ink at 14px that answers the screen's question before the trace does: "Failed at step 2, in lookup.", "Failed before its first step." or "Step 2 spent 62% of the tokens." A running run, and a run of one step that succeeded, have no finding: the status and the trace already say it.
 
@@ -249,7 +249,7 @@ Warm graphite paper with a single cool teal: BRAND's Spectral palette, copied in
 **The timeline.** Each step is a 24px numbered circle on a 1px rule that runs down to the next, with the step's name, its token bar (112px track at 390, 192px from 640) and its count on one line. Tool calls under a step sit in one card, one line each, divided by rules; a delegation's child run nests under its call.
 
 ### Named Rules
-**The Page Scrolls Rule.** The trace is read in the page's own scroll. A trace scrolled inside a box is refused; only a long list of runs (capped at 256px) and raw output (320-384px) scroll in place.
+**The Two Panes Rule.** At 1280px and wider the session page is two panes, each its own scroll; the composer and the run switcher sit outside them, so neither scrolls away. Narrower, a trace is read in the sheet's (or, on a phone, the page's) own scroll. Nothing else on a page scrolls in a box, except raw output (320-384px) and a menu's list.
 
 ## Elevation & Depth
 
@@ -301,6 +301,8 @@ Quiet, compact, one filled button at most per view.
 ### Navigation
 - **Sidebar:** 36px rows, 14px Muted Slate text and a 16px icon, 8px radius. Hover lays the sheet at 60%. The current item becomes a small piece of sheet (Paper fill, inset sheet-edge ring, 500 Graphite text) with its icon in teal.
 - **Phone:** a bar fixed to the bottom holds Home, Runs, Approvals and More; More opens the rest of the list in a sheet that rises from the bottom, up to 85% of the screen's height.
+- **Groups:** Home stands alone with no label. Needs you holds the three queues that wait for a person (Sender approvals, Tool approvals, Improvements), each with its count. Then Work (Runs, Sessions), Build (Agents, Skills, MCP servers, Channels, Builder, Blueprint, Graph) and Team (Team settings, Teams, Deleted teams). Within a group, the screen used most comes first.
+- **A page's own pages** (Team settings): from 1024px a 160px list beside the page, held as it scrolls; its current item is a Stone fill and 500 Graphite text. From 768px the same links are a line of tabs. On a phone the list is a page of its own, each entry with what it decides, and each page has a breadcrumb back to it.
 - **Tabs (narrow screens):** a line of tabs over a rule; the current tab is Graphite with a 2px Graphite underline, the rest Muted Slate. A count sits in a small Stone pill.
 
 ### Conversation
@@ -312,8 +314,8 @@ Read off the session's stream, in the brain's order.
 - **Streamed text does not animate**, piece by piece or as a block: it arrives many times a second.
 - **The composer** sits at the foot of the view, above the phone's bar: a one-line field that grows with what is typed, up to 160px, and Send, the view's one filled button. Elsewhere it is a line saying where replies go and an outline "Start one on the dashboard". The page follows what arrives while the reader is at its end; scrolled up, they get an outline "New activity" button instead.
 
-### Run row
-A list of a session's runs in one Stone card, divided by rules: agent name, status, tokens and time, which wraps to two lines on a phone. The chosen run becomes Paper with a 1px inset teal ring.
+### Run switcher
+One Stone line over the run that is shown: its agent, its status, when it started and "3 of 7", with newer and older buttons beside it. The line opens a menu of the session's runs, newest first (agent, status, tokens and time; the chosen one Paper with a 1px inset teal ring), with "Load older runs" at its foot. Choosing one changes the address, so a trace can be linked, and leaves the page's scroll alone.
 
 ### The Trace Timeline (signature)
 Numbered steps on a rail. Each step's token bar is a 6px fully round track in the rule colour, filled in Graphite at 45% to its share of the run's largest step (at least 2%), or in teal while that step is the one running. Tool calls fold to one line each: a chevron, the tool name in mono, argument chips clipped to one line, and the duration at the right; a failed call opens itself on its error in Brick mono. A delegation shows the target agent, its objective in two lines, the child's status, its time, and a link to the child's run. Events that are not steps (a plan, a missing tool, the finish) sit on the rail as small muted lines with a dot or a warn icon.

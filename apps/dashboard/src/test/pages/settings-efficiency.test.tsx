@@ -4,11 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
-import { brain, showAt, team } from "@/test/brain";
+import { draftOf, isDirty, settingsRequest } from "@/lib/team-settings";
+import { brain, team } from "@/test/brain";
+import { showSettings } from "@/test/settings";
 
-const { Route, draftOf, isDirty, settingsRequest } = await import("@/routes/ui.settings");
 const { spreadOf } = await import("@/lib/efficiency-settings");
-await (Route.options.component as { preload?: () => Promise<void> }).preload?.();
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -50,7 +50,7 @@ function at(stored: TeamSettings) {
     [`GET ${SETTINGS}`]: { body: stored },
     [`PUT ${SETTINGS}`]: ({ body }) => ({ body: { ...stored, ...JSON.parse(String(body)) } }),
   });
-  showAt("/ui/settings", [["/ui/settings", Route]]);
+  showSettings("/ui/settings/improvement");
   return seen;
 }
 
