@@ -98,6 +98,24 @@ func TestListingAttachmentsIsScopedToTheSession(t *testing.T) {
 	}
 }
 
+// A row with no message, which people_only promises never to list, is a 500
+// rather than a panic in the view.
+func TestAListedFileWithNoMessageIsAFailureNotAPanic(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	row := seedAttachment(f, "bundle.zip", "application/zip", []byte("PK"))
+	for i := range f.store.attachments {
+		if f.store.attachments[i].ID == row.ID {
+			f.store.attachments[i].MessageID = nil
+		}
+	}
+
+	if rec := f.get(t, f.sessionAttachments()); rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+}
+
 // The bytes, and everything said about them, come from the row.
 func TestGettingAnAttachmentServesWhatWasRecorded(t *testing.T) {
 	t.Parallel()

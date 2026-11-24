@@ -106,9 +106,10 @@ func TestAFileThatCannotBeKeptWritesNothing(t *testing.T) {
 		call string
 		data []byte
 	}{
-		"no call id":   {"", []byte("hi")},
-		"empty":        {"c", nil},
-		"over the cap": {"c", make([]byte, mcp.MaxKeptBytes+1)},
+		"no call id":                        {"", []byte("hi")},
+		"empty":                             {"c", nil},
+		"over the cap":                      {"c", make([]byte, mcp.MaxKeptBytes+1)},
+		"a call id past what the row takes": {strings.Repeat("c", maxCallID+1), []byte("hi")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

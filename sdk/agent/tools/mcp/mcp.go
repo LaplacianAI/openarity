@@ -224,7 +224,7 @@ func resultOf(ctx context.Context, keep Keeper, tool string, res *sdk.CallToolRe
 		if keep != nil {
 			if file, ok := fileOf(c, seen); ok {
 				file.Tool = tool
-				line, part := kept(ctx, keep, file, c, seen, &files)
+				line, part := keepFile(ctx, keep, file, c, seen, &files)
 				if part != nil {
 					out.Attach = append(out.Attach, *part)
 				}
@@ -309,7 +309,10 @@ func readable(mediaType, name string, data []byte) (*passed, string) {
 	sniffed := bareType(http.DetectContentType(data))
 	switch {
 	case images[kind] != "":
-		name = withExtension(name, images[kind])
+		// Named by what its bytes are, as a kept file is.
+		if ext := images[sniffed]; ext != "" {
+			name = withExtension(name, ext)
+		}
 		switch {
 		case sniffed != kind:
 			return nil, fmt.Sprintf("[%s: said to be %s, but its bytes are %s]", name, kind, sniffed)

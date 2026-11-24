@@ -20,8 +20,11 @@ const (
 
 // capped is an MCP client's transport, bounded: an answer past
 // maxAnswerBytes fails its read, and a POST's answer past largeAnswer waits
-// for large, the worker's one slot, so a worker decodes one large answer at
-// a time. A GET's answer is a server's standing stream of notifications, so
+// for large, the worker's one slot, so a worker reads one large answer at a
+// time. The slot is given back when the answer is read to its end or closed,
+// so it bounds the read and the decode; the decoded files live on while the
+// keeper stores them, so a worker holds a little more than one answer's
+// worth. A GET's answer is a server's standing stream of notifications, so
 // it never takes the slot.
 type capped struct {
 	next  http.RoundTripper
@@ -46,7 +49,9 @@ func (c *capped) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	resp.Body = &cappedBody{
 		body: resp.Body, req: req, large: c.large,
-		post: req.Method == http.MethodPost,
+		// No slot (a Builder not made by NewBuilder) is no wait, not a
+		// read that blocks for ever.
+		post: req.Method == http.MethodPost && c.large != nil,
 	}
 	return resp, nil
 }
@@ -85,6 +90,11 @@ func (b *cappedBody) Read(p []byte) (int, error) {
 	if b.read > maxAnswerBytes {
 		return n, fmt.Errorf("the server's answer is over %d MiB", maxAnswerBytes>>20)
 	}
+	if err == io.EOF {
+		// Read to its end: the next large answer need not wait for Close.
+		// A read after it peeks its EOF in past and takes no slot.
+		b.release()
+	}
 	return n, err
 }
 
@@ -99,7 +109,20 @@ func (b *cappedBody) past(p []byte) (int, error) {
 		return 0, err
 	}
 	b.read += n
+	if err == io.EOF {
+		b.release()
+	}
 	return n, err
+}
+
+// release gives the slot back, once.
+func (b *cappedBody) release() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.held {
+		<-b.large
+		b.held = false
+	}
 }
 
 func (b *cappedBody) holding() bool {
@@ -129,12 +152,9 @@ func (b *cappedBody) take() error {
 // Close gives the slot back once, however often it is called.
 func (b *cappedBody) Close() error {
 	err := b.body.Close()
+	b.release()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.held {
-		<-b.large
-		b.held = false
-	}
 	b.closed = true
 	return err
 }

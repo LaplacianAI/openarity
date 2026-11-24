@@ -22,6 +22,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
@@ -1735,6 +1736,8 @@ func TestAToolsFilesAreHeldToTheConversationsLimits(t *testing.T) {
 		"a PDF":           {maxDocBytes, mcp.MaxDocBytes},
 		"a text file":     {maxTextBytes, mcp.MaxTextBytes},
 		"files at a time": {filesPerRequest, mcp.FilesPerCall},
+		// A tool's file is kept up to what a person may send.
+		"a kept file": {objects.MaxAttachment, mcp.MaxKeptBytes},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s: the brain passes %d, an MCP tool %d", name, pair[0], pair[1])

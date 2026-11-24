@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"strconv"
@@ -60,6 +61,16 @@ func (h *handler) listAttachments(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		api.Fail(w, h.logger, u, "failed to list attachments", err)
 		return
+	}
+
+	for _, row := range rows {
+		// people_only promises a message on every row; one without would
+		// panic in the view below, so it is a failure instead.
+		if row.MessageID == nil {
+			api.Fail(w, h.logger, u, "failed to list attachments",
+				fmt.Errorf("attachment %s has no message", row.ID))
+			return
+		}
 	}
 
 	page, err := api.MapPage(rows, limit,

@@ -15,10 +15,17 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent/tools/mcp"
 )
 
-// keptHold is how long a tool file's key is held back from the reaper
-// between reserving it and its row committing, as the gateway holds a
-// person's.
-const keptHold = time.Hour
+const (
+	// keptHold is how long a tool file's key is held back from the reaper
+	// between reserving it and its row committing, as the gateway holds a
+	// person's.
+	keptHold = time.Hour
+	// rowTimeout bounds the row, which no longer follows the call.
+	rowTimeout = 10 * time.Second
+	// maxCallID is the most of a call's id the row takes, as the database
+	// bounds it.
+	maxCallID = 255
+)
 
 // ToolFileStore is what keeping a tool's file writes: its key reserved, and
 // its row.
@@ -70,8 +77,12 @@ func (k *keeper) keep(ctx context.Context, f mcp.File) (mcp.Kept, error) {
 		return mcp.Kept{}, fmt.Errorf("the file is %d bytes, more than %d", len(f.Data), mcp.MaxKeptBytes)
 	}
 	call := agent.ToolCallID(ctx)
-	if call == "" {
+	switch {
+	case call == "":
 		return mcp.Kept{}, errors.New("the call that returned the file has no id")
+	case len(call) > maxCallID:
+		// Refused before anything is written, not after the bytes are.
+		return mcp.Kept{}, fmt.Errorf("the call's id is %d bytes, more than %d", len(call), maxCallID)
 	}
 
 	// Kept whatever it is: the type stored is what its bytes are, never what
@@ -88,8 +99,11 @@ func (k *keeper) keep(ctx context.Context, f mcp.File) (mcp.Kept, error) {
 	if err := k.files.Objects.Put(ctx, k.team, key, f.Data); err != nil {
 		return mcp.Kept{}, fmt.Errorf("storing it: %w", err)
 	}
-	// The bytes are stored: a call cut off now still records them.
-	row, err := k.files.Store.CreateToolAttachment(context.WithoutCancel(ctx), db.CreateToolAttachmentParams{
+	// The bytes are stored: a call cut off now still records them, within
+	// a deadline of its own.
+	rowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rowTimeout)
+	defer cancel()
+	row, err := k.files.Store.CreateToolAttachment(rowCtx, db.CreateToolAttachmentParams{
 		SessionID: k.session, TeamID: k.team, RunID: &k.run, Tool: &f.Tool, CallID: &call,
 		ObjectKey: key, MediaType: mediaType, SizeBytes: int64(len(f.Data)), Filename: f.Name,
 	})

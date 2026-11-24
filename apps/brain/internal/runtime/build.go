@@ -234,14 +234,20 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		}
 	}
 
-	// Bound only where there is something to read. The builder too: the tools
-	// read and write nothing.
-	files, err := b.store.ListAttachmentsBySession(ctx, db.ListAttachmentsBySessionParams{SessionID: run.SessionID, PageSize: 1})
-	if err != nil {
-		built.Close()
-		return Built{}, fmt.Errorf("reading whether the conversation holds files: %w", err)
+	// Bound only where there is something to read, or may be: a run whose
+	// MCP tools' files are kept can be handed its first file mid-run, and the
+	// tool list is fixed for the run. The builder too: the tools read and
+	// write nothing.
+	readable := b.files != nil && len(held.tools) > 0
+	if !readable {
+		files, err := b.store.ListAttachmentsBySession(ctx, db.ListAttachmentsBySessionParams{SessionID: run.SessionID, PageSize: 1})
+		if err != nil {
+			built.Close()
+			return Built{}, fmt.Errorf("reading whether the conversation holds files: %w", err)
+		}
+		readable = len(files) > 0
 	}
-	if len(files) > 0 {
+	if readable {
 		built.Spec.Tools = append(built.Spec.Tools, attachmentTools(b.store, run.SessionID)...)
 	}
 

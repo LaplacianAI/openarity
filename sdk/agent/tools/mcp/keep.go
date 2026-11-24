@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -31,7 +32,8 @@ type File struct {
 	Name string
 	// MediaType is what the server declared, bare; it may be wrong, or "".
 	MediaType string
-	Data      []byte
+	// Data is the file's bytes, as the server sent them.
+	Data []byte
 }
 
 // Kept is a file stored: the id the model is told it by, and the Ref a Blob
@@ -63,16 +65,20 @@ func fileOf(c sdk.Content, n int) (File, bool) {
 	if len(f.Data) == 0 {
 		return File{}, false
 	}
-	if ext := images[kindOf(f.MediaType)]; ext != "" {
+	// The extension a name lacks is what its bytes are, whatever the server
+	// declared.
+	if ext := images[bareType(http.DetectContentType(f.Data))]; ext != "" {
 		f.Name = withExtension(f.Name, ext)
 	}
 	return f, true
 }
 
-// kept is block c, the nth that is not text, kept by keep and named by its
-// id: its line, and the part the model is shown it as, which holds the
-// Kept Ref and never the bytes. files is how many the call has kept.
-func kept(ctx context.Context, keep Keeper, f File, c sdk.Content, n int, files *int) (string, *agent.Content) {
+// keepFile is block c, the nth that is not text, kept by keep and named by
+// its id: its line, and the part the model is shown it as, which holds the
+// Kept Ref and never the bytes. files is how many the call has handed to
+// keep, kept or not, so a store that is down is asked FilesPerCall times at
+// most.
+func keepFile(ctx context.Context, keep Keeper, f File, c sdk.Content, n int, files *int) (string, *agent.Content) {
 	label := fmt.Sprintf("%s: %s, %s", f.Name, kindOf(f.MediaType), sizeOf(len(f.Data)))
 	switch {
 	case *files >= FilesPerCall:
@@ -80,12 +86,12 @@ func kept(ctx context.Context, keep Keeper, f File, c sdk.Content, n int, files 
 	case len(f.Data) > MaxKeptBytes:
 		return fmt.Sprintf("[%s, more than the %s a tool's file is kept up to]", label, sizeOf(MaxKeptBytes)), nil
 	}
+	*files++
 	k, err := keep.Keep(ctx, f)
 	if err != nil {
 		// The keeper's own error is the caller's to log: it may name a store.
 		return "[" + label + ", which could not be kept]", nil
 	}
-	*files++
 
 	shown, note := fileIn(c, n)
 	id := ", file " + k.ID

@@ -46,6 +46,42 @@ func TestARunInAConversationWithNoFilesHasNoFileTools(t *testing.T) {
 	}
 }
 
+// A run whose MCP tools' files are kept may be handed its first file mid-run,
+// so it can read files from the start; without MCP tools, or with no keeper,
+// a conversation with no files still binds none.
+func TestARunWhoseToolsFilesAreKeptCanReadThemFromTheStart(t *testing.T) {
+	bound := func(b Built) bool {
+		for _, tl := range b.Spec.Tools {
+			if tl.Name == ReadAttachmentToolName {
+				return true
+			}
+		}
+		return false
+	}
+	server := serve(t, "search")
+	for name, tc := range map[string]struct {
+		keep, tools, want bool
+	}{
+		"kept, with MCP tools":    {true, true, true},
+		"kept, with no MCP tools": {true, false, false},
+		"not kept":                {false, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.run.SessionID = uuid.New()
+			if tc.tools {
+				f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", server.url, true, "search")}
+			}
+			if tc.keep {
+				f.builder.WithToolFiles(ToolFiles{Store: &fileRows{}, Objects: f.objects, Logger: quietLogger()})
+			}
+			if got := bound(f.build(t)); got != tc.want {
+				t.Errorf("read_attachment bound = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestARunInAConversationWithFilesCanReadThem(t *testing.T) {
 	_, built := fileFixture(t, attachedFile(uuid.Nil, "screen.png", "image/png", 300<<10))
 

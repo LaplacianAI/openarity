@@ -482,7 +482,7 @@ func TestWhatCannotBePassedIsNamedNotAttached(t *testing.T) {
 		"an image over 5 MiB":     {&sdk.ImageContent{Data: sized(pngBytes, MaxImageBytes+1), MIMEType: "image/png"}, "[image-1.png: image/png, 5242881 bytes, more than the 5.0 MiB an image is passed up to]"},
 		"a PDF over 10 MiB":       {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://big.pdf", MIMEType: "application/pdf", Blob: sized(pdfBytes, MaxDocBytes+1)}}, "[big.pdf: application/pdf, 10485761 bytes, more than the 10.0 MiB a PDF is passed up to]"},
 		"an empty image":          {&sdk.ImageContent{Data: nil, MIMEType: "image/png"}, "[image-1: image/png, empty]"},
-		"bytes not as declared":   {&sdk.ImageContent{Data: []byte("<html>"), MIMEType: "image/png"}, "[image-1.png: said to be image/png, but its bytes are text/html]"},
+		"bytes not as declared":   {&sdk.ImageContent{Data: []byte("<html>"), MIMEType: "image/png"}, "[image-1: said to be image/png, but its bytes are text/html]"},
 		"a PDF that is not one":   {&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a.pdf", MIMEType: "application/pdf", Blob: pngBytes}}, "[a.pdf: said to be application/pdf, but its bytes are image/png]"},
 		"a TIFF":                  {&sdk.ImageContent{Data: []byte("II*\x00"), MIMEType: "image/tiff"}, "[image-1: image/tiff, 4 bytes, an image type a model is not passed]"},
 		"an image block of a PDF": {&sdk.ImageContent{Data: pdfBytes, MIMEType: "application/pdf"}, "[image-1: application/pdf, 15 bytes, an image block that is not an image]"},
@@ -1259,6 +1259,45 @@ func TestWhatAKeeperDoesNotKeepIsNamed(t *testing.T) {
 	if err != nil || len(r.Attach) != 0 || r.Output != "sent\n[image-1.png: image/png, 16 bytes, which could not be kept]" {
 		t.Errorf("refused: attached %d, Output %q, err %v", len(r.Attach), r.Output, err)
 	}
+
+	// A keeper that refuses every file is asked eight times a call, not once
+	// a block.
+	counting := &countingKeeper{}
+	if _, err := answerKept(t, counting, blocks...); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if counting.n != FilesPerCall {
+		t.Errorf("asked the keeper %d times, want %d", counting.n, FilesPerCall)
+	}
+}
+
+// countingKeeper refuses every file, counting how often it was asked.
+type countingKeeper struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (k *countingKeeper) Keep(context.Context, File) (Kept, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.n++
+	return Kept{}, errors.New("down")
+}
+
+// A kept file's name takes the extension of what its bytes are, never of what
+// the server declared.
+func TestAKeptFilesExtensionIsWhatItsBytesAre(t *testing.T) {
+	t.Parallel()
+	k := &fakeKeeper{}
+	if _, err := answerKept(t, k,
+		&sdk.ImageContent{Data: pngBytes, MIMEType: "image/jpeg"},
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://a/shot", MIMEType: "image/png", Blob: pdfBytes}},
+	); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if len(k.files) != 2 || k.files[0].Name != "image-1.png" || k.files[1].Name != "shot" {
+		t.Errorf("kept %+v, want image-1.png (PNG bytes) and shot (a PDF, no image extension)", k.files)
+	}
 }
 
 // A file kept at MaxKeptBytes exactly is kept.
@@ -1291,7 +1330,7 @@ func TestAKeptFileIsShownAsF1ShowsIt(t *testing.T) {
 	if len(r.Attach) != 0 {
 		t.Errorf("attached %+v, want none", r.Attach)
 	}
-	if !strings.HasPrefix(r.Output, "[image-1.png: said to be image/png, but its bytes are application/pdf, file k1]\n[big.txt: text/plain, 100 KiB, the first 100 KiB, file k2]\n") {
+	if !strings.HasPrefix(r.Output, "[image-1: said to be image/png, but its bytes are application/pdf, file k1]\n[big.txt: text/plain, 100 KiB, the first 100 KiB, file k2]\n") {
 		t.Errorf("Output starts %q", r.Output[:min(160, len(r.Output))])
 	}
 	if len(k.files) != 2 || len(k.files[1].Data) != len(long) {

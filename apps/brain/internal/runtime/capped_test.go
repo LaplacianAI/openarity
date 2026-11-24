@@ -68,8 +68,9 @@ func TestALargeAnswerWaitsForTheWorkersSlot(t *testing.T) {
 	large := make(chan struct{}, 1)
 	c := cappedClient(&http.Client{}, large)
 
+	// Read past the line and not to its end, so it holds the slot.
 	first := open(t, c, srv, http.MethodPost, 2*largeAnswer)
-	if _, err := io.ReadAll(first.Body); err != nil {
+	if _, err := io.ReadFull(first.Body, make([]byte, largeAnswer+1)); err != nil {
 		t.Fatal(err)
 	}
 	if len(large) != 1 {
@@ -110,12 +111,43 @@ func TestALargeAnswerWaitsForTheWorkersSlot(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the second large answer never got the slot")
 	}
-	if len(large) != 1 {
-		t.Errorf("the slot holds %d, want the second's alone", len(large))
-	}
-	_ = second.Body.Close()
+	// The second was read to its end, which gave the slot back unclosed.
 	if len(large) != 0 {
-		t.Errorf("the slot holds %d after both closed, want 0", len(large))
+		t.Errorf("the slot holds %d after the second was read to its end, want 0", len(large))
+	}
+}
+
+// An answer read to its end gives the slot back before it is closed, and a
+// read after its end never takes it again.
+func TestAnAnswerReadToItsEndGivesTheSlotBack(t *testing.T) {
+	t.Parallel()
+	srv := sized(t)
+	large := make(chan struct{}, 1)
+	c := cappedClient(&http.Client{}, large)
+
+	resp := open(t, c, srv, http.MethodPost, 2*largeAnswer)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if len(large) != 0 {
+		t.Fatal("an answer read to its end still holds the slot")
+	}
+	large <- struct{}{} // another answer takes it
+	if n, err := resp.Body.Read(make([]byte, 8)); n != 0 || err != io.EOF {
+		t.Errorf("a read after the end: %d, %v; want EOF at once, not a wait for the slot", n, err)
+	}
+}
+
+// A client with no slot, as a Builder not made by NewBuilder has, reads a
+// large answer rather than waiting for ever.
+func TestNoSlotIsNoWait(t *testing.T) {
+	t.Parallel()
+	srv := sized(t)
+	resp := open(t, cappedClient(&http.Client{}, nil), srv, http.MethodPost, 2*largeAnswer)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if b, err := io.ReadAll(resp.Body); err != nil || len(b) != 2*largeAnswer {
+		t.Errorf("read %d, err %v; want all of it", len(b), err)
 	}
 }
 

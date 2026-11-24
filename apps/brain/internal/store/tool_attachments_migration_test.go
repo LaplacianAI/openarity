@@ -89,6 +89,24 @@ func TestAToolFileHasOneSourceInItsSession(t *testing.T) {
 			[]any{session},
 			"attachments_one_source",
 		},
+		"a run with a null tool": {
+			`INSERT INTO attachments (session_id, team_id, run_id, call_id, object_key, media_type, size_bytes, filename)
+			 SELECT $1, team_id, $2, 'c', 'k-null-tool', 'x/y', 1, 'f' FROM sessions WHERE id = $1`,
+			[]any{session, run},
+			"attachments_one_source",
+		},
+		"a run with a null call id": {
+			`INSERT INTO attachments (session_id, team_id, run_id, tool, object_key, media_type, size_bytes, filename)
+			 SELECT $1, team_id, $2, 't', 'k-null-call', 'x/y', 1, 'f' FROM sessions WHERE id = $1`,
+			[]any{session, run},
+			"attachments_one_source",
+		},
+		"a run with an empty tool": {
+			`INSERT INTO attachments (session_id, team_id, run_id, tool, call_id, object_key, media_type, size_bytes, filename)
+			 SELECT $1, team_id, $2, '', 'c', 'k-empty-tool', 'x/y', 1, 'f' FROM sessions WHERE id = $1`,
+			[]any{session, run},
+			"attachments_one_source",
+		},
 		"a run with no call": {
 			`INSERT INTO attachments (session_id, team_id, run_id, tool, call_id, object_key, media_type, size_bytes, filename)
 			 SELECT $1, team_id, $2, 't', '', 'k-call', 'x/y', 1, 'f' FROM sessions WHERE id = $1`,

@@ -26,7 +26,8 @@ ALTER TABLE attachments
 ALTER TABLE attachments
     ADD CONSTRAINT attachments_one_source CHECK (
         (message_id IS NOT NULL AND run_id IS NULL AND tool IS NULL AND call_id IS NULL)
-     OR (message_id IS NULL AND run_id IS NOT NULL AND tool <> '' AND call_id <> '')
+     OR (message_id IS NULL AND run_id IS NOT NULL
+         AND tool IS NOT NULL AND tool <> '' AND call_id IS NOT NULL AND call_id <> '')
     ) NOT VALID,
     ADD CONSTRAINT attachments_tool_bounded CHECK (char_length(tool) <= 255) NOT VALID,
     ADD CONSTRAINT attachments_call_id_bounded CHECK (char_length(call_id) <= 255) NOT VALID;
@@ -35,7 +36,9 @@ ALTER TABLE attachments
 SET LOCAL lock_timeout = '3s';
 
 -- A run's files have no message, so they cannot stay once message_id is
--- required again; the trigger tombstones their objects.
+-- required again: rolling back deletes every tool's file, and the trigger
+-- tombstones their objects. SET NOT NULL then reads the table under its
+-- exclusive lock.
 DELETE FROM attachments WHERE run_id IS NOT NULL;
 
 ALTER TABLE attachments

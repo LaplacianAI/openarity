@@ -382,8 +382,10 @@ func TestARunThatCallsAToolRecordsTheCallAndTheResult(t *testing.T) {
 	if got := kinds(events); !slices.Equal(got, want) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
-	if tools := payload[startedPayload](t, events[0]).Tools; !slices.Equal(tools, []string{"fetch", "graph"}) {
-		t.Errorf("started lists tools %v, want [fetch graph]", tools)
+	// A run with MCP tools whose files are kept can read them from its start.
+	want = []string{"fetch", "graph", AttachmentsToolName, ReadAttachmentToolName}
+	if tools := payload[startedPayload](t, events[0]).Tools; !slices.Equal(tools, want) {
+		t.Errorf("started lists tools %v, want %v", tools, want)
 	}
 	if result := payload[toolResult](t, events[4]); result.ID != "c1" || result.Output != "fetch ran" {
 		t.Errorf("tool_result = %+v", result)
