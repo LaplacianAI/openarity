@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -110,7 +111,11 @@ func retry[T any](ctx context.Context, r *Replays, f func(context.Context) (T, e
 // write is retry for what a try keeps: made whether or not the worker is
 // stopping, so what the try spent is not lost.
 func (r *Replays) write(ctx context.Context, f func(context.Context) error) error {
-	_, err := retry(context.WithoutCancel(ctx), r, func(ctx context.Context) (struct{}, error) {
+	// Not cut by the worker's stop, but bounded: a hung store does not hold
+	// the worker's shutdown.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeWithin)
+	defer cancel()
+	_, err := retry(wctx, r, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, f(ctx)
 	})
 	return err
@@ -120,7 +125,7 @@ func (r *Replays) write(ctx context.Context, f func(context.Context) error) erro
 func permanent(err error) bool {
 	var pg *pgconn.PgError
 	return errors.Is(err, pgx.ErrNoRows) || errors.Is(err, context.Canceled) ||
-		errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &pg) && pg.Code[:2] == "23")
+		errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &pg) && strings.HasPrefix(pg.Code, "23"))
 }
 
 func (r *Replays) stop(ctx context.Context, proposalID uuid.UUID, why string) error {

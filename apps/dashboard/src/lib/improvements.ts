@@ -382,15 +382,26 @@ export function replayOutcome(r: ImprovementReplayRun): ReplayOutcome {
  */
 export const TRYING_QUIET_MS = 45 * 60_000;
 
-/** Whether a change is still being tried and a try moved within TRYING_QUIET_MS of now. */
+/**
+ * How long a change whose tries are all still queued, waiting behind other
+ * changes' tries, is read again.
+ */
+export const QUEUED_QUIET_MS = 6 * 60 * 60_000;
+
+/**
+ * Whether a change is still being tried and still moving: a try began or
+ * ended within TRYING_QUIET_MS of now, or, with none begun yet, it was
+ * proposed within QUEUED_QUIET_MS.
+ */
 export function replayMoving(item: Improvement, now: number): boolean {
   if (item.replay?.status !== "trying") return false;
-  let last = Date.parse(item.created_at);
+  let last = Number.NEGATIVE_INFINITY;
   for (const r of item.replay.runs) {
     for (const at of [r.started_at, r.finished_at]) {
       if (at) last = Math.max(last, Date.parse(at));
     }
   }
+  if (last === Number.NEGATIVE_INFINITY) return now - Date.parse(item.created_at) < QUEUED_QUIET_MS;
   return now - last < TRYING_QUIET_MS;
 }
 

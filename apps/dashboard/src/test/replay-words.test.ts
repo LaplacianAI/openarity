@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ImprovementReplay, ImprovementReplayRun } from "@/api/types";
 import {
+  QUEUED_QUIET_MS,
   replayCost,
   replayMoving,
   replayOutcome,
@@ -135,6 +136,16 @@ describe("a change being tried", () => {
 
   it("stops moving once no try has for longer than one may take", () => {
     expect(replayMoving(item(new Date(at - TRYING_QUIET_MS - 1).toISOString()), at)).toBe(false);
+  });
+
+  it("keeps moving while its tries wait in the queue, for a while", () => {
+    const queued = (created: string) =>
+      ({
+        created_at: created,
+        replay: { status: "trying", runs: [tried("bad", null, { status: "queued" })] },
+      }) as unknown as Parameters<typeof replayMoving>[0];
+    expect(replayMoving(queued("2026-11-24T10:00:00Z"), at)).toBe(true);
+    expect(replayMoving(queued(new Date(at - QUEUED_QUIET_MS - 1).toISOString()), at)).toBe(false);
   });
 
   it("is not moving once its tries are done", () => {

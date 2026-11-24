@@ -50,7 +50,7 @@ function Steps({
   return (
     <div className="space-y-1.5">
       {t.calls.length === 0 ? (
-        <p className="text-muted-foreground">It answered without calling a tool.</p>
+        <p className="text-muted-foreground">No tool call was kept for this try.</p>
       ) : (
         <ol className="space-y-1">
           {t.calls.map((c, i) => (

@@ -34,6 +34,9 @@ const (
 	// storeTries is how many times a read or a write of a try is made
 	// before the try is given up on; the model is never run again for it.
 	storeTries = 3
+	// writeWithin bounds the writes of a try, made again on a context the
+	// worker's stop does not cut.
+	writeWithin = 30 * time.Second
 )
 
 // Why a run was chosen.

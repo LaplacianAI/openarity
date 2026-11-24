@@ -41,7 +41,7 @@ func newReplayFixture(t *testing.T, turns ...turn) *replayFixture {
 		t.Fatal(err)
 	}
 	// No graph: the tools are sent, and a test sees each by its name.
-	f.replayer = NewReplayer(f.clients, roles{}, nil, nil, nil, runner, agent.Endpoint{})
+	f.replayer = NewReplayer(f.clients, teamRules{}, nil, nil, nil, runner, agent.Endpoint{})
 	return f
 }
 
@@ -168,7 +168,13 @@ func TestATriedToolThatIsNotAReadCannotBeMade(t *testing.T) {
 
 // A try that spends its tokens is stopped, and says why, not failed.
 func TestAReplayIsStoppedAtItsTokens(t *testing.T) {
-	f := newReplayFixture(t, callTool("1", "crm__lookup", `{"id":1}`), answer("done", 10, 5))
+	// The first reply crosses the cap and the rest keep asking, so the run
+	// cannot finish before it is stopped.
+	f := newReplayFixture(t,
+		callTool("1", "crm__lookup", `{"id":1}`), callTool("2", "crm__lookup", `{"id":2}`),
+		callTool("3", "crm__lookup", `{"id":3}`), callTool("4", "crm__lookup", `{"id":4}`),
+		answer("done", 10, 5),
+	)
 	out, err := f.replayer.Replay(t.Context(), ReplayInput{
 		Store: f.store, Objects: f.objects, Run: f.run, Limits: ReplayLimits{Tokens: 10},
 		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "go"}}}},
@@ -209,20 +215,22 @@ func TestCanonicalArgumentsAreOneText(t *testing.T) {
 	}
 }
 
-// roles is a team in which the run's person holds what perms says.
-type roles struct {
+// teamRules is a team in which the run's person holds what perms says.
+type teamRules struct {
 	perms []string
 	rules []db.ApprovalRule
 	err   error
 }
 
-func (roles) FindTeamMember(context.Context, db.FindTeamMemberParams) (string, error) {
+func (teamRules) FindTeamMember(context.Context, db.FindTeamMemberParams) (string, error) {
 	return "member", nil
 }
 
-func (r roles) ListRolePermissions(context.Context, string) ([]string, error) { return r.perms, nil }
+func (r teamRules) ListRolePermissions(context.Context, string) ([]string, error) {
+	return r.perms, nil
+}
 
-func (r roles) ListApprovalRules(context.Context, uuid.UUID) ([]db.ApprovalRule, error) {
+func (r teamRules) ListApprovalRules(context.Context, uuid.UUID) ([]db.ApprovalRule, error) {
 	return r.rules, r.err
 }
 
@@ -244,7 +252,7 @@ func TestAReplayKeepsTheTeamsRulesOnReads(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWebFixture("none", "")
 			w.asAgent(true)
-			w.builder.replay, w.builder.rules = true, roles{perms: []string{"approval:self"}, rules: tc.rules}
+			w.builder.replay, w.builder.rules = true, teamRules{perms: []string{"approval:self"}, rules: tc.rules}
 			w.run.UserID = &member
 			if w.store.settings == nil {
 				w.store.settings = &db.TeamSetting{TeamID: w.run.TeamID}
@@ -280,7 +288,7 @@ func TestAReplayReachesTheWebOnlyAsThePastRunsPersonWould(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWebFixture("none", "")
 			w.asAgent(true)
-			w.builder.replay, w.builder.rules = true, roles{perms: tc.perms}
+			w.builder.replay, w.builder.rules = true, teamRules{perms: tc.perms}
 			w.run.UserID, w.run.Unattended = tc.user, tc.unattended
 
 			got := w.build(t)
@@ -348,12 +356,12 @@ func TestAReplayMakesAServersReadOnlyAsTheTeamsRulesAllow(t *testing.T) {
 		unattended bool
 		live       bool
 	}{
-		{"no rule", roles{}, false, true},
-		{"a member's unattended run", roles{}, true, true},
-		{"a tool rule that denies", roles{rules: rule("tool", "crm__lookup", "deny")}, false, false},
-		{"a tool rule that asks", roles{rules: rule("tool", "crm__lookup", "ask")}, false, false},
-		{"a server rule that denies", roles{rules: rule("server", "crm", "deny")}, false, false},
-		{"a verdict not known", roles{rules: rule("tool", "crm__lookup", "maybe")}, false, false},
+		{"no rule", teamRules{}, false, true},
+		{"a member's unattended run", teamRules{}, true, true},
+		{"a tool rule that denies", teamRules{rules: rule("tool", "crm__lookup", "deny")}, false, false},
+		{"a tool rule that asks", teamRules{rules: rule("tool", "crm__lookup", "ask")}, false, false},
+		{"a server rule that denies", teamRules{rules: rule("server", "crm", "deny")}, false, false},
+		{"a verdict not known", teamRules{rules: rule("tool", "crm__lookup", "maybe")}, false, false},
 		{"no rules to read", nil, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -390,7 +398,7 @@ func gatedSettings(team uuid.UUID) *db.TeamSetting {
 func TestAReplayWhoseRulesCannotBeReadIsNotMade(t *testing.T) {
 	f := newReplayFixture(t, answer("done", 10, 5))
 	f.store.settings = gatedSettings(f.run.TeamID)
-	f.replayer.rules = roles{err: errors.New("the store is down")}
+	f.replayer.rules = teamRules{err: errors.New("the store is down")}
 	if _, err := f.replayer.Replay(t.Context(), ReplayInput{
 		Store: f.store, Objects: f.objects, Run: f.run,
 		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "go"}}}},
@@ -419,7 +427,7 @@ func TestAReplayKeepsADenyOnAServersRead(t *testing.T) {
 		TeamID: f.run.TeamID, ApprovalMode: "writes", SearchProvider: "none",
 		CompactionMessages: 10, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
 	}
-	f.replayer.rules = roles{rules: []db.ApprovalRule{{TargetKind: "tool", Target: "crm__lookup", Mode: "deny"}}}
+	f.replayer.rules = teamRules{rules: []db.ApprovalRule{{TargetKind: "tool", Target: "crm__lookup", Mode: "deny"}}}
 
 	out := f.replay(t)
 
