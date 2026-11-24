@@ -16,6 +16,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, LoadMore, PageHeader } from "@/components/ui-bits";
 import {
   APPROVE,
+  replayMoving,
   TAB_STATUSES,
   TAB_WORDS,
   type Tab,
@@ -31,6 +32,9 @@ type ImprovementsSearch = {
 };
 
 const TABS: Tab[] = ["waiting", "applied", "flagged", "closed", "passes"];
+
+/** How often a list with a change still being tried is read again. */
+const TRYING_POLL_MS = 5_000;
 
 export const Route = createFileRoute("/ui/improvements")({
   // The tab, the agent and the words searched for, in the URL so a view of
@@ -108,6 +112,14 @@ function Improvements() {
     initialPageParam: null as string | null,
     getNextPageParam: nextCursorOf,
     enabled: Boolean(teamId) && !perms.isPending && !passes,
+    // A change being tried on past runs is read again while its tries move:
+    // one whose tries stopped moving is not read forever.
+    refetchInterval: (query) => {
+      const now = Date.now();
+      return query.state.data?.pages.some((p) => p.items.some((i) => replayMoving(i, now)))
+        ? TRYING_POLL_MS
+        : false;
+    },
   });
   const rows = list.data?.pages.flatMap((p) => p.items) ?? [];
 

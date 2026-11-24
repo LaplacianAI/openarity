@@ -341,6 +341,11 @@
       "scope": "member"
     },
     {
+      "method": "GET",
+      "path": "/teams/{id}/improvements/{proposalID}/replays/{runID}",
+      "scope": "member"
+    },
+    {
       "method": "POST",
       "path": "/teams/{id}/improvements/{proposalID}/decision",
       "scope": "team",

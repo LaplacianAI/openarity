@@ -127,6 +127,16 @@ type Improver struct {
 	// minute is how long a minute of a team's pass minutes is: a minute,
 	// shorter in a test.
 	minute time.Duration
+	// stored is told of each proposal once its transaction commits: the
+	// replay starts there. Nil tells nothing.
+	stored func(ctx context.Context, proposalID, teamID uuid.UUID)
+}
+
+// OnStored has fn told of each proposal a pass stores, once it is stored,
+// in the same context: what it starts must not fail the pass.
+func (im *Improver) OnStored(fn func(ctx context.Context, proposalID, teamID uuid.UUID)) *Improver {
+	im.stored = fn
+	return im
 }
 
 // NewImprover runs passes through the judge's model endpoint. loops are the

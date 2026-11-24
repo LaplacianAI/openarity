@@ -100,3 +100,69 @@ func TestTheMarginIsSaidInWords(t *testing.T) {
 		}
 	}
 }
+
+func TestTheReplaySettingsAreSentOnlyWhenGiven(t *testing.T) {
+	body, _, err := set(t, efficiencySaved, "--improvement", "on")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := range body {
+		if strings.HasPrefix(k, "improvement_replay") {
+			t.Errorf("%s sent without a flag", k)
+		}
+	}
+	body, _, err = set(t, efficiencySaved, "--replay", "on", "--replay-runs", "6", "--replay-tokens", "300000",
+		"--replay-minutes", "15", "--replay-daily", "80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"improvement_replay": true, "improvement_replay_runs": float64(6), "improvement_replay_tokens": float64(300000),
+		"improvement_replay_minutes": float64(15), "improvement_replay_daily": float64(80),
+	}
+	for k, v := range want {
+		if body[k] != v {
+			t.Errorf("%s = %v, want %v", k, body[k], v)
+		}
+	}
+}
+
+func TestTheReplaySettingsOutOfRangeRefuseBeforeSending(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		says string
+	}{
+		{[]string{"--replay", "yes"}, "on or off"},
+		{[]string{"--replay-runs", "0"}, "1 to 10"},
+		{[]string{"--replay-runs", "11"}, "1 to 10"},
+		{[]string{"--replay-tokens", "19999"}, "20000 to 1000000"},
+		{[]string{"--replay-minutes", "31"}, "1 to 30"},
+		{[]string{"--replay-daily", "501"}, "1 to 500"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			script := settingsRoutes(t, efficiencySaved, http.StatusOK)
+			_, err := clitest.Execute(t, commands, append([]string{"teams", "settings", "set", teamID}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.says) {
+				t.Fatalf("err = %v, want %q", err, tc.says)
+			}
+			if len(script.All()) != 0 {
+				t.Errorf("a refused flag made %d requests", len(script.All()))
+			}
+		})
+	}
+}
+
+func TestSettingsShowDisplaysTryingOnPastRuns(t *testing.T) {
+	saved := strings.Replace(efficiencySaved, `"improvement_efficiency_margin":1,`,
+		`"improvement_efficiency_margin":1,"improvement_replay":true,"improvement_replay_runs":4,"improvement_replay_tokens":200000,"improvement_replay_minutes":10,"improvement_replay_daily":40,`, 1)
+	settingsRoutes(t, saved, http.StatusOK)
+	out, err := clitest.Execute(t, commands, "teams", "settings", "show", teamID)
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	for _, want := range []string{"try on past runs", "4 past runs a change", "200000 tokens and 10 minutes a try", "40 tries a day"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}

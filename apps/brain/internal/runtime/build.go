@@ -54,18 +54,21 @@ type MCPClients interface {
 }
 
 type Builder struct {
-	store          BuildStore
-	objects        Objects
-	mcp            MCPClients
-	graph          *GraphDeps
-	search         *SearchDeps
-	fetch          *FetchDeps
-	browsers       *BrowserDeps
-	workspaces     *WorkspaceDeps
-	delegates      *DelegateDeps
-	workshop       Workshop
-	registry       Registry
-	approvals      ApprovalStore
+	store      BuildStore
+	objects    Objects
+	mcp        MCPClients
+	graph      *GraphDeps
+	search     *SearchDeps
+	fetch      *FetchDeps
+	browsers   *BrowserDeps
+	workspaces *WorkspaceDeps
+	delegates  *DelegateDeps
+	workshop   Workshop
+	registry   Registry
+	approvals  ApprovalStore
+	// rules tells a replay who the past run acted for and the team's
+	// approval rules; a run reads both from its policy.
+	rules          ReplayRules
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 	// files keeps what a run's MCP tools return; without it a tool's files
@@ -73,6 +76,9 @@ type Builder struct {
 	files *ToolFiles
 	// large is the worker's one slot for reading a large MCP answer.
 	large chan struct{}
+	// replay builds a past run again for a replay (replay.go): the tools a
+	// run of the agent would hold, those that reach live state as stand-ins.
+	replay bool
 }
 
 func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *SearchDeps, fetch *FetchDeps) *Builder {
@@ -125,6 +131,15 @@ type Built struct {
 	// request records, as it is before the gate: what a resume makes once
 	// the call is approved.
 	answerable map[string]agent.Tool
+	// live is whether a replay may make a read the team's rules would gate:
+	// nil outside a replay.
+	live func(at target) bool
+	// reads is every tool, by its name in the run, that only reads: a
+	// trusted server's read-only tool, the web for a person who is there,
+	// the graph, and the conversation's history and files, which a replay's
+	// store cuts to before the past run began. A replay runs these live and
+	// no other.
+	reads map[string]bool
 }
 
 // Close ends the sessions the run's calls opened. Safe to call twice, and on
@@ -167,13 +182,21 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if err != nil {
 		return Built{}, err
 	}
-	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b, keeper: b.keeperFor(run)}, answerable: map[string]agent.Tool{}}
+	built := Built{Spec: specOf(a), Agent: a.Name, servers: &runServers{b: b, keeper: b.keeperFor(run)}, answerable: map[string]agent.Tool{}, reads: map[string]bool{}}
 	built.Spec.Session = session
 	gates, err := b.policyFor(ctx, run, settings, built.Spec.Pattern, l)
 	if err != nil {
 		return Built{}, err
 	}
 	built.Spec.Compaction = compactionFor(settings, budgetOf(run.TokenBudget))
+	// Who the run acts for: a call's class, and a replay's reads, turn on it.
+	actor, err := b.actorFor(ctx, run, gates)
+	if err != nil {
+		return Built{}, err
+	}
+	if built.live, err = b.replayRules(ctx, run, settings, actor); err != nil {
+		return Built{}, err
+	}
 
 	// The builder reads the web for servers' docs and a skill's source.
 	web := run.Hub || a.Web || run.Builder
@@ -184,7 +207,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	// agents holds it as any agent does, since a hub may act on its own as
 	// well as hand work on; the built-in hub and the builder are no agent,
 	// so neither has one.
-	work := a.Workspace && b.workspaces != nil &&
+	work := a.Workspace && (b.workspaces != nil || b.replay) &&
 		settings.SandboxProvider != string(sandbox.None)
 	var held catalogue
 	if a.ID != uuid.Nil {
@@ -204,6 +227,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		built.Spec.Tools = append(built.Spec.Tools, held.tools...)
 	} else {
 		reach := b.reach(run, a)
+		built.reads[GraphToolName] = true
 		built.Spec.Tools = append(built.Spec.Tools, GraphTool(*b.graph, run.TeamID, reach, held))
 		if len(held.tools) > 0 {
 			built.Spec.Discovery = &agent.Discovery{
@@ -248,7 +272,10 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		readable = len(files) > 0
 	}
 	if readable {
-		built.Spec.Tools = append(built.Spec.Tools, attachmentTools(b.store, run.SessionID)...)
+		for _, t := range attachmentTools(b.store, run.SessionID) {
+			built.reads[t.Name] = true
+			built.Spec.Tools = append(built.Spec.Tools, t)
+		}
 	}
 
 	// The conversation is the top-level run's: a delegated agent is sent a
@@ -262,18 +289,22 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			return Built{}, fmt.Errorf("reading whether the conversation has history: %w", err)
 		}
 		if len(said) > 1 {
-			built.Spec.Tools = append(built.Spec.Tools, historyTool(b.store, run.SessionID))
+			h := historyTool(b.store, run.SessionID)
+			built.reads[h.Name] = true
+			built.Spec.Tools = append(built.Spec.Tools, h)
 		}
 	}
 
 	if web {
+		// Reaching the internet is a read for a person who is there, and a
+		// write for a guest or a run nobody is present for.
+		egress := approval.ClassFor(approval.Egress, actor)
 		tools, unavailable := b.webTools(ctx, run.TeamID, settings)
 		built.Unavailable = append(built.Unavailable, unavailable...)
 		for _, t := range tools {
-			// Reaching the internet is a read for a person who is there, and a
-			// write for a guest or a run nobody is present for.
 			built.answerable[t.Name] = t
-			gated, refused := gates.gate(t, target{name: t.Name, class: approval.ClassFor(approval.Egress, gates.actorOf())})
+			built.reads[t.Name] = egress == approval.Read && built.allows(target{name: t.Name, class: egress})
+			gated, refused := gates.gate(t, target{name: t.Name, class: egress})
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)
 				continue
@@ -282,7 +313,10 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		}
 	}
 
-	if browse {
+	if browse && b.replay {
+		// A page has moved on since: the replay's browser tools are stand-ins.
+		built.Spec.Tools = append(built.Spec.Tools, browserStandIns()...)
+	} else if browse {
 		r, tools, unavailable := b.browserFor(ctx, run.TeamID, settings)
 		built.browser = r
 		built.Unavailable = append(built.Unavailable, unavailable...)
@@ -298,6 +332,9 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 
 	switch {
+	case work && b.replay:
+		// The workspace has moved on since: the replay's are stand-ins.
+		built.Spec.Tools = append(built.Spec.Tools, (&runWorkspace{}).tools()...)
 	case work:
 		ws := &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID}
 		for _, t := range ws.tools() {
@@ -330,6 +367,14 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 }
 
 func (b *Builder) delegateTool(ctx context.Context, a db.Agent, run db.Run, l Lineage) (agent.Tool, bool, error) {
+	if b.replay {
+		// A replay hands no work on: the tool is offered as the agent would
+		// hold it, as a stand-in, and a call is matched or not made.
+		if run.Depth < maxDepth && (a.Delegation == "team" || a.Delegation == "listed") {
+			return DelegateTool(DelegateDeps{}, a, run, l), true, nil
+		}
+		return agent.Tool{}, false, nil
+	}
 	if b.delegates == nil || run.Depth >= maxDepth {
 		return agent.Tool{}, false, nil
 	}
@@ -485,6 +530,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, r 
 				name: s.Name + "__" + row.Name, server: s.Name, class: approval.ClassOf(row.Annotations, s.TrustHints),
 			}
 			built.answerable[at.name] = raw
+			built.reads[name] = at.class == approval.Read && built.allows(at)
 			t, refused := gates.gate(raw, at)
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)

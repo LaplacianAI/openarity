@@ -898,6 +898,16 @@ export type TeamSettings = {
   improvement_efficiency_mark_runs?: number;
   /** Bad runs fewer than the usual bar that flag an efficiency change; 0 to 3. */
   improvement_efficiency_margin?: number;
+  /** Whether each proposal is tried on a few past runs before it is decided. */
+  improvement_replay?: boolean;
+  /** Past runs a proposal is tried on; 1 to 10. */
+  improvement_replay_runs?: number;
+  /** Tokens one try may spend; 20,000 to 1,000,000. */
+  improvement_replay_tokens?: number;
+  /** Minutes one try may take; 1 to 30. */
+  improvement_replay_minutes?: number;
+  /** Tries the team runs a day (UTC); 1 to 500. */
+  improvement_replay_daily?: number;
   /** When improvement was last turned on; runs that finished before it are never judged. Read only. */
   improvement_since: string | null;
   compaction_messages: number;
@@ -957,6 +967,11 @@ export type TeamSettingsRequest = {
   improvement_efficiency_spread?: number;
   improvement_efficiency_mark_runs?: number;
   improvement_efficiency_margin?: number;
+  improvement_replay?: boolean;
+  improvement_replay_runs?: number;
+  improvement_replay_tokens?: number;
+  improvement_replay_minutes?: number;
+  improvement_replay_daily?: number;
   compaction_messages: number;
   /** Left out, the stored value stays. */
   compaction_tokens_min?: number;
@@ -1174,6 +1189,64 @@ export type Improvement = {
   reverted_at?: string | null;
   /** How the change went once applied; null until it is. */
   watch?: ImprovementWatch | null;
+  /** How it fared on past runs before it was decided; null in a decision's answer. */
+  replay?: ImprovementReplay | null;
+};
+
+/**
+ * How a change fared on a few of its agent's past runs, tried before anyone
+ * decided on it: off when never tried, trying while a try is still to run,
+ * done once one came to an outcome, none when none could be tried.
+ */
+export type ImprovementReplay = {
+  status: "off" | "trying" | "done" | "none";
+  runs: ImprovementReplayRun[];
+};
+
+/** What a run spent: tokens (a cached one as a tenth), steps, time working. */
+export type ImprovementReplayCost = { tokens: number; steps: number; work_ms: number };
+
+/** What a done try made of its run: went wrong and now goes well, and so on. */
+export type ImprovementReplayOutcome = "fixed" | "kept" | "broke" | "still_bad" | "unclear";
+
+/** One past run a change was tried on, beside what the run did itself. */
+export type ImprovementReplayRun = {
+  run: { id: string; readable: boolean; session_id?: string };
+  chosen: "cited" | "good";
+  status: "queued" | "trying" | "done" | "failed" | "skipped";
+  skip_why?: string | null;
+  error?: string | null;
+  original: "good" | "bad";
+  replayed?: "good" | "bad" | "cant_tell" | null;
+  /** The run's outcome beside the try's, once it is done; the brain decides it. */
+  outcome?: ImprovementReplayOutcome | null;
+  verdict?: string | null;
+  why?: string | null;
+  /** What the run was asked; null, with withheld, for a conversation the reader cannot read. */
+  request?: string | null;
+  withheld: boolean;
+  /** The try came to a call the run never made that was not a read, and it was not made. */
+  diverged: boolean;
+  recorded: number;
+  live: number;
+  not_made: number;
+  before: ImprovementReplayCost;
+  after?: ImprovementReplayCost | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+/** One try whole: each call as it was served, and the answer it came to. */
+export type ImprovementReplayTrace = {
+  run: { id: string; readable: boolean; session_id?: string };
+  answer?: string | null;
+  calls: {
+    name: string;
+    how: "recorded" | "live" | "not_made";
+    arguments: string;
+    output?: string;
+    error?: string;
+  }[];
 };
 
 /** What one window of judged runs came to. */

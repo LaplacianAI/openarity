@@ -31,6 +31,7 @@ import type {
   Improvement,
   ImprovementDecision,
   ImprovementFilter,
+  ImprovementReplayTrace,
   ImproverPass,
   ListedAgent,
   ListedChannel,
@@ -1010,6 +1011,19 @@ export function getImprovement(
 ): Promise<Improvement> {
   return request<Improvement>(
     `/teams/${teamId}/improvements/${proposalId}`,
+    signal ? { signal } : {},
+  );
+}
+
+/** One try of a proposal on a past run: each call as it was served, and the answer. */
+export function getImprovementReplay(
+  teamId: string,
+  proposalId: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<ImprovementReplayTrace> {
+  return request<ImprovementReplayTrace>(
+    `/teams/${teamId}/improvements/${proposalId}/replays/${runId}`,
     signal ? { signal } : {},
   );
 }

@@ -84,6 +84,13 @@ type settings struct {
 	ImprovementEfficiencySpread   int16 `json:"improvement_efficiency_spread"`
 	ImprovementEfficiencyMarkRuns int16 `json:"improvement_efficiency_mark_runs"`
 	ImprovementEfficiencyMargin   int16 `json:"improvement_efficiency_margin"`
+	// Trying each proposal on past runs before it is decided, and what a
+	// try may spend. It runs only while improvement is on.
+	ImprovementReplay        bool  `json:"improvement_replay"`
+	ImprovementReplayRuns    int16 `json:"improvement_replay_runs"`
+	ImprovementReplayTokens  int32 `json:"improvement_replay_tokens"`
+	ImprovementReplayMinutes int16 `json:"improvement_replay_minutes"`
+	ImprovementReplayDaily   int16 `json:"improvement_replay_daily"`
 	// When the switch last went on; runs before it are never judged.
 	ImprovementSince    *time.Time `json:"improvement_since"`
 	CompactionMessages  int32      `json:"compaction_messages"`
@@ -165,7 +172,15 @@ type settingsRequest struct {
 	ImprovementEfficiencySpread   *int16 `json:"improvement_efficiency_spread"`
 	ImprovementEfficiencyMarkRuns *int16 `json:"improvement_efficiency_mark_runs"`
 	ImprovementEfficiencyMargin   *int16 `json:"improvement_efficiency_margin"`
-	CompactionMessages            int32  `json:"compaction_messages"`
+	// Trying proposals on past runs, and its numbers; each left out keeps
+	// what is stored. Read wider than they are kept, so a number too large
+	// is refused with its range rather than as a body that cannot be read.
+	ImprovementReplay        *bool  `json:"improvement_replay"`
+	ImprovementReplayRuns    *int32 `json:"improvement_replay_runs"`
+	ImprovementReplayTokens  *int32 `json:"improvement_replay_tokens"`
+	ImprovementReplayMinutes *int32 `json:"improvement_replay_minutes"`
+	ImprovementReplayDaily   *int32 `json:"improvement_replay_daily"`
+	CompactionMessages       int32  `json:"compaction_messages"`
 	// Left out, the stored value stays, as a sandbox does.
 	CompactionTokensMin *int32  `json:"compaction_tokens_min"`
 	CompactionTokensMax *int32  `json:"compaction_tokens_max"`

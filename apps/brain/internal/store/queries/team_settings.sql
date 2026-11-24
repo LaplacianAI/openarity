@@ -18,6 +18,8 @@ INSERT INTO team_settings (
     improvement_daily_runs, improvement_since,
     improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days,
     improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin,
+    improvement_replay, improvement_replay_runs, improvement_replay_tokens,
+    improvement_replay_minutes, improvement_replay_daily,
     sandbox_keep_hours, sandbox_idle_minutes,
     sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb
 ) VALUES (
@@ -41,6 +43,11 @@ INSERT INTO team_settings (
     COALESCE(sqlc.narg(improvement_efficiency_spread)::smallint, 200),
     COALESCE(sqlc.narg(improvement_efficiency_mark_runs)::smallint, 3),
     COALESCE(sqlc.narg(improvement_efficiency_margin)::smallint, 1),
+    COALESCE(sqlc.narg(improvement_replay)::bool, false),
+    COALESCE(sqlc.narg(improvement_replay_runs)::smallint, 4),
+    COALESCE(sqlc.narg(improvement_replay_tokens)::integer, 200000),
+    COALESCE(sqlc.narg(improvement_replay_minutes)::smallint, 10),
+    COALESCE(sqlc.narg(improvement_replay_daily)::smallint, 40),
     -- The caller sends what is stored for these when a save leaves them out:
     -- a null idle or size is the provider's, not "keep".
     COALESCE(sqlc.narg(sandbox_keep_hours)::integer, 24), sqlc.narg(sandbox_idle_minutes),
@@ -84,6 +91,11 @@ ON CONFLICT (team_id) DO UPDATE SET
     improvement_efficiency_spread    = COALESCE(sqlc.narg(improvement_efficiency_spread)::smallint, team_settings.improvement_efficiency_spread),
     improvement_efficiency_mark_runs = COALESCE(sqlc.narg(improvement_efficiency_mark_runs)::smallint, team_settings.improvement_efficiency_mark_runs),
     improvement_efficiency_margin    = COALESCE(sqlc.narg(improvement_efficiency_margin)::smallint, team_settings.improvement_efficiency_margin),
+    improvement_replay         = COALESCE(sqlc.narg(improvement_replay)::bool, team_settings.improvement_replay),
+    improvement_replay_runs    = COALESCE(sqlc.narg(improvement_replay_runs)::smallint, team_settings.improvement_replay_runs),
+    improvement_replay_tokens  = COALESCE(sqlc.narg(improvement_replay_tokens)::integer, team_settings.improvement_replay_tokens),
+    improvement_replay_minutes = COALESCE(sqlc.narg(improvement_replay_minutes)::smallint, team_settings.improvement_replay_minutes),
+    improvement_replay_daily   = COALESCE(sqlc.narg(improvement_replay_daily)::smallint, team_settings.improvement_replay_daily),
     -- Set each time the switch goes on, kept while it stays on: runs from
     -- before it went on are never judged.
     improvement_since   = CASE

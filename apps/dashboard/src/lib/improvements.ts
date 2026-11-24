@@ -4,6 +4,9 @@ import type {
   ImprovementFilter,
   ImprovementKind,
   ImprovementMark,
+  ImprovementReplay,
+  ImprovementReplayOutcome,
+  ImprovementReplayRun,
   ImprovementWatch,
   ImproverPass,
 } from "@/api/types";
@@ -348,3 +351,102 @@ export function patternWords(w: ImprovementWatch): string | null {
   if (w.before.signature == null || w.after.signature == null) return null;
   return `The pattern it targeted: in ${w.before.signature} of ${w.before.runs} runs before, ${w.after.signature} of ${w.after.runs} after`;
 }
+
+/** What a try on a past run came to, beside the run itself, and how it reads. */
+export type ReplayOutcome = { words: string; tone: "good" | "bad" | "neutral" };
+
+const OUTCOME_WORDS: Record<ImprovementReplayOutcome, ReplayOutcome & { phrase: string }> = {
+  fixed: { words: "Went wrong, now done", tone: "good", phrase: "that went wrong now done" },
+  still_bad: {
+    words: "Went wrong, still does",
+    tone: "neutral",
+    phrase: "that went wrong still do",
+  },
+  kept: { words: "Went well, still does", tone: "neutral", phrase: "that went well still do" },
+  broke: { words: "Went well, now goes wrong", tone: "bad", phrase: "that went well now go wrong" },
+  unclear: { words: "Could not tell", tone: "neutral", phrase: "could not tell" },
+};
+
+export function replayOutcome(r: ImprovementReplayRun): ReplayOutcome {
+  if (r.status === "queued" || r.status === "trying")
+    return { words: "Still to try", tone: "neutral" };
+  if (r.status === "skipped") return { words: "Not tried", tone: "neutral" };
+  if (r.status === "failed") return { words: "The try failed", tone: "neutral" };
+  const { words, tone } = OUTCOME_WORDS[r.outcome ?? "unclear"];
+  return { words, tone };
+}
+
+/**
+ * How long a change being tried may go with no try moving before the list
+ * stops reading it again: longer than one try may take (30 minutes at most).
+ */
+export const TRYING_QUIET_MS = 45 * 60_000;
+
+/**
+ * How long a change whose tries are all still queued, waiting behind other
+ * changes' tries, is read again.
+ */
+export const QUEUED_QUIET_MS = 6 * 60 * 60_000;
+
+/**
+ * Whether a change is still being tried and still moving: a try began or
+ * ended within TRYING_QUIET_MS of now, or, with none begun yet, it was
+ * proposed within QUEUED_QUIET_MS.
+ */
+export function replayMoving(item: Improvement, now: number): boolean {
+  if (item.replay?.status !== "trying") return false;
+  let last = Number.NEGATIVE_INFINITY;
+  for (const r of item.replay.runs) {
+    for (const at of [r.started_at, r.finished_at]) {
+      if (at) last = Math.max(last, Date.parse(at));
+    }
+  }
+  if (last === Number.NEGATIVE_INFINITY) return now - Date.parse(item.created_at) < QUEUED_QUIET_MS;
+  return now - last < TRYING_QUIET_MS;
+}
+
+/** Whether a run that went well goes wrong with the change. */
+export function replayWorse(r: ImprovementReplay | null | undefined): boolean {
+  return !!r?.runs.some((x) => x.outcome === "broke");
+}
+
+/** The tries in one line: "Tried on 4 past runs: 2 that went wrong now done · 2 that went well still do". */
+export function replaySummary(r: ImprovementReplay): string {
+  const done = r.runs.filter((x) => x.status === "done");
+  if (r.status === "off") return "Not tried on past runs: trying was off";
+  if (r.status === "trying") {
+    const total = r.runs.filter((x) => x.status !== "skipped").length;
+    const finished = r.runs.filter((x) => x.status === "done" || x.status === "failed").length;
+    return finished > 0
+      ? `Trying on past runs… ${finished} of ${total} tried`
+      : "Trying on past runs…";
+  }
+  if (r.status === "none")
+    return r.runs.some((x) => x.status === "failed")
+      ? "Every try on a past run failed"
+      : "Not tried on any past run";
+  const tally = new Map<ImprovementReplayOutcome, number>();
+  for (const x of done) {
+    const o = x.outcome ?? "unclear";
+    tally.set(o, (tally.get(o) ?? 0) + 1);
+  }
+  const order: ImprovementReplayOutcome[] = ["fixed", "still_bad", "kept", "broke", "unclear"];
+  const parts = order
+    .filter((o) => tally.has(o))
+    .map((o) => `${tally.get(o)} ${OUTCOME_WORDS[o].phrase}`);
+  return `Tried on ${count(done.length, "past run")}: ${parts.join(" · ")}`;
+}
+
+/** "18,400 → 12,000 tokens · 9 → 5 steps · 41 s → 20 s", or null before the try is done. */
+export function replayCost(r: ImprovementReplayRun): string | null {
+  if (!r.after) return null;
+  const n = (v: number) => v.toLocaleString("en-US");
+  return `${n(r.before.tokens)} → ${n(r.after.tokens)} tokens · ${r.before.steps} → ${r.after.steps} steps · ${workTime(r.before.work_ms)} → ${workTime(r.after.work_ms)}`;
+}
+
+/** What a call in a try was served as. */
+export const SERVED_WORDS: Record<"recorded" | "live" | "not_made", string> = {
+  recorded: "As in the past run",
+  live: "Looked up now",
+  not_made: "Skipped",
+};

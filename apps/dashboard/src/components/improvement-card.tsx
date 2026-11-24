@@ -17,6 +17,7 @@ import type {
   ImprovementDecision,
   ImprovementWatch,
 } from "@/api/types";
+import { TriedOnPastRuns } from "@/components/improvement-replay";
 import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Mono } from "@/components/ui-bits";
@@ -31,6 +32,8 @@ import {
   MARK_WORDS,
   missingWrites,
   patternWords,
+  replayMoving,
+  replayWorse,
   SAVES_WORDS,
   scopeWords,
   timeWords,
@@ -314,6 +317,7 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
   const decidedAt = item.status === "reverted" ? item.reverted_at : (item.decided_at ?? null);
   // An efficiency change says what it aims to save, before what kind of change it is.
   const saves = item.goal === "efficiency" ? (item.saves ?? []) : [];
+  const worse = replayWorse(item.replay);
 
   return (
     <div
@@ -329,6 +333,16 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
           {item.skill ? ` of ${item.skill.name}` : ""} · {scopeWords(item.scope)}
         </span>
         {item.status !== "waiting" ? <StatusPill status={item.status} /> : null}
+        {worse ? (
+          // What trying it came to, not a kind of change: beside its status.
+          <span
+            data-worse
+            className="inline-flex items-center gap-1 self-center rounded-full px-2 py-0.5 text-xs text-warning shadow-[inset_0_0_0_1px_var(--sheet-edge)]"
+          >
+            <TriangleAlert aria-hidden className="size-3 shrink-0" />
+            Worse on past runs
+          </span>
+        ) : null}
         {decidedAt ? (
           <time dateTime={decidedAt} className="text-xs text-muted-foreground">
             {absoluteTime(decidedAt)}
@@ -393,6 +407,15 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
           <Change key={c.field} change={c} />
         ))}
       </div>
+
+      {item.replay && item.replay.status !== "off" ? (
+        <TriedOnPastRuns
+          teamId={teamId}
+          proposalId={item.id}
+          replay={item.replay}
+          stalled={item.replay.status === "trying" && !replayMoving(item, Date.now())}
+        />
+      ) : null}
 
       {item.watch ? <Watch watch={item.watch} goal={item.goal} saves={item.saves} /> : null}
 

@@ -203,30 +203,64 @@ type GraphOutbox struct {
 }
 
 type ImprovementProposal struct {
-	ID          uuid.UUID
-	TeamID      uuid.UUID
-	AgentID     uuid.UUID
-	SkillID     *uuid.UUID
-	Kind        string
-	Status      string
-	Why         string
-	Hypothesis  string
-	Scope       string
-	Signature   *string
-	RunIds      []uuid.UUID
-	Outsider    bool
-	Marks       []string
-	Before      []byte
-	After       []byte
-	CreatedAt   time.Time
-	DecidedBy   *uuid.UUID
-	DecidedAt   *time.Time
-	RevertedBy  *uuid.UUID
-	RevertedAt  *time.Time
-	WithdrawnBy *uuid.UUID
-	PassID      *uuid.UUID
-	Goal        string
-	Saves       []string
+	ID             uuid.UUID
+	TeamID         uuid.UUID
+	AgentID        uuid.UUID
+	SkillID        *uuid.UUID
+	Kind           string
+	Status         string
+	Why            string
+	Hypothesis     string
+	Scope          string
+	Signature      *string
+	RunIds         []uuid.UUID
+	Outsider       bool
+	Marks          []string
+	Before         []byte
+	After          []byte
+	CreatedAt      time.Time
+	DecidedBy      *uuid.UUID
+	DecidedAt      *time.Time
+	RevertedBy     *uuid.UUID
+	RevertedAt     *time.Time
+	WithdrawnBy    *uuid.UUID
+	PassID         *uuid.UUID
+	Goal           string
+	Saves          []string
+	ReplayChosenAt *time.Time
+}
+
+type ImprovementReplay struct {
+	ProposalID        uuid.UUID
+	TeamID            uuid.UUID
+	SourceRunID       uuid.UUID
+	Position          int16
+	Chosen            string
+	Status            string
+	SkipWhy           *string
+	Error             *string
+	Original          string
+	Replayed          *string
+	Verdict           *string
+	Why               *string
+	Diverged          bool
+	Recorded          int16
+	Live              int16
+	NotMade           int16
+	InputTokens       int64
+	CachedInputTokens int64
+	OutputTokens      int64
+	JudgeTokens       int64
+	Steps             int32
+	WorkMs            int64
+	OriginalSpent     int64
+	OriginalSteps     int32
+	OriginalWorkMs    int64
+	Answer            *string
+	Trace             []byte
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
 }
 
 type ImprovementWatch struct {
@@ -678,6 +712,11 @@ type TeamSetting struct {
 	ImprovementEfficiencySpread   int16
 	ImprovementEfficiencyMarkRuns int16
 	ImprovementEfficiencyMargin   int16
+	ImprovementReplay             bool
+	ImprovementReplayRuns         int16
+	ImprovementReplayTokens       int32
+	ImprovementReplayMinutes      int16
+	ImprovementReplayDaily        int16
 }
 
 type User struct {

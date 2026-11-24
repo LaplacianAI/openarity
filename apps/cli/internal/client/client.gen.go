@@ -759,6 +759,162 @@ func (e ImprovementMark) Valid() bool {
 	}
 }
 
+// Defines values for ImprovementReplayStatus.
+const (
+	ImprovementReplayStatusDone   ImprovementReplayStatus = "done"
+	ImprovementReplayStatusNone   ImprovementReplayStatus = "none"
+	ImprovementReplayStatusOff    ImprovementReplayStatus = "off"
+	ImprovementReplayStatusTrying ImprovementReplayStatus = "trying"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayStatus enum.
+func (e ImprovementReplayStatus) Valid() bool {
+	switch e {
+	case ImprovementReplayStatusDone:
+		return true
+	case ImprovementReplayStatusNone:
+		return true
+	case ImprovementReplayStatusOff:
+		return true
+	case ImprovementReplayStatusTrying:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementReplayCallHow.
+const (
+	Live     ImprovementReplayCallHow = "live"
+	NotMade  ImprovementReplayCallHow = "not_made"
+	Recorded ImprovementReplayCallHow = "recorded"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayCallHow enum.
+func (e ImprovementReplayCallHow) Valid() bool {
+	switch e {
+	case Live:
+		return true
+	case NotMade:
+		return true
+	case Recorded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementReplayRunChosen.
+const (
+	ImprovementReplayRunChosenCited ImprovementReplayRunChosen = "cited"
+	ImprovementReplayRunChosenGood  ImprovementReplayRunChosen = "good"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayRunChosen enum.
+func (e ImprovementReplayRunChosen) Valid() bool {
+	switch e {
+	case ImprovementReplayRunChosenCited:
+		return true
+	case ImprovementReplayRunChosenGood:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementReplayRunOriginal.
+const (
+	ImprovementReplayRunOriginalBad  ImprovementReplayRunOriginal = "bad"
+	ImprovementReplayRunOriginalGood ImprovementReplayRunOriginal = "good"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayRunOriginal enum.
+func (e ImprovementReplayRunOriginal) Valid() bool {
+	switch e {
+	case ImprovementReplayRunOriginalBad:
+		return true
+	case ImprovementReplayRunOriginalGood:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementReplayRunOutcome.
+const (
+	Broke    ImprovementReplayRunOutcome = "broke"
+	Fixed    ImprovementReplayRunOutcome = "fixed"
+	Kept     ImprovementReplayRunOutcome = "kept"
+	StillBad ImprovementReplayRunOutcome = "still_bad"
+	Unclear  ImprovementReplayRunOutcome = "unclear"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayRunOutcome enum.
+func (e ImprovementReplayRunOutcome) Valid() bool {
+	switch e {
+	case Broke:
+		return true
+	case Fixed:
+		return true
+	case Kept:
+		return true
+	case StillBad:
+		return true
+	case Unclear:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementReplayRunReplayed.
+const (
+	ImprovementReplayRunReplayedBad      ImprovementReplayRunReplayed = "bad"
+	ImprovementReplayRunReplayedCantTell ImprovementReplayRunReplayed = "cant_tell"
+	ImprovementReplayRunReplayedGood     ImprovementReplayRunReplayed = "good"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayRunReplayed enum.
+func (e ImprovementReplayRunReplayed) Valid() bool {
+	switch e {
+	case ImprovementReplayRunReplayedBad:
+		return true
+	case ImprovementReplayRunReplayedCantTell:
+		return true
+	case ImprovementReplayRunReplayedGood:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImprovementReplayRunStatus.
+const (
+	ImprovementReplayRunStatusDone    ImprovementReplayRunStatus = "done"
+	ImprovementReplayRunStatusFailed  ImprovementReplayRunStatus = "failed"
+	ImprovementReplayRunStatusQueued  ImprovementReplayRunStatus = "queued"
+	ImprovementReplayRunStatusSkipped ImprovementReplayRunStatus = "skipped"
+	ImprovementReplayRunStatusTrying  ImprovementReplayRunStatus = "trying"
+)
+
+// Valid indicates whether the value is a known member of the ImprovementReplayRunStatus enum.
+func (e ImprovementReplayRunStatus) Valid() bool {
+	switch e {
+	case ImprovementReplayRunStatusDone:
+		return true
+	case ImprovementReplayRunStatusFailed:
+		return true
+	case ImprovementReplayRunStatusQueued:
+		return true
+	case ImprovementReplayRunStatusSkipped:
+		return true
+	case ImprovementReplayRunStatusTrying:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImprovementStatus.
 const (
 	ImprovementStatusApplied   ImprovementStatus = "applied"
@@ -1085,19 +1241,19 @@ func (e RunFeedbackRequestVia) Valid() bool {
 
 // Defines values for RunOutcomeEffective.
 const (
-	Bad     RunOutcomeEffective = "bad"
-	Good    RunOutcomeEffective = "good"
-	Neither RunOutcomeEffective = "neither"
+	RunOutcomeEffectiveBad     RunOutcomeEffective = "bad"
+	RunOutcomeEffectiveGood    RunOutcomeEffective = "good"
+	RunOutcomeEffectiveNeither RunOutcomeEffective = "neither"
 )
 
 // Valid indicates whether the value is a known member of the RunOutcomeEffective enum.
 func (e RunOutcomeEffective) Valid() bool {
 	switch e {
-	case Bad:
+	case RunOutcomeEffectiveBad:
 		return true
-	case Good:
+	case RunOutcomeEffectiveGood:
 		return true
-	case Neither:
+	case RunOutcomeEffectiveNeither:
 		return true
 	default:
 		return false
@@ -2558,7 +2714,10 @@ type Improvement struct {
 	PassID *openapi_types.UUID `json:"pass_id,omitempty" yaml:"pass_id,omitempty"`
 
 	// Reaches For a skill_edit, every agent that holds the skill now
-	Reaches    []NamedRef          `json:"reaches" yaml:"reaches"`
+	Reaches []NamedRef `json:"reaches" yaml:"reaches"`
+
+	// Replay How it fared on past runs before it was decided; null in a decision's answer
+	Replay     *ImprovementReplay  `json:"replay,omitempty" yaml:"replay,omitempty"`
 	RevertedAt *time.Time          `json:"reverted_at,omitempty" yaml:"reverted_at,omitempty"`
 	RevertedBy *openapi_types.UUID `json:"reverted_by,omitempty" yaml:"reverted_by,omitempty"`
 
@@ -2646,6 +2805,126 @@ type ImprovementPage struct {
 
 	// NextCursor Absent on the last page
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// ImprovementReplay How the change fared on a few of its agent's past runs, tried before
+// anyone decided on it. status is off when it was never tried (its team
+// had trying off when its runs would have been chosen), trying while a
+// try is still to run, done once one came to an outcome, and none when
+// none of its runs could be tried or every try failed. Shown, never
+// acted on: the approver decides.
+type ImprovementReplay struct {
+	Runs   []ImprovementReplayRun  `json:"runs" yaml:"runs"`
+	Status ImprovementReplayStatus `json:"status" yaml:"status"`
+}
+
+// ImprovementReplayStatus defines model for ImprovementReplay.Status.
+type ImprovementReplayStatus string
+
+// ImprovementReplayCall defines model for ImprovementReplayCall.
+type ImprovementReplayCall struct {
+	Arguments string                   `json:"arguments" yaml:"arguments"`
+	Error     *string                  `json:"error,omitempty" yaml:"error,omitempty"`
+	How       ImprovementReplayCallHow `json:"how" yaml:"how"`
+	Name      string                   `json:"name" yaml:"name"`
+	Output    *string                  `json:"output,omitempty" yaml:"output,omitempty"`
+}
+
+// ImprovementReplayCallHow defines model for ImprovementReplayCall.How.
+type ImprovementReplayCallHow string
+
+// ImprovementReplayCost defines model for ImprovementReplayCost.
+type ImprovementReplayCost struct {
+	Steps int32 `json:"steps" yaml:"steps"`
+
+	// Tokens Tokens spent, a cached token as a tenth
+	Tokens int64 `json:"tokens" yaml:"tokens"`
+
+	// WorkMs Time working, in milliseconds, leaving out time waiting for a person's approval
+	WorkMs int64 `json:"work_ms" yaml:"work_ms"`
+}
+
+// ImprovementReplayRun One past run the change was tried on, beside what the run did itself.
+// request and why are withheld (null, with withheld true) from a caller
+// who may not read the run's conversation.
+type ImprovementReplayRun struct {
+	After  *ImprovementReplayCost `json:"after,omitempty" yaml:"after,omitempty"`
+	Before ImprovementReplayCost  `json:"before" yaml:"before"`
+
+	// Chosen A run the proposal cites, or a recent good run of its agent
+	Chosen ImprovementReplayRunChosen `json:"chosen" yaml:"chosen"`
+
+	// Diverged The try came to a call the run never made that was not a read, and it was not made
+	Diverged bool `json:"diverged" yaml:"diverged"`
+
+	// Error Why the try failed; to a caller who may not read the run, only that it did
+	Error      *string    `json:"error,omitempty" yaml:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty" yaml:"finished_at,omitempty"`
+
+	// Live New calls that only read, run for real
+	Live    int32 `json:"live" yaml:"live"`
+	NotMade int32 `json:"not_made" yaml:"not_made"`
+
+	// Original How the run itself went, 👍 and 👎 counted
+	Original ImprovementReplayRunOriginal `json:"original" yaml:"original"`
+
+	// Outcome The run's outcome beside the try's, once the try is done: fixed
+	// (went wrong, now goes well), kept (went well, still does), broke
+	// (went well, now goes wrong), still_bad, or unclear (the try's
+	// outcome could not be told). Null until the try is done.
+	Outcome *ImprovementReplayRunOutcome `json:"outcome,omitempty" yaml:"outcome,omitempty"`
+
+	// Recorded Calls given what the run's same call got
+	Recorded int32 `json:"recorded" yaml:"recorded"`
+
+	// Replayed How the try went; null until it is done
+	Replayed *ImprovementReplayRunReplayed `json:"replayed,omitempty" yaml:"replayed,omitempty"`
+
+	// Request What the run was asked
+	Request   *string                    `json:"request,omitempty" yaml:"request,omitempty"`
+	Run       ImprovementRunRef          `json:"run" yaml:"run"`
+	SkipWhy   *string                    `json:"skip_why,omitempty" yaml:"skip_why,omitempty"`
+	StartedAt *time.Time                 `json:"started_at,omitempty" yaml:"started_at,omitempty"`
+	Status    ImprovementReplayRunStatus `json:"status" yaml:"status"`
+
+	// Verdict The judge's verdict on the try
+	Verdict  *string `json:"verdict,omitempty" yaml:"verdict,omitempty"`
+	Why      *string `json:"why,omitempty" yaml:"why,omitempty"`
+	Withheld bool    `json:"withheld" yaml:"withheld"`
+}
+
+// ImprovementReplayRunChosen A run the proposal cites, or a recent good run of its agent
+type ImprovementReplayRunChosen string
+
+// ImprovementReplayRunOriginal How the run itself went, 👍 and 👎 counted
+type ImprovementReplayRunOriginal string
+
+// ImprovementReplayRunOutcome The run's outcome beside the try's, once the try is done: fixed
+// (went wrong, now goes well), kept (went well, still does), broke
+// (went well, now goes wrong), still_bad, or unclear (the try's
+// outcome could not be told). Null until the try is done.
+type ImprovementReplayRunOutcome string
+
+// ImprovementReplayRunReplayed How the try went; null until it is done
+type ImprovementReplayRunReplayed string
+
+// ImprovementReplayRunStatus defines model for ImprovementReplayRun.Status.
+type ImprovementReplayRunStatus string
+
+// ImprovementReplayTrace defines model for ImprovementReplayTrace.
+type ImprovementReplayTrace struct {
+	Answer *string                 `json:"answer,omitempty" yaml:"answer,omitempty"`
+	Calls  []ImprovementReplayCall `json:"calls" yaml:"calls"`
+	Run    ImprovementRunRef       `json:"run" yaml:"run"`
+}
+
+// ImprovementRunRef defines model for ImprovementRunRef.
+type ImprovementRunRef struct {
+	ID       openapi_types.UUID `json:"id" yaml:"id"`
+	Readable bool               `json:"readable" yaml:"readable"`
+
+	// SessionID The conversation the run is read in; present only when readable
+	SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
 }
 
 // ImprovementStatus defines model for ImprovementStatus.
@@ -4193,6 +4472,21 @@ type TeamSettings struct {
 	// ImprovementPassTokens The tokens an improver pass may spend across its tries, its screen's included; past them it stops and reports what it has. 400,000 until set.
 	ImprovementPassTokens *int32 `json:"improvement_pass_tokens,omitempty" yaml:"improvement_pass_tokens,omitempty"`
 
+	// ImprovementReplay Whether each proposal is tried on a few of its agent's past runs before it is decided, and judged. A try acts on nothing: a call the past run made gets what it got then, a new read runs, and anything else is not made. Runs only while improvement is on. False until set.
+	ImprovementReplay *bool `json:"improvement_replay,omitempty" yaml:"improvement_replay,omitempty"`
+
+	// ImprovementReplayDaily The tries a team runs a day (UTC); past it, a proposal's tries still to run are skipped, and not tried later. 40 until set.
+	ImprovementReplayDaily *int32 `json:"improvement_replay_daily,omitempty" yaml:"improvement_replay_daily,omitempty"`
+
+	// ImprovementReplayMinutes The minutes one try may take; past them, it is stopped and counts as could not tell. 10 until set.
+	ImprovementReplayMinutes *int32 `json:"improvement_replay_minutes,omitempty" yaml:"improvement_replay_minutes,omitempty"`
+
+	// ImprovementReplayRuns The past runs a proposal is tried on: half that it cites, half recent good ones of its agent. 4 until set.
+	ImprovementReplayRuns *int32 `json:"improvement_replay_runs,omitempty" yaml:"improvement_replay_runs,omitempty"`
+
+	// ImprovementReplayTokens The tokens one try may spend, checked as each model reply comes back; the reply that crosses it is counted and the try is stopped, so a read that reply asked for may still be made (never a call that is not a read), and it counts as could not tell. Judging the try is not counted. 200000 until set.
+	ImprovementReplayTokens *int32 `json:"improvement_replay_tokens,omitempty" yaml:"improvement_replay_tokens,omitempty"`
+
 	// ImprovementSampleShare The percentage of runs judged done that are digested anyway, for contrast. 10 until set.
 	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`
 
@@ -4265,6 +4559,21 @@ type TeamSettingsRequest struct {
 
 	// ImprovementPassTokens Left out, the stored value stays.
 	ImprovementPassTokens *int32 `json:"improvement_pass_tokens,omitempty" yaml:"improvement_pass_tokens,omitempty"`
+
+	// ImprovementReplay Left out, the stored value stays.
+	ImprovementReplay *bool `json:"improvement_replay,omitempty" yaml:"improvement_replay,omitempty"`
+
+	// ImprovementReplayDaily Left out, the stored value stays.
+	ImprovementReplayDaily *int32 `json:"improvement_replay_daily,omitempty" yaml:"improvement_replay_daily,omitempty"`
+
+	// ImprovementReplayMinutes Left out, the stored value stays.
+	ImprovementReplayMinutes *int32 `json:"improvement_replay_minutes,omitempty" yaml:"improvement_replay_minutes,omitempty"`
+
+	// ImprovementReplayRuns Left out, the stored value stays.
+	ImprovementReplayRuns *int32 `json:"improvement_replay_runs,omitempty" yaml:"improvement_replay_runs,omitempty"`
+
+	// ImprovementReplayTokens Left out, the stored value stays.
+	ImprovementReplayTokens *int32 `json:"improvement_replay_tokens,omitempty" yaml:"improvement_replay_tokens,omitempty"`
 
 	// ImprovementSampleShare Left out, the stored share stays.
 	ImprovementSampleShare *int32 `json:"improvement_sample_share,omitempty" yaml:"improvement_sample_share,omitempty"`
@@ -5824,6 +6133,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
 	DecideImprovement(ctx context.Context, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetImprovementReplay Read one try of a proposed improvement on a past run
+	//
+	// Each call the try made, and how it was served, with the answer it came
+	// to. Readable as the proposal is, and only by someone who may read the
+	// past run's conversation; to anyone else it is a 403.
+	//
+	// Corresponds with GET /teams/{id}/improvements/{proposalID}/replays/{runID} (the `GetImprovementReplay` operationId).
+	GetImprovementReplay(ctx context.Context, id TeamID, proposalID ImprovementID, runID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListLoops List the loops an agent may use
 	//
@@ -8241,6 +8559,25 @@ func (c *Client) DecideImprovementWithBody(ctx context.Context, id TeamID, propo
 // Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
 func (c *Client) DecideImprovement(ctx context.Context, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDecideImprovementRequest(c.Server, id, proposalID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetImprovementReplay Read one try of a proposed improvement on a past run
+//
+// Each call the try made, and how it was served, with the answer it came
+// to. Readable as the proposal is, and only by someone who may read the
+// past run's conversation; to anyone else it is a 403.
+//
+// Corresponds with GET /teams/{id}/improvements/{proposalID}/replays/{runID} (the `GetImprovementReplay` operationId).
+func (c *Client) GetImprovementReplay(ctx context.Context, id TeamID, proposalID ImprovementID, runID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetImprovementReplayRequest(c.Server, id, proposalID, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -12179,6 +12516,54 @@ func NewDecideImprovementRequestWithBody(server string, id TeamID, proposalID Im
 	return req, nil
 }
 
+// NewGetImprovementReplayRequest constructs an http.Request for the GetImprovementReplay method
+func NewGetImprovementReplayRequest(server string, id TeamID, proposalID ImprovementID, runID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "proposalID", proposalID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "runID", runID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/improvements/%s/replays/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListLoopsRequest constructs an http.Request for the ListLoops method
 func NewListLoopsRequest(server string, id TeamID) (*http.Request, error) {
 	var err error
@@ -15939,6 +16324,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /teams/{id}/improvements/{proposalID}/decision (the `DecideImprovement` operationId).
 	DecideImprovementWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, body DecideImprovementJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideImprovementResponse, error)
 
+	// GetImprovementReplayWithResponse Read one try of a proposed improvement on a past run
+	//
+	// Each call the try made, and how it was served, with the answer it came
+	// to. Readable as the proposal is, and only by someone who may read the
+	// past run's conversation; to anyone else it is a 403.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/improvements/{proposalID}/replays/{runID} (the `GetImprovementReplay` operationId).
+	GetImprovementReplayWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, runID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetImprovementReplayResponse, error)
+
 	// ListLoopsWithResponse List the loops an agent may use
 	//
 	// A read, so belonging to the team is enough. These are the loops the
@@ -18922,6 +19318,54 @@ func (r DecideImprovementResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DecideImprovementResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetImprovementReplayResponse401Headers the declared response headers of an HTTP 401 response for GetImprovementReplay
+type GetImprovementReplayResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetImprovementReplayResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImprovementReplayTrace
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetImprovementReplayResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetImprovementReplayResponse) GetJSON200() *ImprovementReplayTrace {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetImprovementReplayResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetImprovementReplayResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetImprovementReplayResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetImprovementReplayResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22645,6 +23089,23 @@ func (c *ClientWithResponses) DecideImprovementWithResponse(ctx context.Context,
 	return ParseDecideImprovementResponse(rsp)
 }
 
+// GetImprovementReplayWithResponse Read one try of a proposed improvement on a past run
+//
+// Each call the try made, and how it was served, with the answer it came
+// to. Readable as the proposal is, and only by someone who may read the
+// past run's conversation; to anyone else it is a 403.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/improvements/{proposalID}/replays/{runID} (the `GetImprovementReplay` operationId).
+func (c *ClientWithResponses) GetImprovementReplayWithResponse(ctx context.Context, id TeamID, proposalID ImprovementID, runID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetImprovementReplayResponse, error) {
+	rsp, err := c.GetImprovementReplay(ctx, id, proposalID, runID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetImprovementReplayResponse(rsp)
+}
+
 // ListLoopsWithResponse List the loops an agent may use
 //
 // A read, so belonging to the team is enough. These are the loops the
@@ -25609,6 +26070,45 @@ func ParseDecideImprovementResponse(rsp *http.Response) (*DecideImprovementRespo
 	switch {
 	case rsp.StatusCode == 401:
 		var headers DecideImprovementResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetImprovementReplayResponse parses an HTTP response from a GetImprovementReplayWithResponse call
+func ParseGetImprovementReplayResponse(rsp *http.Response) (*GetImprovementReplayResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetImprovementReplayResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImprovementReplayTrace
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetImprovementReplayResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
