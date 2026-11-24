@@ -28,9 +28,14 @@ afterEach(() => {
  * The shell over a team whose summary says `waiting` people are waiting:
  * null, as the brain answers a reader without channel:read.
  */
-function shell(waiting: number | null = 0, actions = ["agent:write", "channel:read"]) {
+function shell(
+  waiting: number | null = 0,
+  actions = ["agent:write", "channel:read"],
+  more: Parameters<typeof brain>[0] = {},
+) {
   const seen = brain({
     ...team(actions),
+    ...more,
     "GET /whoami": { body: { subject: "ann", email: "ann@example.com" } },
     "GET /teams/{id}/summary": {
       body: {
@@ -51,7 +56,7 @@ function readAQueue(seen: { path: string }[]): boolean {
 }
 
 describe("the navigation on a wide screen", () => {
-  it("groups the screens by job, and keeps settings and the account at the foot", async () => {
+  it("groups the screens by job, what waits for a person first, and the team last", async () => {
     widths(true, true);
     shell();
 
@@ -64,15 +69,36 @@ describe("the navigation on a wide screen", () => {
           .getAllByRole("link")
           .map((a) => a.textContent),
       ]);
+    // Home stands alone, first, with no group or heading of its own.
+    expect(within(nav).getAllByRole("link")[0]).toHaveAccessibleName("Home");
     expect(groups).toEqual([
-      ["Work", ["Home", "Runs", "Sessions", "Sender approvals", "Tool approvals"]],
-      [
-        "Build",
-        ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint", "Improvements"],
-      ],
-      ["Understand", ["Graph"]],
+      ["Needs you", ["Sender approvals", "Tool approvals", "Improvements"]],
+      ["Work", ["Runs", "Sessions"]],
+      ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint", "Graph"]],
       ["Team", ["Team settings", "Teams"]],
     ]);
+  });
+
+  it("counts the changes waiting for an approver", async () => {
+    widths(true, true);
+    const seen = shell(0, ["agent:write", "improvement:approve"], {
+      "GET /teams/{id}/improvements": { body: { items: [{ id: "p1" }, { id: "p2" }] } },
+    });
+    const link = await screen.findByRole("link", { name: /Improvements/ });
+    await waitFor(() => expect(link).toHaveTextContent("Improvements, 2 waiting"));
+    const asked = seen.find((s) => s.path.includes("/improvements"));
+    expect(asked?.path).toContain("status=waiting");
+  });
+
+  it("asks nothing about changes of someone who may not approve them", async () => {
+    widths(true, true);
+    // Tool approvals' count is asked once permissions are known, as this
+    // one would be: by then, the change count has had its chance.
+    const seen = shell(0, ["agent:write", "approval:read"]);
+    const link = await screen.findByRole("link", { name: /Improvements/ });
+    await waitFor(() => expect(seen.some((s) => s.path.includes("/approvals"))).toBe(true));
+    expect(link).toHaveTextContent(/^Improvements$/);
+    expect(seen.some((s) => s.path.includes("/improvements"))).toBe(false);
   });
 
   // The count is the summary's, one read for the whole team, refreshed once a
@@ -139,6 +165,27 @@ describe("the navigation on a phone", () => {
     ).toEqual(["Home", "Runs", expect.stringMatching(/^Sender approvals/)]);
     expect(within(bar).getByRole("button", { name: "More" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main" })).toBeNull();
+  });
+
+  // Tool approvals and Improvements are only under More, so More says when
+  // something waits there.
+  it("marks More while something waits on a screen only it reaches", async () => {
+    widths(false, false);
+    shell(0, ["agent:write", "improvement:approve"], {
+      "GET /teams/{id}/improvements": { body: { items: [{ id: "p1" }] } },
+    });
+    const bar = await screen.findByRole("navigation", { name: "Quick" });
+    expect(
+      await within(bar).findByRole("button", { name: "More, something waits there" }),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves More plain while nothing waits there", async () => {
+    widths(false, false);
+    const seen = shell(3);
+    const bar = await screen.findByRole("navigation", { name: "Quick" });
+    await waitFor(() => expect(seen.some((s) => s.path.endsWith("/summary"))).toBe(true));
+    expect(within(bar).getByRole("button", { name: "More" })).toBeInTheDocument();
   });
 
   it("opens every screen and the account from More", async () => {

@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useState } from "react";
-import { fetchWhoami, listDeletedTeams, listToolApprovals } from "@/api";
+import { fetchWhoami, listDeletedTeams, listImprovements, listToolApprovals } from "@/api";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam, useMe, useToken } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
@@ -68,6 +68,7 @@ import {
   useNotifySwitch,
   useWaitingTitle,
 } from "@/lib/notify";
+import { SETTINGS_PAGES } from "@/lib/settings-pages";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -119,15 +120,21 @@ const DELETED_TEAMS: NavItem = {
 /** The count beside a navigation entry that has one, by its path. */
 type Badges = Readonly<Record<string, string | null>>;
 
-type NavGroup = { label: string; items: readonly NavItem[] };
+/** A group of the navigation; one with no label (Home) stands alone, with no heading. */
+type NavGroup = { label?: string; items: readonly NavItem[] };
 
 /**
  * The navigation, grouped by the job a screen is for rather than the noun it
- * lists. Deleted teams sits under Teams, for super admins only.
+ * lists, and in each group by how often it is used. Home stands alone, with no
+ * label; what waits for a person comes next, then the work, then what the
+ * team is built from, then the team itself. Deleted teams sits under Teams,
+ * for super admins only.
  */
 export function navGroups(superAdmin: boolean): readonly NavGroup[] {
   return [
-    { label: "Work", items: [HOME, RUNS, SESSIONS, APPROVALS, REQUESTS] },
+    { items: [HOME] },
+    { label: "Needs you", items: [APPROVALS, REQUESTS, IMPROVEMENTS] },
+    { label: "Work", items: [RUNS, SESSIONS] },
     {
       label: "Build",
       items: [
@@ -137,12 +144,8 @@ export function navGroups(superAdmin: boolean): readonly NavGroup[] {
         { to: "/ui/channels", label: "Channels", icon: Radio, exact: false },
         { to: "/ui/build", label: "Builder", icon: Sparkles, exact: false },
         { to: "/ui/blueprint", label: "Blueprint", icon: FileCode2, exact: false },
-        IMPROVEMENTS,
+        { to: "/ui/graph", label: "Graph", icon: Network, exact: false },
       ],
-    },
-    {
-      label: "Understand",
-      items: [{ to: "/ui/graph", label: "Graph", icon: Network, exact: false }],
     },
     {
       label: "Team",
@@ -208,6 +211,27 @@ function usePendingRequests(teamId: string | null, every: number, background: bo
   return { n, more, items: pending.data?.items };
 }
 
+/**
+ * Changes the agents proposed that wait for a decision: a count, or "50+" past
+ * one page. Null for none, and for a reader who may not decide on them: the
+ * brain shows them waiting changes only to an approver.
+ */
+function usePendingImprovements(teamId: string | null, every: number, background: boolean) {
+  const perms = usePermissions(teamId);
+  const waiting = useQuery({
+    queryKey: ["improvements", teamId, "waiting-count"],
+    queryFn: ({ signal }) =>
+      listImprovements(teamId as string, { status: ["waiting"], limit: 50 }, null, signal),
+    enabled: Boolean(teamId) && !perms.isPending && perms.can("improvement:approve"),
+    staleTime: Math.min(every, 30_000),
+    refetchInterval: every,
+    refetchIntervalInBackground: background,
+  });
+  const n = waiting.data?.items.length ?? 0;
+  if (n === 0) return null;
+  return `${n}${waiting.data?.next_cursor ? "+" : ""}`;
+}
+
 /** The entry a path belongs to: the longest that matches, so a nested page lights only itself. */
 function activeOf(items: readonly NavItem[], pathname: string): string | undefined {
   return items.filter((i) => isActive(pathname, i)).sort((a, b) => b.to.length - a.to.length)[0]
@@ -271,10 +295,12 @@ function Shell({ pathname }: { pathname: string }) {
   const every = notifying ? NOTIFY_POLL_MS : BADGE_POLL_MS;
   const senders = useWaiting(teamId, every, notifying);
   const requests = usePendingRequests(teamId, every, notifying);
+  const improvements = usePendingImprovements(teamId, every, notifying);
   const requestsBadge = requests.n === 0 ? null : `${requests.n}${requests.more ? "+" : ""}`;
   const waiting: Badges = {
     [APPROVALS.to]: senders ? String(senders) : null,
     [REQUESTS.to]: requestsBadge,
+    [IMPROVEMENTS.to]: improvements,
   };
   const perms = usePermissions(teamId);
   useApprovalNotices({
@@ -293,11 +319,22 @@ function Shell({ pathname }: { pathname: string }) {
       open={finding}
       onOpenChange={setFinding}
       teamId={teamId}
-      screens={groups.flatMap((g) =>
-        g.items.map(
-          (i): Destination => ({ label: i.label, kind: "Screen", icon: i.icon, to: i.to }),
+      screens={[
+        ...groups.flatMap((g) =>
+          g.items.map(
+            (i): Destination => ({ label: i.label, kind: "Screen", icon: i.icon, to: i.to }),
+          ),
         ),
-      )}
+        // Each page of the team's settings is found by its own name too.
+        ...SETTINGS_PAGES.map(
+          (p): Destination => ({
+            label: `Team settings: ${p.label}`,
+            kind: "Screen",
+            icon: Settings,
+            to: p.to,
+          }),
+        ),
+      ]}
     />
   );
 
@@ -313,7 +350,7 @@ function Shell({ pathname }: { pathname: string }) {
         "font-sans text-foreground",
         phone
           ? "flex min-h-dvh flex-col bg-sheet"
-          : "grid min-h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame",
+          : "grid h-dvh grid-rows-[3rem_minmax(0,1fr)] bg-frame",
         layout === "full" && "grid-cols-[14.25rem_minmax(0,1fr)]",
         layout === "rail" && "grid-cols-[3.5rem_minmax(0,1fr)]",
       )}
@@ -358,14 +395,19 @@ function Shell({ pathname }: { pathname: string }) {
           <span />
         </header>
       )}
+      {/* From a tablet up the sheet scrolls, not the window, so the frame
+          stays. A page that marks itself data-fills-sheet is given the
+          sheet's height to split into panes of its own. */}
       <main
+        data-scroll-restoration-id={phone ? undefined : "sheet"}
+        data-scroller={phone ? undefined : ""}
         className={
           phone
             ? "min-w-0 flex-1"
-            : "col-start-2 mr-2 mb-2 min-w-0 rounded-2xl border border-sheet-edge bg-sheet"
+            : "col-start-2 mr-2 mb-2 min-h-0 min-w-0 overflow-y-auto rounded-2xl border border-sheet-edge bg-sheet"
         }
       >
-        <div className={phone ? "px-4 pt-5 pb-24" : "px-6 py-6"}>
+        <div className={phone ? "px-4 pt-5 pb-24" : "px-6 py-6 has-[[data-fills-sheet]]:h-full"}>
           <Outlet />
         </div>
       </main>
@@ -449,15 +491,19 @@ function Nav({
   return (
     <nav aria-label="Main" className="flex flex-col gap-4">
       {groups.map((g) => (
-        // biome-ignore lint/a11y/useSemanticElements: a fieldset is for form controls, and these are links
-        <div key={g.label} role="group" aria-label={g.label} className="flex flex-col gap-0.5">
+        <div
+          key={g.label ?? "start"}
+          // A labelled group is named; Home, alone, is not a group at all.
+          {...(g.label ? { role: "group", "aria-label": g.label } : {})}
+          className="flex flex-col gap-0.5"
+        >
           {rail ? (
             <span aria-hidden className="mx-auto mb-1 h-px w-5 bg-rule first:hidden" />
-          ) : (
+          ) : g.label ? (
             <span aria-hidden className="px-2.5 pb-1 text-xs text-muted-foreground">
               {g.label}
             </span>
-          )}
+          ) : null}
           {g.items.map((item) => (
             <NavLink
               key={item.to}
@@ -660,6 +706,12 @@ function QuickBar({
     pathname,
   );
   const inMore = !quick.some((q) => q.to === active);
+  // Something waits on a screen only More reaches (Tool approvals,
+  // Improvements): More carries the dot the bar has no room to.
+  const moreWaiting = groups
+    .flatMap((g) => g.items)
+    .filter((i) => !quick.some((q) => q.to === i.to))
+    .some((i) => waiting[i.to]);
   const who = usePrincipal();
   const { theme, toggle } = useTheme();
   return (
@@ -705,8 +757,17 @@ function QuickBar({
               inMore ? "font-medium text-foreground" : "text-muted-foreground",
             )}
           >
-            <Ellipsis aria-hidden className={cn("size-5", inMore && "text-primary")} />
+            <span className="relative">
+              <Ellipsis aria-hidden className={cn("size-5", inMore && "text-primary")} />
+              {moreWaiting ? (
+                <span
+                  aria-hidden
+                  className="absolute -top-1 -right-1.5 size-2 rounded-full bg-waiting"
+                />
+              ) : null}
+            </span>
             More
+            {moreWaiting ? <span className="sr-only">, something waits there</span> : null}
           </button>
         </DialogPrimitive.Trigger>
         <DialogPrimitive.Portal>

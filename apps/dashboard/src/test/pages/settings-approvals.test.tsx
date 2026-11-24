@@ -4,10 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { ApprovalRule, TeamSettings } from "@/api/types";
-import { brain, choose, pageOf, showAt, team } from "@/test/brain";
-
-const { Route } = await import("@/routes/ui.settings");
-await pageOf(Route);
+import { brain, choose, team } from "@/test/brain";
+import { showSettings } from "@/test/settings";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -70,7 +68,7 @@ async function chooseServer(section: HTMLElement, name: string) {
 }
 
 function open() {
-  return showAt("/ui/settings", [["/ui/settings", Route]]);
+  return showSettings("/ui/settings/approvals");
 }
 
 const approvals = () => screen.findByRole("region", { name: "Tool approvals" });

@@ -4,10 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
-import { brain, showAt, team } from "@/test/brain";
-
-const { Route } = await import("@/routes/ui.settings");
-await (Route.options.component as { preload?: () => Promise<void> }).preload?.();
+import { brain, team } from "@/test/brain";
+import { showSettings } from "@/test/settings";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -47,7 +45,7 @@ async function open(stored: TeamSettings = STORED, perms = ["team:settings"]) {
       body: { ...stored, compaction_tokens_min: 40_000, compaction_tokens_max: 70_000 },
     },
   });
-  showAt("/ui/settings", [["/ui/settings", Route]]);
+  showSettings("/ui/settings/general");
   const section = await screen.findByRole("region", { name: "Compaction" });
   return { seen, section: within(section) };
 }

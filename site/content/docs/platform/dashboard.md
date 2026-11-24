@@ -8,18 +8,21 @@ The brain serves a web dashboard at `/ui` — on a local stack,
 
 ## Finding your way
 
-The sidebar is grouped by the job a screen is for:
+The sidebar opens with **Home**, then groups the screens by the job they are
+for, the one used most first in each:
 
 | Group | Screens | What they are for |
 | ----- | ------- | ----------------- |
-| Work | Home, Runs, Sessions, Approvals | Is the team working, what did it do, who is waiting |
-| Build | Agents, Skills, MCP servers, Channels, Builder, Blueprint, Improvements | Defining what the team can do and where it hears from, and the changes its agents propose to themselves |
-| Understand | Graph | The team's agents, servers, tools and skills as the graph holds them |
-| Team | Team settings, Teams, Deleted teams | The team's model, hub, web search and self-improvement; its members; and, for super admins only, deleted teams and restoring one |
+| Needs you | Sender approvals, Tool approvals, Improvements | Who is waiting to be let in, the tool calls waiting for a person, and the changes agents propose to themselves |
+| Work | Runs, Sessions | What the team did, and its conversations |
+| Build | Agents, Skills, MCP servers, Channels, Builder, Blueprint, Graph | Defining what the team can do and where it hears from, and the graph that holds it |
+| Team | Team settings, Teams, Deleted teams | How the team's agents run; its members; and, for super admins only, deleted teams and restoring one |
 
 The team in the top bar is the one everything is scoped to, shown with your
-role in it; with more than one team it is a switcher. Approvals shows how many
-senders are waiting.
+role in it; with more than one team it is a switcher. Each screen in Needs you
+shows how many things wait there; Improvements shows it only to someone who
+may approve a change. From a tablet up, the sidebar and the top bar stay where
+they are while a page scrolls.
 
 **⌘K** (Ctrl+K elsewhere) opens a search over every screen and, by name, the
 team's agents, skills and sessions. If you may start runs, what you typed can
@@ -50,7 +53,10 @@ who is in it, its last message and its latest run, and filters by channel and
 by the status of a run. A session is named by the provider's reference when it
 has one, then by what was first asked in it, then "Direct session". Opening one
 shows the **Conversation** and its **Runs**, each with its trace: tool calls,
-delegations and fetched pages. Under a channel's answer is a line saying
+delegations and fetched pages. On a wide screen the two sit side by side and
+each scrolls on its own, so a conversation that keeps going never pushes the
+run out of view; a line over the run says which of the session's runs it is
+and chooses another, with newer and older beside it. Under a channel's answer is a line saying
 whether the reply was sent, when, or why not; see [Channels](channels.md).
 
 **Improvements** lists the changes the team's agents propose to their own
@@ -195,9 +201,12 @@ plan, and any change to the draft takes the plan away. It is a
 [blueprint](blueprints.md), applied in one transaction.
 
 **Teams** lists the teams you can see and their members, with each member's
-role: `member`, `approver` or `admin`. **Team settings** groups the model,
-the hub, compaction, web search, the sandbox, the browser, and whether the
-team's agents improve themselves from their runs. While that is on, every
+role: `member`, `approver` or `admin`. **Team settings** has four pages:
+**General** (the model, the hub and compaction, and deleting the team for a
+super admin), **Tools** (web search, the sandbox and the browser),
+**Approvals** (which tool calls wait for a person, and the rules) and
+**Improvement** (whether the team's agents improve themselves from their
+runs). While that is on, every
 finished run is judged in the background on whether the task was done, by the
 team's model or a judge model chosen here, and a share of the good runs (10%
 until changed) is studied beside every bad one, as is a run that ended well

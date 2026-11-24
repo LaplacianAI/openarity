@@ -57,6 +57,10 @@ export const SCREENS = [
   { name: "skills", path: "/ui/skills" },
   { name: "graph", path: "/ui/graph" },
   { name: "settings", path: "/ui/settings" },
+  { name: "settings-general", path: "/ui/settings/general" },
+  { name: "settings-tools", path: "/ui/settings/tools" },
+  { name: "settings-approvals", path: "/ui/settings/approvals" },
+  { name: "settings-improvement", path: "/ui/settings/improvement" },
   { name: "sign-in", path: "/ui/", signedOut: true },
   { name: "gallery", path: "/ui/_gallery", devOnly: true },
 ];

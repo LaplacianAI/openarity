@@ -318,6 +318,7 @@ function RunTurnView({
         to="/ui/sessions/$sessionId"
         params={{ sessionId }}
         search={{ tab: "runs", run: run.id }}
+        resetScroll={false}
         className="inline-flex items-center gap-1 rounded text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
       >
         {run.output.trim().length > ANSWER_FOLD
