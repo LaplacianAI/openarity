@@ -139,7 +139,7 @@ describe("asking the team from Home", () => {
     expect(alert).not.toHaveTextContent("orchestrator");
     expect(within(alert).getByRole("link", { name: /Open team settings/ })).toHaveAttribute(
       "href",
-      "/ui/settings",
+      "/ui/settings/general",
     );
     expect(box).toHaveValue("Anyone there?");
     expect(router.state.location.pathname).toBe("/ui/");

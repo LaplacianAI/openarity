@@ -77,7 +77,7 @@ export function Refusal({ refusal }: { refusal: AskRefusal }) {
           <>
             {" "}
             <Link
-              to="/ui/settings"
+              to="/ui/settings/general"
               className="inline-flex items-center gap-1 font-medium underline underline-offset-4"
             >
               Open team settings

@@ -796,7 +796,7 @@ function Selection({
       ) : null}
       {node.id === BUILT_IN_HUB ? (
         <Link
-          to="/ui/settings"
+          to="/ui/settings/general"
           className="inline-block text-primary underline-offset-4 hover:underline"
         >
           Choose the hub in team settings

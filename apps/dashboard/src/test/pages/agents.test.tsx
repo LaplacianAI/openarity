@@ -526,7 +526,7 @@ describe("defining an agent", () => {
     });
     at("/ui/agents/new");
     const link = await screen.findByRole("link", { name: /choose a sandbox in team settings/i });
-    expect(link).toHaveAttribute("href", "/ui/settings");
+    expect(link).toHaveAttribute("href", "/ui/settings/general");
     expect(screen.getByText(/has no sandbox yet/)).toBeVisible();
     expect(screen.getByRole("switch", { name: "Can work in a workspace" })).toBeEnabled();
   });

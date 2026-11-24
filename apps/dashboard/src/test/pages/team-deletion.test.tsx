@@ -7,11 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
 import { brain, pageOf, showAt, TEAM, team } from "@/test/brain";
+import { SETTINGS_ROUTES } from "@/test/settings";
 
-const { Route: SettingsRoute } = await import("@/routes/ui.settings");
 const { Route: TeamsRoute } = await import("@/routes/ui.teams.index");
 const { Route: DeletedRoute } = await import("@/routes/ui.teams.deleted");
-await pageOf(SettingsRoute);
 await pageOf(TeamsRoute);
 await pageOf(DeletedRoute);
 
@@ -49,7 +48,7 @@ const GONE = {
 
 function at(path: string) {
   return showAt(path, [
-    ["/ui/settings", SettingsRoute],
+    ...SETTINGS_ROUTES,
     ["/ui/teams/", TeamsRoute],
     ["/ui/teams/deleted", DeletedRoute],
   ]);
@@ -73,15 +72,15 @@ async function openDialog() {
 describe("the danger zone", () => {
   it("is not offered to anyone but a super admin", async () => {
     settingsBrain(false);
-    at("/ui/settings");
+    at("/ui/settings/general");
 
-    expect(await screen.findByLabelText(/^provider$/i)).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Model" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete team" })).not.toBeInTheDocument();
   });
 
   it("deletes only once the exact name is typed", async () => {
     const seen = settingsBrain(true);
-    at("/ui/settings");
+    at("/ui/settings/general");
 
     const dialog = await openDialog();
     const confirm = within(dialog).getByRole("button", { name: /delete platform/i });
@@ -102,7 +101,7 @@ describe("the danger zone", () => {
   // default as a usual case, in words; the brain's own date comes on delete.
   it("says when a team is purged by default", async () => {
     settingsBrain(true);
-    at("/ui/settings");
+    at("/ui/settings/general");
 
     const dialog = await openDialog();
     const week = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -115,7 +114,7 @@ describe("the danger zone", () => {
     settingsBrain(true, {
       "DELETE /teams/{id}": { status: 409, text: "the team has runs in progress" },
     });
-    at("/ui/settings");
+    at("/ui/settings/general");
 
     const dialog = await openDialog();
     await userEvent.type(within(dialog).getByLabelText(/type the team's name/i), "platform");
@@ -134,7 +133,7 @@ describe("the danger zone", () => {
       "DELETE /teams/{id}": { status: 204 },
       "GET /teams/{id}": { body: GONE },
     });
-    const router = at("/ui/settings");
+    const router = at("/ui/settings/general");
 
     const dialog = await openDialog();
     await userEvent.type(within(dialog).getByLabelText(/type the team's name/i), "platform");

@@ -594,7 +594,7 @@ it("reads the hub in the list and the panel, and leads to where it is chosen", a
   expect(panel).toHaveTextContent("The team's hub: every message reaches it first");
   expect(
     within(panel).getByRole("link", { name: "Choose the hub in team settings" }),
-  ).toHaveAttribute("href", "/ui/settings");
+  ).toHaveAttribute("href", "/ui/settings/general");
   expect(within(panel).queryByText("Id")).toBeNull();
 });
 

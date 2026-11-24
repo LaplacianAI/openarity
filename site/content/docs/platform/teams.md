@@ -29,7 +29,7 @@ oa teams members add platform erik --role approver
 
 ## Deleting
 
-From the dashboard, the team's **Team settings** page ends with a danger zone; the
+From the dashboard, the **General** page of the team's **Team settings** ends with a danger zone; the
 name has to be typed back before the delete is sent. From the command line:
 
 ```sh

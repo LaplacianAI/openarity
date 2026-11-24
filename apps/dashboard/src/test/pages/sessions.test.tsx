@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
@@ -597,8 +597,14 @@ function frame(seq: number, kind: string, data: unknown): string {
 
 const END = 'event: end\ndata: {"status":"succeeded"}\n\n';
 
-function runList(): HTMLElement {
-  return screen.getByRole("navigation", { name: "Runs" });
+/** The session's runs, as the switcher's menu lists them; opened if it is shut. */
+async function runList(): Promise<HTMLElement> {
+  const shown = screen.queryByRole("menu");
+  if (shown) return shown;
+  // From the keyboard: jsdom has no pointer capture for a press to open it.
+  (await screen.findByRole("button", { name: /choose (another|a) run/i })).focus();
+  await userEvent.keyboard("{Enter}");
+  return screen.findByRole("menu");
 }
 
 function pane(): HTMLElement {
@@ -606,8 +612,8 @@ function pane(): HTMLElement {
 }
 
 /** The agents of the listed runs, top to bottom. */
-function agents(): string[] {
-  return Array.from(runList().querySelectorAll("[data-run] [data-agent]")).map(
+async function agents(): Promise<string[]> {
+  return Array.from((await runList()).querySelectorAll("[data-run] [data-agent]")).map(
     (e) => e.textContent ?? "",
   );
 }
@@ -645,17 +651,22 @@ describe("the runs", () => {
     });
 
     await open("?tab=runs");
-    await screen.findByRole("navigation", { name: "Runs" });
-    expect(agents()).toEqual(["third-agent", "second-agent"]);
+    // While shut, the line says which run is shown and where it is among them.
+    expect(
+      await screen.findByRole("button", { name: /third-agent, 1 of 2\+, newest first/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Runs/ })).toHaveTextContent("Runs2");
+    expect(await agents()).toEqual(["third-agent", "second-agent"]);
     // Status is said in words, not only by an icon's colour.
-    expect(within(runList()).getByText("running")).toBeInTheDocument();
-    expect(within(runList()).getByText("failed")).toBeInTheDocument();
-    expect(within(runList()).getAllByText("150 tokens")).toHaveLength(2);
+    expect(within(await runList()).getByText("running")).toBeInTheDocument();
+    expect(within(await runList()).getByText("failed")).toBeInTheDocument();
+    expect(within(await runList()).getAllByText("150 tokens")).toHaveLength(2);
 
-    await userEvent.click(within(runList()).getByRole("button", { name: /load more/i }));
-    await within(runList()).findByText("first-agent");
-    expect(agents()).toEqual(["third-agent", "second-agent", "first-agent"]);
+    await userEvent.click(
+      within(await runList()).getByRole("menuitem", { name: /load older runs/i }),
+    );
+    await within(await runList()).findByText("first-agent");
+    expect(await agents()).toEqual(["third-agent", "second-agent", "first-agent"]);
     expect(seen.some((s) => s.path === `/teams/${TEAM}/sessions/${SID}/runs?cursor=older`)).toBe(
       true,
     );
@@ -689,8 +700,7 @@ describe("the runs", () => {
     await open("?tab=runs");
     const panel = tabPanel("Runs");
     await userEvent.click(await within(panel).findByRole("button", { name: "Try again" }));
-    await within(panel).findByRole("navigation", { name: "Runs" });
-    expect(agents()).toEqual(["helper"]);
+    expect(await agents()).toEqual(["helper"]);
     expect(within(panel).queryByRole("alert")).toBeNull();
   });
 
@@ -708,17 +718,17 @@ describe("the runs", () => {
     expect(
       await within(pane()).findByRole("heading", { level: 2, name: "newer-agent" }),
     ).toBeInTheDocument();
-    expect(within(runList()).getByRole("link", { name: /newer-agent/ })).toHaveAttribute(
+    expect(within(await runList()).getByRole("menuitem", { name: /newer-agent/ })).toHaveAttribute(
       "aria-current",
       "page",
     );
 
-    await userEvent.click(within(runList()).getByRole("link", { name: /older-agent/ }));
+    await userEvent.click(within(await runList()).getByRole("menuitem", { name: /older-agent/ }));
     expect(
       await within(pane()).findByRole("heading", { level: 2, name: "older-agent" }),
     ).toBeInTheDocument();
     expect(router.state.location.search).toEqual({ tab: "runs", run: "r1" });
-    expect(within(runList()).getByRole("link", { name: /older-agent/ })).toHaveAttribute(
+    expect(within(await runList()).getByRole("menuitem", { name: /older-agent/ })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -812,6 +822,124 @@ describe("the runs", () => {
   });
 });
 
+describe("the run switcher", () => {
+  const three = {
+    body: {
+      items: [
+        run("r3", "third-agent", "succeeded"),
+        run("r2", "second-agent", "succeeded"),
+        run("r1", "first-agent", "failed"),
+      ],
+    },
+  };
+
+  it("steps to the newer and the older run, and has no newer one past the newest", async () => {
+    listed({ [RUNS]: three, [EVENTS]: () => ({ stream: chunks(END) }) });
+    const router = await open("?tab=runs&run=r2");
+
+    expect(
+      await screen.findByRole("button", { name: /second-agent, 2 of 3, newest first/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Newer run" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("run=r3"),
+    );
+    await userEvent.click(screen.getByRole("link", { name: "Older run" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ tab: "runs", run: "r1" }));
+    expect(
+      await within(pane()).findByRole("heading", { level: 2, name: "first-agent" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Older run" })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("link", { name: "Newer run" }));
+    await userEvent.click(await screen.findByRole("link", { name: "Newer run" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ tab: "runs", run: "r3" }));
+    expect(screen.getByRole("button", { name: "Newer run" })).toBeDisabled();
+  });
+
+  it("loads older runs from the last run's older step", async () => {
+    const seen = listed({
+      [RUNS]: (s) =>
+        s.path.includes("cursor=older")
+          ? { body: { items: [run("r1", "first-agent", "failed")] } }
+          : { body: { items: [run("r2", "second-agent", "succeeded")], next_cursor: "older" } },
+      [EVENTS]: () => ({ stream: chunks(END) }),
+    });
+    await open("?tab=runs");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Older run" }));
+    await waitFor(() => expect(seen.some((s) => s.path.endsWith("/runs?cursor=older"))).toBe(true));
+    expect(await screen.findByRole("link", { name: "Older run" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("run=r1"),
+    );
+  });
+});
+
+describe("following the conversation on a phone", () => {
+  // An answer is laid out, or the buttons under it are read, after it
+  // arrived: a reader at the end is kept there, and one who scrolled up is not.
+  it("stays at the end as what is shown grows, until the reader scrolls up", async () => {
+    let grew: () => void = () => {};
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(cb: () => void) {
+          grew = cb;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const toWindow = vi.fn();
+    vi.stubGlobal("scrollTo", toWindow);
+    const tall = vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(4000);
+    onTestFinished(() => tall.mockRestore());
+    listed({
+      [CONVO]: () => conversation(said("m1", "user-ann", "hello")),
+      [RUNS]: { body: { items: [] } },
+    });
+    await open("?tab=messages");
+    expect(await screen.findByText("hello")).toBeInTheDocument();
+
+    toWindow.mockClear();
+    act(() => grew());
+    expect(toWindow).toHaveBeenCalledWith({ top: 4000 });
+
+    // The page's own scroll is heard after more arrived: still at the end.
+    act(() => {
+      window.scrollY = 3000;
+      window.dispatchEvent(new Event("scroll"));
+    });
+    toWindow.mockClear();
+    act(() => grew());
+    expect(toWindow).toHaveBeenCalledWith({ top: 4000 });
+
+    // Scrolled up to read: far from the end, so growing leaves them there.
+    toWindow.mockClear();
+    act(() => {
+      window.scrollY = 0;
+      window.dispatchEvent(new Event("scroll"));
+    });
+    act(() => grew());
+    expect(toWindow).not.toHaveBeenCalled();
+  });
+
+  it("scrolls the window, which is what scrolls there", async () => {
+    const toWindow = vi.fn();
+    vi.stubGlobal("scrollTo", toWindow);
+    const tall = vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(4000);
+    onTestFinished(() => tall.mockRestore());
+    listed({
+      [CONVO]: () => conversation(said("m1", "user-ann", "hello")),
+      [RUNS]: { body: { items: [] } },
+    });
+    await open("?tab=messages");
+    expect(await screen.findByText("hello")).toBeInTheDocument();
+    await waitFor(() => expect(toWindow).toHaveBeenCalledWith({ top: 4000 }));
+  });
+});
+
 /* ------------------------------------------------------------------ trace */
 
 describe("a run's trace", () => {
@@ -856,6 +984,74 @@ describe("a run's trace", () => {
       const detail = pane();
       await waitFor(() => expect(detail.querySelectorAll("[data-step]")).toHaveLength(1));
       expect(within(detail).getByText("Ended: succeeded")).toBeInTheDocument();
+    });
+
+    // The composer comes in under the conversation after it is shown, and
+    // the pane gets shorter: a reader at the end is kept there.
+    it("stays at the end of the conversation's pane when the pane itself shrinks", async () => {
+      const watched: Element[] = [];
+      let resized: () => void = () => {};
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(cb: () => void) {
+            resized = cb;
+          }
+          observe(el: Element) {
+            watched.push(el);
+          }
+          disconnect() {}
+        },
+      );
+      listed({
+        [CONVO]: () => conversation(said("m1", "user-ann", "hello")),
+        [RUNS]: { body: { items: [run("r1", "helper", "succeeded")] } },
+        [EVENTS]: () => ({ stream: chunks(END) }),
+      });
+
+      await open();
+      expect(await screen.findByText("hello")).toBeInTheDocument();
+      const talk = within(screen.getByRole("region", { name: "Messages" }))
+        .getByText("hello")
+        .closest("[data-scroller]");
+      expect(talk).not.toBeNull();
+      await waitFor(() => expect(watched).toContain(talk));
+      const scrolled = vi.spyOn(Element.prototype, "scrollTop", "set");
+      onTestFinished(() => scrolled.mockRestore());
+      act(() => resized());
+      expect(scrolled.mock.contexts).toContain(talk);
+    });
+
+    // Each half is its own scroll: what arrives in the conversation scrolls
+    // the conversation, and the run beside it stays where it was read.
+    it("follows the conversation in its own pane, never the window or the run", async () => {
+      const toWindow = vi.fn();
+      vi.stubGlobal("scrollTo", toWindow);
+      const scrolled = vi.spyOn(Element.prototype, "scrollTop", "set");
+      // A page tall enough that following the window would scroll it.
+      const tall = vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(4000);
+      onTestFinished(() => tall.mockRestore());
+      listed({
+        [CONVO]: () =>
+          conversation(said("m1", "user-ann", "hello"), said("m2", "user-ann", "again")),
+        [RUNS]: { body: { items: [run("r1", "helper", "succeeded")] } },
+        [EVENTS]: () => ({ stream: chunks(END) }),
+      });
+
+      await open();
+      expect(await screen.findByText("again")).toBeInTheDocument();
+      const page = document.querySelector("[data-fills-sheet]");
+      expect(page).not.toBeNull();
+      const talk = within(screen.getByRole("region", { name: "Conversation" }))
+        .getByRole("region", { name: "Messages" })
+        .querySelector("[data-scroller]");
+      expect(talk).not.toBeNull();
+      expect(pane()).toHaveAttribute("data-scroller");
+      await waitFor(() => expect(scrolled.mock.contexts).toContain(talk));
+      expect(scrolled.mock.contexts).not.toContain(pane());
+      // The router puts the window at its top on arriving; nothing follows it to its end.
+      expect(toWindow).not.toHaveBeenCalledWith({ top: 4000 });
+      scrolled.mockRestore();
     });
   });
 
@@ -1423,7 +1619,7 @@ describe("a run's trace", () => {
     const signal = eventsSeen(seen).find((s) => s.path.includes("/runs/rA/"))?.signal;
     expect(signal?.aborted).toBe(false);
 
-    await userEvent.click(within(runList()).getByRole("link", { name: /done-agent/ }));
+    await userEvent.click(within(await runList()).getByRole("menuitem", { name: /done-agent/ }));
     expect(await within(pane()).findByText("Ended: succeeded")).toBeInTheDocument();
     await waitFor(() => expect(signal?.aborted).toBe(true));
     expect(router.state.location.search).toEqual({ tab: "runs", run: "rB" });
@@ -1447,10 +1643,10 @@ describe("a run's trace", () => {
 
     await open("?tab=runs");
     expect(await within(pane()).findByText("Ended: succeeded")).toBeInTheDocument();
-    await userEvent.click(within(runList()).getByRole("link", { name: /second-agent/ }));
+    await userEvent.click(within(await runList()).getByRole("menuitem", { name: /second-agent/ }));
     await within(pane()).findByRole("heading", { level: 2, name: "second-agent" });
     expect(await within(pane()).findByText("Ended: succeeded")).toBeInTheDocument();
-    await userEvent.click(within(runList()).getByRole("link", { name: /first-agent/ }));
+    await userEvent.click(within(await runList()).getByRole("menuitem", { name: /first-agent/ }));
     await within(pane()).findByRole("heading", { level: 2, name: "first-agent" });
 
     expect(pane().querySelectorAll("[data-step]")).toHaveLength(1);
@@ -1500,7 +1696,7 @@ describe("a run's trace", () => {
     live.push(frame(1, "finished", { status: "succeeded" }) + END);
 
     expect(await within(pane()).findByText("Ended: succeeded")).toBeInTheDocument();
-    expect(await within(runList()).findByText("succeeded")).toBeInTheDocument();
+    expect(await within(await runList()).findByText("succeeded")).toBeInTheDocument();
     expect(within(pane()).queryByText("Live")).toBeNull();
     expect(listings).toBe(2);
   });
@@ -1563,7 +1759,7 @@ describe("cancelling a run", () => {
     await userEvent.click(
       await within(pane()).findByRole("button", { name: "Cancel the run of busy-agent" }),
     );
-    expect(await within(runList()).findByText("cancelled")).toBeInTheDocument();
+    expect(await within(await runList()).findByText("cancelled")).toBeInTheDocument();
     expect(
       seen.some((s) => s.method === "POST" && s.path === `/teams/${TEAM}/runs/r2/cancel`),
     ).toBe(true);
@@ -2376,9 +2572,10 @@ describe("whom a session's runs handed work to", () => {
         ),
     });
     await open("?tab=runs");
-    expect(await within(runList()).findByText("→ log-reader")).toBeInTheDocument();
+    expect(await within(await runList()).findByText("→ log-reader")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
 
-    await userEvent.click(screen.getByRole("tab", { name: "Conversation" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Conversation" }));
     const turn = await waitFor(() => document.querySelector('[data-turn="r1"]') as HTMLElement);
     expect(within(turn).getByRole("button", { name: /handed to log-reader/ })).toBeInTheDocument();
   });

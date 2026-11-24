@@ -28,9 +28,14 @@ afterEach(() => {
  * The shell over a team whose summary says `waiting` people are waiting:
  * null, as the brain answers a reader without channel:read.
  */
-function shell(waiting: number | null = 0, actions = ["agent:write", "channel:read"]) {
+function shell(
+  waiting: number | null = 0,
+  actions = ["agent:write", "channel:read"],
+  more: Parameters<typeof brain>[0] = {},
+) {
   const seen = brain({
     ...team(actions),
+    ...more,
     "GET /whoami": { body: { subject: "ann", email: "ann@example.com" } },
     "GET /teams/{id}/summary": {
       body: {
@@ -51,7 +56,7 @@ function readAQueue(seen: { path: string }[]): boolean {
 }
 
 describe("the navigation on a wide screen", () => {
-  it("groups the screens by job, and keeps settings and the account at the foot", async () => {
+  it("groups the screens by job, what waits for a person first, and the team last", async () => {
     widths(true, true);
     shell();
 
@@ -65,14 +70,36 @@ describe("the navigation on a wide screen", () => {
           .map((a) => a.textContent),
       ]);
     expect(groups).toEqual([
-      ["Work", ["Home", "Runs", "Sessions", "Sender approvals", "Tool approvals"]],
-      [
-        "Build",
-        ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint", "Improvements"],
-      ],
-      ["Understand", ["Graph"]],
+      [null, ["Home"]],
+      ["Needs you", ["Sender approvals", "Tool approvals", "Improvements"]],
+      ["Work", ["Runs", "Sessions"]],
+      ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint", "Graph"]],
       ["Team", ["Team settings", "Teams"]],
     ]);
+    // Home stands alone: its group has no heading of its own.
+    expect(within(nav).queryByText("Home", { selector: "span[aria-hidden]" })).toBeNull();
+  });
+
+  it("counts the changes waiting for an approver", async () => {
+    widths(true, true);
+    const seen = shell(0, ["agent:write", "improvement:approve"], {
+      "GET /teams/{id}/improvements": { body: { items: [{ id: "p1" }, { id: "p2" }] } },
+    });
+    const link = await screen.findByRole("link", { name: /Improvements/ });
+    await waitFor(() => expect(link).toHaveTextContent("Improvements, 2 waiting"));
+    const asked = seen.find((s) => s.path.includes("/improvements"));
+    expect(asked?.path).toContain("status=waiting");
+  });
+
+  it("asks nothing about changes of someone who may not approve them", async () => {
+    widths(true, true);
+    // Tool approvals' count is asked once permissions are known, as this
+    // one would be: by then, the change count has had its chance.
+    const seen = shell(0, ["agent:write", "approval:read"]);
+    const link = await screen.findByRole("link", { name: /Improvements/ });
+    await waitFor(() => expect(seen.some((s) => s.path.includes("/approvals"))).toBe(true));
+    expect(link).toHaveTextContent(/^Improvements$/);
+    expect(seen.some((s) => s.path.includes("/improvements"))).toBe(false);
   });
 
   // The count is the summary's, one read for the whole team, refreshed once a

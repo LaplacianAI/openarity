@@ -5,16 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
-import { brain, choose, showAt, team } from "@/test/brain";
-
-const { Route, NO_MODEL, draftOf, groupRequest, isDirty, settingsRequest } = await import(
-  "@/routes/ui.settings"
-);
-await (Route.options.component as { preload?: () => Promise<void> }).preload?.();
+import { NO_MODEL } from "@/lib/ask";
+import { draftOf, groupRequest, isDirty, settingsRequest } from "@/lib/team-settings";
+import { brain, choose, team } from "@/test/brain";
+import { SETTINGS_INDEX, showSettings } from "@/test/settings";
 
 /** Somewhere to go: showAt hangs it off its own root. */
 const Elsewhere = createRoute({
-  getParentRoute: () => Route,
+  getParentRoute: () => SETTINGS_INDEX,
   path: "/ui/elsewhere",
   component: () => <p>elsewhere</p>,
 });
@@ -236,12 +234,9 @@ describe("each group on its own", () => {
   });
 });
 
-/** The page under a real router, with somewhere else to go. */
-function at() {
-  return showAt("/ui/settings", [
-    ["/ui/settings", Route],
-    ["/ui/elsewhere", Elsewhere],
-  ]);
+/** A page of the settings under a real router, with somewhere else to go. */
+function at(page: "general" | "tools" | "improvement" = "general") {
+  return showSettings(`/ui/settings/${page}`, [["/ui/elsewhere", Elsewhere]]);
 }
 
 /** A group of the page, by its title. */
@@ -253,19 +248,33 @@ async function saveIn(title: string) {
   await userEvent.click(within(group(title)).getByRole("button", { name: /^save$/i }));
 }
 
-it("shows the defaults for a team that never saved", async () => {
-  brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: NEVER } });
-  at();
+describe("the defaults for a team that never saved", () => {
+  it("on General", async () => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: NEVER } });
+    at();
 
-  expect(await screen.findByText(/No model —/)).toBeInTheDocument();
-  expect(screen.getByLabelText(/^provider$/i)).toHaveTextContent("Off");
-  expect(screen.getByLabelText(/improve agents from their runs/i)).not.toBeChecked();
-  expect(screen.queryByText(/learn from each run/i)).toBeNull();
-  expect(screen.getByText(/each finished run is judged in the background/i)).toBeInTheDocument();
-  expect(screen.queryByText(/this changes nothing/i)).toBeNull();
-  expect(screen.getByLabelText(/messages before a run compacts/i)).toHaveValue("100");
-  expect(screen.getByLabelText(/^at least$/i)).toHaveValue("50,000");
-  expect(screen.getByLabelText(/^at most$/i)).toHaveValue("60,000");
+    expect(await screen.findByText(/No model —/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/messages before a run compacts/i)).toHaveValue("100");
+    expect(screen.getByLabelText(/^at least$/i)).toHaveValue("50,000");
+    expect(screen.getByLabelText(/^at most$/i)).toHaveValue("60,000");
+  });
+
+  it("on Tools", async () => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: NEVER } });
+    at("tools");
+
+    expect(await screen.findByLabelText(/^provider$/i)).toHaveTextContent("Off");
+  });
+
+  it("on Improvement", async () => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: NEVER } });
+    at("improvement");
+
+    expect(await screen.findByLabelText(/improve agents from their runs/i)).not.toBeChecked();
+    expect(screen.queryByText(/learn from each run/i)).toBeNull();
+    expect(screen.getByText(/each finished run is judged in the background/i)).toBeInTheDocument();
+    expect(screen.queryByText(/this changes nothing/i)).toBeNull();
+  });
 });
 
 // Settings are per team; the title says whose they are.
@@ -290,7 +299,7 @@ describe("the finding", () => {
     brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
     at();
 
-    await screen.findByLabelText(/^provider$/i);
+    await screen.findByRole("textbox", { name: /^model$/i });
     expect(screen.queryByText(NO_MODEL)).not.toBeInTheDocument();
   });
 });
@@ -303,7 +312,7 @@ it("saves the improvement switch without touching the key", async () => {
     "GET /teams/{id}/settings": { body: BRAVE },
     "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, improvement: true }) },
   });
-  at();
+  at("improvement");
 
   await userEvent.click(await screen.findByLabelText(/improve agents from their runs/i));
   await saveIn("Improvement");
@@ -325,37 +334,40 @@ it("keeps another group's unsaved edit, unsent, through a save", async () => {
   const seen = brain({
     ...team(["team:settings"]),
     "GET /teams/{id}/settings": { body: BRAVE },
-    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, improvement: true }) },
+    "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, compaction_messages: 300 }) },
   });
   at();
 
   const model = await screen.findByRole("textbox", { name: /^model$/i });
   await userEvent.clear(model);
   await userEvent.type(model, "gpt-6");
-  await userEvent.click(screen.getByLabelText(/improve agents from their runs/i));
-  await saveIn("Improvement");
+  const messages = screen.getByLabelText(/messages before a run compacts/i);
+  await userEvent.clear(messages);
+  await userEvent.type(messages, "300");
+  await saveIn("Compaction");
 
   await waitFor(() => expect(put(seen)).toBeDefined());
   expect(put(seen).model.name).toBe("gpt-5");
-  expect(await within(group("Improvement")).findByText("Saved")).toBeInTheDocument();
+  expect(put(seen).compaction_messages).toBe(300);
+  expect(await within(group("Compaction")).findByText("Saved")).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: /^model$/i })).toHaveValue("gpt-6");
   expect(within(group("Model")).getByText("Unsaved changes")).toBeInTheDocument();
 });
 
 it("offers Save only once something in the group changed", async () => {
   brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
-  at();
+  at("tools");
 
-  await screen.findByLabelText(/improve agents from their runs/i);
-  expect(within(group("Improvement")).queryByRole("button", { name: /^save$/i })).toBeNull();
-  await userEvent.click(screen.getByLabelText(/improve agents from their runs/i));
-  expect(within(group("Improvement")).getByRole("button", { name: /^save$/i })).toBeEnabled();
-  expect(within(group("Model")).queryByRole("button", { name: /^save$/i })).toBeNull();
+  await screen.findByLabelText(/^provider$/i);
+  expect(within(group("Web search")).queryByRole("button", { name: /^save$/i })).toBeNull();
+  await choose(screen.getByLabelText(/^provider$/i), "Tavily");
+  expect(within(group("Web search")).getByRole("button", { name: /^save$/i })).toBeEnabled();
+  expect(within(group("Browser")).queryByRole("button", { name: /^save$/i })).toBeNull();
 });
 
 it("asks before leaving with a change unsaved", async () => {
   brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
-  const router = at();
+  const router = at("improvement");
 
   await userEvent.click(await screen.findByLabelText(/improve agents from their runs/i));
   act(() => {
@@ -366,7 +378,7 @@ it("asks before leaving with a change unsaved", async () => {
   expect(await screen.findByRole("heading", { name: "Leave without saving?" })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
   await waitFor(() => expect(screen.queryByRole("heading", { name: /leave/i })).toBeNull());
-  expect(router.state.location.pathname).toBe("/ui/settings");
+  expect(router.state.location.pathname).toBe("/ui/settings/improvement");
 });
 
 it("leaves without asking once the change is saved", async () => {
@@ -375,7 +387,7 @@ it("leaves without asking once the change is saved", async () => {
     "GET /teams/{id}/settings": { body: BRAVE },
     "PUT /teams/{id}/settings": { body: saved({ ...BRAVE, improvement: true }) },
   });
-  const router = at();
+  const router = at("improvement");
 
   await userEvent.click(await screen.findByLabelText(/improve agents from their runs/i));
   await saveIn("Improvement");
@@ -391,7 +403,7 @@ it("leaves without asking once the change is saved", async () => {
 
 it("says a key is set without showing one", async () => {
   brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
-  at();
+  at("tools");
 
   expect(await screen.findByText(/a key is set/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/api key/i)).toHaveValue("");
@@ -405,7 +417,7 @@ it("sends a typed key once and forgets it", async () => {
       body: saved({ ...NEVER, search: { provider: "brave", url: null, key_set: true } }),
     },
   });
-  at();
+  at("tools");
 
   await choose(await screen.findByLabelText(/^provider$/i), "Brave Search");
   const field = screen.getByLabelText(/api key/i);
@@ -425,7 +437,7 @@ it("asks for a key when switching to another provider that needs one", async () 
     "GET /teams/{id}/settings": { body: BRAVE },
     "PUT /teams/{id}/settings": { body: BRAVE },
   });
-  at();
+  at("tools");
 
   await choose(await screen.findByLabelText(/^provider$/i), "Tavily");
   await saveIn("Web search");
@@ -436,7 +448,7 @@ it("asks for a key when switching to another provider that needs one", async () 
 
 it("is read-only without team:settings", async () => {
   brain({ ...team([]), "GET /teams/{id}/settings": { body: BRAVE } });
-  at();
+  at("tools");
 
   expect(await screen.findByText("team:settings")).toBeInTheDocument();
   expect(screen.getByLabelText(/^provider$/i)).toBeDisabled();
@@ -460,14 +472,14 @@ it("shows the brain's refusal in the group that was saved", async () => {
       text: "search.url must not point at a private, loopback or link-local address",
     },
   });
-  at();
+  at("tools");
 
   await choose(await screen.findByLabelText(/^provider$/i), "SearXNG (self-hosted)");
   await userEvent.type(screen.getByLabelText(/^address$/i), "http://127.0.0.1");
   await saveIn("Web search");
 
   expect(await within(group("Web search")).findByRole("alert")).toHaveTextContent(/link-local/);
-  expect(within(group("Improvement")).queryByRole("alert")).toBeNull();
+  expect(within(group("Browser")).queryByRole("alert")).toBeNull();
 });
 
 describe("the hub", () => {
@@ -497,14 +509,16 @@ describe("the hub", () => {
     const seen = brain({
       ...team(["team:settings"]),
       "GET /teams/{id}/settings": { body: WITH_HUB },
-      "PUT /teams/{id}/settings": { body: saved({ ...WITH_HUB, improvement: true }) },
+      "PUT /teams/{id}/settings": { body: saved({ ...WITH_HUB, compaction_messages: 300 }) },
     });
     at();
 
     const hub = await screen.findByRole("list", { name: "Hub" });
     expect(hub).toHaveTextContent("triage");
-    await userEvent.click(screen.getByLabelText(/improve agents from their runs/i));
-    await saveIn("Improvement");
+    const messages = screen.getByLabelText(/messages before a run compacts/i);
+    await userEvent.clear(messages);
+    await userEvent.type(messages, "300");
+    await saveIn("Compaction");
 
     await waitFor(() => expect(put(seen)).toBeDefined());
     expect(put(seen).hub).toBe("triage");
@@ -782,7 +796,7 @@ describe("a team's workspaces", () => {
       "GET /teams/{id}/settings": { body: SIZED },
       "PUT /teams/{id}/settings": { body: saved(SIZED) },
     });
-    at();
+    at("tools");
 
     const sandbox = await screen.findByRole("region", { name: "Sandbox" });
     await choose(within(sandbox).getByLabelText("Sandbox provider"), /^E2B/);
@@ -809,7 +823,7 @@ describe("a team's workspaces", () => {
       },
     };
     brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: own } });
-    at();
+    at("tools");
     const sandbox = await screen.findByRole("region", { name: "Sandbox" });
     expect(
       within(sandbox).getByText(/Your own template sets each workspace's size/),
@@ -822,7 +836,7 @@ describe("a team's workspaces", () => {
   // Either way a size changes, every conversation gets a new workspace.
   it("warns that files go whenever a save would change the size", async () => {
     brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: SIZED } });
-    at();
+    at("tools");
     const sandbox = await screen.findByRole("region", { name: "Sandbox" });
     const warning = /without the files in its old one/;
     expect(within(sandbox).queryByText(warning)).toBeNull();
@@ -843,7 +857,7 @@ describe("a team's workspaces", () => {
   // as well.
   it("warns before a provider switch or a lower keep time costs files", async () => {
     brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: SANDBOXD } });
-    at();
+    at("tools");
     const sandbox = await screen.findByRole("region", { name: "Sandbox" });
     expect(within(sandbox).queryAllByRole("status")).toHaveLength(0);
 
@@ -872,7 +886,7 @@ describe("a team's workspaces", () => {
       "GET /teams/{id}/settings": { body: SANDBOXD },
       "PUT /teams/{id}/settings": { body: saved(SIZED) },
     });
-    at();
+    at("tools");
 
     const sandbox = await screen.findByRole("region", { name: "Sandbox" });
     expect(within(sandbox).queryByLabelText("Memory")).toBeNull();
@@ -993,7 +1007,7 @@ it("saves a self-hosted browser at its address, with no key", async () => {
       }),
     },
   });
-  at();
+  at("tools");
 
   await choose(await screen.findByLabelText(/browser provider/i), "Lightpanda");
   await userEvent.type(screen.getByLabelText(/^address$/i), "ws://lightpanda:9222");
@@ -1007,7 +1021,7 @@ it("saves a self-hosted browser at its address, with no key", async () => {
 
 it("shows a hosted browser's key field, and no address", async () => {
   brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: KERNEL } });
-  at();
+  at("tools");
 
   expect(await screen.findByLabelText(/browser provider/i)).toHaveTextContent("Kernel");
   expect(screen.getByLabelText(/^api key$/i)).toBeInTheDocument();
@@ -1041,7 +1055,7 @@ describe("the room template an E2B team's rooms start from", () => {
     [E2B, /built in your e2b account when the sandbox is saved/i],
   ])("says how far its build is", async (stored, text) => {
     brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: stored } });
-    at();
+    at("tools");
 
     const status = await within(await screen.findByRole("region", { name: /sandbox/i })).findByRole(
       "status",
@@ -1052,10 +1066,109 @@ describe("the room template an E2B team's rooms start from", () => {
   it("says nothing of a build for a team naming its own template", async () => {
     const own: TeamSettings = { ...E2B, sandbox: { ...E2B.sandbox, template: "acme/ours" } };
     brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: own } });
-    at();
+    at("tools");
 
     const region = await screen.findByRole("region", { name: /sandbox/i });
     expect(within(region).getByLabelText(/^template$/i)).toHaveValue("acme/ours");
     expect(within(region).queryByText(/room template/i)).toBeNull();
+  });
+});
+
+describe("its pages", () => {
+  const real = window.matchMedia;
+  function widths(min768: boolean, min1024: boolean) {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes("64rem") ? min1024 : query.includes("48rem") ? min768 : false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  }
+  afterEach(() => {
+    window.matchMedia = real;
+  });
+
+  const REGIONS = [
+    "Model",
+    "The hub",
+    "Compaction",
+    "Web search",
+    "Sandbox",
+    "Browser",
+    "Improvement",
+  ];
+  function shown(): string[] {
+    return REGIONS.filter((name) => screen.queryByRole("region", { name }) !== null);
+  }
+
+  it.each([
+    ["general", ["Model", "The hub", "Compaction"]],
+    ["tools", ["Web search", "Sandbox", "Browser"]],
+    ["improvement", ["Improvement"]],
+  ] as const)("shows only its own sections on %s", async (page, sections) => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
+    at(page);
+    await screen.findByRole("region", { name: sections[0] });
+    expect(shown()).toEqual(sections);
+  });
+
+  it("opens on General on a desk, with every page listed beside it", async () => {
+    widths(true, true);
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
+    const router = showSettings("/ui/settings");
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/ui/settings/general"));
+    const nav = await screen.findByRole("navigation", { name: "Team settings" });
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["General", "Tools", "Approvals", "Improvement"]);
+    expect(within(nav).getByRole("link", { name: "General" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("is a list of its pages on a phone, and each page leads back to it", async () => {
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
+    const router = showSettings("/ui/settings");
+
+    const nav = await screen.findByRole("navigation", { name: "Team settings" });
+    expect(router.state.location.pathname).toBe("/ui/settings");
+    expect(within(nav).getByText(/web search, where commands run/i)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Model" })).toBeNull();
+
+    await userEvent.click(within(nav).getByRole("link", { name: /Tools/ }));
+    expect(await screen.findByRole("region", { name: "Web search" })).toBeInTheDocument();
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByText("Tools")).toHaveAttribute("aria-current", "page");
+    await userEvent.click(within(crumbs).getByRole("link", { name: "Team settings" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/ui/settings"));
+  });
+
+  // Nothing runs until the team has a model, wherever in its settings you are.
+  it("says the hub can't run on every page, and marks General", async () => {
+    widths(true, true);
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: NEVER } });
+    at("improvement");
+
+    expect(await screen.findByText(NO_MODEL)).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Team settings" });
+    expect(within(nav).getByRole("link", { name: /General, no model is set/ })).toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Tools" })).toBeInTheDocument();
+  });
+
+  it("lists the pages as a row of tabs on a tablet", async () => {
+    widths(true, false);
+    brain({ ...team(["team:settings"]), "GET /teams/{id}/settings": { body: BRAVE } });
+    at("tools");
+
+    const nav = await screen.findByRole("navigation", { name: "Team settings" });
+    expect(within(nav).getByRole("link", { name: "Tools" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
   });
 });
