@@ -81,6 +81,17 @@ type payload struct {
 	Scope      string `json:"scope"`
 	Superseded bool   `json:"superseded"`
 	Said       string `json:"said"`
+
+	// A file the run handed its person.
+	File    *sentFile `json:"file"`
+	Caption string    `json:"caption"`
+}
+
+// sentFile is a file_sent event's file.
+type sentFile struct {
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+	Size      int    `json:"size"`
 }
 
 // planEntry is one step of the hub's plan, as its plan event carries it.

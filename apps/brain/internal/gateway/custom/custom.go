@@ -254,11 +254,14 @@ func (provider) Reply(
 		return nil, errors.New("custom: no signing secret")
 	}
 
-	file, err := fileOf(out)
-	if err != nil {
-		return nil, err
+	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text, Approval: out.Prompt}
+	if out.Kind == "file" {
+		file, err := fileOf(out)
+		if err != nil {
+			return nil, err
+		}
+		b.File = file
 	}
-	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text, Approval: out.Prompt, File: file}
 	b.Session.Ref, b.Session.Kind = out.Session.Ref, string(out.Session.Kind)
 	raw, err := json.Marshal(b)
 	if err != nil {

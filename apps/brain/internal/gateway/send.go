@@ -24,13 +24,25 @@ import (
 
 const (
 	replyBatch = 20
-	// eventAttempts is how often an event is tried: a broken one must not hold
-	// its conversation's answer back through the answer's six.
+	// eventAttempts is how often an event or a file is tried: a broken one
+	// must not hold its conversation's answer back through the answer's six.
 	eventAttempts  = 2
-	replyLease     = 2 * time.Minute // longer than the client's 10 s timeout
+	replyLease     = 2 * time.Minute // longer than one post's deadline
 	replyAttempts  = 6
 	replyReadLimit = 64 << 10
+
+	// A post's deadline is 10 s, and a second more for each 512 KiB it
+	// carries, at most a minute: a 25 MiB file is about 34 MB of base64.
+	// HTTPPoster sets it per post, so its client should have none.
+	postBase    = 10 * time.Second
+	postPerByte = 512 << 10
+	maxPost     = time.Minute
 )
+
+// postTimeout is how long a post of n bytes may take.
+func postTimeout(n int) time.Duration {
+	return min(postBase+time.Duration(n/postPerByte)*time.Second, maxPost)
+}
 
 // retryAfter is the wait after each failed attempt, the first at index 0.
 var retryAfter = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute, time.Hour, time.Hour}
@@ -209,6 +221,10 @@ func replyID(row db.ClaimDueRepliesRow) (string, int32) {
 		return run + ":" + strconv.Itoa(int(*row.EventSeq)), eventAttempts
 	case row.Kind == "answer" || row.Kind == "apology":
 		return run, replyAttempts
+	case row.Kind == "file":
+		// Twice, like a step: a file that cannot go must not hold the answer
+		// behind it for hours.
+		return run + ":file:" + strconv.FormatInt(row.ID, 10), eventAttempts
 	default:
 		return run + ":" + row.Kind + ":" + strconv.FormatInt(row.ID, 10), replyAttempts
 	}
@@ -274,16 +290,6 @@ func withDetail(out *Outbound, detail []byte) error {
 			return fmt.Errorf("reading the notice: %w", err)
 		}
 		out.Notice = &n
-	case "file":
-		var f struct {
-			Caption string `json:"caption"`
-		}
-		if err := json.Unmarshal(detail, &f); err != nil {
-			return fmt.Errorf("reading the file's caption: %w", err)
-		}
-		if out.File != nil {
-			out.File.Caption = f.Caption
-		}
 	}
 	return nil
 }
@@ -310,13 +316,26 @@ func (s *Sender) fileOf(row db.ClaimDueRepliesRow) func(ctx context.Context) (*O
 			return nil, fmt.Errorf("reading the reply's file: %w", err)
 		}
 		data, err := s.objects.Get(ctx, f.TeamID, f.ObjectKey)
-		if errors.Is(err, objects.ErrNotFound) {
+		switch {
+		case errors.Is(err, objects.ErrNotFound):
 			return nil, fmt.Errorf("%w: the file %s is no longer stored", ErrUnsendable, f.Filename)
-		}
-		if err != nil {
+		case errors.Is(err, objects.ErrCorrupt), errors.Is(err, objects.ErrWrongTeam):
+			// The same bytes fail the same way every time.
+			return nil, fmt.Errorf("%w: the file %s cannot be read: %w", ErrUnsendable, f.Filename, err)
+		case err != nil:
 			return nil, fmt.Errorf("reading the file %s: %w", f.Filename, err)
+		case len(data) == 0:
+			return nil, fmt.Errorf("%w: the file %s is empty", ErrUnsendable, f.Filename)
 		}
-		return &OutFile{Name: f.Filename, MediaType: f.MediaType, Data: data}, nil
+		var detail struct {
+			Caption string `json:"caption"`
+		}
+		if len(row.Detail) > 0 {
+			if err := json.Unmarshal(row.Detail, &detail); err != nil {
+				return nil, fmt.Errorf("%w: reading the file's caption: %w", ErrUnsendable, err)
+			}
+		}
+		return &OutFile{Name: f.Filename, MediaType: f.MediaType, Caption: detail.Caption, Data: data}, nil
 	}
 }
 
@@ -445,12 +464,17 @@ func (s *Sender) credentials(ctx context.Context, o outgoing, keys []string) (Cr
 
 // HTTPPoster posts each part with client, which must refuse what a team may
 // not reach at dial time and follow no redirect: a 302 would turn the POST
-// into a GET somewhere else.
+// into a GET somewhere else. Each post has a deadline of its own, by its
+// size (postTimeout), so the client's Timeout should be none: it would cut a
+// file short however long its deadline.
 func HTTPPoster(client *http.Client) Poster { return httpPoster{client: client} }
 
 type httpPoster struct{ client *http.Client }
 
 func (p httpPoster) Post(ctx context.Context, _ uuid.UUID, out OutboundRequest) error {
+	// Held until the answer is read: the deadline covers the whole exchange.
+	ctx, cancel := context.WithTimeout(ctx, postTimeout(len(out.Body)))
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, out.URL, bytes.NewReader(out.Body))
 	if err != nil {
 		return fmt.Errorf("%w: the reply URL: %w", ErrUnsendable, err)

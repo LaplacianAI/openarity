@@ -32,6 +32,7 @@ import { OutcomeLine } from "@/components/run-outcome";
 import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fileSize } from "@/lib/format";
 import { explainRunError } from "@/lib/run-error";
 import {
   argumentPairs,
@@ -668,6 +669,17 @@ function TraceView({
                 {item.reason ? `: ${item.reason}` : null}
                 {item.said ? (
                   <span className="mt-0.5 block whitespace-pre-wrap">{item.said}</span>
+                ) : null}
+              </Note>
+            );
+          case "sent":
+            return (
+              <Note key={key} kind="file_sent">
+                <span className="font-medium text-foreground">Sent the person a file</span>:{" "}
+                <span className="break-all">{item.filename}</span>
+                {item.mediaType ? ` (${item.mediaType}, ${fileSize(item.size)})` : null}
+                {item.caption ? (
+                  <span className="mt-0.5 block whitespace-pre-wrap">{item.caption}</span>
                 ) : null}
               </Note>
             );

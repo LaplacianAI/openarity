@@ -734,6 +734,7 @@ func TestOnlyARunsAnswerCarriesItsID(t *testing.T) {
 		{"approval of an event", row(111, "approval", &seq), run.String() + ":13", eventAttempts},
 		{"event", row(115, "event", &seq), run.String() + ":13", eventAttempts},
 		{"approval of no event", row(116, "approval", nil), run.String() + ":approval:116", replyAttempts},
+		{"file", row(118, "file", nil), run.String() + ":file:118", eventAttempts},
 		{"no kind", row(117, "", nil), run.String() + "::117", replyAttempts},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -1023,8 +1024,6 @@ func fileSending(t *testing.T) (*sending, *fileRelay, *keptFiles, db.ClaimDueRep
 	rcv := newReceiver(t, http.StatusOK)
 	row := due(rcv.URL+"/replies", 1)
 	row.Provider, row.Kind, row.Text, row.InReplyTo = "filer", "file", "report.pdf", nil
-	call := "call-1"
-	row.CallID = &call
 	row.Detail = []byte(`{"caption":"The Q3 numbers"}`)
 	team := uuid.New()
 	s.store.due = []db.ClaimDueRepliesRow{row}
@@ -1069,6 +1068,15 @@ func TestAFileGoneSinceIsGivenUp(t *testing.T) {
 	for name, gone := range map[string]func(*sending, *keptFiles){
 		"its row":    func(s *sending, _ *keptFiles) { s.store.files = nil },
 		"its object": func(_ *sending, o *keptFiles) { o.files = nil },
+		// Bytes that cannot be read fail the same way on every attempt.
+		"its bytes corrupt":    func(_ *sending, o *keptFiles) { o.err = fmt.Errorf("%w: k", objects.ErrCorrupt) },
+		"another team's bytes": func(_ *sending, o *keptFiles) { o.err = fmt.Errorf("%w: k", objects.ErrWrongTeam) },
+		"its bytes empty": func(_ *sending, o *keptFiles) {
+			for k := range o.files {
+				o.files[k] = nil
+			}
+		},
+		"a caption that is not one": func(s *sending, _ *keptFiles) { s.store.due[0].Detail = []byte(`{"caption":5}`) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -1151,7 +1159,7 @@ func TestAnAnswerReadsNoFile(t *testing.T) {
 	t.Parallel()
 
 	s, fr, objs, row, _ := fileSending(t)
-	row.Kind, row.Detail, row.CallID = "answer", nil, nil
+	row.Kind, row.Detail = "answer", nil
 	s.store.due = []db.ClaimDueRepliesRow{row}
 	if _, err := s.sender.Drain(t.Context()); err != nil {
 		t.Fatal(err)
@@ -1170,5 +1178,64 @@ func TestOnlyAFileReplierSendsFiles(t *testing.T) {
 	}
 	if reg.SendsFiles("relay") || !reg.SendsFiles("filer") || reg.SendsFiles("nope") {
 		t.Error("SendsFiles does not follow the marker")
+	}
+}
+
+// A file is tried twice, as a step is: one that cannot go must not hold the
+// answer behind it through the answer's six.
+func TestAFileIsTriedTwiceAtMost(t *testing.T) {
+	t.Parallel()
+
+	s, _, _, row, rcv := fileSending(t)
+	rcv.Close()
+	row.Attempts = eventAttempts
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.store.gaveUp) != 1 || len(s.store.retried) != 0 {
+		t.Errorf("a file's second failure: gave up %d, retried %d", len(s.store.gaveUp), len(s.store.retried))
+	}
+}
+
+// A post's deadline grows with what it carries, from a text's ten seconds to
+// a minute at most, so a 25 MiB file is not cut short and nothing waits long.
+func TestAPostsDeadlineIsByItsSize(t *testing.T) {
+	t.Parallel()
+
+	for n, want := range map[int]time.Duration{
+		0:           10 * time.Second,
+		512<<10 - 1: 10 * time.Second,
+		512 << 10:   11 * time.Second,
+		10 << 20:    30 * time.Second,
+		25 << 20:    maxPost,
+		35_000_000:  maxPost,
+	} {
+		if got := postTimeout(n); got != want {
+			t.Errorf("postTimeout(%d) = %v, want %v", n, got, want)
+		}
+	}
+	if maxPost >= replyLease {
+		t.Errorf("a post may take %v, past the %v lease it is sent under", maxPost, replyLease)
+	}
+}
+
+// The deadline holds over a receiver that never answers, whatever the
+// client's own timeout.
+func TestAPostThatHangsMeetsItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-block }))
+	t.Cleanup(func() { close(block); srv.Close() })
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := HTTPPoster(&http.Client{Transport: &http.Transport{}}).Post(ctx, uuid.New(), OutboundRequest{URL: srv.URL, Body: []byte("hi")})
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the post's deadline", err)
+	}
+	if took := time.Since(start); took < postBase-time.Second || took > postBase+5*time.Second {
+		t.Errorf("gave up after %v, want about %v", took, postBase)
 	}
 }

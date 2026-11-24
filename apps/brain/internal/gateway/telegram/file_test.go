@@ -122,11 +122,14 @@ func TestAFilesNameCannotBreakItsHeader(t *testing.T) {
 func TestAFileReplyWithNoFileIsRefused(t *testing.T) {
 	t.Parallel()
 
-	for _, f := range []*gateway.OutFile{nil, {Name: "empty.txt", MediaType: "text/plain"}} {
+	for name, f := range map[string]*gateway.OutFile{
+		"no file":  nil,
+		"no bytes": {Name: "empty.txt", MediaType: "text/plain"},
+	} {
 		out := fileOut("4242", &gateway.OutFile{})
 		out.File = f
 		if _, err := telegram.New().(gateway.Replier).Reply(gateway.Channel{}, out, creds(), time.Time{}); err == nil { //nolint:errcheck // a Replier
-			t.Errorf("file %+v built a request", f)
+			t.Errorf("%s built a request", name)
 		}
 	}
 }
@@ -140,5 +143,23 @@ func TestTelegramSendsFiles(t *testing.T) {
 	}
 	if !reg.SendsFiles("telegram") {
 		t.Error("telegram does not say it sends files")
+	}
+}
+
+// The boundary is the reply's and its bytes': two files under one reply id
+// part differently, so a file cannot be written to hold its own boundary.
+func TestADocumentsBoundaryIsItsBytes(t *testing.T) {
+	t.Parallel()
+
+	boundary := func(data string) string {
+		reqs := fileReply(t, fileOut("4242", &gateway.OutFile{Name: "a.txt", MediaType: "text/plain", Data: []byte(data)}))
+		_, params, err := mime.ParseMediaType(reqs[0].Header.Get("Content-Type"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return params["boundary"]
+	}
+	if a, b := boundary("one"), boundary("two"); a == b {
+		t.Errorf("two files share the boundary %q", a)
 	}
 }

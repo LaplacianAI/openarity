@@ -161,7 +161,7 @@ func ReadPart(req gateway.OutboundRequest) (Part, error) {
 			kinds++
 		}
 	}
-	if p.ID == "" || p.To == "" || kinds != 1 || p.File != nil && len(p.File.Data) == 0 {
+	if p.ID == "" || p.To == "" || kinds != 1 || (p.File != nil && len(p.File.Data) == 0) {
 		return Part{}, errors.New("whatsapp: a part with no id, address, or exactly one of text, a poll and a file")
 	}
 	if p.Poll != nil && (p.Poll.Question == "" || len(p.Poll.Options) < 2) {

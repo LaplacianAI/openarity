@@ -22,10 +22,8 @@ type replyFile struct {
 	Data      string `json:"data"`
 }
 
+// fileOf is a file reply's file, for the body.
 func fileOf(out gateway.Outbound) (*replyFile, error) {
-	if out.Kind != "file" {
-		return nil, nil //nolint:nilnil // only a file reply has a file
-	}
 	f := out.File
 	if f == nil || len(f.Data) == 0 {
 		return nil, errors.New("custom: a file reply with no file")

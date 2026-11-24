@@ -30,6 +30,7 @@ import (
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
 	"github.com/LaplacianAI/openarity/sdk/agent/stores/postgres"
+	"github.com/LaplacianAI/openarity/sdk/stream"
 )
 
 // --- a scripted model ---
@@ -2094,7 +2095,7 @@ func TestARunSendsAFileOfItsConversation(t *testing.T) {
 	)
 	f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil },
 		agent.Endpoint{BaseURL: "http://model.test"})
-	f.exec.builder.WithFileSends(FileSends{Store: f.store, SendsFiles: func(string) bool { return false }})
+	f.exec.builder.WithFileSends(FileSends{Store: f.store, SendsFiles: func(string) bool { return false }, Logger: quietLogger()})
 
 	f.mustExecute(t)
 
@@ -2106,11 +2107,14 @@ func TestARunSendsAFileOfItsConversation(t *testing.T) {
 	}
 	var payload []byte
 	f.mustScan(t, `SELECT payload FROM run_events WHERE run_id = $1 AND kind = 'file_sent'`, []any{f.run}, &payload)
-	var got fileSentPayload
+	var got stream.FileSent
 	if err := json.Unmarshal(payload, &got); err != nil {
 		t.Fatal(err)
 	}
-	want := fileSentPayload{ToolCallID: "c1", ID: export.ID, Filename: "export.csv", MediaType: "text/csv", Size: 4, Caption: "The export"}
+	want := stream.FileSent{
+		ToolCallID: "c1", Caption: "The export",
+		File: stream.File{ID: export.ID.String(), Filename: "export.csv", MediaType: "text/csv", Size: 4},
+	}
 	if got != want {
 		t.Errorf("file_sent = %+v, want %+v", got, want)
 	}

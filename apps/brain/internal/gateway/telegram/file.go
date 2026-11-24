@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -20,8 +21,9 @@ func (provider) RepliesWithFiles() {}
 
 // document is a file as sendDocument, multipart as the Bot API takes an
 // upload. Always a document, never a photo: sendPhoto recompresses, and a
-// person who asked for the file wants its bytes. The boundary is the reply's
-// own, so the same reply builds the same body on every attempt.
+// person who asked for the file wants its bytes. The boundary is a hash of
+// the reply's id and the file's bytes: the same reply builds the same body on
+// every attempt, and no file can hold its own boundary to add a field.
 func document(token string, chatID, thread int64, out gateway.Outbound) ([]gateway.OutboundRequest, error) {
 	f := out.File
 	if f == nil || len(f.Data) == 0 {
@@ -29,9 +31,12 @@ func document(token string, chatID, thread int64, out gateway.Outbound) ([]gatew
 	}
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
-	sum := sha256.Sum256([]byte(out.ID))
-	if err := w.SetBoundary(hex.EncodeToString(sum[:16])); err != nil {
-		return nil, err
+	h := sha256.New()
+	h.Write([]byte(out.ID))
+	h.Write([]byte{0})
+	h.Write(f.Data)
+	if err := w.SetBoundary(hex.EncodeToString(h.Sum(nil)[:16])); err != nil {
+		return nil, fmt.Errorf("telegram: the document's boundary: %w", err)
 	}
 	fields := [][2]string{{"chat_id", strconv.FormatInt(chatID, 10)}}
 	if thread != 0 {
@@ -42,21 +47,21 @@ func document(token string, chatID, thread int64, out gateway.Outbound) ([]gatew
 	}
 	for _, kv := range fields {
 		if err := w.WriteField(kv[0], kv[1]); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("telegram: the document's %s: %w", kv[0], err)
 		}
 	}
-	h := textproto.MIMEHeader{}
-	h.Set("Content-Disposition", `form-data; name="document"; filename="`+quoteSafe(f.Name)+`"`)
-	h.Set("Content-Type", f.MediaType)
-	part, err := w.CreatePart(h)
+	ph := textproto.MIMEHeader{}
+	ph.Set("Content-Disposition", `form-data; name="document"; filename="`+quoteSafe(f.Name)+`"`)
+	ph.Set("Content-Type", f.MediaType)
+	part, err := w.CreatePart(ph)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("telegram: the document's part: %w", err)
 	}
 	if _, err := part.Write(f.Data); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("telegram: the document's bytes: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("telegram: closing the document: %w", err)
 	}
 	header := http.Header{}
 	header.Set("Content-Type", w.FormDataContentType())

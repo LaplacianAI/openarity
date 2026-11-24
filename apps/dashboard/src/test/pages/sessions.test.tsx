@@ -3014,6 +3014,32 @@ describe("writing in a conversation", () => {
     );
   });
 
+  it("shows one file sent twice as two, above the answer", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const export1 = { id: "f7", filename: "export.csv", media_type: "text/csv", size: 2048 };
+    writer({
+      [SESSION]: { body: MINE },
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "hub" }),
+          sf("file_sent", { run_id: "r1", tool_call_id: "c1", file: export1 }),
+          sf("file_sent", { run_id: "r1", tool_call_id: "c2", file: export1 }),
+          sf("run_finished", { run_id: "r1", status: "succeeded", output: "Here is the export." }),
+        ),
+    });
+    await open("?tab=messages");
+
+    const files = await screen.findByRole("region", { name: "Files hub sent" });
+    const chips = within(within(files).getByRole("list", { name: "Files hub sent" })).getAllByRole(
+      "listitem",
+    );
+    expect(chips).toHaveLength(2);
+    const answer = await screen.findByText("Here is the export.");
+    expect(files.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(error.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
+    error.mockRestore();
+  });
+
   it("offers no reply in someone else's conversation on the dashboard", async () => {
     writer({ [SESSION]: { body: { ...MINE, user_id: "user-other" } } });
     await open("?tab=messages");

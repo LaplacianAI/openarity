@@ -53,9 +53,13 @@ func TestAFileIsOneReplyForItsCall(t *testing.T) {
 		t.Fatalf("claimed %d, want the conversation's first", len(rows))
 	}
 	got := rows[0]
-	if got.Kind != "file" || got.Text != "export.csv" || got.CallID == nil || *got.CallID != "call-1" ||
-		string(got.Detail) != `{"caption": "Q3"}` || got.InReplyTo != nil {
+	if got.Kind != "file" || got.Text != "export.csv" || string(got.Detail) != `{"caption": "Q3"}` || got.InReplyTo != nil {
 		t.Errorf("claimed %+v (detail %s)", got, got.Detail)
+	}
+	for call, want := range map[string]bool{"call-1": true, "call-2": true, "call-3": false} {
+		if got, err := s.FileReplyExists(t.Context(), db.FileReplyExistsParams{RunID: r.ID, CallID: call}); err != nil || got != want {
+			t.Errorf("FileReplyExists(%s) = %v, %v; want %v", call, got, err, want)
+		}
 	}
 	f, err := s.GetReplyFile(t.Context(), got.ID)
 	if err != nil {
@@ -212,5 +216,24 @@ func TestWhereAConversationsFilesGo(t *testing.T) {
 				t.Errorf("reach = %+v, %v; want %+v", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// A run's files sent are its file_sent events, whoever reads them.
+func TestARunCountsTheFilesItSent(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	c := newConversation(t, s, "file-count")
+	r := c.working(t, s, "m-1")
+	other := c.working(t, s, "m-2")
+	for i, run := range []uuid.UUID{r.ID, r.ID, other.ID} {
+		if _, err := s.pool.Exec(t.Context(),
+			`INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, $2, 'file_sent', '{}')`, run, 100+i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.CountRunFilesSent(t.Context(), r.ID); err != nil || n != 2 {
+		t.Errorf("CountRunFilesSent = %d, %v; want the run's 2", n, err)
 	}
 }

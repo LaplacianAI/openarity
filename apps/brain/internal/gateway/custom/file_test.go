@@ -65,10 +65,10 @@ func TestAFileReplyWithNoFileIsRefused(t *testing.T) {
 
 	out := outbound()
 	out.Kind = "file"
-	for _, f := range []*gateway.OutFile{nil, {Name: "e.txt", MediaType: "text/plain"}} {
+	for name, f := range map[string]*gateway.OutFile{"no file": nil, "no bytes": {Name: "e.txt", MediaType: "text/plain"}} {
 		out.File = f
 		if _, err := replier(t).Reply(to(), out, creds(), replyAt); err == nil {
-			t.Errorf("file %+v built a request", f)
+			t.Errorf("%s built a request", name)
 		}
 	}
 }

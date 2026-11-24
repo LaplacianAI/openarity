@@ -29,6 +29,9 @@ func newReplyJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, 
 		return nil, err
 	}
 	client := replyClient(reachable(cfg.MCPPrivateNetworks))
+	// This client is the sender's own, and each post sets its deadline by its
+	// size: ten seconds would cut a 25 MiB file short on every attempt.
+	client.Timeout = 0
 	sender := gateway.NewSender(dbStore, sec, reg, gateway.HTTPPoster(client), gateway.Scope{}, logger).WithFiles(attachments)
 	return gateway.ReplyJob(sender), nil
 }

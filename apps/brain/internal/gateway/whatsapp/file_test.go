@@ -58,9 +58,9 @@ func TestAPartIsExactlyOneOfTextAPollAndAFile(t *testing.T) {
 func TestAFileReplyWithNoFileIsRefused(t *testing.T) {
 	t.Parallel()
 
-	for _, f := range []*gateway.OutFile{nil, {Name: "e.txt", MediaType: "text/plain"}} {
+	for name, f := range map[string]*gateway.OutFile{"no file": nil, "no bytes": {Name: "e.txt", MediaType: "text/plain"}} {
 		if _, err := whatsapp.New().(gateway.Replier).Reply(gateway.Channel{}, fileOut(f), nil, time.Time{}); err == nil { //nolint:errcheck // a Replier
-			t.Errorf("file %+v built a request", f)
+			t.Errorf("%s built a request", name)
 		}
 	}
 }

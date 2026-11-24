@@ -128,8 +128,8 @@ func TestEveryRecordedKindBecomesItsEvent(t *testing.T) {
 		// As the runtime writes it (sendfile.go): the file by the names a
 		// message's file has, beside the call that sent it.
 		{
-			eventRow(22, "file_sent", &run, `{"tool_call_id":"c9","id":"f1","filename":"report.pdf",`+
-				`"media_type":"application/pdf","size":9,"caption":"Q3"}`),
+			eventRow(22, "file_sent", &run, `{"tool_call_id":"c9","file":{"id":"f1","filename":"report.pdf",`+
+				`"media_type":"application/pdf","size":9},"caption":"Q3"}`),
 			stream.FileSent{
 				ToolCallID: "c9", Caption: "Q3",
 				File: stream.File{ID: "f1", Filename: "report.pdf", MediaType: "application/pdf", Size: 9},

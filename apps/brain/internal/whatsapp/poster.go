@@ -59,11 +59,9 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 	if err := a.sleep(ctx, typing(spoken(p), a.jitter())); err != nil {
 		return err
 	}
-	msg := a.message(c, cli, p)
-	if p.File != nil {
-		if msg, err = document(ctx, cli, p.File); err != nil {
-			return err
-		}
+	msg, err := a.message(ctx, c, cli, p)
+	if err != nil {
+		return err
 	}
 	id := cli.GenerateMessageID()
 	c.sending(id)
@@ -81,14 +79,18 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 	return nil
 }
 
-// message is a part as WhatsApp's extended text: the people it mentions, and
-// the message it quotes when this connection still remembers it. A quote it
-// cannot draw is left out rather than shown empty.
-func (a *Accounts) message(c *conn, cli Client, p gwa.Part) *waE2E.Message {
-	if p.Poll != nil {
+// message is a part as WhatsApp sends it: a poll, a document, or extended
+// text with the people it mentions and the message it quotes when this
+// connection still remembers it. A quote it cannot draw is left out rather
+// than shown empty.
+func (a *Accounts) message(ctx context.Context, c *conn, cli Client, p gwa.Part) (*waE2E.Message, error) {
+	switch {
+	case p.Poll != nil:
 		// Single choice. whatsmeow keeps the poll's secret when it sends it,
 		// which is what lets a vote on it be decrypted (SendMessage, send.go).
-		return cli.BuildPollCreation(p.Poll.Question, p.Poll.Options, 1)
+		return cli.BuildPollCreation(p.Poll.Question, p.Poll.Options, 1), nil
+	case p.File != nil:
+		return document(ctx, cli, p.File)
 	}
 	ext := &waE2E.ExtendedTextMessage{Text: &p.Text}
 	ctxInfo := &waE2E.ContextInfo{}
@@ -105,7 +107,7 @@ func (a *Accounts) message(c *conn, cli Client, p gwa.Part) *waE2E.Message {
 	if set {
 		ext.ContextInfo = ctxInfo
 	}
-	return &waE2E.Message{ExtendedTextMessage: ext}
+	return &waE2E.Message{ExtendedTextMessage: ext}, nil
 }
 
 // document uploads a file and is the message naming it. WhatsApp keeps

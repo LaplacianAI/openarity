@@ -579,7 +579,8 @@ type reservedFor struct{ hub, web, browse, work bool }
 func reserved(name string, r reservedFor) bool {
 	switch name {
 	// Every run compacts, and the SDK refuses a second read_output.
-	case GraphToolName, DelegateToolName, agent.ReadOutputToolName, AttachmentsToolName, ReadAttachmentToolName:
+	case GraphToolName, DelegateToolName, agent.ReadOutputToolName, AttachmentsToolName, ReadAttachmentToolName,
+		SendFileToolName:
 		return true
 	// The names the SDK gives the tools that find, describe and run the rest,
 	// and open skills: a server's tool under one would stop the run.

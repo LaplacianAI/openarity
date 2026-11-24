@@ -529,9 +529,20 @@ file's name, and `file` carries the file itself, its bytes in base64:
 
 `media_type` is what the bytes are, as the brain sniffed them when the file was
 kept; `caption` is left out when the agent wrote none. A file is 25 MiB at
-most, so a reply is about 34 MB at most. Its `id` is `<run id>:file:<n>`.
-Telegram sends the file as a document and WhatsApp as a document message; on
-Slack, an agent cannot send files yet.
+most, so a reply is about 34 MB at most: read it before you time it out. Its
+`id` is `<run id>:file:<reply id>`, the same on every attempt, so drop a repeat
+by it, as every reply may arrive twice. A receiver written before this kind
+existed gets it too, so show a `kind` it does not know as nothing rather than
+as an answer.
+
+Only the run that answers the conversation sends files, ten at most, each with
+a caption of 1024 characters at most, and a `custom` channel only when it has
+a reply URL. A file is tried twice, a minute apart, then given up, so it never
+holds the answer behind it for long. Telegram sends the file as a document and
+WhatsApp as a document message; Telegram drops no repeat, so a file whose
+answer was lost on the way can arrive twice there. On Slack, an agent cannot
+send files yet. On the dashboard the file shows above the run's answer, and its
+bytes are `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}`.
 
 It carries the same two headers as a message, signed under a different prefix:
 `X-Openarity-Signature` is `v1=` and the hex HMAC-SHA256 of

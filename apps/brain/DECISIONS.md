@@ -732,7 +732,28 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   `custom` sends the bytes inline in the signed reply rather than a link,
   which would be a route serving files to whoever holds it. A replay holds
   `send_file` as a stand-in, as it holds the workspace's tools. Delivery is
-  at least once, as every reply's.
+  at least once, as every reply's: Telegram drops no repeat, so a post whose
+  answer was lost sends the file twice there. A file is tried twice, as a
+  step is, so one that cannot go holds its answer back a minute, not hours;
+  bytes that cannot be decrypted are given up at once. Each post has a
+  deadline by its size, ten seconds and a second per 512 KiB, a minute at
+  most, under the two-minute lease; a claimed batch is sent one row at a
+  time, so rows late in a slow batch can outlive the lease and be sent by a
+  second sender too, as text replies always could. A sender holds one file's
+  bytes at a time, about three copies of it on `custom` (the bytes, base64,
+  the body): some 100 MB at 25 MiB, four replies to a worker at once.
+  Ten files a run, the count read from the run's `file_sent` events when it
+  is built, so a resume keeps to it. A reply not written and not queued is
+  the model told the file did not go; on a channel, a `file_sent` event that
+  fails after the reply is queued is logged, not the call's failure, as the
+  model would send the file again. Deleting a file deletes its file replies,
+  sent ones too: a file goes only with its conversation, its message or its
+  run, and the record of its sending goes with it. The risk accepted: a
+  tool's file reaches the person without an approval, so an instruction a
+  tool's content plants could send them a file of the conversation. It
+  reaches only this conversation's people, who could already be shown the
+  tool's text in the answer; a team that wants a person between the two
+  gates the tool that returns the file.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes
   sniff as, never the server's word, and so is the extension a name lacks.
   Any type is kept, unlike a person's: one sniffed as nothing better is

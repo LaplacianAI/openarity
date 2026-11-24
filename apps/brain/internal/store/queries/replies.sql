@@ -62,7 +62,6 @@ WITH claimed AS (
     RETURNING r.*
 )
 SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq, c.detail,
-       c.call_id,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -190,6 +189,19 @@ WHERE r.id = sqlc.arg('run_id')::uuid
   AND r.reply_to_channel
   AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 ON CONFLICT (run_id, call_id) WHERE kind = 'file' DO NOTHING;
+
+-- Whether a call's file reply was written: what InsertFileReply writing
+-- none means, a call made again, or a channel that can no longer be posted
+-- to. Rides replies_one_per_file_call.
+-- name: FileReplyExists :one
+SELECT EXISTS (
+    SELECT 1 FROM replies
+    WHERE run_id = sqlc.arg('run_id')::uuid AND call_id = sqlc.arg('call_id')::text AND kind = 'file')::bool;
+
+-- How many files a run has sent, by its file_sent events: a run resumed
+-- holds to the ten it may send, counting those before.
+-- name: CountRunFilesSent :one
+SELECT count(*) FROM run_events WHERE run_id = sqlc.arg('run_id')::uuid AND kind = 'file_sent';
 
 -- Where a conversation's files can reach. One read on its stream, the
 -- dashboard's or the API's, takes them there: it has no channel, or the

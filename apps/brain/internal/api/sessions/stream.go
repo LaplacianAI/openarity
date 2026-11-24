@@ -198,15 +198,7 @@ func eventOf(row db.ListSessionEventsRow) (stream.Event, error) {
 	case "waiting":
 		return decode[stream.RunWaiting](row.Payload)
 	case "file_sent":
-		var p struct {
-			ToolCallID string `json:"tool_call_id"`
-			stream.File
-			Caption string `json:"caption"`
-		}
-		if err := json.Unmarshal(row.Payload, &p); err != nil {
-			return nil, err
-		}
-		return stream.FileSent{ToolCallID: p.ToolCallID, File: p.File, Caption: p.Caption}, nil
+		return decode[stream.FileSent](row.Payload)
 	}
 	return stream.Custom{Name: row.Kind, Value: row.Payload}, nil
 }

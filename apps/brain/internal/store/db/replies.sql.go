@@ -39,7 +39,6 @@ WITH claimed AS (
     RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq, r.detail, r.attachment_id, r.call_id
 )
 SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq, c.detail,
-       c.call_id,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -69,7 +68,6 @@ type ClaimDueRepliesRow struct {
 	PartsSent   int32
 	EventSeq    *int32
 	Detail      []byte
-	CallID      *string
 	Provider    string
 	ReplyUrl    *string
 	SessionRef  *string
@@ -116,7 +114,6 @@ func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams
 			&i.PartsSent,
 			&i.EventSeq,
 			&i.Detail,
-			&i.CallID,
 			&i.Provider,
 			&i.ReplyUrl,
 			&i.SessionRef,
@@ -131,6 +128,40 @@ func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const countRunFilesSent = `-- name: CountRunFilesSent :one
+SELECT count(*) FROM run_events WHERE run_id = $1::uuid AND kind = 'file_sent'
+`
+
+// How many files a run has sent, by its file_sent events: a run resumed
+// holds to the ten it may send, counting those before.
+func (q *Queries) CountRunFilesSent(ctx context.Context, runID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunFilesSent, runID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const fileReplyExists = `-- name: FileReplyExists :one
+SELECT EXISTS (
+    SELECT 1 FROM replies
+    WHERE run_id = $1::uuid AND call_id = $2::text AND kind = 'file')::bool
+`
+
+type FileReplyExistsParams struct {
+	RunID  uuid.UUID
+	CallID string
+}
+
+// Whether a call's file reply was written: what InsertFileReply writing
+// none means, a call made again, or a channel that can no longer be posted
+// to. Rides replies_one_per_file_call.
+func (q *Queries) FileReplyExists(ctx context.Context, arg FileReplyExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, fileReplyExists, arg.RunID, arg.CallID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const getReplyFile = `-- name: GetReplyFile :one
