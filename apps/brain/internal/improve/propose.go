@@ -275,6 +275,9 @@ func (t *passTools) store(ctx context.Context, n proposals.Proposed) (uuid.UUID,
 	if err != nil {
 		return uuid.UUID{}, fmt.Errorf("storing the proposal: %w", err)
 	}
+	if t.im.stored != nil {
+		t.im.stored(ctx, stored.ID, stored.TeamID)
+	}
 	return stored.ID, nil
 }
 

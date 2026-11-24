@@ -23,12 +23,26 @@ import (
 // ApprovalStore is what the gate reads and writes: the team's rules, who the
 // run is for, and the requests themselves.
 type ApprovalStore interface {
+	MemberRoles
 	ListApprovalRules(ctx context.Context, teamID uuid.UUID) ([]db.ApprovalRule, error)
-	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
-	ListRolePermissions(ctx context.Context, role string) ([]string, error)
 	InsertApproval(ctx context.Context, arg db.InsertApprovalParams) (db.Approval, error)
 	FindPendingRequest(ctx context.Context, arg db.FindPendingRequestParams) (db.Approval, error)
 	FindRunScopedApproval(ctx context.Context, arg db.FindRunScopedApprovalParams) (db.Approval, error)
+}
+
+// ReplayRules is what a replay reads of the team's approvals: who the past
+// run acted for, and the rules, so a read a rule would deny or ask about is
+// not made with nobody to ask.
+type ReplayRules interface {
+	MemberRoles
+	ListApprovalRules(ctx context.Context, teamID uuid.UUID) ([]db.ApprovalRule, error)
+}
+
+// MemberRoles is what tells who a run acts for: its person's role and what
+// the role may do.
+type MemberRoles interface {
+	FindTeamMember(ctx context.Context, arg db.FindTeamMemberParams) (string, error)
+	ListRolePermissions(ctx context.Context, role string) ([]string, error)
 }
 
 // WithApprovals puts every MCP and web tool a run is given behind the team's
@@ -87,18 +101,17 @@ type policy struct {
 
 func (b *Builder) policyFor(ctx context.Context, run db.Run, s db.TeamSetting, pattern agent.PatternName, l Lineage) (*policy, error) {
 	mode := approval.Mode(s.ApprovalMode)
-	if b.approvals == nil || mode == approval.Off || mode == "" {
+	// A replay asks no person anything: nothing it holds that is not a read
+	// is made.
+	if b.approvals == nil || b.replay || mode == approval.Off || mode == "" {
 		return nil, nil
 	}
 	rows, err := b.approvals.ListApprovalRules(ctx, run.TeamID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the team's approval rules: %w", err)
 	}
-	rules := make([]approval.Rule, len(rows))
-	for i, r := range rows {
-		rules[i] = approval.Rule{Kind: r.TargetKind, Target: r.Target, Verdict: approval.Verdict(r.Mode), RequireOther: r.RequireOther}
-	}
-	canSelf, err := b.canApproveOwn(ctx, run)
+	rules := rulesOf(rows)
+	canSelf, err := canApproveOwn(ctx, b.approvals, run)
 	if err != nil {
 		return nil, err
 	}
@@ -110,21 +123,56 @@ func (b *Builder) policyFor(ctx context.Context, run db.Run, s db.TeamSetting, p
 	}, nil
 }
 
+func rulesOf(rows []db.ApprovalRule) []approval.Rule {
+	rules := make([]approval.Rule, len(rows))
+	for i, r := range rows {
+		rules[i] = approval.Rule{Kind: r.TargetKind, Target: r.Target, Verdict: approval.Verdict(r.Mode), RequireOther: r.RequireOther}
+	}
+	return rules
+}
+
+// replayRules is, for a replay, whether the team's approvals would let a
+// read be made with no one asked: a rule that denies it or asks about it
+// keeps it from being made live. Nil outside a replay; with nothing to read
+// the rules from, no gated read is made.
+func (b *Builder) replayRules(ctx context.Context, run db.Run, s db.TeamSetting, actor approval.Actor) (func(target) bool, error) {
+	if !b.replay {
+		return nil, nil
+	}
+	mode := approval.Mode(s.ApprovalMode)
+	if mode == "" || mode == approval.Off {
+		return func(target) bool { return true }, nil
+	}
+	if b.rules == nil {
+		return func(target) bool { return false }, nil
+	}
+	rows, err := b.rules.ListApprovalRules(ctx, run.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("reading the team's approval rules: %w", err)
+	}
+	rules := rulesOf(rows)
+	return func(at target) bool { return decide(mode, rules, actor, at).Verdict == approval.Allow }, nil
+}
+
+// allows is whether a replay may make the read at live; outside a replay,
+// every read.
+func (b *Built) allows(at target) bool { return b.live == nil || b.live(at) }
+
 // canApproveOwn is whether the run's person may approve the calls made for
 // them. A run with nobody behind it, or someone no longer in the team, may
 // not.
-func (b *Builder) canApproveOwn(ctx context.Context, run db.Run) (bool, error) {
-	if run.UserID == nil {
+func canApproveOwn(ctx context.Context, roles MemberRoles, run db.Run) (bool, error) {
+	if run.UserID == nil || roles == nil {
 		return false, nil
 	}
-	role, err := b.approvals.FindTeamMember(ctx, db.FindTeamMemberParams{TeamID: run.TeamID, UserID: *run.UserID})
+	role, err := roles.FindTeamMember(ctx, db.FindTeamMemberParams{TeamID: run.TeamID, UserID: *run.UserID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("reading the run's person's role: %w", err)
 	}
-	actions, err := b.approvals.ListRolePermissions(ctx, role)
+	actions, err := roles.ListRolePermissions(ctx, role)
 	if err != nil {
 		return false, fmt.Errorf("reading what the %s role may do: %w", role, err)
 	}
@@ -139,6 +187,21 @@ type target struct {
 	// also is what approving the call approves besides, shown under its
 	// arguments.
 	also string
+}
+
+// actorFor is who the run acts for, as a call's class depends on it. A
+// replay has no policy, so it is read from the run itself: a replay of a run
+// a guest or nobody was present for reaches the web as that run would have,
+// a write, and so not at all.
+func (b *Builder) actorFor(ctx context.Context, run db.Run, p *policy) (approval.Actor, error) {
+	if !b.replay {
+		return p.actorOf(), nil
+	}
+	canSelf, err := canApproveOwn(ctx, b.rules, run)
+	if err != nil {
+		return approval.Actor{}, err
+	}
+	return approval.Actor{CanSelf: canSelf, Unattended: run.Unattended}, nil
 }
 
 // actorOf is who the run acts for; none when there is no policy.
@@ -160,9 +223,13 @@ func (p *policy) gate(t agent.Tool, at target) (agent.Tool, *Unavailable) {
 	return p.wrap(t, at, p.decide(at))
 }
 
-func (p *policy) decide(at target) approval.Decision {
+func (p *policy) decide(at target) approval.Decision { return decide(p.mode, p.rules, p.actor, at) }
+
+// decide is what the team's approvals make of a call to at: a run's gate
+// and a replay's reads both ask it.
+func decide(mode approval.Mode, rules []approval.Rule, actor approval.Actor, at target) approval.Decision {
 	return approval.Decide(approval.Input{
-		Tool: at.name, Server: at.server, Class: at.class, Mode: p.mode, Rules: p.rules, Actor: p.actor,
+		Tool: at.name, Server: at.server, Class: at.class, Mode: mode, Rules: rules, Actor: actor,
 	})
 }
 

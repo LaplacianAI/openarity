@@ -54,7 +54,7 @@ INSERT INTO improvement_proposals (
     $5, $6, $7, $8,
     $9, $10, $11, $12, $13,
     $14, $15, $16::text[]
-) RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves
+) RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves, replay_chosen_at
 `
 
 type CreateImprovementProposalParams struct {
@@ -121,6 +121,7 @@ func (q *Queries) CreateImprovementProposal(ctx context.Context, arg CreateImpro
 		&i.PassID,
 		&i.Goal,
 		&i.Saves,
+		&i.ReplayChosenAt,
 	)
 	return i, err
 }
@@ -129,7 +130,7 @@ const decideImprovementProposal = `-- name: DecideImprovementProposal :one
 UPDATE improvement_proposals
 SET status = $1, decided_by = $2, decided_at = now()
 WHERE id = $3 AND status = 'waiting'
-RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves
+RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves, replay_chosen_at
 `
 
 type DecideImprovementProposalParams struct {
@@ -166,12 +167,13 @@ func (q *Queries) DecideImprovementProposal(ctx context.Context, arg DecideImpro
 		&i.PassID,
 		&i.Goal,
 		&i.Saves,
+		&i.ReplayChosenAt,
 	)
 	return i, err
 }
 
 const getImprovementProposal = `-- name: GetImprovementProposal :one
-SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves FROM improvement_proposals WHERE id = $1 AND team_id = $2
+SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves, replay_chosen_at FROM improvement_proposals WHERE id = $1 AND team_id = $2
 `
 
 type GetImprovementProposalParams struct {
@@ -207,6 +209,7 @@ func (q *Queries) GetImprovementProposal(ctx context.Context, arg GetImprovement
 		&i.PassID,
 		&i.Goal,
 		&i.Saves,
+		&i.ReplayChosenAt,
 	)
 	return i, err
 }
@@ -275,7 +278,7 @@ func (q *Queries) ListAgentsHoldingSkill(ctx context.Context, skillID uuid.UUID)
 }
 
 const listImprovementProposals = `-- name: ListImprovementProposals :many
-SELECT p.id, p.team_id, p.agent_id, p.skill_id, p.kind, p.status, p.why, p.hypothesis, p.scope, p.signature, p.run_ids, p.outsider, p.marks, p.before, p.after, p.created_at, p.decided_by, p.decided_at, p.reverted_by, p.reverted_at, p.withdrawn_by, p.pass_id, p.goal, p.saves FROM improvement_proposals p
+SELECT p.id, p.team_id, p.agent_id, p.skill_id, p.kind, p.status, p.why, p.hypothesis, p.scope, p.signature, p.run_ids, p.outsider, p.marks, p.before, p.after, p.created_at, p.decided_by, p.decided_at, p.reverted_by, p.reverted_at, p.withdrawn_by, p.pass_id, p.goal, p.saves, p.replay_chosen_at FROM improvement_proposals p
 WHERE p.team_id = $1
   AND p.status = ANY ($2::text[])
   AND ($3::uuid IS NULL OR p.agent_id = $3::uuid)
@@ -346,6 +349,7 @@ func (q *Queries) ListImprovementProposals(ctx context.Context, arg ListImprovem
 			&i.PassID,
 			&i.Goal,
 			&i.Saves,
+			&i.ReplayChosenAt,
 		); err != nil {
 			return nil, err
 		}
@@ -554,7 +558,7 @@ func (q *Queries) LockAgent(ctx context.Context, arg LockAgentParams) (Agent, er
 }
 
 const lockImprovementProposal = `-- name: LockImprovementProposal :one
-SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves FROM improvement_proposals WHERE id = $1 AND team_id = $2 FOR UPDATE
+SELECT id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves, replay_chosen_at FROM improvement_proposals WHERE id = $1 AND team_id = $2 FOR UPDATE
 `
 
 type LockImprovementProposalParams struct {
@@ -592,6 +596,7 @@ func (q *Queries) LockImprovementProposal(ctx context.Context, arg LockImproveme
 		&i.PassID,
 		&i.Goal,
 		&i.Saves,
+		&i.ReplayChosenAt,
 	)
 	return i, err
 }
@@ -631,7 +636,7 @@ const revertImprovementProposal = `-- name: RevertImprovementProposal :one
 UPDATE improvement_proposals
 SET status = 'reverted', reverted_by = $1, reverted_at = now()
 WHERE id = $2 AND status = 'applied'
-RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves
+RETURNING id, team_id, agent_id, skill_id, kind, status, why, hypothesis, scope, signature, run_ids, outsider, marks, before, after, created_at, decided_by, decided_at, reverted_by, reverted_at, withdrawn_by, pass_id, goal, saves, replay_chosen_at
 `
 
 type RevertImprovementProposalParams struct {
@@ -667,6 +672,7 @@ func (q *Queries) RevertImprovementProposal(ctx context.Context, arg RevertImpro
 		&i.PassID,
 		&i.Goal,
 		&i.Saves,
+		&i.ReplayChosenAt,
 	)
 	return i, err
 }

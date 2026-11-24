@@ -97,7 +97,13 @@ func (b *Builder) delegateFor(ctx context.Context, a db.Agent, run db.Run, l Lin
 	if err != nil {
 		return agent.Tool{}, false, fmt.Errorf("counting the team's agents: %w", err)
 	}
-	if n == 0 || b.delegates == nil {
+	switch {
+	case n == 0:
+		return agent.Tool{}, false, nil
+	case b.replay:
+		// As delegateTool's: a stand-in, matched or not made.
+		return DelegateTool(DelegateDeps{}, a, run, l), true, nil
+	case b.delegates == nil:
 		return agent.Tool{}, false, nil
 	}
 	return DelegateTool(*b.delegates, a, run, l), true, nil

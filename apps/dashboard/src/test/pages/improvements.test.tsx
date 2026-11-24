@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { Improvement } from "@/api/types";
@@ -621,5 +621,181 @@ describe("watching", () => {
     at("/ui/improvements?tab=applied");
     expect(await screen.findByText("Watching: 3 of 10 runs so far")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Clear flag" })).toBeNull();
+  });
+});
+
+describe("tried on past runs", () => {
+  const runOf = (id: string, original: "good" | "bad", replayed: "good" | "bad", extra = {}) => ({
+    run: { id, readable: true, session_id: "s1" },
+    chosen: original === "bad" ? ("cited" as const) : ("good" as const),
+    status: "done" as const,
+    original,
+    replayed,
+    outcome:
+      original === "bad"
+        ? replayed === "good"
+          ? ("fixed" as const)
+          : ("still_bad" as const)
+        : replayed === "good"
+          ? ("kept" as const)
+          : ("broke" as const),
+    request: `request ${id}`,
+    withheld: false,
+    diverged: false,
+    recorded: 2,
+    live: 0,
+    not_made: 0,
+    before: { tokens: 18_400, steps: 9, work_ms: 41_000 },
+    after: { tokens: 12_000, steps: 5, work_ms: 20_000 },
+    ...extra,
+  });
+
+  it("reads a change again while it is being tried, until its tries are done", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let finished = false;
+    const now = new Date().toISOString();
+    const trying = proposal("p1", {
+      replay: {
+        status: "trying",
+        runs: [
+          runOf("r1", "bad", "good", { started_at: now, finished_at: now }),
+          {
+            ...runOf("r2", "good", "good"),
+            status: "trying",
+            outcome: null,
+            after: null,
+            started_at: now,
+          },
+        ],
+      },
+    });
+    const done = proposal("p1", {
+      replay: { status: "done", runs: [runOf("r1", "bad", "good"), runOf("r2", "good", "good")] },
+    });
+    brain({
+      ...team(APPROVER),
+      ...agents,
+      [LIST]: () => ({ body: { items: [finished ? done : trying] } }),
+    });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    const region = () => within(card).getByRole("region", { name: "Tried on past runs" });
+    expect(region()).toHaveTextContent("Trying on past runs… 1 of 2 tried");
+    expect(region()).not.toHaveTextContent("stopped checking");
+
+    finished = true;
+    await vi.advanceTimersByTimeAsync(6_000);
+    await waitFor(() => expect(region()).toHaveTextContent("Tried on 2 past runs"));
+  });
+
+  it("stops reading a change whose tries stopped moving, and says so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const long = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    const stuck = proposal("p1", {
+      created_at: long,
+      replay: {
+        status: "trying",
+        runs: [
+          {
+            ...runOf("r1", "bad", "good"),
+            status: "trying",
+            outcome: null,
+            after: null,
+            started_at: long,
+          },
+        ],
+      },
+    });
+    const seen = brain({ ...team(APPROVER), ...agents, [LIST]: { body: { items: [stuck] } } });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    expect(within(card).getByRole("region", { name: "Tried on past runs" })).toHaveTextContent(
+      "No try has moved for a while, so this page stopped checking",
+    );
+    const reads = () =>
+      seen.filter((s) => s.path.includes("status=waiting") && !s.path.includes("limit=")).length;
+    const before = reads();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(reads()).toBe(before);
+  });
+
+  it("says how a waiting change fared, warns when one that went well now goes wrong, and shows a try's steps", async () => {
+    const item = proposal("p1", {
+      replay: {
+        status: "done",
+        runs: [
+          runOf("r1", "bad", "good", { diverged: true, not_made: 1 }),
+          runOf("r2", "good", "bad"),
+          {
+            ...runOf("r3", "good", "good"),
+            request: null,
+            withheld: true,
+            run: { id: "r3", readable: false },
+          },
+        ],
+      },
+    });
+    brain({
+      ...team(APPROVER),
+      ...lists([item]),
+      "GET /teams/{id}/improvements/{id}/replays/{id}": {
+        body: {
+          run: { id: "r1", readable: true },
+          answer: "Refunded order 42.",
+          calls: [
+            { name: "orders__lookup", how: "recorded", arguments: "{}", output: "order 42: paid" },
+            { name: "orders__refund", how: "not_made", arguments: "{}", error: "Not made" },
+          ],
+        },
+      },
+    });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    // A result, beside the status: not among the kinds of change.
+    expect(within(card).getByText("Worse on past runs")).toBeInTheDocument();
+    const kinds = within(card).queryByRole("list", { name: "What kind of change" });
+    expect(kinds?.textContent ?? "").not.toContain("Worse on past runs");
+    const tried = within(card).getByRole("region", { name: "Tried on past runs" });
+    expect(tried).toHaveTextContent(
+      "Tried on 3 past runs: 1 that went wrong now done · 1 that went well still do · 1 that went well now go wrong",
+    );
+    expect(tried).toHaveTextContent("Went wrong, now done");
+    expect(tried).toHaveTextContent("18,400 → 12,000 tokens · 9 → 5 steps · 41 s → 20 s");
+    expect(tried).toHaveTextContent("Went a different way: 1 step was skipped");
+    expect(tried).toHaveTextContent("A conversation you cannot read");
+    // A withheld try offers no steps.
+    expect(within(tried).getAllByRole("button", { name: "See the steps" })).toHaveLength(2);
+
+    await userEvent.click(
+      within(tried).getAllByRole("button", { name: "See the steps" })[0] as HTMLElement,
+    );
+    expect(await within(tried).findByText("Refunded order 42.")).toBeInTheDocument();
+    expect(tried).toHaveTextContent("As in the past run");
+    expect(tried).toHaveTextContent("Skipped");
+  });
+
+  it("says nothing of a change never tried", async () => {
+    brain({
+      ...team(APPROVER),
+      ...lists([proposal("p1", { replay: { status: "off", runs: [] } })]),
+    });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    expect(within(card).queryByRole("region", { name: "Tried on past runs" })).toBeNull();
+    expect(within(card).queryByText("Worse on past runs")).toBeNull();
   });
 });

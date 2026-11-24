@@ -50,6 +50,8 @@ type Reads interface {
 	GetImprovementWatch(ctx context.Context, proposalID uuid.UUID) (db.ImprovementWatch, error)
 	ListImprovementWatches(ctx context.Context, ids []uuid.UUID) ([]db.ImprovementWatch, error)
 	ListPassPruneProposals(ctx context.Context, passIDs []uuid.UUID) ([]db.ListPassPruneProposalsRow, error)
+	ListProposalReplays(ctx context.Context, proposalIDs []uuid.UUID) ([]db.ListProposalReplaysRow, error)
+	GetProposalReplay(ctx context.Context, arg db.GetProposalReplayParams) (db.GetProposalReplayRow, error)
 }
 
 type handler struct {
@@ -66,6 +68,7 @@ func New(logger *slog.Logger, reads Reads, a api.Authorizer, d proposals.Decider
 	r.Get("/{id}/improvements", h.list)
 	r.Get("/{id}/improvements/passes", h.passes)
 	r.Get("/{id}/improvements/{proposalID}", h.get)
+	r.Get("/{id}/improvements/{proposalID}/replays/{runID}", h.replay)
 	r.Post("/{id}/improvements/{proposalID}/decision", h.decide)
 	return r
 }
@@ -110,6 +113,8 @@ type view struct {
 	RevertedAt *time.Time `json:"reverted_at"`
 	// How the change went once applied; null until it is.
 	Watch *watchView `json:"watch"`
+	// How it fared on past runs before it was decided.
+	Replay *replayView `json:"replay"`
 }
 
 type cursor struct {
@@ -199,6 +204,11 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	for _, w := range watches {
 		byID[w.ProposalID] = w
 	}
+	tried, err := h.replays(r, u, teamID, page.Items)
+	if err != nil {
+		api.Fail(w, h.logger, u, "failed to read the improvements' tries on past runs", err)
+		return
+	}
 
 	out := api.Page[view]{Items: make([]view, 0, len(page.Items)), NextCursor: page.NextCursor}
 	for _, row := range page.Items {
@@ -210,6 +220,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		if watch, ok := byID[row.ID]; ok {
 			v.Watch = watchViewOf(watch)
 		}
+		v.Replay = tried[row.ID]
 		out.Items = append(out.Items, v)
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, out)
@@ -228,6 +239,10 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.withWatch(r, &v); err != nil {
 		api.Fail(w, h.logger, u, "failed to read the improvement's watch", err)
+		return
+	}
+	if err := h.withReplay(r, u, &v, row); err != nil {
+		api.Fail(w, h.logger, u, "failed to read the improvement's tries on past runs", err)
 		return
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, v)

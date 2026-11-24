@@ -520,3 +520,34 @@ func TestStoringAProposalKeepsThePassAlive(t *testing.T) {
 		t.Errorf("status = %s, want it still running after storing", p.Status)
 	}
 }
+
+// Each proposal a pass stores is told, with its team, once it is stored, for
+// its tries on past runs to begin; one refused is not.
+func TestAStoredProposalIsTold(t *testing.T) {
+	w := newWorld(t)
+	im := w.improver(t)
+	var told []uuid.UUID
+	im.OnStored(func(_ context.Context, proposalID, teamID uuid.UUID) {
+		if teamID != w.team {
+			t.Errorf("told team %s, want %s", teamID, w.team)
+		}
+		told = append(told, proposalID)
+	})
+	var runs []uuid.UUID
+	for range 3 {
+		runs = append(runs, w.digested(t, skipped, "wrong", false))
+	}
+	pass := w.begin(t, im, patternPasses(w.patterns(t))[0])
+	if out, _ := w.proposeWith(t, im, pass, instructionsEdit(runs[0]), reply{text: screenOKText}); !strings.HasPrefix(out, "Stored") {
+		t.Fatalf("propose = %q", out)
+	}
+	got := w.proposals(t, "waiting")
+	if len(told) != 1 || len(got) != 1 || told[0] != got[0].ID {
+		t.Errorf("told %v of %d stored", told, len(got))
+	}
+	w.exec(t, `UPDATE improver_passes SET status = 'failed', finished_at = now(), error = 'lost' WHERE id = $1`, pass.ID)
+	w.proposeWith(t, im, pass, instructionsEdit(runs[1]), reply{text: screenOKText})
+	if len(told) != 1 {
+		t.Errorf("told of a proposal refused: %v", told)
+	}
+}

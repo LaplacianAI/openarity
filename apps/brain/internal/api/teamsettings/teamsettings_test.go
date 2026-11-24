@@ -101,12 +101,17 @@ func (f *fakeStore) UpsertTeamSettings(_ context.Context, p db.UpsertTeamSetting
 		ImprovementPassMinutes: kept(p.ImprovementPassMinutes, f.row, func(s db.TeamSetting) int16 { return s.ImprovementPassMinutes }, 20),
 		ImprovementDailyRuns:   kept(p.ImprovementDailyRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementDailyRuns }, 5),
 
-		ImprovementEfficiency:         keptBool(p.ImprovementEfficiency, f.row),
+		ImprovementEfficiency:         keptBool(p.ImprovementEfficiency, f.row, func(s db.TeamSetting) bool { return s.ImprovementEfficiency }),
 		ImprovementEfficiencyRuns:     kept(p.ImprovementEfficiencyRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyRuns }, 20),
 		ImprovementEfficiencyDays:     kept(p.ImprovementEfficiencyDays, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyDays }, 14),
 		ImprovementEfficiencySpread:   kept(p.ImprovementEfficiencySpread, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencySpread }, 200),
 		ImprovementEfficiencyMarkRuns: kept(p.ImprovementEfficiencyMarkRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyMarkRuns }, 3),
 		ImprovementEfficiencyMargin:   kept(p.ImprovementEfficiencyMargin, f.row, func(s db.TeamSetting) int16 { return s.ImprovementEfficiencyMargin }, 1),
+		ImprovementReplay:             keptBool(p.ImprovementReplay, f.row, func(s db.TeamSetting) bool { return s.ImprovementReplay }),
+		ImprovementReplayRuns:         kept(p.ImprovementReplayRuns, f.row, func(s db.TeamSetting) int16 { return s.ImprovementReplayRuns }, 4),
+		ImprovementReplayTokens:       kept(p.ImprovementReplayTokens, f.row, func(s db.TeamSetting) int32 { return s.ImprovementReplayTokens }, 200_000),
+		ImprovementReplayMinutes:      kept(p.ImprovementReplayMinutes, f.row, func(s db.TeamSetting) int16 { return s.ImprovementReplayMinutes }, 10),
+		ImprovementReplayDaily:        kept(p.ImprovementReplayDaily, f.row, func(s db.TeamSetting) int16 { return s.ImprovementReplayDaily }, 40),
 		UpdatedAt:                     time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC),
 
 		SandboxIdleMinutes:       p.SandboxIdleMinutes,
@@ -1262,6 +1267,12 @@ type improveWire struct {
 	ImprovementEfficiencySpread   int16 `json:"improvement_efficiency_spread"`
 	ImprovementEfficiencyMarkRuns int16 `json:"improvement_efficiency_mark_runs"`
 	ImprovementEfficiencyMargin   int16 `json:"improvement_efficiency_margin"`
+
+	ImprovementReplay        bool  `json:"improvement_replay"`
+	ImprovementReplayRuns    int16 `json:"improvement_replay_runs"`
+	ImprovementReplayTokens  int32 `json:"improvement_replay_tokens"`
+	ImprovementReplayMinutes int16 `json:"improvement_replay_minutes"`
+	ImprovementReplayDaily   int16 `json:"improvement_replay_daily"`
 }
 
 func decodeImprove(t *testing.T, rec *httptest.ResponseRecorder) improveWire {
@@ -1425,12 +1436,12 @@ func TestTheDefaultsIncludeTheSampleShare(t *testing.T) {
 
 // keptBool is a nullable switch as the upsert keeps it: the request's when
 // sent, else the stored one, else off.
-func keptBool(v pgtype.Bool, row *db.TeamSetting) bool {
+func keptBool(v pgtype.Bool, row *db.TeamSetting, of func(db.TeamSetting) bool) bool {
 	switch {
 	case v.Valid:
 		return v.Bool
 	case row != nil:
-		return row.ImprovementEfficiency
+		return of(*row)
 	}
 	return false
 }
@@ -1497,5 +1508,50 @@ func TestTheEfficiencySettings(t *testing.T) {
 	// Held to the runs stored, 40, not the default: 30 is fine.
 	if got := decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_efficiency_mark_runs":30}`)); got.ImprovementEfficiencyMarkRuns != 30 {
 		t.Errorf("mark runs under the stored runs = %d, want 30", got.ImprovementEfficiencyMarkRuns)
+	}
+}
+
+// Trying proposals on past runs starts off at its defaults; its switch and
+// numbers are saved and kept when left out, and each number is refused
+// outside its range with its name; a refusal saves nothing.
+func TestTheReplaySettings(t *testing.T) {
+	e := newEnv()
+	got := decodeImprove(t, e.save(t, `{`+improveBase+`}`))
+	if got.ImprovementReplay || got.ImprovementReplayRuns != 4 || got.ImprovementReplayTokens != 200_000 ||
+		got.ImprovementReplayMinutes != 10 || got.ImprovementReplayDaily != 40 {
+		t.Fatalf("a first save's replay settings = %+v", got)
+	}
+	got = decodeImprove(t, e.save(t, `{`+improveBase+`,"improvement_replay":true,"improvement_replay_runs":6,
+		"improvement_replay_tokens":300000,"improvement_replay_minutes":15,"improvement_replay_daily":80}`))
+	if !got.ImprovementReplay || got.ImprovementReplayRuns != 6 || got.ImprovementReplayTokens != 300_000 ||
+		got.ImprovementReplayMinutes != 15 || got.ImprovementReplayDaily != 80 {
+		t.Fatalf("saved replay settings = %+v", got)
+	}
+	if got = decodeImprove(t, e.save(t, `{`+improveBase+`}`)); !got.ImprovementReplay || got.ImprovementReplayRuns != 6 ||
+		got.ImprovementReplayDaily != 80 {
+		t.Fatalf("left out, the replay settings became %+v", got)
+	}
+	saved := len(e.store.upserts)
+	for _, bad := range []struct{ body, name string }{
+		{`"improvement_replay_runs":0`, "improvement_replay_runs"},
+		{`"improvement_replay_runs":11`, "improvement_replay_runs"},
+		{`"improvement_replay_tokens":19999`, "improvement_replay_tokens"},
+		{`"improvement_replay_tokens":1000001`, "improvement_replay_tokens"},
+		{`"improvement_replay_minutes":0`, "improvement_replay_minutes"},
+		{`"improvement_replay_minutes":31`, "improvement_replay_minutes"},
+		{`"improvement_replay_daily":0`, "improvement_replay_daily"},
+		{`"improvement_replay_daily":501`, "improvement_replay_daily"},
+		// Past what keeps it: refused with its range, not as a body that
+		// cannot be read.
+		{`"improvement_replay_runs":40000`, "improvement_replay_runs"},
+		{`"improvement_replay_minutes":40000`, "improvement_replay_minutes"},
+		{`"improvement_replay_daily":40000`, "improvement_replay_daily"},
+	} {
+		if rec := e.save(t, `{`+improveBase+`,`+bad.body+`}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), bad.name) {
+			t.Errorf("%s = %d %q, want 400 naming %s", bad.body, rec.Code, rec.Body, bad.name)
+		}
+	}
+	if len(e.store.upserts) != saved {
+		t.Error("refused replay settings were saved")
 	}
 }

@@ -133,6 +133,29 @@ fall, both of them for a change aimed at both; its card shows both. Each of
 these numbers is a team setting, explained beside its field, and a change to the
 margin applies to changes still being watched.
 
+With **Try each change on past runs first** on (off until a team turns it on),
+each proposal is tried on a few of its agent's past runs before anyone decides
+on it: half the runs it was proposed from, half recent runs that went well, one
+a conversation. A try acts on nothing. A call the past run made, with the same
+arguments, gets the result it got then; a new call runs for real only when it
+only reads (the graph, the conversation and its files as they were before the
+run, a trusted server's read-only tool, and a web search or fetch when a member
+was there for the run; for a guest's run, or one nobody was there for, the web
+is skipped too); anything else is skipped, and the try says it went a different
+way. The judge decides each try as it decided the run. The
+card's **Tried on past runs** block shows each run before and after, with its
+tokens, steps and time, and the steps of a try behind **See the steps**;
+**Worse on past runs** marks a change under which a run that went well now goes
+wrong. Nothing is withdrawn or blocked by it: the approver may decide at any
+time. A run that cannot be rebuilt as it was (a call too long to have been kept
+whole, or a conversation compacted since) is not tried, and says why. What a
+try may spend (tokens and minutes) and how many tries the team runs a day are
+team settings; past the daily count a change is shown untried. The tokens are
+checked as each model reply comes back, so a try may spend one reply past them
+(and make a read that reply asked for, never anything else), and judging it is
+not counted. A team rule that denies or asks about a tool
+keeps a replay from making that call too.
+
 **Approvals** is the queue of people who wrote in on a channel and have not been
 let in, the longest waiting first, with a **Let in** action that binds them to
 a member (it suggests the member whose name fits, when exactly one does). A

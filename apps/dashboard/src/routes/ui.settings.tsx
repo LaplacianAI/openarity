@@ -35,6 +35,7 @@ import { DeleteTeamDialog } from "@/components/delete-team-dialog";
 import { EfficiencyFields } from "@/components/efficiency-settings";
 import { type Picked, Picker } from "@/components/picker";
 import { Field, ReadOnlyNote } from "@/components/registry-bits";
+import { ReplayFields } from "@/components/replay-settings";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +66,12 @@ import {
   efficiencyRequest,
   spreadOf,
 } from "@/lib/efficiency-settings";
+import {
+  REPLAY_NUMBERS,
+  type ReplayDraft,
+  replayDraftOf,
+  replayRequest,
+} from "@/lib/replay-settings";
 import { cn } from "@/lib/utils";
 import { waitWords } from "@/lib/wait";
 
@@ -246,7 +253,7 @@ function DangerZone({ teamId, teamName }: { teamId: string; teamName: string }) 
   );
 }
 
-export type SettingsDraft = EfficiencyDraft & {
+type DraftFields = EfficiencyDraft & {
   modelOn: boolean;
   modelName: string;
   maxTokens: string;
@@ -300,6 +307,8 @@ export type SettingsDraft = EfficiencyDraft & {
   hub: Picked | null;
 };
 
+export type SettingsDraft = DraftFields & ReplayDraft;
+
 export function draftOf(s: TeamSettings): SettingsDraft {
   return {
     modelOn: s.model !== null,
@@ -333,6 +342,7 @@ export function draftOf(s: TeamSettings): SettingsDraft {
     passMinutes: String(s.improvement_pass_minutes ?? 20),
     dailyRuns: String(s.improvement_daily_runs ?? 5),
     ...efficiencyDraftOf(s),
+    ...replayDraftOf(s),
     compaction: String(s.compaction_messages),
     tokensMin: grouped(s.compaction_tokens_min),
     tokensMax: grouped(s.compaction_tokens_max),
@@ -387,6 +397,11 @@ const FIELDS: Record<Group, (keyof SettingsDraft)[]> = {
     "effSpread",
     "effMarkRuns",
     "effMargin",
+    "replay",
+    "replayRuns",
+    "replayTokens",
+    "replayMinutes",
+    "replayDaily",
   ],
 };
 
@@ -411,6 +426,10 @@ const BY_VALUE = new Set<keyof SettingsDraft>([
   "effRuns",
   "effDays",
   "effMarkRuns",
+  "replayRuns",
+  "replayTokens",
+  "replayMinutes",
+  "replayDaily",
 ]);
 
 /** The efficiency pass's numbers: hidden, and never sent, while it is off. */
@@ -422,11 +441,14 @@ const EFF_NUMBERS: ReadonlySet<keyof SettingsDraft> = new Set([
   "effMargin",
 ]);
 
+/** Trying on past runs' numbers: hidden, and never sent, while it is off. */
+const REPLAY_SET: ReadonlySet<keyof SettingsDraft> = new Set(REPLAY_NUMBERS);
+
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
   const base = draftOf(stored);
   const changed = FIELDS[group].some((f) =>
-    LIFE_SET.has(f) || (EFF_NUMBERS.has(f) && !d.efficiency)
+    LIFE_SET.has(f) || (EFF_NUMBERS.has(f) && !d.efficiency) || (REPLAY_SET.has(f) && !d.replay)
       ? false
       : f === "effSpread"
         ? spreadOf(d.effSpread) !== spreadOf(base.effSpread)
@@ -652,7 +674,9 @@ function improvementRequest(
   }
   const efficiency = efficiencyRequest(d, base);
   if (typeof efficiency === "string") return efficiency;
-  return { ...out, ...efficiency };
+  const replay = replayRequest(d, base);
+  if (typeof replay === "string") return replay;
+  return { ...out, ...efficiency, ...replay };
 }
 
 /** What the page starts a size from when the team has none of its own. */
@@ -1840,6 +1864,11 @@ function SettingsForm({
               </Field>
             </div>
             <EfficiencyFields
+              draft={draft}
+              onChange={(patch) => set("improvement", patch)}
+              showProblems={effChecked}
+            />
+            <ReplayFields
               draft={draft}
               onChange={(patch) => set("improvement", patch)}
               showProblems={effChecked}
