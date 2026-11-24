@@ -297,7 +297,7 @@ func newSettingsSetCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().StringVar(&f.replay, "replay", "",
 		"on or off: try each proposed change on a few of its agent's past runs before it is decided, sending and changing nothing; runs only while --improvement is on")
 	cmd.Flags().Int32Var(&f.replayRuns, "replay-runs", 0,
-		"the past runs a change is tried on, half it is meant to fix and half that went well, 1 to 10; 4 until set")
+		"the past runs a change is tried on, half it was proposed from and half that went well, 1 to 10; 4 until set")
 	cmd.Flags().Int32Var(&f.replayTokens, "replay-tokens", 0,
 		"the tokens one try may spend before it is stopped, 20000 to 1000000; 200000 until set")
 	cmd.Flags().Int32Var(&f.replayMinutes, "replay-minutes", 0,

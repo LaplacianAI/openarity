@@ -123,7 +123,9 @@ function Run({
         </p>
       ) : null}
       {run.status === "failed" && run.error ? (
-        <p className="text-muted-foreground">The try failed: {run.error}</p>
+        <p className="text-muted-foreground">
+          {run.withheld ? "The try failed." : `The try failed: ${run.error}`}
+        </p>
       ) : null}
       {run.status === "done" && run.why ? (
         <p className="text-muted-foreground">Judged: {run.why}</p>

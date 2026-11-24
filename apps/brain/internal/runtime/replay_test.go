@@ -176,6 +176,14 @@ func TestAReplayIsStoppedAtItsTokens(t *testing.T) {
 	if err != nil || !errors.Is(out.Over, ErrReplayTokens) {
 		t.Errorf("replay = %+v, %v; want stopped at its tokens", out.Over, err)
 	}
+	// What it spent is kept, and the call the crossing reply asked for is
+	// not made.
+	if out.Usage.InputTokens+out.Usage.OutputTokens < 10 {
+		t.Errorf("a stopped try spent %+v, want what its reply used", out.Usage)
+	}
+	if n := f.crm.calls.Load(); n != 0 {
+		t.Errorf("the lookup reached its server %d times past the cap", n)
+	}
 }
 
 // A try past its minutes is stopped the same way.
@@ -206,13 +214,54 @@ func TestCanonicalArgumentsAreOneText(t *testing.T) {
 }
 
 // roles is a team in which the run's person holds what perms says.
-type roles struct{ perms []string }
+type roles struct {
+	perms []string
+	rules []db.ApprovalRule
+}
 
 func (roles) FindTeamMember(context.Context, db.FindTeamMemberParams) (string, error) {
 	return "member", nil
 }
 
 func (r roles) ListRolePermissions(context.Context, string) ([]string, error) { return r.perms, nil }
+
+func (r roles) ListApprovalRules(context.Context, uuid.UUID) ([]db.ApprovalRule, error) {
+	return r.rules, nil
+}
+
+// A read the team's rules deny, or ask about, is not made live in a replay:
+// there is no one to ask, and a deny holds whoever runs it.
+func TestAReplayKeepsTheTeamsRulesOnReads(t *testing.T) {
+	member := uuid.New()
+	for _, tc := range []struct {
+		name  string
+		mode  string
+		rules []db.ApprovalRule
+		read  bool
+	}{
+		{"no rule", "writes", nil, true},
+		{"approvals off", "off", []db.ApprovalRule{{TargetKind: "tool", Target: WebFetchToolName, Mode: "deny"}}, true},
+		{"denied", "writes", []db.ApprovalRule{{TargetKind: "tool", Target: WebFetchToolName, Mode: "deny"}}, false},
+		{"asked about", "writes", []db.ApprovalRule{{TargetKind: "tool", Target: WebFetchToolName, Mode: "ask"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWebFixture("none", "")
+			w.asAgent(true)
+			w.builder.replay, w.builder.roles = true, roles{perms: []string{"approval:self"}, rules: tc.rules}
+			w.run.UserID = &member
+			if w.store.settings == nil {
+				w.store.settings = &db.TeamSetting{TeamID: w.run.TeamID}
+			}
+			w.store.settings.ApprovalMode = tc.mode
+
+			got := w.build(t)
+
+			if got.reads[WebFetchToolName] != tc.read {
+				t.Errorf("web_fetch read = %v, want %v", got.reads[WebFetchToolName], tc.read)
+			}
+		})
+	}
+}
 
 // The web is a read in a replay only for a past run a person who may
 // approve their own calls was there for: for a guest's, or a run nobody was
@@ -286,5 +335,25 @@ func TestARunsCallsAreReadFromItsEvents(t *testing.T) {
 	}
 	if _, err := RecordedOf([]db.RunEvent{{Seq: 1, Kind: "tool_call", Payload: []byte(`{`)}}); err == nil {
 		t.Error("an unreadable event was passed over")
+	}
+}
+
+// A trusted read-only tool a team rule denies is not made live in a
+// replay: the server sees no call.
+func TestAReplayKeepsADenyOnAServersRead(t *testing.T) {
+	f := newReplayFixture(t, callTool("1", "crm__lookup", `{"id":2}`), answer("done", 10, 5))
+	f.store.settings = &db.TeamSetting{
+		TeamID: f.run.TeamID, ApprovalMode: "writes", SearchProvider: "none",
+		CompactionMessages: 10, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
+	}
+	f.replayer.roles = roles{rules: []db.ApprovalRule{{TargetKind: "tool", Target: "crm__lookup", Mode: "deny"}}}
+
+	out := f.replay(t)
+
+	if want := []string{"crm__lookup:not_made"}; !slices.Equal(hows(out.Calls), want) {
+		t.Errorf("calls %v, want %v", hows(out.Calls), want)
+	}
+	if n := f.crm.calls.Load(); n != 0 {
+		t.Errorf("a denied read reached its server %d times", n)
 	}
 }

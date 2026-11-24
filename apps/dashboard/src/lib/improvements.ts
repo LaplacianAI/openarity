@@ -387,11 +387,12 @@ export function replaySummary(r: ImprovementReplay): string {
   if (r.status === "off") return "Not tried on past runs: trying was off";
   if (r.status === "trying") {
     const total = r.runs.filter((x) => x.status !== "skipped").length;
-    return done.length > 0
-      ? `Trying on past runs… ${done.length} of ${total} tried`
+    const finished = r.runs.filter((x) => x.status === "done" || x.status === "failed").length;
+    return finished > 0
+      ? `Trying on past runs… ${finished} of ${total} tried`
       : "Trying on past runs…";
   }
-  if (r.status === "none") return "None of its past runs could be tried";
+  if (r.status === "none") return "Not tried on any past run";
   const tally = new Map<ImprovementReplayOutcome, number>();
   for (const x of done) {
     const o = x.outcome ?? "unclear";

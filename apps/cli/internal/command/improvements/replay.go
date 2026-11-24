@@ -128,11 +128,14 @@ func (v *replayView) worse() bool {
 // wrong now done · 2 that went well still do"; while some are still to run,
 // how many of them are done.
 func (v *replayView) summary() string {
-	tried, total := 0, 0
+	tried, finished, total := 0, 0, 0
 	counts := map[string]int{}
 	for _, r := range v.Runs {
 		if r.Status != "skipped" {
 			total++
+		}
+		if r.Status == "done" || r.Status == "failed" {
+			finished++
 		}
 		if r.Status != "done" {
 			continue
@@ -144,12 +147,12 @@ func (v *replayView) summary() string {
 	case "off":
 		return "not tried: trying on past runs was off"
 	case "trying":
-		if tried > 0 {
-			return fmt.Sprintf("trying on past runs… %d of %d tried", tried, total)
+		if finished > 0 {
+			return fmt.Sprintf("trying on past runs… %d of %d tried", finished, total)
 		}
 		return "trying on past runs…"
 	case "none":
-		return "none of its past runs could be tried"
+		return "not tried on any past run"
 	}
 	var parts []string
 	for _, p := range []struct {
@@ -212,6 +215,9 @@ func replayRows(opts *cli.Options, table *printer.Table, v *replayView) {
 		}
 		if r.SkipWhy != nil {
 			cell += " · " + cli.Safe(*r.SkipWhy)
+		}
+		if r.Status == "failed" && r.Error != nil && !r.Withheld {
+			cell += " · " + oneLine(cli.Safe(*r.Error), 80)
 		}
 		table.Row("", cell, opts.Styles.Muted.Render(r.Run))
 	}

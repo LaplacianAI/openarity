@@ -111,7 +111,7 @@ var (
 // replay holds as stand-ins.
 type Replayer struct {
 	mcp      MCPClients
-	roles    MemberRoles
+	roles    ReplayRules
 	graph    *GraphDeps
 	search   *SearchDeps
 	fetch    *FetchDeps
@@ -121,7 +121,7 @@ type Replayer struct {
 }
 
 // NewReplayer replays with roles telling who each past run acted for.
-func NewReplayer(m MCPClients, roles MemberRoles, g *GraphDeps, search *SearchDeps, fetch *FetchDeps,
+func NewReplayer(m MCPClients, roles ReplayRules, g *GraphDeps, search *SearchDeps, fetch *FetchDeps,
 	r *agent.Runner, endpoint agent.Endpoint,
 ) *Replayer {
 	return &Replayer{mcp: m, roles: roles, graph: g, search: search, fetch: fetch, runner: r, endpoint: endpoint, now: time.Now}
@@ -182,15 +182,22 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 		runCtx, cancel = context.WithTimeoutCause(runCtx, lim.Time, ErrReplayTime)
 		defer cancel()
 	}
-	// The token cap is checked as each step's usage arrives, so the step
-	// that crosses it is finished first: a try may spend one step more.
+	// The token cap is checked as each model reply's usage arrives: the
+	// reply that crosses it is spent, and the try stops there, before any
+	// call it asked for is made. A try may so spend one reply past the cap.
 	events := make(chan agent.Event, 16)
 	watched := make(chan struct{})
 	var spent int
+	// used is what the try spent, as its usage events say: a run stopped
+	// short may report none of it.
+	var used agent.Usage
 	go func() {
 		defer close(watched)
 		for e := range events {
 			if u, ok := e.(agent.UsageEvent); ok {
+				used.InputTokens += u.Usage.InputTokens
+				used.OutputTokens += u.Usage.OutputTokens
+				used.CachedInputTokens += u.Usage.CachedInputTokens
 				spent += u.Usage.InputTokens + u.Usage.OutputTokens
 				if lim.Tokens > 0 && spent >= lim.Tokens {
 					stop(ErrReplayTokens)
@@ -211,6 +218,9 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 	if err != nil {
 		if cause := context.Cause(runCtx); errors.Is(cause, ErrReplayTokens) || errors.Is(cause, ErrReplayTime) {
 			out.Over = cause
+			if used.InputTokens+used.OutputTokens > out.Usage.InputTokens+out.Usage.OutputTokens {
+				out.Usage = used
+			}
 			return out, nil
 		}
 		return out, err

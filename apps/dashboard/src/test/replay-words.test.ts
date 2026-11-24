@@ -87,7 +87,7 @@ describe("the tries", () => {
   it.each([
     ["off", "Not tried on past runs"],
     ["trying", "Trying on past runs…"],
-    ["none", "None of its past runs could be tried"],
+    ["none", "Not tried on any past run"],
   ] as const)("say %s", (status, words) => {
     expect(replaySummary({ status, runs: [] })).toMatch(words);
   });

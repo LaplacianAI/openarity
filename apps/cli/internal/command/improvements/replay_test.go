@@ -45,7 +45,7 @@ func TestShowSaysHowAProposalFaredOnPastRuns(t *testing.T) {
 
 func TestTheReplaySummaryNamesEachState(t *testing.T) {
 	for status, want := range map[string]string{
-		"off": "not tried: trying on past runs was off", "trying": "trying on past runs…", "none": "none of its past runs could be tried",
+		"off": "not tried: trying on past runs was off", "trying": "trying on past runs…", "none": "not tried on any past run",
 	} {
 		if got := (&replayView{Status: status}).summary(); !strings.HasPrefix(got, want) {
 			t.Errorf("%s = %q, want %q", status, got, want)

@@ -34,6 +34,8 @@ const TABS: Tab[] = ["waiting", "applied", "flagged", "closed", "passes"];
 
 /** How often a list with a change still being tried is read again. */
 const TRYING_POLL_MS = 5_000;
+/** How many reads a list makes while a change is being tried: half an hour's. */
+const TRYING_POLLS = 360;
 
 export const Route = createFileRoute("/ui/improvements")({
   // The tab, the agent and the words searched for, in the URL so a view of
@@ -111,8 +113,11 @@ function Improvements() {
     initialPageParam: null as string | null,
     getNextPageParam: nextCursorOf,
     enabled: Boolean(teamId) && !perms.isPending && !passes,
-    // A change being tried on past runs is read again until its tries are done.
+    // A change being tried on past runs is read again until its tries are
+    // done, for as long as a try may take at most: one stuck is not read
+    // forever.
     refetchInterval: (query) =>
+      query.state.dataUpdateCount < TRYING_POLLS &&
       query.state.data?.pages.some((p) => p.items.some((i) => i.replay?.status === "trying"))
         ? TRYING_POLL_MS
         : false,

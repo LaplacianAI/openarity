@@ -66,9 +66,9 @@ type Builder struct {
 	workshop   Workshop
 	registry   Registry
 	approvals  ApprovalStore
-	// roles tells a replay who the past run acted for; a run reads it from
-	// its policy.
-	roles          MemberRoles
+	// roles tells a replay who the past run acted for and the team's rules;
+	// a run reads both from its policy.
+	roles          ReplayRules
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 	// replay builds a past run again for a replay (replay.go): the tools a
@@ -106,6 +106,9 @@ type Built struct {
 	// request records, as it is before the gate: what a resume makes once
 	// the call is approved.
 	answerable map[string]agent.Tool
+	// live is whether a replay may make a read the team's rules would gate:
+	// nil outside a replay.
+	live func(at target) bool
 	// reads is every tool, by its name in the run, that only reads: a
 	// trusted server's read-only tool, the web for a person who is there,
 	// the graph, and the conversation's history and files, which a replay's
@@ -161,6 +164,9 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		return Built{}, err
 	}
 	built.Spec.Compaction = compactionFor(settings, budgetOf(run.TokenBudget))
+	if built.live, err = b.replayRules(ctx, run, settings); err != nil {
+		return Built{}, err
+	}
 
 	// The builder reads the web for servers' docs and a skill's source.
 	web := run.Hub || a.Web || run.Builder
@@ -266,7 +272,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		built.Unavailable = append(built.Unavailable, unavailable...)
 		for _, t := range tools {
 			built.answerable[t.Name] = t
-			built.reads[t.Name] = egress == approval.Read
+			built.reads[t.Name] = egress == approval.Read && built.allows(target{name: t.Name, class: egress})
 			gated, refused := gates.gate(t, target{name: t.Name, class: egress})
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)
@@ -493,9 +499,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, r 
 				name: s.Name + "__" + row.Name, server: s.Name, class: approval.ClassOf(row.Annotations, s.TrustHints),
 			}
 			built.answerable[at.name] = raw
-			if at.class == approval.Read {
-				built.reads[name] = true
-			}
+			built.reads[name] = at.class == approval.Read && built.allows(at)
 			t, refused := gates.gate(raw, at)
 			if refused != nil {
 				built.Unavailable = append(built.Unavailable, *refused)
