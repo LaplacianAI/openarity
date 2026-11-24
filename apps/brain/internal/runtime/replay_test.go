@@ -176,13 +176,9 @@ func TestAReplayIsStoppedAtItsTokens(t *testing.T) {
 	if err != nil || !errors.Is(out.Over, ErrReplayTokens) {
 		t.Errorf("replay = %+v, %v; want stopped at its tokens", out.Over, err)
 	}
-	// What it spent is kept, and the call the crossing reply asked for is
-	// not made.
+	// What it spent is kept.
 	if out.Usage.InputTokens+out.Usage.OutputTokens < 10 {
 		t.Errorf("a stopped try spent %+v, want what its reply used", out.Usage)
-	}
-	if n := f.crm.calls.Load(); n != 0 {
-		t.Errorf("the lookup reached its server %d times past the cap", n)
 	}
 }
 
@@ -217,6 +213,7 @@ func TestCanonicalArgumentsAreOneText(t *testing.T) {
 type roles struct {
 	perms []string
 	rules []db.ApprovalRule
+	err   error
 }
 
 func (roles) FindTeamMember(context.Context, db.FindTeamMemberParams) (string, error) {
@@ -226,7 +223,7 @@ func (roles) FindTeamMember(context.Context, db.FindTeamMemberParams) (string, e
 func (r roles) ListRolePermissions(context.Context, string) ([]string, error) { return r.perms, nil }
 
 func (r roles) ListApprovalRules(context.Context, uuid.UUID) ([]db.ApprovalRule, error) {
-	return r.rules, nil
+	return r.rules, r.err
 }
 
 // A read the team's rules deny, or ask about, is not made live in a replay:
@@ -247,7 +244,7 @@ func TestAReplayKeepsTheTeamsRulesOnReads(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWebFixture("none", "")
 			w.asAgent(true)
-			w.builder.replay, w.builder.roles = true, roles{perms: []string{"approval:self"}, rules: tc.rules}
+			w.builder.replay, w.builder.rules = true, roles{perms: []string{"approval:self"}, rules: tc.rules}
 			w.run.UserID = &member
 			if w.store.settings == nil {
 				w.store.settings = &db.TeamSetting{TeamID: w.run.TeamID}
@@ -283,7 +280,7 @@ func TestAReplayReachesTheWebOnlyAsThePastRunsPersonWould(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWebFixture("none", "")
 			w.asAgent(true)
-			w.builder.replay, w.builder.roles = true, roles{perms: tc.perms}
+			w.builder.replay, w.builder.rules = true, roles{perms: tc.perms}
 			w.run.UserID, w.run.Unattended = tc.user, tc.unattended
 
 			got := w.build(t)
@@ -338,6 +335,82 @@ func TestARunsCallsAreReadFromItsEvents(t *testing.T) {
 	}
 }
 
+// A trusted server's read is made live in a replay only when the team's
+// approvals would let it be made with no one asked; anything else, and any
+// doubt, is not made, and the server sees no call.
+func TestAReplayMakesAServersReadOnlyAsTheTeamsRulesAllow(t *testing.T) {
+	rule := func(kind, target, mode string) []db.ApprovalRule {
+		return []db.ApprovalRule{{TargetKind: kind, Target: target, Mode: mode}}
+	}
+	for _, tc := range []struct {
+		name       string
+		rules      ReplayRules
+		unattended bool
+		live       bool
+	}{
+		{"no rule", roles{}, false, true},
+		{"a member's unattended run", roles{}, true, true},
+		{"a tool rule that denies", roles{rules: rule("tool", "crm__lookup", "deny")}, false, false},
+		{"a tool rule that asks", roles{rules: rule("tool", "crm__lookup", "ask")}, false, false},
+		{"a server rule that denies", roles{rules: rule("server", "crm", "deny")}, false, false},
+		{"a verdict not known", roles{rules: rule("tool", "crm__lookup", "maybe")}, false, false},
+		{"no rules to read", nil, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReplayFixture(t, callTool("1", "crm__lookup", `{"id":2}`), answer("done", 10, 5))
+			f.store.settings = gatedSettings(f.run.TeamID)
+			f.replayer.rules = tc.rules
+			f.run.Unattended = tc.unattended
+
+			out := f.replay(t)
+
+			want, calls := "crm__lookup:not_made", int32(0)
+			if tc.live {
+				want, calls = "crm__lookup:live", 1
+			}
+			if got := hows(out.Calls); !slices.Equal(got, []string{want}) {
+				t.Errorf("calls %v, want %s", got, want)
+			}
+			if n := f.crm.calls.Load(); n != calls {
+				t.Errorf("the server saw %d calls, want %d", n, calls)
+			}
+		})
+	}
+}
+
+func gatedSettings(team uuid.UUID) *db.TeamSetting {
+	return &db.TeamSetting{
+		TeamID: team, ApprovalMode: "writes", SearchProvider: "none",
+		CompactionMessages: 10, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
+	}
+}
+
+// Rules that cannot be read fail the replay: it is not made as though there
+// were none.
+func TestAReplayWhoseRulesCannotBeReadIsNotMade(t *testing.T) {
+	f := newReplayFixture(t, answer("done", 10, 5))
+	f.store.settings = gatedSettings(f.run.TeamID)
+	f.replayer.rules = roles{err: errors.New("the store is down")}
+	if _, err := f.replayer.Replay(t.Context(), ReplayInput{
+		Store: f.store, Objects: f.objects, Run: f.run,
+		Messages: []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "go"}}}},
+	}); err == nil {
+		t.Error("a replay ran with its team's rules unread")
+	}
+	if n := len(f.model.requests()); n != 0 {
+		t.Errorf("the model was asked %d times", n)
+	}
+}
+
+// A try that calls no tool keeps an empty list of calls, never none.
+func TestAReplayWithNoCallKeepsAnEmptyList(t *testing.T) {
+	f := newReplayFixture(t, answer("done", 10, 5))
+	out := f.replay(t)
+	if out.Calls == nil || len(out.Calls) != 0 {
+		t.Errorf("calls = %#v, want an empty list", out.Calls)
+	}
+}
+
 // A trusted read-only tool a team rule denies is not made live in a
 // replay: the server sees no call.
 func TestAReplayKeepsADenyOnAServersRead(t *testing.T) {
@@ -346,7 +419,7 @@ func TestAReplayKeepsADenyOnAServersRead(t *testing.T) {
 		TeamID: f.run.TeamID, ApprovalMode: "writes", SearchProvider: "none",
 		CompactionMessages: 10, CompactionTokensMin: 50_000, CompactionTokensMax: 60_000,
 	}
-	f.replayer.roles = roles{rules: []db.ApprovalRule{{TargetKind: "tool", Target: "crm__lookup", Mode: "deny"}}}
+	f.replayer.rules = roles{rules: []db.ApprovalRule{{TargetKind: "tool", Target: "crm__lookup", Mode: "deny"}}}
 
 	out := f.replay(t)
 

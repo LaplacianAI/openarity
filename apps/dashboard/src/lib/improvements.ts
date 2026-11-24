@@ -376,6 +376,24 @@ export function replayOutcome(r: ImprovementReplayRun): ReplayOutcome {
   return { words, tone };
 }
 
+/**
+ * How long a change being tried may go with no try moving before the list
+ * stops reading it again: longer than one try may take (30 minutes at most).
+ */
+export const TRYING_QUIET_MS = 45 * 60_000;
+
+/** Whether a change is still being tried and a try moved within TRYING_QUIET_MS of now. */
+export function replayMoving(item: Improvement, now: number): boolean {
+  if (item.replay?.status !== "trying") return false;
+  let last = Date.parse(item.created_at);
+  for (const r of item.replay.runs) {
+    for (const at of [r.started_at, r.finished_at]) {
+      if (at) last = Math.max(last, Date.parse(at));
+    }
+  }
+  return now - last < TRYING_QUIET_MS;
+}
+
 /** Whether a run that went well goes wrong with the change. */
 export function replayWorse(r: ImprovementReplay | null | undefined): boolean {
   return !!r?.runs.some((x) => x.outcome === "broke");
@@ -392,7 +410,10 @@ export function replaySummary(r: ImprovementReplay): string {
       ? `Trying on past runs… ${finished} of ${total} tried`
       : "Trying on past runs…";
   }
-  if (r.status === "none") return "Not tried on any past run";
+  if (r.status === "none")
+    return r.runs.some((x) => x.status === "failed")
+      ? "Every try on a past run failed"
+      : "Not tried on any past run";
   const tally = new Map<ImprovementReplayOutcome, number>();
   for (const x of done) {
     const o = x.outcome ?? "unclear";

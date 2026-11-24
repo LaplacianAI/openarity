@@ -141,3 +141,15 @@ func TestATryIsReadBesideItsRunsOutcome(t *testing.T) {
 		}
 	}
 }
+
+// A try's calls are a list, even when none was made or a row kept none.
+func TestATryWithNoCallReadsAnEmptyList(t *testing.T) {
+	for _, trace := range []string{"", "null", " null ", "[]"} {
+		if got := string(callsOf([]byte(trace))); got != "[]" {
+			t.Errorf("callsOf(%q) = %s, want []", trace, got)
+		}
+	}
+	if got := string(callsOf([]byte(`[{"name":"a"}]`))); got != `[{"name":"a"}]` {
+		t.Errorf("a kept list = %s", got)
+	}
+}

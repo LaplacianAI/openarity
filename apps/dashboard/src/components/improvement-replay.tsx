@@ -162,10 +162,13 @@ export function TriedOnPastRuns({
   teamId,
   proposalId,
   replay,
+  stalled = false,
 }: {
   teamId: string;
   proposalId: string;
   replay: ImprovementReplay;
+  /** Still trying, with no try moving for a while: the page stopped checking. */
+  stalled?: boolean;
 }) {
   const worse = replayWorse(replay);
   return (
@@ -187,6 +190,11 @@ export function TriedOnPastRuns({
         )}
         <span>{replaySummary(replay)}</span>
       </p>
+      {stalled ? (
+        <p className="text-muted-foreground">
+          No try has moved for a while, so this page stopped checking. Reload to look again.
+        </p>
+      ) : null}
       {replay.runs.length > 0 ? (
         <ul className="space-y-2 pl-5">
           {replay.runs.map((r) => (

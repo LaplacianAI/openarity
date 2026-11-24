@@ -32,6 +32,7 @@ import {
   MARK_WORDS,
   missingWrites,
   patternWords,
+  replayMoving,
   replayWorse,
   SAVES_WORDS,
   scopeWords,
@@ -408,7 +409,12 @@ export function ImprovementCard({ teamId, item }: { teamId: string; item: Improv
       </div>
 
       {item.replay && item.replay.status !== "off" ? (
-        <TriedOnPastRuns teamId={teamId} proposalId={item.id} replay={item.replay} />
+        <TriedOnPastRuns
+          teamId={teamId}
+          proposalId={item.id}
+          replay={item.replay}
+          stalled={item.replay.status === "trying" && !replayMoving(item, Date.now())}
+        />
       ) : null}
 
       {item.watch ? <Watch watch={item.watch} goal={item.goal} saves={item.saves} /> : null}

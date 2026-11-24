@@ -152,6 +152,9 @@ func (v *replayView) summary() string {
 		}
 		return "trying on past runs…"
 	case "none":
+		if finished > 0 {
+			return "every try on a past run failed"
+		}
 		return "not tried on any past run"
 	}
 	var parts []string

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/improve"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
@@ -26,35 +28,32 @@ func (r *Replays) Queued(ctx context.Context, proposalID uuid.UUID) ([]uuid.UUID
 // so its step is never tried again, and a try whose error comes back is
 // for Fail.
 func (r *Replays) Try(ctx context.Context, proposalID, teamID, runID uuid.UUID) error {
-	var p db.ImprovementProposal
-	if err := r.again(ctx, func() (err error) {
-		p, err = r.store.GetImprovementProposal(ctx, db.GetImprovementProposalParams{ID: proposalID, TeamID: teamID})
-		return err
-	}); err != nil {
-		return fmt.Errorf("reading proposal %s: %w", proposalID, err)
+	p, err := retry(ctx, r, func(ctx context.Context) (db.ImprovementProposal, error) {
+		return r.store.GetImprovementProposal(ctx, db.GetImprovementProposalParams{ID: proposalID, TeamID: teamID})
+	})
+	if err != nil {
+		return fmt.Errorf("the try could not start: reading proposal %s: %w", proposalID, err)
 	}
 	if p.Status != proposalWaiting && p.Status != proposalApplied {
 		return r.stop(ctx, proposalID, whyDecided)
 	}
-	var s db.GetReplaySettingsRow
-	if err := r.again(ctx, func() (err error) {
-		s, err = r.store.GetReplaySettings(ctx, teamID)
-		return err
-	}); err != nil {
-		return fmt.Errorf("reading team %s's settings: %w", teamID, err)
+	s, err := retry(ctx, r, func(ctx context.Context) (db.GetReplaySettingsRow, error) {
+		return r.store.GetReplaySettings(ctx, teamID)
+	})
+	if err != nil {
+		return fmt.Errorf("the try could not start: reading team %s's settings: %w", teamID, err)
 	}
 	if !s.Improvement || !s.ImprovementReplay {
 		return r.stop(ctx, proposalID, whyOff)
 	}
-	var started int64
-	if err := r.again(ctx, func() (err error) {
-		started, err = r.store.ClaimReplay(ctx, db.StartReplayParams{
+	started, err := retry(ctx, r, func(ctx context.Context) (int64, error) {
+		return r.store.ClaimReplay(ctx, db.StartReplayParams{
 			ProposalID: proposalID, SourceRunID: runID, TeamID: teamID,
 			Since: midnight(r.now()), Daily: int32(s.ImprovementReplayDaily),
 		})
-		return err
-	}); err != nil {
-		return fmt.Errorf("starting a try of proposal %s: %w", proposalID, err)
+	})
+	if err != nil {
+		return fmt.Errorf("the try could not start: claiming it: %w", err)
 	}
 	if started == 0 {
 		return r.stop(ctx, proposalID, whyDailyCap)
@@ -78,35 +77,54 @@ func (r *Replays) Fail(ctx context.Context, proposalID, runID uuid.UUID, why err
 
 func (r *Replays) fail(ctx context.Context, proposalID, runID uuid.UUID, why error, spent agent.Usage) error {
 	msg := clip(why.Error(), errorBytes)
-	return r.again(ctx, func() error {
-		return r.store.FailReplay(context.WithoutCancel(ctx), db.FailReplayParams{
+	return r.write(ctx, func(ctx context.Context) error {
+		return r.store.FailReplay(ctx, db.FailReplayParams{
 			Error: &msg, InputTokens: int64(spent.InputTokens), OutputTokens: int64(spent.OutputTokens),
 			ProposalID: proposalID, SourceRunID: runID,
 		})
 	})
 }
 
-// again makes f up to storeTries times, pausing between, until it succeeds
-// or ctx is done.
-func (r *Replays) again(ctx context.Context, f func() error) error {
-	var err error
+// retry makes f up to storeTries times, pausing between, until it succeeds,
+// its error is one another try would not mend, or ctx is done.
+func retry[T any](ctx context.Context, r *Replays, f func(context.Context) (T, error)) (T, error) {
+	var (
+		v   T
+		err error
+	)
 	for i := range storeTries {
 		if i > 0 {
 			select {
 			case <-ctx.Done():
-				return errors.Join(err, ctx.Err())
+				return v, errors.Join(err, ctx.Err())
 			case <-time.After(r.pause):
 			}
 		}
-		if err = f(); err == nil {
-			return nil
+		if v, err = f(ctx); err == nil || permanent(err) {
+			return v, err
 		}
 	}
+	return v, err
+}
+
+// write is retry for what a try keeps: made whether or not the worker is
+// stopping, so what the try spent is not lost.
+func (r *Replays) write(ctx context.Context, f func(context.Context) error) error {
+	_, err := retry(context.WithoutCancel(ctx), r, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, f(ctx)
+	})
 	return err
 }
 
+// permanent is an error another try would meet again.
+func permanent(err error) bool {
+	var pg *pgconn.PgError
+	return errors.Is(err, pgx.ErrNoRows) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &pg) && pg.Code[:2] == "23")
+}
+
 func (r *Replays) stop(ctx context.Context, proposalID uuid.UUID, why string) error {
-	if err := r.again(ctx, func() error {
+	if err := r.write(ctx, func(ctx context.Context) error {
 		return r.store.SkipQueuedReplays(ctx, db.SkipQueuedReplaysParams{SkipWhy: &why, ProposalID: proposalID})
 	}); err != nil {
 		return fmt.Errorf("stopping proposal %s's tries: %w", proposalID, err)
@@ -237,7 +255,7 @@ func (r *Replays) finish(ctx context.Context, p db.ImprovementProposal, runID uu
 		}
 	}
 	row.Replayed = &replayed
-	if err := r.again(ctx, func() error { return r.store.FinishReplay(context.WithoutCancel(ctx), row) }); err != nil {
+	if err := r.write(ctx, func(ctx context.Context) error { return r.store.FinishReplay(ctx, row) }); err != nil {
 		return fmt.Errorf("writing a try of proposal %s: %w", p.ID, err)
 	}
 	return nil

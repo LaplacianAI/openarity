@@ -48,7 +48,7 @@ export function ReplayFields({
           <Field
             label="Tokens for one try"
             htmlFor="settings-replay-tokens"
-            hint={`The most one try may spend, checked as each reply from the model comes back: the reply that goes past it still counts, and the try stops there. A try that needs more is stopped and counted as “could not tell”, so a change that makes runs run away cannot run up the bill. Judging the try is not counted here. From ${REPLAY.tokens.min.toLocaleString("en-US")} to ${REPLAY.tokens.max.toLocaleString("en-US")}.`}
+            hint={`The most one try may spend, checked as each reply from the model comes back: the reply that goes past it still counts, and the try stops there; a look-up that reply asked for may still run, but nothing is ever changed or sent. A try that needs more is stopped and counted as “could not tell”, so a change that makes runs run away cannot run up the bill. Judging the try is not counted here. From ${REPLAY.tokens.min.toLocaleString("en-US")} to ${REPLAY.tokens.max.toLocaleString("en-US")}.`}
             error={problems.replayTokens}
           >
             <Unit

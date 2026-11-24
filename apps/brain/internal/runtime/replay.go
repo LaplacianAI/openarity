@@ -111,7 +111,7 @@ var (
 // replay holds as stand-ins.
 type Replayer struct {
 	mcp      MCPClients
-	roles    ReplayRules
+	rules    ReplayRules
 	graph    *GraphDeps
 	search   *SearchDeps
 	fetch    *FetchDeps
@@ -120,11 +120,12 @@ type Replayer struct {
 	now      func() time.Time
 }
 
-// NewReplayer replays with roles telling who each past run acted for.
-func NewReplayer(m MCPClients, roles ReplayRules, g *GraphDeps, search *SearchDeps, fetch *FetchDeps,
+// NewReplayer replays with rules telling who each past run acted for and
+// what the team's approvals make of a read.
+func NewReplayer(m MCPClients, rules ReplayRules, g *GraphDeps, search *SearchDeps, fetch *FetchDeps,
 	r *agent.Runner, endpoint agent.Endpoint,
 ) *Replayer {
-	return &Replayer{mcp: m, roles: roles, graph: g, search: search, fetch: fetch, runner: r, endpoint: endpoint, now: time.Now}
+	return &Replayer{mcp: m, rules: rules, graph: g, search: search, fetch: fetch, runner: r, endpoint: endpoint, now: time.Now}
 }
 
 // ReplayInput is one past run to replay, and the harness to replay it on.
@@ -146,7 +147,7 @@ type ReplayInput struct {
 func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error) {
 	run, msgs, lim := in.Run, in.Messages, in.Limits
 	b := &Builder{
-		store: in.Store, objects: in.Objects, roles: p.roles,
+		store: in.Store, objects: in.Objects, rules: p.rules,
 		mcp: p.mcp, graph: p.graph, search: p.search, fetch: p.fetch,
 		connectTimeout: connectTimeout, replay: true,
 	}
@@ -182,9 +183,10 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 		runCtx, cancel = context.WithTimeoutCause(runCtx, lim.Time, ErrReplayTime)
 		defer cancel()
 	}
-	// The token cap is checked as each model reply's usage arrives: the
-	// reply that crosses it is spent, and the try stops there, before any
-	// call it asked for is made. A try may so spend one reply past the cap.
+	// The token cap is checked as each model reply's usage arrives, beside
+	// the run: the reply that crosses it is spent, and the try is stopped.
+	// A try may so spend one reply past the cap, and a read that reply asked
+	// for may still be made; a call that is not a read never is.
 	events := make(chan agent.Event, 16)
 	watched := make(chan struct{})
 	var spent int
@@ -195,9 +197,7 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 		defer close(watched)
 		for e := range events {
 			if u, ok := e.(agent.UsageEvent); ok {
-				used.InputTokens += u.Usage.InputTokens
-				used.OutputTokens += u.Usage.OutputTokens
-				used.CachedInputTokens += u.Usage.CachedInputTokens
+				used.Add(u.Usage)
 				spent += u.Usage.InputTokens + u.Usage.OutputTokens
 				if lim.Tokens > 0 && spent >= lim.Tokens {
 					stop(ErrReplayTokens)
@@ -215,12 +215,12 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 	}()
 	out.Elapsed = p.now().Sub(start)
 	out.Output, out.Usage, out.Steps, out.Calls = res.Output, res.Usage, res.Steps, r.served()
+	if used.InputTokens+used.OutputTokens > out.Usage.InputTokens+out.Usage.OutputTokens {
+		out.Usage = used
+	}
 	if err != nil {
 		if cause := context.Cause(runCtx); errors.Is(cause, ErrReplayTokens) || errors.Is(cause, ErrReplayTime) {
 			out.Over = cause
-			if used.InputTokens+used.OutputTokens > out.Usage.InputTokens+out.Usage.OutputTokens {
-				out.Usage = used
-			}
 			return out, nil
 		}
 		return out, err
@@ -313,7 +313,7 @@ func (r *replaying) note(s Served) {
 func (r *replaying) served() []Served {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]Served(nil), r.calls...)
+	return append([]Served{}, r.calls...)
 }
 
 func (r *replaying) wrapAll(ts []agent.Tool) []agent.Tool {
@@ -345,6 +345,10 @@ func (r *replaying) wrap(t agent.Tool) agent.Tool {
 		if live == nil {
 			r.note(Served{Name: t.Name, How: ServedNotMade, Arguments: string(args), Error: notMade})
 			return agent.ToolResult{}, toModel(notMade)
+		}
+		// A try stopped at its limits makes no new read.
+		if err := ctx.Err(); err != nil {
+			return agent.ToolResult{}, err
 		}
 		res, ok, err := live(ctx, args)
 		if !ok {

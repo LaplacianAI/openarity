@@ -151,8 +151,9 @@ time. A run that cannot be rebuilt as it was (a call too long to have been kept
 whole, or a conversation compacted since) is not tried, and says why. What a
 try may spend (tokens and minutes) and how many tries the team runs a day are
 team settings; past the daily count a change is shown untried. The tokens are
-checked as each model reply comes back, so a try may spend one reply past them,
-and judging it is not counted. A team rule that denies or asks about a tool
+checked as each model reply comes back, so a try may spend one reply past them
+(and make a read that reply asked for, never anything else), and judging it is
+not counted. A team rule that denies or asks about a tool
 keeps a replay from making that call too.
 
 **Approvals** is the queue of people who wrote in on a channel and have not been

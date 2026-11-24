@@ -53,6 +53,14 @@ func TestTheReplaySummaryNamesEachState(t *testing.T) {
 	}
 }
 
+// A proposal whose every try failed says so, not that none was tried.
+func TestTheReplaySummarySaysEveryTryFailed(t *testing.T) {
+	v := &replayView{Status: "none", Runs: []replayRunView{{Status: "failed"}, {Status: "skipped"}}}
+	if got, want := v.summary(), "every try on a past run failed"; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
+
 // While some tries are still to run, the summary says how many are done.
 func TestTheReplaySummaryCountsTriesWhileTrying(t *testing.T) {
 	fixed := "fixed"

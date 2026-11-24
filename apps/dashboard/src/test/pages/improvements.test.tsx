@@ -656,12 +656,19 @@ describe("tried on past runs", () => {
       vi.useRealTimers();
     });
     let finished = false;
+    const now = new Date().toISOString();
     const trying = proposal("p1", {
       replay: {
         status: "trying",
         runs: [
-          runOf("r1", "bad", "good"),
-          { ...runOf("r2", "good", "good"), status: "queued", outcome: null, after: null },
+          runOf("r1", "bad", "good", { started_at: now, finished_at: now }),
+          {
+            ...runOf("r2", "good", "good"),
+            status: "trying",
+            outcome: null,
+            after: null,
+            started_at: now,
+          },
         ],
       },
     });
@@ -679,10 +686,47 @@ describe("tried on past runs", () => {
     ) as HTMLElement;
     const region = () => within(card).getByRole("region", { name: "Tried on past runs" });
     expect(region()).toHaveTextContent("Trying on past runs… 1 of 2 tried");
+    expect(region()).not.toHaveTextContent("stopped checking");
 
     finished = true;
     await vi.advanceTimersByTimeAsync(6_000);
     await waitFor(() => expect(region()).toHaveTextContent("Tried on 2 past runs"));
+  });
+
+  it("stops reading a change whose tries stopped moving, and says so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const long = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    const stuck = proposal("p1", {
+      created_at: long,
+      replay: {
+        status: "trying",
+        runs: [
+          {
+            ...runOf("r1", "bad", "good"),
+            status: "trying",
+            outcome: null,
+            after: null,
+            started_at: long,
+          },
+        ],
+      },
+    });
+    const seen = brain({ ...team(APPROVER), ...agents, [LIST]: { body: { items: [stuck] } } });
+    at();
+    const card = (await screen.findByText(/Closed the ticket/)).closest(
+      "[data-improvement]",
+    ) as HTMLElement;
+    expect(within(card).getByRole("region", { name: "Tried on past runs" })).toHaveTextContent(
+      "No try has moved for a while, so this page stopped checking",
+    );
+    const reads = () =>
+      seen.filter((s) => s.path.includes("status=waiting") && !s.path.includes("limit=")).length;
+    const before = reads();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(reads()).toBe(before);
   });
 
   it("says how a waiting change fared, warns when one that went well now goes wrong, and shows a try's steps", async () => {

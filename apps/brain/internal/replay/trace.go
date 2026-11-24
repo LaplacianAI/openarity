@@ -38,10 +38,14 @@ func ending(res runtime.Replayed) string {
 	return fmt.Sprintf("status succeeded; %d steps; tokens in %d, out %d", res.Steps, res.Usage.InputTokens, res.Usage.OutputTokens)
 }
 
-// traceOf is the try's calls as its row keeps them: whole when they fit in
-// traceBytes, else the first of them that do, so a long try keeps how it
-// began.
+// traceOf is the try's calls as its row keeps them, a JSON list: whole
+// when they fit in traceBytes, else the first of them that do, so a long try
+// keeps how it began.
 func traceOf(calls []runtime.Served) []byte {
+	if len(calls) == 0 {
+		// Never JSON null: a reader counts the calls.
+		return []byte("[]")
+	}
 	kept := calls
 	for {
 		b, err := json.Marshal(kept)

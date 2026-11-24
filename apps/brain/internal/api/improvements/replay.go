@@ -1,6 +1,7 @@
 package improvements
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -257,6 +258,15 @@ func (h *handler) replay(w http.ResponseWriter, r *http.Request) {
 	}
 	api.WriteJSON(w, h.logger, http.StatusOK, replayTraceView{
 		Run:    runRef{ID: runID, Readable: true, SessionID: &visible[0].SessionID},
-		Answer: row.Answer, Calls: row.Trace,
+		Answer: row.Answer, Calls: callsOf(row.Trace),
 	})
+}
+
+// callsOf is a try's kept calls as a list, whatever kept them: a reader
+// counts them, so never null.
+func callsOf(trace []byte) json.RawMessage {
+	if t := bytes.TrimSpace(trace); len(t) == 0 || bytes.Equal(t, []byte("null")) {
+		return json.RawMessage("[]")
+	}
+	return trace
 }

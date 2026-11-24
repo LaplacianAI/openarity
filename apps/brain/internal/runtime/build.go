@@ -66,9 +66,9 @@ type Builder struct {
 	workshop   Workshop
 	registry   Registry
 	approvals  ApprovalStore
-	// roles tells a replay who the past run acted for and the team's rules;
-	// a run reads both from its policy.
-	roles          ReplayRules
+	// rules tells a replay who the past run acted for and the team's
+	// approval rules; a run reads both from its policy.
+	rules          ReplayRules
 	note           func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error
 	connectTimeout time.Duration
 	// replay builds a past run again for a replay (replay.go): the tools a
@@ -164,7 +164,12 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		return Built{}, err
 	}
 	built.Spec.Compaction = compactionFor(settings, budgetOf(run.TokenBudget))
-	if built.live, err = b.replayRules(ctx, run, settings); err != nil {
+	// Who the run acts for: a call's class, and a replay's reads, turn on it.
+	actor, err := b.actorFor(ctx, run, gates)
+	if err != nil {
+		return Built{}, err
+	}
+	if built.live, err = b.replayRules(ctx, run, settings, actor); err != nil {
 		return Built{}, err
 	}
 
@@ -260,11 +265,6 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 
 	if web {
-		actor, err := b.actorFor(ctx, run, gates)
-		if err != nil {
-			built.Close()
-			return Built{}, err
-		}
 		// Reaching the internet is a read for a person who is there, and a
 		// write for a guest or a run nobody is present for.
 		egress := approval.ClassFor(approval.Egress, actor)

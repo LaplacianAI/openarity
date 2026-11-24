@@ -107,10 +107,11 @@ func (j *Job) replay(ctx dbos.Context, in string) (string, error) {
 				// The worker is stopping: the try is picked up again.
 				return in, err
 			}
-			// Not left trying: the try failed, and the next is tried.
+			// Not left trying: the try failed, and the next is tried. Fail
+			// makes its own write again, so the step is run once.
 			if _, ferr := dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
 				return runID.String(), j.replays.Fail(sctx, proposalID, runID, err)
-			}, storeStep("fail "+runID.String())...); ferr != nil {
+			}, dbos.WithStepName("fail "+runID.String())); ferr != nil {
 				return in, errors.Join(err, ferr)
 			}
 		}

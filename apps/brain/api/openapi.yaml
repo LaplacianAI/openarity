@@ -7047,7 +7047,7 @@ components:
           format: int32
           minimum: 20000
           maximum: 1000000
-          description: The tokens one try may spend, checked as each model reply comes back; the reply that crosses it is counted, the try stops before any call it asked for, and counts as could not tell. Judging the try is not counted. 200000 until set.
+          description: The tokens one try may spend, checked as each model reply comes back; the reply that crosses it is counted and the try is stopped, so a read that reply asked for may still be made (never a call that is not a read), and it counts as could not tell. Judging the try is not counted. 200000 until set.
         improvement_replay_minutes:
           type: integer
           format: int32

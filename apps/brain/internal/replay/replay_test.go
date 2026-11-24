@@ -680,8 +680,10 @@ func TestATraceKeepsHowALongTryBegan(t *testing.T) {
 	if err := json.Unmarshal(b, &kept); err != nil || len(b) > traceBytes || len(kept) == 0 || kept[0].Name != "c0" {
 		t.Errorf("kept %d calls in %d bytes (%v)", len(kept), len(b), err)
 	}
-	if string(traceOf(nil)) != "null" && string(traceOf(nil)) != "[]" {
-		t.Errorf("no calls = %s", traceOf(nil))
+	for _, none := range [][]runtime.Served{nil, {}} {
+		if got := string(traceOf(none)); got != "[]" {
+			t.Errorf("no calls = %s, want []", got)
+		}
 	}
 }
 
@@ -709,6 +711,26 @@ func TestAReplayInputIsProposalAndTeam(t *testing.T) {
 	for _, bad := range []string{"", "nope", uuid.NewString(), "x:" + uuid.NewString()} {
 		if _, _, err := parseInput(bad); err == nil {
 			t.Errorf("parseInput(%q) took it", bad)
+		}
+	}
+}
+
+// A read another try would not mend is made once; one that might is made
+// again.
+func TestARetryStopsAtAPermanentError(t *testing.T) {
+	r := &Replays{pause: 0}
+	for _, tc := range []struct {
+		err   error
+		tries int
+	}{
+		{pgx.ErrNoRows, 1},
+		{context.Canceled, 1},
+		{errors.New("the connection reset"), storeTries},
+	} {
+		n := 0
+		_, err := retry(t.Context(), r, func(context.Context) (int, error) { n++; return 0, tc.err })
+		if !errors.Is(err, tc.err) || n != tc.tries {
+			t.Errorf("%v: made %d times (%v), want %d", tc.err, n, err, tc.tries)
 		}
 	}
 }

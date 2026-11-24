@@ -4484,7 +4484,7 @@ type TeamSettings struct {
 	// ImprovementReplayRuns The past runs a proposal is tried on: half that it cites, half recent good ones of its agent. 4 until set.
 	ImprovementReplayRuns *int32 `json:"improvement_replay_runs,omitempty" yaml:"improvement_replay_runs,omitempty"`
 
-	// ImprovementReplayTokens The tokens one try may spend, checked as each model reply comes back; the reply that crosses it is counted, the try stops before any call it asked for, and counts as could not tell. Judging the try is not counted. 200000 until set.
+	// ImprovementReplayTokens The tokens one try may spend, checked as each model reply comes back; the reply that crosses it is counted and the try is stopped, so a read that reply asked for may still be made (never a call that is not a read), and it counts as could not tell. Judging the try is not counted. 200000 until set.
 	ImprovementReplayTokens *int32 `json:"improvement_replay_tokens,omitempty" yaml:"improvement_replay_tokens,omitempty"`
 
 	// ImprovementSampleShare The percentage of runs judged done that are digested anyway, for contrast. 10 until set.

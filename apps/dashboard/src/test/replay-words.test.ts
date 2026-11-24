@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { ImprovementReplay, ImprovementReplayRun } from "@/api/types";
-import { replayCost, replayOutcome, replaySummary, replayWorse } from "@/lib/improvements";
+import {
+  replayCost,
+  replayMoving,
+  replayOutcome,
+  replaySummary,
+  replayWorse,
+  TRYING_QUIET_MS,
+} from "@/lib/improvements";
 
 /** The outcome the brain gives a done try, as its fixtures carry it. */
 function outcomeOf(
@@ -92,17 +99,45 @@ describe("the tries", () => {
     expect(replaySummary({ status, runs: [] })).toMatch(words);
   });
 
+  it("say every try failed when none came to an outcome", () => {
+    expect(
+      replaySummary({ status: "none", runs: [tried("bad", null, { status: "failed" })] }),
+    ).toBe("Every try on a past run failed");
+  });
+
   it("say how many are tried while some are still to run", () => {
     expect(
       replaySummary({
         status: "trying",
         runs: [
           tried("bad", "good"),
+          tried("bad", null, { status: "failed" }),
           tried("good", null, { status: "trying" }),
           tried("good", null, { status: "queued" }),
           tried("bad", null, { status: "skipped" }),
         ],
       }),
-    ).toBe("Trying on past runs… 1 of 3 tried");
+    ).toBe("Trying on past runs… 2 of 4 tried");
+  });
+});
+
+describe("a change being tried", () => {
+  const at = Date.parse("2026-11-24T12:00:00Z");
+  const item = (started: string, status: "trying" | "done" = "trying") =>
+    ({
+      created_at: "2026-11-24T10:00:00Z",
+      replay: { status, runs: [tried("bad", null, { status: "trying", started_at: started })] },
+    }) as unknown as Parameters<typeof replayMoving>[0];
+
+  it("moves while a try began within the quiet time", () => {
+    expect(replayMoving(item("2026-11-24T11:50:00Z"), at)).toBe(true);
+  });
+
+  it("stops moving once no try has for longer than one may take", () => {
+    expect(replayMoving(item(new Date(at - TRYING_QUIET_MS - 1).toISOString()), at)).toBe(false);
+  });
+
+  it("is not moving once its tries are done", () => {
+    expect(replayMoving(item("2026-11-24T11:59:00Z", "done"), at)).toBe(false);
   });
 });

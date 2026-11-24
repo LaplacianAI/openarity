@@ -135,7 +135,7 @@ func rulesOf(rows []db.ApprovalRule) []approval.Rule {
 // read be made with no one asked: a rule that denies it or asks about it
 // keeps it from being made live. Nil outside a replay; with nothing to read
 // the rules from, no gated read is made.
-func (b *Builder) replayRules(ctx context.Context, run db.Run, s db.TeamSetting) (func(target) bool, error) {
+func (b *Builder) replayRules(ctx context.Context, run db.Run, s db.TeamSetting, actor approval.Actor) (func(target) bool, error) {
 	if !b.replay {
 		return nil, nil
 	}
@@ -143,28 +143,20 @@ func (b *Builder) replayRules(ctx context.Context, run db.Run, s db.TeamSetting)
 	if mode == "" || mode == approval.Off {
 		return func(target) bool { return true }, nil
 	}
-	if b.roles == nil {
+	if b.rules == nil {
 		return func(target) bool { return false }, nil
 	}
-	rows, err := b.roles.ListApprovalRules(ctx, run.TeamID)
+	rows, err := b.rules.ListApprovalRules(ctx, run.TeamID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the team's approval rules: %w", err)
 	}
-	actor, err := b.actorFor(ctx, run, nil)
-	if err != nil {
-		return nil, err
-	}
 	rules := rulesOf(rows)
-	return func(at target) bool {
-		return approval.Decide(approval.Input{
-			Tool: at.name, Server: at.server, Class: at.class, Mode: mode, Rules: rules, Actor: actor,
-		}).Verdict == approval.Allow
-	}, nil
+	return func(at target) bool { return decide(mode, rules, actor, at).Verdict == approval.Allow }, nil
 }
 
 // allows is whether a replay may make the read at live; outside a replay,
 // every read.
-func (b Built) allows(at target) bool { return b.live == nil || b.live(at) }
+func (b *Built) allows(at target) bool { return b.live == nil || b.live(at) }
 
 // canApproveOwn is whether the run's person may approve the calls made for
 // them. A run with nobody behind it, or someone no longer in the team, may
@@ -205,7 +197,7 @@ func (b *Builder) actorFor(ctx context.Context, run db.Run, p *policy) (approval
 	if !b.replay {
 		return p.actorOf(), nil
 	}
-	canSelf, err := canApproveOwn(ctx, b.roles, run)
+	canSelf, err := canApproveOwn(ctx, b.rules, run)
 	if err != nil {
 		return approval.Actor{}, err
 	}
@@ -231,9 +223,13 @@ func (p *policy) gate(t agent.Tool, at target) (agent.Tool, *Unavailable) {
 	return p.wrap(t, at, p.decide(at))
 }
 
-func (p *policy) decide(at target) approval.Decision {
+func (p *policy) decide(at target) approval.Decision { return decide(p.mode, p.rules, p.actor, at) }
+
+// decide is what the team's approvals make of a call to at: a run's gate
+// and a replay's reads both ask it.
+func decide(mode approval.Mode, rules []approval.Rule, actor approval.Actor, at target) approval.Decision {
 	return approval.Decide(approval.Input{
-		Tool: at.name, Server: at.server, Class: at.class, Mode: p.mode, Rules: p.rules, Actor: p.actor,
+		Tool: at.name, Server: at.server, Class: at.class, Mode: mode, Rules: rules, Actor: actor,
 	})
 }
 
