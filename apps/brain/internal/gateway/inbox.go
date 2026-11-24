@@ -271,7 +271,7 @@ func deliverOne(ctx context.Context, q Queries, ch Channel, m Delivery, via stri
 
 	for _, f := range m.Files {
 		if _, err := q.CreateAttachment(ctx, db.CreateAttachmentParams{
-			MessageID:  messageID,
+			MessageID:  &messageID,
 			SessionID:  session.ID,
 			ObjectKey:  f.ObjectKey,
 			TeamID:     ch.TeamID,

@@ -134,6 +134,8 @@ apps/brain/
     servers.go         a run's MCP servers, each opened by the first call to one of its tools
     attachments.go     attachments() and read_attachment(id): a conversation's files, handed over by reference
     resolve.go         Resolving: the model client that fetches those files' bytes for each request
+    keep.go            a tool's file kept as its conversation's attachment: reserved, sealed, its call recorded
+    capped.go          an MCP client's answers capped at 40 MiB, one large answer read at a time per worker
     history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
     gate.go            tool-call approvals: each MCP and web tool's verdict when the run is built; a call that asks makes nothing, and the model says so in its own words

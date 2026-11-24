@@ -20,7 +20,7 @@ import (
 func seedAttachment(f *fixture, filename, mediaType string, body []byte) db.Attachment {
 	row := db.Attachment{
 		ID:         uuid.New(),
-		MessageID:  f.store.messages[0].ID,
+		MessageID:  &f.store.messages[0].ID,
 		SessionID:  f.sessionID,
 		ObjectKey:  "teams/" + f.teamID.String() + "/objects/" + uuid.NewString(),
 		KeyVersion: 1,
@@ -64,7 +64,7 @@ func TestListingASessionsAttachments(t *testing.T) {
 		t.Fatalf("%d items, want 1", len(page.Items))
 	}
 	got := page.Items[0]
-	if got.ID != row.ID || got.MessageID != row.MessageID {
+	if got.ID != row.ID || got.MessageID != *row.MessageID {
 		t.Errorf("item = %+v", got)
 	}
 	if got.Filename != "label.png" || got.MediaType != "image/png" || got.SizeBytes != 3 {
@@ -91,6 +91,28 @@ func TestListingAttachmentsIsScopedToTheSession(t *testing.T) {
 	}
 	if got := f.store.attachmentListArgs[0].SessionID; got != f.sessionID {
 		t.Errorf("listed session %s, want %s", got, f.sessionID)
+	}
+	// A tool's file has no message, and every file listed here names one.
+	if !f.store.attachmentListArgs[0].PeopleOnly {
+		t.Error("listed a tool's files too, which have no message to name")
+	}
+}
+
+// A row with no message, which people_only promises never to list, is a 500
+// rather than a panic in the view.
+func TestAListedFileWithNoMessageIsAFailureNotAPanic(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	row := seedAttachment(f, "bundle.zip", "application/zip", []byte("PK"))
+	for i := range f.store.attachments {
+		if f.store.attachments[i].ID == row.ID {
+			f.store.attachments[i].MessageID = nil
+		}
+	}
+
+	if rec := f.get(t, f.sessionAttachments()); rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
 	}
 }
 

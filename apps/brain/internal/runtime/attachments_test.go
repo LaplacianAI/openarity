@@ -16,7 +16,7 @@ import (
 
 func attachedFile(session uuid.UUID, name, mediaType string, size int64) db.Attachment {
 	return db.Attachment{
-		ID: uuid.New(), SessionID: session, TeamID: uuid.New(), MessageID: uuid.New(),
+		ID: uuid.New(), SessionID: session, TeamID: uuid.New(), MessageID: new(uuid.New()),
 		ObjectKey: "k-" + name, MediaType: mediaType, SizeBytes: size, Filename: name,
 		CreatedAt: time.Date(2026, 11, 14, 9, 12, 0, 0, time.UTC),
 	}
@@ -43,6 +43,42 @@ func TestARunInAConversationWithNoFilesHasNoFileTools(t *testing.T) {
 		if tl.Name == AttachmentsToolName || tl.Name == ReadAttachmentToolName {
 			t.Fatalf("%s is bound in a conversation with no files", tl.Name)
 		}
+	}
+}
+
+// A run whose MCP tools' files are kept may be handed its first file mid-run,
+// so it can read files from the start; without MCP tools, or with no keeper,
+// a conversation with no files still binds none.
+func TestARunWhoseToolsFilesAreKeptCanReadThemFromTheStart(t *testing.T) {
+	bound := func(b Built) bool {
+		for _, tl := range b.Spec.Tools {
+			if tl.Name == ReadAttachmentToolName {
+				return true
+			}
+		}
+		return false
+	}
+	server := serve(t, "search")
+	for name, tc := range map[string]struct {
+		keep, tools, want bool
+	}{
+		"kept, with MCP tools":    {true, true, true},
+		"kept, with no MCP tools": {true, false, false},
+		"not kept":                {false, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.run.SessionID = uuid.New()
+			if tc.tools {
+				f.store.grants = []db.ListGrantedMCPServersRow{urlServer("web", server.url, true, "search")}
+			}
+			if tc.keep {
+				f.builder.WithToolFiles(ToolFiles{Store: &fileRows{}, Objects: f.objects, Logger: quietLogger()})
+			}
+			if got := bound(f.build(t)); got != tc.want {
+				t.Errorf("read_attachment bound = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -104,6 +140,36 @@ func TestAttachmentsListsTheConversationsFiles(t *testing.T) {
 	}
 	if g := got.Files[1]; g.Filename != "invoice.pdf" || g.MediaType != "application/pdf" || g.Size != "2.5 MB" || g.Sent != "2026-11-14T09:12:00Z" {
 		t.Errorf("the PDF is listed as %+v", g)
+	}
+}
+
+// A file a tool returned is listed with a person's, each saying who it came
+// from, and the runtime asks for both.
+func TestAttachmentsSaysWhoEachFileCameFrom(t *testing.T) {
+	shot := attachedFile(uuid.Nil, "screen.png", "image/png", 10)
+	bundle := attachedFile(uuid.Nil, "bundle.zip", "application/zip", 10)
+	bundle.MessageID, bundle.RunID, bundle.Tool, bundle.CallID = nil, new(uuid.New()), new("mail__fetch"), new("c1")
+	f, built := fileFixture(t, shot, bundle)
+
+	out, err := tool(t, built, AttachmentsToolName).Invoke(t.Context(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Files []listedFile `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	from := map[string]string{}
+	for _, g := range got.Files {
+		from[g.Filename] = g.From
+	}
+	if from["screen.png"] != "a person" || from["bundle.zip"] != "the tool mail__fetch" {
+		t.Errorf("listed from %v, want the person's and the tool's", from)
+	}
+	if f.store.peopleOnly {
+		t.Error("the runtime asked for people's files alone, and would never list a tool's")
 	}
 }
 

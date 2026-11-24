@@ -114,7 +114,7 @@ type ApprovalRule struct {
 
 type Attachment struct {
 	ID         uuid.UUID
-	MessageID  uuid.UUID
+	MessageID  *uuid.UUID
 	ObjectKey  string
 	KeyVersion int32
 	MediaType  string
@@ -123,6 +123,9 @@ type Attachment struct {
 	CreatedAt  time.Time
 	SessionID  uuid.UUID
 	TeamID     uuid.UUID
+	RunID      *uuid.UUID
+	Tool       *string
+	CallID     *string
 }
 
 type Channel struct {

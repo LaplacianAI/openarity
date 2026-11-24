@@ -202,7 +202,8 @@ func (f *execFixture) executor(t *testing.T, clients agent.ClientFactory, endpoi
 		t.Fatalf("agent.New: %v", err)
 	}
 	builder := NewBuilder(f.store, f.objects, &fakeClients{client: &http.Client{}},
-		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, f.search, nil)
+		&GraphDeps{Search: f.graph, Embed: &fakeEmbedder{}, Store: f.store}, f.search, nil).
+		WithToolFiles(ToolFiles{Store: f.store, Objects: f.objects, Logger: quietLogger()})
 	e := NewExecutor(f.store, builder, runner, endpoint, f.sessions, quietLogger()).WithClock(func() time.Time { return fixedNow })
 	e.every = 20 * time.Millisecond
 	return e
@@ -381,8 +382,10 @@ func TestARunThatCallsAToolRecordsTheCallAndTheResult(t *testing.T) {
 	if got := kinds(events); !slices.Equal(got, want) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
-	if tools := payload[startedPayload](t, events[0]).Tools; !slices.Equal(tools, []string{"fetch", "graph"}) {
-		t.Errorf("started lists tools %v, want [fetch graph]", tools)
+	// A run with MCP tools whose files are kept can read them from its start.
+	want = []string{"fetch", "graph", AttachmentsToolName, ReadAttachmentToolName}
+	if tools := payload[startedPayload](t, events[0]).Tools; !slices.Equal(tools, want) {
+		t.Errorf("started lists tools %v, want %v", tools, want)
 	}
 	if result := payload[toolResult](t, events[4]); result.ID != "c1" || result.Output != "fetch ran" {
 		t.Errorf("tool_result = %+v", result)
@@ -390,15 +393,20 @@ func TestARunThatCallsAToolRecordsTheCallAndTheResult(t *testing.T) {
 	server.waitClosed(t, 1)
 }
 
-// An image an MCP tool returns reaches the model on its next request, in the
-// turn after the tool's result, as an image: not "omitted".
-func TestAnImageAnMCPToolReturnsReachesTheModel(t *testing.T) {
+// A tool's files are kept as the conversation's attachments, with the call
+// as their source and their type read from their bytes: the model reads the
+// image it returned, its bytes fetched for the request, and is told the zip
+// by its id; the saved transcript names both and holds neither's bytes.
+func TestAnMCPToolsFilesAreKeptAndTheImageReachesTheModel(t *testing.T) {
 	model := newScripted(callTool("c1", "chart", `{}`), answer("a rising line", 10, 5))
 	f := newExecFixture(t, model)
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+	zip := []byte("PK\x03\x04the-bundle")
 	server := serveAnswering(t, map[string][]sdk.Content{"chart": {
 		&sdk.TextContent{Text: "the chart"},
 		&sdk.ImageContent{Data: png, MIMEType: "image/png"},
+		// Declared as a PNG; kept as what its bytes are.
+		&sdk.EmbeddedResource{Resource: &sdk.ResourceContents{URI: "x://plots/bundle.png", MIMEType: "image/png", Blob: zip}},
 	}})
 	var id uuid.UUID
 	if err := f.raw.QueryRow(t.Context(),
@@ -412,6 +420,42 @@ func TestAnImageAnMCPToolReturnsReachesTheModel(t *testing.T) {
 	f.mustExecute(t)
 
 	wantStatus(t, f.row(t), "succeeded", "")
+	rows, err := f.raw.Query(t.Context(), `
+		SELECT id, filename, media_type, size_bytes, tool, call_id, message_id IS NULL, object_key
+		FROM attachments WHERE run_id = $1 ORDER BY filename`, f.run)
+	if err != nil {
+		t.Fatalf("reading the kept files: %v", err)
+	}
+	type kept struct {
+		id                          uuid.UUID
+		name, kind, tool, call, key string
+		size                        int64
+		noMessage                   bool
+	}
+	var files []kept
+	for rows.Next() {
+		var k kept
+		if err := rows.Scan(&k.id, &k.name, &k.kind, &k.size, &k.tool, &k.call, &k.noMessage, &k.key); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, k)
+	}
+	if len(files) != 2 {
+		t.Fatalf("kept %d files, want the image and the bundle", len(files))
+	}
+	bundle, image := files[0], files[1]
+	if bundle.name != "bundle.png" || bundle.kind != "application/zip" || image.name != "image-1.png" || image.kind != "image/png" {
+		t.Errorf("kept %+v and %+v, want each named and typed by its bytes", bundle, image)
+	}
+	for _, k := range files {
+		if k.tool != "chart" || k.call != "c1" || !k.noMessage {
+			t.Errorf("%s came from %q call %q (no message: %v), want the chart call", k.name, k.tool, k.call, k.noMessage)
+		}
+		if got := f.objects.data[k.key]; got == "" {
+			t.Errorf("%s's bytes were not stored", k.name)
+		}
+	}
+
 	reqs := f.model.requests()
 	if len(reqs) != 2 {
 		t.Fatalf("%d model requests, want 2", len(reqs))
@@ -426,20 +470,28 @@ func TestAnImageAnMCPToolReturnsReachesTheModel(t *testing.T) {
 			attached = &msgs[i]
 		}
 	}
-	if result == nil || result.Text() != "the chart\n[attached image-1.png: image/png, 8 bytes]" {
-		t.Fatalf("the tool's result reached the model as %+v", result)
+	want := "the chart\n[attached image-1.png: image/png, 8 bytes, file " + image.id.String() + "]\n" +
+		"[bundle.png: said to be image/png, but its bytes are application/zip, file " + bundle.id.String() + "]"
+	if result == nil || result.Text() != want {
+		t.Fatalf("the tool's result reached the model as %+v, want %q", result, want)
 	}
 	if attached == nil {
 		t.Fatal("no turn after the tool's result carried its image")
 	}
-	var image *agent.Content
+	var shown *agent.Content
 	for i, c := range attached.Content {
 		if c.Type == agent.ContentImage {
-			image = &attached.Content[i]
+			shown = &attached.Content[i]
 		}
 	}
-	if image == nil || image.Blob == nil || image.Blob.MediaType != "image/png" || !bytes.Equal(image.Blob.Data, png) {
-		t.Errorf("the turn after the result carried %+v, want the image's bytes", attached.Content)
+	if shown == nil || shown.Blob == nil || !bytes.Equal(shown.Blob.Data, png) {
+		t.Errorf("the turn after the result carried %+v, want the image's bytes, fetched for the request", attached.Content)
+	}
+
+	var saved string
+	f.mustScan(t, `SELECT coalesce(string_agg(body::text, ''), '') FROM agent_messages`, nil, &saved)
+	if !strings.Contains(saved, "attachment:"+image.id.String()) || strings.Contains(saved, `"data"`) {
+		t.Errorf("the transcript does not name the image by reference, or holds a file's bytes: %.400s", saved)
 	}
 	server.waitClosed(t, 1)
 }
@@ -524,7 +576,7 @@ func TestAFileSentWithTheMessageReachesTheModelAndNotTheTranscript(t *testing.T)
 
 	const png = "\x89PNG-the-screenshot-bytes"
 	shot, err := f.store.CreateAttachment(t.Context(), db.CreateAttachmentParams{
-		MessageID: message, SessionID: session, TeamID: f.team, ObjectKey: "teams/x/objects/shot", KeyVersion: 1,
+		MessageID: &message, SessionID: session, TeamID: f.team, ObjectKey: "teams/x/objects/shot", KeyVersion: 1,
 		MediaType: "image/png", SizeBytes: int64(len(png)), Filename: "screen.png",
 	})
 	if err != nil {

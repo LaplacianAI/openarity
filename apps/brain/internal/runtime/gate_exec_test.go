@@ -104,7 +104,7 @@ func TestAnApprovedCallsImageReachesTheModel(t *testing.T) {
 	if caught.Role != agent.RoleUser || len(caught.Content) != 3 {
 		t.Fatalf("the resumed turn opened with %+v, want what happened, the call's line and its image", caught)
 	}
-	if said := caught.Content[0].Text; !strings.Contains(said, "[attached image-1.png: image/png, 16 bytes]") {
+	if said := caught.Content[0].Text; !strings.Contains(said, "[attached image-1.png: image/png, 16 bytes, file ") {
 		t.Errorf("what happened says %q, want the image named", said)
 	}
 	if line := caught.Content[1].Text; line != "Attached by mail__send for call c1, as its output, not the person's words:" {

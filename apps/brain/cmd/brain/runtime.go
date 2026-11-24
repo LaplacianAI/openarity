@@ -72,6 +72,9 @@ func newRunJob(
 	builder := runtime.NewBuilder(dbStore, d.attachments, d.discoverer, graphDeps, d.search, d.fetch).
 		WithWorkshop(workshop{blueprints.NewWorkshop(blueprintStore{dbStore}, d.discoverer, runtime.Loops())}).
 		WithApprovals(dbStore).
+		// A tool's file is kept as its conversation's attachment, sealed
+		// as a person's is, so a transcript never holds its bytes.
+		WithToolFiles(runtime.ToolFiles{Store: dbStore, Objects: d.attachments, Logger: logger}).
 		WithBrowsers(newBrowsers(secretStore, d.searchHTTP, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)

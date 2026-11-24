@@ -50,12 +50,23 @@ type listedFile struct {
 	MediaType string    `json:"media_type"`
 	Size      string    `json:"size"`
 	Sent      string    `json:"sent"`
+	// From is who the file came from: a person, or the tool that returned it.
+	From string `json:"from"`
+}
+
+// fromOf is who a file came from, as attachments says it.
+func fromOf(r db.Attachment) string {
+	if r.Tool != nil {
+		return "the tool " + *r.Tool
+	}
+	return "a person"
 }
 
 func listAttachments(s AttachmentStore, session uuid.UUID) agent.Tool {
 	return agent.Tool{
 		Name: AttachmentsToolName,
-		Description: "List the files sent in this conversation, newest first: each one's id, name, type and size. " +
+		Description: "List the files in this conversation, newest first, those a person sent and those a tool returned: " +
+			"each one's id, name, type, size and who it came from. " +
 			"Read one with " + ReadAttachmentToolName + ".",
 		Schema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		Invoke: func(ctx context.Context, _ json.RawMessage) (string, error) {
@@ -76,7 +87,7 @@ func listAttachments(s AttachmentStore, session uuid.UUID) agent.Tool {
 				}
 				out.Files = append(out.Files, listedFile{
 					ID: r.ID, Filename: r.Filename, MediaType: r.MediaType,
-					Size: sizeOf(r.SizeBytes), Sent: r.CreatedAt.UTC().Format(time.RFC3339),
+					Size: sizeOf(r.SizeBytes), Sent: r.CreatedAt.UTC().Format(time.RFC3339), From: fromOf(r),
 				})
 			}
 			b, err := json.Marshal(out)
@@ -88,8 +99,8 @@ func listAttachments(s AttachmentStore, session uuid.UUID) agent.Tool {
 func readAttachment(s AttachmentStore, session uuid.UUID) agent.Tool {
 	return agent.Tool{
 		Name: ReadAttachmentToolName,
-		Description: "Look at a file sent in this conversation, by the id " + AttachmentsToolName +
-			" or the message gave: an image or a PDF is shown to you, a text file is given as text.",
+		Description: "Look at a file in this conversation, by the id " + AttachmentsToolName +
+			", the message or the tool gave: an image or a PDF is shown to you, a text file is given as text.",
 		Schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"the file's id"}},` +
 			`"required":["id"],"additionalProperties":false}`),
 		Result: func(ctx context.Context, raw json.RawMessage) (agent.ToolResult, error) {

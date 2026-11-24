@@ -686,22 +686,47 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   runs other teams' work. At most eight files go in one request, the newest,
   text files among them; images are read up to 5 MB and PDFs and text up to
   10 MB, and a text file is sent as its first 100 KiB.
-- **Until F2, a tool's own files ride in the transcript.** An image or a
-  PDF an MCP tool returns, like a browser screenshot, reaches the model as
-  `Blob.Data`, so its bytes are saved in the run's transcript in Postgres,
-  outside the attachment encryption the rule above keeps. Anyone who can read
-  the `agent_messages` table can read them. That was chosen over holding MCP
-  files back until they can be stored, for one slice: F2, the next of the
-  sandboxes design's file slices (openarity-ideation,
-  `Specs/2026-11-18-sandboxes-design.md`), stores a tool's file as a
-  conversation attachment and leaves only its `attachment:<id>`; this ends
-  when it does. Meanwhile each call attaches eight files and 10 MiB at most
-  (images up to 5 MiB, PDFs up to 10 MiB; text goes in the tool's text, cut at
-  100 KiB), and each request, by the rule above, sends the newest eight of
-  every file it holds, inline, referenced or text, within 20 MiB; the rest
-  are named as earlier files, and one past the bytes left is never read.
-  Text a tool returns counts toward its call's eight files and 10 MiB too. The transcript keeps them all, so it grows by what
-  a run's tools attached.
+- **A tool's file is a conversation attachment.** Every file an MCP tool
+  returns, readable or not, up to 25 MiB (`mcp.MaxKeptBytes`, a person's
+  limit too), is kept by the run's keeper (`runtime/keep.go`) as one of its
+  session's attachments: its key reserved, its bytes sealed under the team's
+  key, and a row whose source is the run's call (`run_id`, `tool`,
+  `call_id`) rather than a message, exactly one of the two, checked by the
+  database. The transcript holds only `attachment:<id>`; the model is shown
+  an image or a PDF it may read by reference, fetched for each request by the
+  rule above, and every other file is a line with its id, which
+  `read_attachment` and `attachments` reach from the run's start when the
+  run has MCP tools; a run without them, such as a delegate with none, binds
+  them only when the session already has files, so one built before a
+  sibling's first file cannot read it. A keeper
+  that fails does not fail the call, since the tool's work is done: the file
+  is named as not kept, and the cause logged, never shown. The SDK decides
+  what a file is and how its line reads (`mcp.Keeper`), so the brain never
+  rewrites a result. A call made twice, as a replay, keeps its file twice:
+  two rows, each the bytes it returned. Whoever may read the session may
+  fetch a tool's file by id through the bytes route, as a person's; the
+  API's list of the session's files is a person's alone (`people_only`),
+  each named by its message, until a tool's file reaches a person through
+  `send_file` (F3). A pod from before this reads `message_id` as never null,
+  so its attachment reads fail on a tool's row while a deploy rolls: the
+  window is the rollout's. Runs from before this kept their files' bytes in
+  their transcripts, and `Resolving` still sends inline bytes as it sends a
+  reference's.
+- **A tool's file is typed by its bytes.** The type stored is what the bytes
+  sniff as, never the server's word, and so is the extension a name lacks.
+  Any type is kept, unlike a person's: one sniffed as nothing better is
+  `application/octet-stream`, served as a download under `nosniff`.
+- **An MCP answer is capped at 40 MiB, and a worker reads one large answer
+  at a time.** An answer decodes at about nine times its size (measured: a
+  100 MiB file peaked a client at 870 MiB to 1 GiB), so files larger than
+  25 MiB are F4's: written in the room, read through its file API. An answer
+  past 40 MiB, such as two 25 MiB files, fails its call with the cap named.
+  A POST answer past 1 MiB waits for the worker's one slot
+  (`runtime/capped.go`), within its call's five minutes, and gives it back
+  when it is read to its end or closed; the files it decoded live on while
+  the keeper stores them, so a worker holds a little more than one large
+  answer. The cap counts a GET stream's whole life too, which carries a
+  resumed answer; a per-event cap for long streams is a follow-up.
 - **What Postgres cannot include in a transaction gets a tombstone, not a
   best-effort call.** A cascade does not reach a bucket or a secret store, and
   the two writes can never both be atomic. What is atomic is recording the

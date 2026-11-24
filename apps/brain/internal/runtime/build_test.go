@@ -22,6 +22,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/graph"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
@@ -32,6 +33,7 @@ import (
 
 type fakeStore struct {
 	mu         sync.Mutex
+	peopleOnly bool // whether a list asked for people's files alone
 	agents     map[uuid.UUID]db.Agent
 	agentErr   error
 	grants     []db.ListGrantedMCPServersRow
@@ -114,7 +116,12 @@ func (f *fakeStore) ListAttachmentsBySession(_ context.Context, arg db.ListAttac
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []db.Attachment
+	// As the query does: people_only leaves out a tool's files.
+	f.peopleOnly = f.peopleOnly || arg.PeopleOnly
 	for _, a := range f.attached {
+		if arg.PeopleOnly && a.MessageID == nil {
+			continue
+		}
 		if a.SessionID == arg.SessionID && len(out) < int(arg.PageSize) {
 			out = append(out, a)
 		}
@@ -167,6 +174,26 @@ type fakeObjects struct {
 	data   map[string]string
 	err    error
 	gotten []string
+	put    []string // every team/key written, in order
+	putErr error
+	onPut  func() // when set, called after a Put stores its bytes
+}
+
+func (f *fakeObjects) Put(_ context.Context, teamID uuid.UUID, key string, body []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.putErr != nil {
+		return f.putErr
+	}
+	f.put = append(f.put, teamID.String()+"/"+key)
+	if f.data == nil {
+		f.data = map[string]string{}
+	}
+	f.data[key] = string(body)
+	if f.onPut != nil {
+		f.onPut()
+	}
+	return nil
 }
 
 func (f *fakeObjects) Get(_ context.Context, teamID uuid.UUID, key string) ([]byte, error) {
@@ -1709,6 +1736,8 @@ func TestAToolsFilesAreHeldToTheConversationsLimits(t *testing.T) {
 		"a PDF":           {maxDocBytes, mcp.MaxDocBytes},
 		"a text file":     {maxTextBytes, mcp.MaxTextBytes},
 		"files at a time": {filesPerRequest, mcp.FilesPerCall},
+		// A tool's file is kept up to what a person may send.
+		"a kept file": {objects.MaxAttachment, mcp.MaxKeptBytes},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s: the brain passes %d, an MCP tool %d", name, pair[0], pair[1])

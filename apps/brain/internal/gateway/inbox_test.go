@@ -724,8 +724,8 @@ func TestAnAttachmentIsWrittenAgainstItsMessageAndSession(t *testing.T) {
 	// names the wrong one of either is refused by the database. Asserting both
 	// here is what makes that refusal impossible to reach.
 	wantMessage := f.ids[ch.ID.String()+"/m-1"]
-	if got.MessageID != wantMessage {
-		t.Errorf("MessageID = %s, want the id the insert returned, %s",
+	if got.MessageID == nil || *got.MessageID != wantMessage {
+		t.Errorf("MessageID = %v, want the id the insert returned, %s",
 			got.MessageID, wantMessage)
 	}
 	wantSession := f.sessions[ch.ID.String()+"/c-1"].ID

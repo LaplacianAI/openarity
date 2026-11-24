@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"strconv"
@@ -45,7 +46,7 @@ func (h *handler) listAttachments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db.ListAttachmentsBySessionParams{SessionID: session.ID, PageSize: limit + 1}
+	params := db.ListAttachmentsBySessionParams{SessionID: session.ID, PeopleOnly: true, PageSize: limit + 1}
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
 		var c attachmentCursor
 		if !api.DecodeCursor(w, raw, &c) {
@@ -62,13 +63,24 @@ func (h *handler) listAttachments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, row := range rows {
+		// people_only promises a message on every row; one without would
+		// panic in the view below, so it is a failure instead.
+		if row.MessageID == nil {
+			api.Fail(w, h.logger, u, "failed to list attachments",
+				fmt.Errorf("attachment %s has no message", row.ID))
+			return
+		}
+	}
+
 	page, err := api.MapPage(rows, limit,
 		func(row db.Attachment) any {
 			return attachmentCursor{CreatedAt: row.CreatedAt, ID: row.ID}
 		},
 		func(row db.Attachment) attachment {
 			return attachment{
-				ID: row.ID, MessageID: row.MessageID, Filename: row.Filename,
+				// people_only: every row listed has its message.
+				ID: row.ID, MessageID: *row.MessageID, Filename: row.Filename,
 				MediaType: row.MediaType, SizeBytes: row.SizeBytes,
 				CreatedAt: row.CreatedAt,
 			}

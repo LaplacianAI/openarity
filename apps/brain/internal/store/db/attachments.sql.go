@@ -18,11 +18,11 @@ INSERT INTO attachments (
     object_key, key_version, media_type, size_bytes, filename
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id
+RETURNING id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id, run_id, tool, call_id
 `
 
 type CreateAttachmentParams struct {
-	MessageID  uuid.UUID
+	MessageID  *uuid.UUID
 	SessionID  uuid.UUID
 	TeamID     uuid.UUID
 	ObjectKey  string
@@ -55,12 +55,73 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		&i.CreatedAt,
 		&i.SessionID,
 		&i.TeamID,
+		&i.RunID,
+		&i.Tool,
+		&i.CallID,
+	)
+	return i, err
+}
+
+const createToolAttachment = `-- name: CreateToolAttachment :one
+INSERT INTO attachments (
+    session_id, team_id, run_id, tool, call_id,
+    object_key, key_version, media_type, size_bytes, filename
+)
+VALUES (
+    $1, $2, $3, $4, $5,
+    $6, 1, $7, $8, $9
+)
+RETURNING id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id, run_id, tool, call_id
+`
+
+type CreateToolAttachmentParams struct {
+	SessionID uuid.UUID
+	TeamID    uuid.UUID
+	RunID     *uuid.UUID
+	Tool      *string
+	CallID    *string
+	ObjectKey string
+	MediaType string
+	SizeBytes int64
+	Filename  string
+}
+
+// A file a tool returned, kept for the conversation its run is in. Its
+// source is the run's call, so it has no message; the run and the session
+// are named as a pair, so a run of another session cannot be.
+func (q *Queries) CreateToolAttachment(ctx context.Context, arg CreateToolAttachmentParams) (Attachment, error) {
+	row := q.db.QueryRow(ctx, createToolAttachment,
+		arg.SessionID,
+		arg.TeamID,
+		arg.RunID,
+		arg.Tool,
+		arg.CallID,
+		arg.ObjectKey,
+		arg.MediaType,
+		arg.SizeBytes,
+		arg.Filename,
+	)
+	var i Attachment
+	err := row.Scan(
+		&i.ID,
+		&i.MessageID,
+		&i.ObjectKey,
+		&i.KeyVersion,
+		&i.MediaType,
+		&i.SizeBytes,
+		&i.Filename,
+		&i.CreatedAt,
+		&i.SessionID,
+		&i.TeamID,
+		&i.RunID,
+		&i.Tool,
+		&i.CallID,
 	)
 	return i, err
 }
 
 const getAttachmentInSession = `-- name: GetAttachmentInSession :one
-SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id FROM attachments
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id, run_id, tool, call_id FROM attachments
 WHERE id = $1 AND session_id = $2
 `
 
@@ -87,13 +148,16 @@ func (q *Queries) GetAttachmentInSession(ctx context.Context, arg GetAttachmentI
 		&i.CreatedAt,
 		&i.SessionID,
 		&i.TeamID,
+		&i.RunID,
+		&i.Tool,
+		&i.CallID,
 	)
 	return i, err
 }
 
 const listAttachmentsByMessage = `-- name: ListAttachmentsByMessage :many
-SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id FROM attachments
-WHERE message_id = $1
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id, run_id, tool, call_id FROM attachments
+WHERE message_id = $1::uuid
 ORDER BY created_at, id
 `
 
@@ -117,6 +181,9 @@ func (q *Queries) ListAttachmentsByMessage(ctx context.Context, messageID uuid.U
 			&i.CreatedAt,
 			&i.SessionID,
 			&i.TeamID,
+			&i.RunID,
+			&i.Tool,
+			&i.CallID,
 		); err != nil {
 			return nil, err
 		}
@@ -129,16 +196,18 @@ func (q *Queries) ListAttachmentsByMessage(ctx context.Context, messageID uuid.U
 }
 
 const listAttachmentsBySession = `-- name: ListAttachmentsBySession :many
-SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id FROM attachments
+SELECT id, message_id, object_key, key_version, media_type, size_bytes, filename, created_at, session_id, team_id, run_id, tool, call_id FROM attachments
 WHERE session_id = $1
-  AND (NOT $2::bool
-   OR (created_at, id) < ($3::timestamptz, $4::uuid))
+  AND (NOT $2::bool OR message_id IS NOT NULL)
+  AND (NOT $3::bool
+   OR (created_at, id) < ($4::timestamptz, $5::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListAttachmentsBySessionParams struct {
 	SessionID      uuid.UUID
+	PeopleOnly     bool
 	UseCursor      bool
 	AfterCreatedAt time.Time
 	AfterID        uuid.UUID
@@ -154,9 +223,13 @@ type ListAttachmentsBySessionParams struct {
 // Ordered newest first and paged on (created_at, id), matching messages and
 // sessions: a page boundary has to be a total order, and created_at repeats
 // when several files arrive on one delivery.
+//
+// people_only leaves out the files a run's tools returned, which have no
+// message: the API lists a person's files by the message that sent them.
 func (q *Queries) ListAttachmentsBySession(ctx context.Context, arg ListAttachmentsBySessionParams) ([]Attachment, error) {
 	rows, err := q.db.Query(ctx, listAttachmentsBySession,
 		arg.SessionID,
+		arg.PeopleOnly,
 		arg.UseCursor,
 		arg.AfterCreatedAt,
 		arg.AfterID,
@@ -180,6 +253,9 @@ func (q *Queries) ListAttachmentsBySession(ctx context.Context, arg ListAttachme
 			&i.CreatedAt,
 			&i.SessionID,
 			&i.TeamID,
+			&i.RunID,
+			&i.Tool,
+			&i.CallID,
 		); err != nil {
 			return nil, err
 		}
