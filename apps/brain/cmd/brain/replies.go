@@ -23,8 +23,14 @@ func newReplyJob(cfg *config.Config, logger *slog.Logger, dbStore *store.Store, 
 	if err != nil {
 		return nil, err
 	}
+	// A file a run sent is read from where it was kept, and decrypted.
+	attachments, err := newAttachmentStore(cfg, sec, logger)
+	if err != nil {
+		return nil, err
+	}
 	client := replyClient(reachable(cfg.MCPPrivateNetworks))
-	return gateway.ReplyJob(gateway.NewSender(dbStore, sec, reg, gateway.HTTPPoster(client), gateway.Scope{}, logger)), nil
+	sender := gateway.NewSender(dbStore, sec, reg, gateway.HTTPPoster(client), gateway.Scope{}, logger).WithFiles(attachments)
+	return gateway.ReplyJob(sender), nil
 }
 
 // replyClient follows no redirect: a 302 would turn the POST into a GET

@@ -712,6 +712,27 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   window is the rollout's. Runs from before this kept their files' bytes in
   their transcripts, and `Resolving` still sends inline bytes as it sends a
   reference's.
+- **A run hands its person a file with `send_file` (F3).** Any file of the
+  conversation, a person's or a tool's, by its id, looked up within the
+  session so another conversation's is a missing row, and again by the
+  database (`replies_file_in_session`). Offered to a top-level run only, as
+  only it answers the conversation, and only where the file can arrive: a
+  conversation read on its stream (no channel, or the dashboard's) or a
+  channel the run answers whose provider is a `gateway.FileReplier` and, for
+  `custom`, has a reply URL; never on Slack until its three-call upload is
+  built (F3b). Not gated by approvals: it reaches no further than the
+  answer. A run event `file_sent` puts a chip under the run on the dashboard;
+  on a channel the file is also a reply of kind `file`, in the session's
+  order, so a file sent while the run works goes out before its answer, one
+  per call (`replies_one_per_file_call`) and kicked at once. Ten a run,
+  counted per attempt, and a caption of 1024 characters, Telegram's. The
+  sender loads and decrypts the bytes just before it builds the requests,
+  one file at a time; a file gone since is given up, a store that fails is
+  retried. Telegram sends a document, never a photo, which it recompresses;
+  `custom` sends the bytes inline in the signed reply rather than a link,
+  which would be a route serving files to whoever holds it. A replay holds
+  `send_file` as a stand-in, as it holds the workspace's tools. Delivery is
+  at least once, as every reply's.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes
   sniff as, never the server's word, and so is the extension a name lacks.
   Any type is kept, unlike a person's: one sniffed as nothing better is

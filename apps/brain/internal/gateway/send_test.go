@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -16,7 +17,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -73,6 +76,11 @@ type outbox struct {
 	sent    []db.ReplySentParams
 	retried []db.RetryReplyParams
 	gaveUp  []db.GiveUpReplyParams
+
+	// files are the file replies' files, by reply id; fileErr fails the read.
+	files     map[int64]db.GetReplyFileRow
+	fileErr   error
+	fileReads []int64
 
 	notices       []db.ClaimDueNoticesRow
 	noticeClaims  []db.ClaimDueNoticesParams
@@ -139,6 +147,18 @@ func (o *outbox) RetryReply(_ context.Context, arg db.RetryReplyParams) (int64, 
 func (o *outbox) GiveUpReply(_ context.Context, arg db.GiveUpReplyParams) (int64, error) {
 	o.gaveUp = append(o.gaveUp, arg)
 	return 1, o.markErr
+}
+
+func (o *outbox) GetReplyFile(_ context.Context, id int64) (db.GetReplyFileRow, error) {
+	o.fileReads = append(o.fileReads, id)
+	if o.fileErr != nil {
+		return db.GetReplyFileRow{}, o.fileErr
+	}
+	f, ok := o.files[id]
+	if !ok {
+		return db.GetReplyFileRow{}, pgx.ErrNoRows
+	}
+	return f, nil
 }
 
 // receiver is the other end: it answers status and keeps what it was sent.
@@ -960,5 +980,195 @@ func TestAPostReadsTheAnswerOfAProviderThatSaysNoInA200(t *testing.T) {
 	status, answer = http.StatusOK, `{"ok":false}`
 	if err := poster.Post(t.Context(), uuid.New(), OutboundRequest{URL: srv.URL}); err != nil {
 		t.Errorf("with nothing to read the answer, a 200 failed: %v", err)
+	}
+}
+
+// --- a file a run sent ---
+
+// fileRelay is a relay that also sends files.
+type fileRelay struct{ relay }
+
+func (*fileRelay) Name() string      { return "filer" }
+func (*fileRelay) RepliesWithFiles() {}
+
+// keptFiles is the attachment store: its objects by team and key, and err for
+// every read.
+type keptFiles struct {
+	mu    sync.Mutex
+	files map[string][]byte
+	err   error
+	reads int
+}
+
+func (s *keptFiles) Get(_ context.Context, teamID uuid.UUID, key string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	if s.err != nil {
+		return nil, s.err
+	}
+	b, ok := s.files[teamID.String()+"/"+key]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", objects.ErrNotFound, key)
+	}
+	return b, nil
+}
+
+// fileSending is a sender of file replies through a fileRelay, with one file
+// reply due whose file is kept.
+func fileSending(t *testing.T) (*sending, *fileRelay, *keptFiles, db.ClaimDueRepliesRow, *receiver) {
+	t.Helper()
+	fr := &fileRelay{}
+	s := newSending(t, fr)
+	rcv := newReceiver(t, http.StatusOK)
+	row := due(rcv.URL+"/replies", 1)
+	row.Provider, row.Kind, row.Text, row.InReplyTo = "filer", "file", "report.pdf", nil
+	call := "call-1"
+	row.CallID = &call
+	row.Detail = []byte(`{"caption":"The Q3 numbers"}`)
+	team := uuid.New()
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	s.store.files = map[int64]db.GetReplyFileRow{row.ID: {
+		TeamID: team, ObjectKey: "objects/f1", Filename: "report.pdf", MediaType: "application/pdf", SizeBytes: 9,
+	}}
+	objs := &keptFiles{files: map[string][]byte{team.String() + "/objects/f1": []byte("%PDF-1.7\n")}}
+	s.sender.WithFiles(objs)
+	return s, fr, objs, row, rcv
+}
+
+// The provider is handed the file's bytes, its name and type as kept, and
+// the caption the run wrote, under the reply's own id; then it is sent.
+func TestAFileReplyCarriesItsFileAndItsCaption(t *testing.T) {
+	t.Parallel()
+
+	s, fr, _, row, rcv := fileSending(t)
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.outs) != 1 {
+		t.Fatalf("the provider was asked %d times", len(fr.outs))
+	}
+	out := fr.outs[0]
+	want := &OutFile{Name: "report.pdf", MediaType: "application/pdf", Caption: "The Q3 numbers", Data: []byte("%PDF-1.7\n")}
+	if out.Kind != "file" || out.Text != "report.pdf" || !reflect.DeepEqual(out.File, want) {
+		t.Errorf("out = %+v, file %+v", out, out.File)
+	}
+	if wantID := row.RunID.String() + ":file:7"; out.ID != wantID {
+		t.Errorf("id = %q, want %q", out.ID, wantID)
+	}
+	if rcv.got() != 1 || len(s.store.sent) != 1 || len(s.store.gaveUp)+len(s.store.retried) != 0 {
+		t.Errorf("posted %d, marks %+v %+v %+v", rcv.got(), s.store.sent, s.store.gaveUp, s.store.retried)
+	}
+}
+
+// A file gone since it was sent, its row or its object, has nothing to send
+// however often it is tried: given up, and nothing posted.
+func TestAFileGoneSinceIsGivenUp(t *testing.T) {
+	t.Parallel()
+
+	for name, gone := range map[string]func(*sending, *keptFiles){
+		"its row":    func(s *sending, _ *keptFiles) { s.store.files = nil },
+		"its object": func(_ *sending, o *keptFiles) { o.files = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, fr, objs, _, rcv := fileSending(t)
+			gone(s, objs)
+			if _, err := s.sender.Drain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(s.store.gaveUp) != 1 || len(s.store.retried) != 0 || rcv.got() != 0 || len(fr.outs) != 0 {
+				t.Errorf("gave up %v, retried %v, posted %d, built %d", s.store.gaveUp, s.store.retried, rcv.got(), len(fr.outs))
+			}
+		})
+	}
+}
+
+// A store that fails now may not later: the reply is tried again.
+func TestAFileThatCannotBeReadNowIsTriedAgain(t *testing.T) {
+	t.Parallel()
+
+	for name, fail := range map[string]func(*sending, *keptFiles){
+		"the row":    func(s *sending, _ *keptFiles) { s.store.fileErr = errors.New("connection reset") },
+		"the object": func(_ *sending, o *keptFiles) { o.err = errors.New("bucket unreachable") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, _, objs, _, rcv := fileSending(t)
+			fail(s, objs)
+			if _, err := s.sender.Drain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(s.store.retried) != 1 || len(s.store.gaveUp) != 0 || rcv.got() != 0 {
+				t.Errorf("retried %v, gave up %v, posted %d", s.store.retried, s.store.gaveUp, rcv.got())
+			}
+		})
+	}
+}
+
+// A file reply for a provider that sends no files, or a sender that reads
+// none, can never be sent: given up before anything is read.
+func TestAFileNobodyHereCanSendIsGivenUp(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a provider that sends none", func(t *testing.T) {
+		t.Parallel()
+		s, _, objs, row, rcv := fileSending(t)
+		row.Provider = "relay"
+		reg, err := NewRegistry(&relay{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.store.due = []db.ClaimDueRepliesRow{row}
+		sender := senderWith(t, s, reg, HTTPPoster(&http.Client{}), Scope{}).WithFiles(objs)
+		if _, err := sender.Drain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.store.gaveUp) != 1 || rcv.got() != 0 || objs.reads != 0 || len(s.store.fileReads) != 0 {
+			t.Errorf("gave up %v, posted %d, read %d objects and %d rows", s.store.gaveUp, rcv.got(), objs.reads, len(s.store.fileReads))
+		}
+	})
+	t.Run("a sender with no files", func(t *testing.T) {
+		t.Parallel()
+		s, fr, _, row, rcv := fileSending(t)
+		reg, err := NewRegistry(fr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.store.due = []db.ClaimDueRepliesRow{row}
+		sender := senderWith(t, s, reg, HTTPPoster(&http.Client{}), Scope{})
+		if _, err := sender.Drain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.store.gaveUp) != 1 || rcv.got() != 0 || len(s.store.fileReads) != 0 {
+			t.Errorf("gave up %v, posted %d, read %d rows", s.store.gaveUp, rcv.got(), len(s.store.fileReads))
+		}
+	})
+}
+
+// Only a file reply reads a file: an answer is built from its row alone.
+func TestAnAnswerReadsNoFile(t *testing.T) {
+	t.Parallel()
+
+	s, fr, objs, row, _ := fileSending(t)
+	row.Kind, row.Detail, row.CallID = "answer", nil, nil
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.store.fileReads) != 0 || objs.reads != 0 || len(fr.outs) != 1 || fr.outs[0].File != nil {
+		t.Errorf("read %d rows and %d objects; out %+v", len(s.store.fileReads), objs.reads, fr.outs)
+	}
+}
+
+func TestOnlyAFileReplierSendsFiles(t *testing.T) {
+	t.Parallel()
+
+	reg, err := NewRegistry(&relay{}, &fileRelay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.SendsFiles("relay") || !reg.SendsFiles("filer") || reg.SendsFiles("nope") {
+		t.Error("SendsFiles does not follow the marker")
 	}
 }

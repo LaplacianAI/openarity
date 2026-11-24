@@ -2066,3 +2066,57 @@ func (f *execFixture) mustScan(t *testing.T, sql string, args []any, into ...any
 		t.Fatalf("%s: %v", sql, err)
 	}
 }
+
+// The whole of send_file on the dashboard: a run hands its person a file of
+// the conversation, the model is told it went, and the run's file_sent event
+// names it as the stream does. Nothing is queued for a channel: the
+// dashboard's answer is its stream.
+func TestARunSendsAFileOfItsConversation(t *testing.T) {
+	f := newExecFixture(t, nil)
+	var session, channel, user, message uuid.UUID
+	f.mustScan(t, `SELECT session_id FROM runs WHERE id = $1`, []any{f.run}, &session)
+	f.mustScan(t, `INSERT INTO users (issuer, subject) VALUES ('dev', 'ann') RETURNING id`, nil, &user)
+	f.mustScan(t, `SELECT id FROM channels WHERE team_id = $1 AND provider = 'dashboard'`, []any{f.team}, &channel)
+	f.mustExec(t, `UPDATE sessions SET channel_id = $1, provider_ref = 'dash-1' WHERE id = $2`, channel, session)
+	f.mustScan(t, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text)
+		VALUES ($1, $2, $3, 'ext-1', 'send me the export') RETURNING id`, []any{channel, session, user}, &message)
+	export, err := f.store.CreateAttachment(t.Context(), db.CreateAttachmentParams{
+		MessageID: &message, SessionID: session, TeamID: f.team, ObjectKey: "teams/x/objects/export", KeyVersion: 1,
+		MediaType: "text/csv", SizeBytes: 4, Filename: "export.csv",
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment: %v", err)
+	}
+	f.objects.data[export.ObjectKey] = "a,b\n"
+	f.model = newScripted(
+		callTool("c1", SendFileToolName, `{"id":"`+export.ID.String()+`","caption":"The export"}`),
+		answer("Sent.", 10, 5),
+	)
+	f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil },
+		agent.Endpoint{BaseURL: "http://model.test"})
+	f.exec.builder.WithFileSends(FileSends{Store: f.store, SendsFiles: func(string) bool { return false }})
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	var output string
+	f.mustScan(t, `SELECT payload->>'output' FROM run_events WHERE run_id = $1 AND kind = 'tool_result'`, []any{f.run}, &output)
+	if !strings.HasPrefix(output, "Sent export.csv (text/csv") {
+		t.Errorf("the model was told %q", output)
+	}
+	var payload []byte
+	f.mustScan(t, `SELECT payload FROM run_events WHERE run_id = $1 AND kind = 'file_sent'`, []any{f.run}, &payload)
+	var got fileSentPayload
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := fileSentPayload{ToolCallID: "c1", ID: export.ID, Filename: "export.csv", MediaType: "text/csv", Size: 4, Caption: "The export"}
+	if got != want {
+		t.Errorf("file_sent = %+v, want %+v", got, want)
+	}
+	var replies int
+	f.mustScan(t, `SELECT count(*) FROM replies WHERE run_id = $1`, []any{f.run}, &replies)
+	if replies != 0 {
+		t.Errorf("%d replies queued for the dashboard", replies)
+	}
+}

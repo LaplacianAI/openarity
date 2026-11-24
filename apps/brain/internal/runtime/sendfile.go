@@ -1,0 +1,198 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"sync/atomic"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/sdk/agent"
+)
+
+const (
+	SendFileToolName = "send_file"
+
+	// filesPerRun is how many files one run hands its person: past it a run
+	// is sending a folder, not answering.
+	filesPerRun = 10
+	// maxCaption is Telegram's caption, the shortest a platform takes.
+	maxCaption = 1024
+)
+
+// FileSendStore is what handing a person a file takes: the file, looked up
+// within the conversation, and the reply that posts it to a channel.
+type FileSendStore interface {
+	GetAttachmentInSession(ctx context.Context, arg db.GetAttachmentInSessionParams) (db.Attachment, error)
+	InsertFileReply(ctx context.Context, arg db.InsertFileReplyParams) (int64, error)
+	GetSessionFileReach(ctx context.Context, sessionID uuid.UUID) (db.GetSessionFileReachRow, error)
+}
+
+// FileSends is where a run's files can go. SendsFiles says whether a channel
+// provider posts a file; the gateway's registry answers it.
+type FileSends struct {
+	Store      FileSendStore
+	SendsFiles func(provider string) bool
+}
+
+// fileSentPayload is the file_sent run event: what the dashboard shows under
+// the run, and what the stream names as a message's file is named.
+type fileSentPayload struct {
+	ToolCallID string    `json:"tool_call_id"`
+	ID         uuid.UUID `json:"id"`
+	Filename   string    `json:"filename"`
+	MediaType  string    `json:"media_type"`
+	Size       int64     `json:"size"`
+	Caption    string    `json:"caption,omitempty"`
+}
+
+// sendFile is the tool. toChannel is a run answering a channel, whose file
+// is also a reply; a session with no channel is read on its stream alone.
+// note writes the run event and kick has a channel's reply sent now; nil, as
+// in a replay, the tool is a stand-in that is never made.
+type sendFile struct {
+	store     FileSendStore
+	run       db.Run
+	toChannel bool
+	note      func(ctx context.Context, kind string, payload any) error
+	kick      func(callID string)
+	sent      atomic.Int32
+}
+
+func (s *sendFile) tool() agent.Tool {
+	return agent.Tool{
+		Name: SendFileToolName,
+		Description: "Send the person a file of this conversation, by the id " + AttachmentsToolName +
+			" or a tool gave: it reaches them as a file, in this conversation, before your answer. " +
+			"Use it when they want the file itself; say what is in it in your answer. At most 10 a run.",
+		Schema: json.RawMessage(`{"type":"object","properties":{` +
+			`"id":{"type":"string","description":"the file's id"},` +
+			`"caption":{"type":"string","maxLength":1024,"description":"a line sent with the file, if any"}},` +
+			`"required":["id"],"additionalProperties":false}`),
+		Invoke: s.invoke,
+	}
+}
+
+func (s *sendFile) invoke(ctx context.Context, raw json.RawMessage) (string, error) {
+	var a struct {
+		ID      string `json:"id"`
+		Caption string `json:"caption"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return "", fmt.Errorf("the arguments are not valid JSON: %w", err)
+	}
+	id, err := uuid.Parse(strings.TrimSpace(a.ID))
+	if err != nil {
+		return "", fmt.Errorf("%q is not a file's id; %s lists them", a.ID, AttachmentsToolName)
+	}
+	caption, err := captionOf(a.Caption)
+	if err != nil {
+		return "", err
+	}
+	call := agent.ToolCallID(ctx)
+	if call == "" || len(call) > maxCallID {
+		return "", errors.New("this call has no id the reply can be kept by, so the file was not sent")
+	}
+
+	row, err := s.store.GetAttachmentInSession(ctx, db.GetAttachmentInSessionParams{ID: id, SessionID: s.run.SessionID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("there is no file %s in this conversation; %s lists them", id, AttachmentsToolName)
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading file %s: %w", id, err)
+	}
+	// Counted before sending, so a send that fails still counts: a store
+	// that is down is not asked eleven times.
+	if s.sent.Add(1) > filesPerRun {
+		return "", fmt.Errorf("this run has sent %d files, the most one run sends; say where the rest are instead", filesPerRun)
+	}
+
+	if s.toChannel {
+		var detail []byte
+		if caption != "" {
+			if detail, err = json.Marshal(fileDetail{Caption: caption}); err != nil {
+				return "", err
+			}
+		}
+		// None written is the same call made again, already sent, or a
+		// channel that can no longer be posted to, which drops the answer
+		// too: neither is the model's to fix.
+		n, err := s.store.InsertFileReply(ctx, db.InsertFileReplyParams{
+			RunID: s.run.ID, AttachmentID: id, CallID: call, Detail: detail,
+		})
+		if err != nil {
+			return "", fmt.Errorf("the file was not sent: %w", err)
+		}
+		if n > 0 && s.kick != nil {
+			s.kick(call)
+		}
+	}
+	if err := s.note(ctx, "file_sent", fileSentPayload{
+		ToolCallID: call, ID: row.ID, Filename: row.Filename, MediaType: row.MediaType, Size: row.SizeBytes, Caption: caption,
+	}); err != nil {
+		return "", fmt.Errorf("the file's sending could not be recorded: %w", err)
+	}
+	return fmt.Sprintf("Sent %s (%s, %s) to the person.", row.Filename, row.MediaType, sizeOf(row.SizeBytes)), nil
+}
+
+// fileDetail is a file reply's detail: what the platform sends with it.
+type fileDetail struct {
+	Caption string `json:"caption,omitempty"`
+}
+
+// captionOf is the caption as a platform takes it: one paragraph or a few,
+// no control characters but line breaks, and short enough for every one.
+func captionOf(s string) (string, error) {
+	s = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r == '\n' || !unicode.IsControl(r) && r != '\u2028' && r != '\u2029' {
+			return r
+		}
+		return -1
+	}, s))
+	if n := utf8.RuneCountInString(s); n > maxCaption {
+		return "", fmt.Errorf("the caption is %d characters; a file's is %d at most, so say the rest in your answer", n, maxCaption)
+	}
+	return s, nil
+}
+
+// sendFileFor is the tool for a run, when it can hand its person a file: a
+// top-level run, as only it answers the conversation, whose session can be
+// read on its stream or whose channel posts files back. A replay holds a
+// stand-in wherever a top-level run might, as it has no channel to ask.
+func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent.Tool, bool, error) {
+	if run.ParentRunID != nil {
+		return agent.Tool{}, false, nil
+	}
+	if b.replay {
+		return (&sendFile{run: run}).tool(), true, nil
+	}
+	if b.sends == nil || b.note == nil {
+		return agent.Tool{}, false, nil
+	}
+	reach, err := b.sends.Store.GetSessionFileReach(ctx, run.SessionID)
+	if err != nil {
+		return agent.Tool{}, false, fmt.Errorf("reading where the conversation's files can go: %w", err)
+	}
+	toChannel := !reach.Streamed
+	posts := run.ReplyToChannel && reach.Postable && b.sends.SendsFiles(reach.Provider)
+	if toChannel && !posts {
+		return agent.Tool{}, false, nil
+	}
+	s := &sendFile{
+		store: b.sends.Store, run: run, toChannel: toChannel,
+		note: func(ctx context.Context, kind string, p any) error { return b.note(ctx, run.ID, l.Worker, kind, p) },
+		kick: func(call string) {
+			if b.kickFile != nil {
+				b.kickFile(run.ID, call)
+			}
+		},
+	}
+	return s.tool(), true, nil
+}

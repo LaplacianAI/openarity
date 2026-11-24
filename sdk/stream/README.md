@@ -78,6 +78,7 @@ with the envelope's `at` and `run_id` beside the event's own fields.
 | `approval_requested` | a run asking a person before a call: the call is not made, with the code a person can type back |
 | `approval_decided` | the request answered, expired, or cancelled: with its run, or because the person wrote again (`superseded`) |
 | `run_waiting` | a run that stopped for a person's answer rather than finishing, with what it told them in `said` |
+| `file_sent` | a run handing a person a file of the conversation, named by its id like a message's file, with the call that sent it |
 | `custom` | a server's own event, named |
 
 The names follow [AG-UI](https://docs.ag-ui.com/concepts/events)'s, so an

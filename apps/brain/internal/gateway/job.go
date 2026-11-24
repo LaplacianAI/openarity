@@ -94,6 +94,16 @@ func KickEvent(c dbos.Client, runID uuid.UUID, seq int32) error {
 	return nil
 }
 
+// KickFile has a file a run sent go out at once. The workflow id is the
+// call's, so each file is its own kick and a call kicked twice sends once.
+func KickFile(c dbos.Client, runID uuid.UUID, callID string) error {
+	key := "reply:" + runID.String() + ":file:" + callID
+	if _, err := dbos.Enqueue[string](c, replyQueue, replyWorkflow, key, dbos.WithEnqueueWorkflowID(key)); err != nil {
+		return fmt.Errorf("kicking the file of call %s of run %s: %w", callID, runID, err)
+	}
+	return nil
+}
+
 // KickNoticeReply has the brain's notice about one message (an answer given
 // in the chat) sent at once. The workflow id is the message's, so a delivery
 // repeated sends once.

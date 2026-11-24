@@ -106,6 +106,8 @@ type Executor struct {
 	// kickEvent has one step of a channel run sent now, named by the run
 	// event it came from.
 	kickEvent func(uuid.UUID, int32) error
+	// kickFile has a file a channel run sent go out now, named by its call.
+	kickFile func(uuid.UUID, string) error
 
 	// notes holds, for each run executing here, the channel its recorder takes
 	// the brain's own events on, so they are written in order with the agent's.
@@ -122,6 +124,15 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 	}
 	b.delegates = &DelegateDeps{Store: s, Run: e}
 	b.note = e.note
+	// Read when the file is sent, as the kicks are set once the job registers.
+	b.kickFile = func(id uuid.UUID, call string) {
+		if e.kickFile == nil {
+			return
+		}
+		if err := e.kickFile(id, call); err != nil {
+			e.logger.Warn("file not kicked; the sweep will send it", "run", id, "call", call, "err", err)
+		}
+	}
 	return e
 }
 

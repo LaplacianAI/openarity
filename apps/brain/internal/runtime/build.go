@@ -76,6 +76,10 @@ type Builder struct {
 	files *ToolFiles
 	// large is the worker's one slot for reading a large MCP answer.
 	large chan struct{}
+	// sends is where a run's files can go (sendfile.go); without it no run
+	// is given send_file. kickFile has a channel's file reply sent now.
+	sends    *FileSends
+	kickFile func(runID uuid.UUID, callID string)
 	// replay builds a past run again for a replay (replay.go): the tools a
 	// run of the agent would hold, those that reach live state as stand-ins.
 	replay bool
@@ -93,6 +97,13 @@ func NewBuilder(s BuildStore, o Objects, m MCPClients, g *GraphDeps, search *Sea
 // their bytes.
 func (b *Builder) WithToolFiles(f ToolFiles) *Builder {
 	b.files = &f
+	return b
+}
+
+// WithFileSends gives a top-level run send_file, where its conversation can
+// be handed a file: the dashboard's, or a channel whose provider posts one.
+func (b *Builder) WithFileSends(s FileSends) *Builder {
+	b.sends = &s
 	return b
 }
 
@@ -275,6 +286,15 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		for _, t := range attachmentTools(b.store, run.SessionID) {
 			built.reads[t.Name] = true
 			built.Spec.Tools = append(built.Spec.Tools, t)
+		}
+		// A file can be sent only where there is one to send, as read.
+		send, ok, err := b.sendFileFor(ctx, run, l)
+		if err != nil {
+			built.Close()
+			return Built{}, err
+		}
+		if ok {
+			built.Spec.Tools = append(built.Spec.Tools, send)
 		}
 	}
 

@@ -99,6 +99,7 @@ export function ConversationView({
             sessionId={sessionId}
             people={people}
             now={now}
+            files={files}
             after={afterRun?.(e.id)}
           />
         ),
@@ -233,6 +234,7 @@ function RunTurnView({
   sessionId,
   people,
   now,
+  files,
   after,
 }: {
   run: RunTurn;
@@ -242,6 +244,7 @@ function RunTurnView({
   sessionId: string;
   people: People;
   now: number;
+  files?: SentFiles;
   after?: ReactNode;
 }) {
   const running = run.status === "running";
@@ -294,6 +297,23 @@ function RunTurnView({
           <Answer run={run} />
         )}
       </div>
+
+      {run.files.length > 0 ? (
+        <section aria-label={`Files ${run.agent} sent`} data-files-sent>
+          <SentFilesView sent={run.files.map((s) => s.file)} files={files} />
+          {run.files.some((s) => s.caption !== "") ? (
+            <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              {run.files
+                .filter((s) => s.caption !== "")
+                .map((s) => (
+                  <li key={s.toolCallId} className="break-words">
+                    {s.file.filename}: {s.caption}
+                  </li>
+                ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
 
       {teamId && asked.length > 0 ? (
         <ul aria-label="Tool approvals" className="space-y-2">

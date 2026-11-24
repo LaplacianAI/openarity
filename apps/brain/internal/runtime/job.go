@@ -47,6 +47,7 @@ type Job struct {
 	resume    func(uuid.UUID, int32) error
 	kick      func(dbos.Client, uuid.UUID) error
 	kickEvent func(dbos.Client, uuid.UUID, int32) error
+	kickFile  func(dbos.Client, uuid.UUID, string) error
 }
 
 func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
@@ -57,10 +58,15 @@ func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
 }
 
 // SendsReplies has a channel run's reply sent as soon as the run finishes,
-// through kick, and each step it tells as soon as it is told, through
-// kickEvent. Without them replies wait for their sweep.
-func (j *Job) SendsReplies(kick func(dbos.Client, uuid.UUID) error, kickEvent func(dbos.Client, uuid.UUID, int32) error) *Job {
-	j.kick, j.kickEvent = kick, kickEvent
+// through kick, each step it tells as soon as it is told, through
+// kickEvent, and each file it sends as it sends it, through kickFile. Without
+// them replies wait for their sweep.
+func (j *Job) SendsReplies(
+	kick func(dbos.Client, uuid.UUID) error,
+	kickEvent func(dbos.Client, uuid.UUID, int32) error,
+	kickFile func(dbos.Client, uuid.UUID, string) error,
+) *Job {
+	j.kick, j.kickEvent, j.kickFile = kick, kickEvent, kickFile
 	return j
 }
 
@@ -83,6 +89,9 @@ func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	}
 	if j.kickEvent != nil {
 		j.executor.kickEvent = func(id uuid.UUID, seq int32) error { return j.kickEvent(d, id, seq) }
+	}
+	if j.kickFile != nil {
+		j.executor.kickFile = func(id uuid.UUID, call string) error { return j.kickFile(d, id, call) }
 	}
 
 	return []dbos.ScheduleSpec{j.schedule()}, nil

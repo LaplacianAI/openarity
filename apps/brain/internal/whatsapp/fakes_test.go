@@ -48,6 +48,9 @@ type fakeClient struct {
 	// votes is what DecryptPollVote answers by vote id; one not in it fails
 	// as whatsmeow's does when the poll's secret is not known.
 	votes map[types.MessageID][][]byte
+	// uploads is what Upload was handed, and uploadErr fails it.
+	uploads   [][]byte
+	uploadErr error
 }
 
 type sentMessage struct {
@@ -163,6 +166,21 @@ func (f *fakeClient) DecryptPollVote(_ context.Context, vote *events.Message) (*
 		return nil, errors.New("failed to decrypt poll vote: message secret not found")
 	}
 	return &waE2E.PollVoteMessage{SelectedOptions: hashes}, nil
+}
+
+// Upload answers as WhatsApp's media server does, naming the upload by
+// its length, so a test can see the message names what was uploaded.
+func (f *fakeClient) Upload(_ context.Context, data []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.uploadErr != nil {
+		return whatsmeow.UploadResponse{}, f.uploadErr
+	}
+	f.uploads = append(f.uploads, data)
+	return whatsmeow.UploadResponse{
+		URL: "https://mmg.whatsapp.net/d/f/upload", DirectPath: "/v/t62/upload", MediaKey: []byte("key"),
+		FileEncSHA256: []byte("enc"), FileSHA256: []byte("sha"), FileLength: uint64(len(data)),
+	}, nil
 }
 
 func (f *fakeClient) DownloadAny(context.Context, *waE2E.Message) ([]byte, error) {

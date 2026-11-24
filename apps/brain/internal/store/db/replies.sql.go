@@ -36,9 +36,10 @@ WITH claimed AS (
         ORDER BY d.next_attempt_at, d.id
         LIMIT $5
         FOR UPDATE SKIP LOCKED)
-    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq, r.detail
+    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq, r.detail, r.attachment_id, r.call_id
 )
 SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq, c.detail,
+       c.call_id,
        ch.provider, ch.reply_url,
        s.provider_ref AS session_ref, s.kind AS session_kind,
        m.external_id AS in_reply_to
@@ -68,6 +69,7 @@ type ClaimDueRepliesRow struct {
 	PartsSent   int32
 	EventSeq    *int32
 	Detail      []byte
+	CallID      *string
 	Provider    string
 	ReplyUrl    *string
 	SessionRef  *string
@@ -114,6 +116,7 @@ func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams
 			&i.PartsSent,
 			&i.EventSeq,
 			&i.Detail,
+			&i.CallID,
 			&i.Provider,
 			&i.ReplyUrl,
 			&i.SessionRef,
@@ -128,6 +131,61 @@ func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const getReplyFile = `-- name: GetReplyFile :one
+SELECT a.team_id, a.object_key, a.filename, a.media_type, a.size_bytes
+FROM replies r
+JOIN attachments a ON a.id = r.attachment_id AND a.session_id = r.session_id
+WHERE r.id = $1
+`
+
+type GetReplyFileRow struct {
+	TeamID    uuid.UUID
+	ObjectKey string
+	Filename  string
+	MediaType string
+	SizeBytes int64
+}
+
+// The file a reply sends, read by the sender just before it posts it.
+func (q *Queries) GetReplyFile(ctx context.Context, id int64) (GetReplyFileRow, error) {
+	row := q.db.QueryRow(ctx, getReplyFile, id)
+	var i GetReplyFileRow
+	err := row.Scan(
+		&i.TeamID,
+		&i.ObjectKey,
+		&i.Filename,
+		&i.MediaType,
+		&i.SizeBytes,
+	)
+	return i, err
+}
+
+const getSessionFileReach = `-- name: GetSessionFileReach :one
+SELECT (s.channel_id IS NULL OR ch.provider = 'dashboard')::bool AS streamed,
+       COALESCE(ch.provider, '')::text AS provider,
+       (ch.provider IS NOT NULL AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL))::bool AS postable
+FROM sessions s
+LEFT JOIN channels ch ON ch.id = s.channel_id
+WHERE s.id = $1::uuid
+`
+
+type GetSessionFileReachRow struct {
+	Streamed bool
+	Provider string
+	Postable bool
+}
+
+// Where a conversation's files can reach. One read on its stream, the
+// dashboard's or the API's, takes them there: it has no channel, or the
+// team's dashboard channel, which nothing posts to. Any other is its
+// channel's provider, and whether that channel can be posted back to.
+func (q *Queries) GetSessionFileReach(ctx context.Context, sessionID uuid.UUID) (GetSessionFileReachRow, error) {
+	row := q.db.QueryRow(ctx, getSessionFileReach, sessionID)
+	var i GetSessionFileReachRow
+	err := row.Scan(&i.Streamed, &i.Provider, &i.Postable)
+	return i, err
 }
 
 const giveUpReply = `-- name: GiveUpReply :execrows
@@ -221,6 +279,45 @@ func (q *Queries) InsertEventReply(ctx context.Context, arg InsertEventReplyPara
 	return result.RowsAffected(), nil
 }
 
+const insertFileReply = `-- name: InsertFileReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, detail, attachment_id, call_id)
+SELECT r.team_id, r.id, r.session_id, s.channel_id, 'file', a.filename,
+       $1::jsonb, a.id, $2::text
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+JOIN attachments a ON a.id = $3::uuid AND a.session_id = r.session_id
+WHERE r.id = $4::uuid
+  AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, call_id) WHERE kind = 'file' DO NOTHING
+`
+
+type InsertFileReplyParams struct {
+	Detail       []byte
+	CallID       string
+	AttachmentID uuid.UUID
+	RunID        uuid.UUID
+}
+
+// A file a run hands its person (send_file): written for a run that answers a
+// channel which can be posted back to, as InsertReply is, and only for a file
+// of the run's own session, so another conversation's id inserts nothing. It
+// quotes nothing, as a step does. text is the file's name and detail its
+// caption. A call made again is still one reply.
+func (q *Queries) InsertFileReply(ctx context.Context, arg InsertFileReplyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertFileReply,
+		arg.Detail,
+		arg.CallID,
+		arg.AttachmentID,
+		arg.RunID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertNotice = `-- name: InsertNotice :execrows
 INSERT INTO replies (team_id, run_id, session_id, channel_id, in_reply_to, kind, text, detail)
 SELECT $1::uuid, $2::uuid, $3::uuid,
@@ -274,7 +371,7 @@ JOIN sessions s ON s.id = r.session_id
 JOIN channels ch ON ch.id = s.channel_id
 WHERE r.id = $4::uuid AND r.reply_to_channel
   AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
-RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq, detail
+RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq, detail, attachment_id, call_id
 `
 
 type InsertReplyParams struct {
@@ -320,6 +417,8 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 		&i.PartsSent,
 		&i.EventSeq,
 		&i.Detail,
+		&i.AttachmentID,
+		&i.CallID,
 	)
 	return i, err
 }

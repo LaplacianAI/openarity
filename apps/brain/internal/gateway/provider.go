@@ -124,6 +124,15 @@ type EventReplier interface {
 	RepliesWithEvents()
 }
 
+// FileReplier is a Replier that also sends a file a run handed its person,
+// a reply of kind "file" with Outbound.File set. Only on these channels is
+// a run given send_file. Its own package builds the file message, as it
+// parses its webhooks; the sender loads the bytes first, so Reply stays pure.
+type FileReplier interface {
+	Replier
+	RepliesWithFiles()
+}
+
 // SecretIssuer is a provider whose platform issues the signing secret, as
 // Slack's app settings do. The brain cannot generate one for it: a delivery
 // is signed with the platform's, so a channel is refused without it.
@@ -205,16 +214,26 @@ type Outbound struct {
 	InReplyTo string
 	// Kind is "answer", "apology" when the run failed, "event": one step
 	// of a run still working, sent before its answer and quoting nothing,
-	// "approval": a run asking its person, or "notice": the brain's short
-	// word on an answer given in the chat.
+	// "approval": a run asking its person, "notice": the brain's short
+	// word on an answer given in the chat, or "file": a file the run sent,
+	// in File, with Text its name.
 	Kind string
 	Text string
+	// File is a file reply's file, loaded for this attempt.
+	File *OutFile
 	// Prompt is an approval's requests, for the platform's buttons: those
 	// with Ask set are its person's to answer here. Text already says how
 	// to answer by typing, so a platform with no controls sends Text alone.
 	Prompt *approval.Prompt
 	// Notice is a notice's detail, for answering a tap where it was made.
 	Notice *ReplyNotice
+}
+
+// OutFile is a file a run sent, as a platform sends it: its name, the type
+// its bytes were sniffed as when it was kept, and the line sent with it.
+type OutFile struct {
+	Name, MediaType, Caption string
+	Data                     []byte
 }
 
 // ReplyNotice is what a platform needs to send a notice the way the answer
@@ -241,6 +260,7 @@ type Registry struct {
 	setups    map[string]Setup
 	toURL     map[string]bool
 	events    map[string]bool
+	files     map[string]bool
 	connects  map[string]Connector
 	notifiers map[string]Notifier
 	sockets   map[string]bool
@@ -250,7 +270,7 @@ type Registry struct {
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
-		toURL: map[string]bool{}, events: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
+		toURL: map[string]bool{}, events: map[string]bool{}, files: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
 		sockets: map[string]bool{}, issuers: map[string]bool{},
 	}
 	for _, p := range providers {
@@ -284,6 +304,9 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		}
 		if _, ok := p.(EventReplier); ok {
 			reg.events[name] = true
+		}
+		if _, ok := p.(FileReplier); ok {
+			reg.files[name] = true
 		}
 		if c, ok := p.(Connector); ok {
 			reg.connects[name] = c
@@ -334,6 +357,9 @@ func (r Registry) TakesReplyURL(name string) bool { return r.toURL[name] }
 
 // RepliesWithEvents is whether the named provider sends a run's steps.
 func (r Registry) RepliesWithEvents(name string) bool { return r.events[name] }
+
+// SendsFiles is whether the provider sends a file a run hands its person.
+func (r Registry) SendsFiles(name string) bool { return r.files[name] }
 
 // Setup is how the named provider completes its credentials, if it needs to.
 func (r Registry) Setup(name string) (Setup, bool) {

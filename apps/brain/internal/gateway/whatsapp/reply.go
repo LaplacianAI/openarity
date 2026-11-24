@@ -39,6 +39,17 @@ type Part struct {
 	// Poll, when set, makes this part a poll and not text: Text is empty.
 	// Older parts have none, so they read as they always did.
 	Poll *Poll `json:"poll,omitempty"`
+	// File, when set, makes this part a document and not text: Text is
+	// empty. The socket uploads it, then sends the message naming it.
+	File *File `json:"file,omitempty"`
+}
+
+// File is a file a run sent, its bytes in the part (base64 in JSON).
+type File struct {
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	Caption   string `json:"caption,omitempty"`
+	Data      []byte `json:"data"`
 }
 
 // Poll is a single-choice poll: the question, and the options a vote is
@@ -70,6 +81,9 @@ func (provider) Reply(_ gateway.Channel, out gateway.Outbound, _ gateway.Credent
 	to, err := conversation(out.Session.Ref)
 	if err != nil {
 		return nil, err
+	}
+	if out.Kind == "file" {
+		return document(to, out)
 	}
 	if strings.TrimSpace(out.Text) == "" {
 		return nil, errors.New("whatsapp: an empty reply")
@@ -141,8 +155,14 @@ func ReadPart(req gateway.OutboundRequest) (Part, error) {
 	if err := json.Unmarshal(req.Body, &p); err != nil {
 		return Part{}, fmt.Errorf("whatsapp: reading a part: %w", err)
 	}
-	if p.ID == "" || p.To == "" || (p.Text == "") == (p.Poll == nil) {
-		return Part{}, errors.New("whatsapp: a part with no id, address, or exactly one of text and a poll")
+	kinds := 0
+	for _, has := range []bool{p.Text != "", p.Poll != nil, p.File != nil} {
+		if has {
+			kinds++
+		}
+	}
+	if p.ID == "" || p.To == "" || kinds != 1 || p.File != nil && len(p.File.Data) == 0 {
+		return Part{}, errors.New("whatsapp: a part with no id, address, or exactly one of text, a poll and a file")
 	}
 	if p.Poll != nil && (p.Poll.Question == "" || len(p.Poll.Options) < 2) {
 		return Part{}, errors.New("whatsapp: a poll with no question or fewer than two options")

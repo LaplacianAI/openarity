@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -44,6 +46,13 @@ type ReplyStore interface {
 	NoticeSent(ctx context.Context, arg db.NoticeSentParams) (int64, error)
 	RetryNotice(ctx context.Context, arg db.RetryNoticeParams) (int64, error)
 	GiveUpNotice(ctx context.Context, arg db.GiveUpNoticeParams) (int64, error)
+
+	GetReplyFile(ctx context.Context, id int64) (db.GetReplyFileRow, error)
+}
+
+// FileReader reads a file's bytes: the attachment store, which decrypts them.
+type FileReader interface {
+	Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error)
 }
 
 // Sender posts the outbox's replies, one conversation's in order, and the
@@ -55,6 +64,7 @@ type Sender struct {
 	poster  Poster
 	scope   Scope
 	logger  *slog.Logger
+	objects FileReader
 }
 
 // Poster sends one part a provider built, for a channel. An error is retried
@@ -74,6 +84,13 @@ type Scope struct {
 
 func NewSender(s ReplyStore, sec Secrets, reg Registry, poster Poster, scope Scope, logger *slog.Logger) *Sender {
 	return &Sender{store: s, secrets: sec, reg: reg, poster: poster, scope: scope, logger: logger}
+}
+
+// WithFiles lets the sender send the files runs hand their people. Without
+// it a file reply is given up, as nothing could read its bytes.
+func (s *Sender) WithFiles(o FileReader) *Sender {
+	s.objects = o
+	return s
 }
 
 // claimScope is the scope as a claim's arguments.
@@ -167,11 +184,15 @@ type outgoing struct {
 	teamID    uuid.UUID
 	channelID uuid.UUID
 	provider  string
-	build     func(creds Credentials) ([]OutboundRequest, error)
-	sent      func(ctx context.Context) (int64, error)
-	partSent  func(ctx context.Context, parts int32) (int64, error)
-	retry     func(ctx context.Context, msg string, after time.Duration) (int64, error)
-	giveUp    func(ctx context.Context, msg string) (int64, error)
+	// load reads what the requests carry beyond the row, a file reply's
+	// file, before they are built: an error is retried unless it wraps
+	// ErrUnsendable. Nil for everything else.
+	load     func(ctx context.Context) (*OutFile, error)
+	build    func(creds Credentials, file *OutFile) ([]OutboundRequest, error)
+	sent     func(ctx context.Context) (int64, error)
+	partSent func(ctx context.Context, parts int32) (int64, error)
+	retry    func(ctx context.Context, msg string, after time.Duration) (int64, error)
+	giveUp   func(ctx context.Context, msg string) (int64, error)
 }
 
 // replyID is the id a reply is sent under, for a receiver to drop a repeat,
@@ -199,7 +220,8 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 	return outgoing{
 		what: "reply", id: row.ID, attempts: row.Attempts, tries: tries, partsSent: row.PartsSent,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,
-		build: func(creds Credentials) ([]OutboundRequest, error) {
+		load: s.fileOf(row),
+		build: func(creds Credentials, file *OutFile) ([]OutboundRequest, error) {
 			rp, ok := s.reg.Replier(row.Provider)
 			if !ok {
 				return nil, fmt.Errorf("the %s provider sends no replies", row.Provider)
@@ -211,6 +233,7 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 				InReplyTo: deref(row.InReplyTo),
 				Kind:      row.Kind,
 				Text:      row.Text,
+				File:      file,
 			}
 			if err := withDetail(&out, row.Detail); err != nil {
 				return nil, err
@@ -251,8 +274,50 @@ func withDetail(out *Outbound, detail []byte) error {
 			return fmt.Errorf("reading the notice: %w", err)
 		}
 		out.Notice = &n
+	case "file":
+		var f struct {
+			Caption string `json:"caption"`
+		}
+		if err := json.Unmarshal(detail, &f); err != nil {
+			return fmt.Errorf("reading the file's caption: %w", err)
+		}
+		if out.File != nil {
+			out.File.Caption = f.Caption
+		}
 	}
 	return nil
+}
+
+// fileOf loads a file reply's file, just before it is sent: one at a time,
+// so a sender holds one file's bytes. A file gone since, or a provider that
+// sends none, is given up; a store that fails is tried again.
+func (s *Sender) fileOf(row db.ClaimDueRepliesRow) func(ctx context.Context) (*OutFile, error) {
+	if row.Kind != "file" {
+		return nil
+	}
+	return func(ctx context.Context) (*OutFile, error) {
+		switch {
+		case !s.reg.SendsFiles(row.Provider):
+			return nil, fmt.Errorf("%w: the %s provider sends no files", ErrUnsendable, row.Provider)
+		case s.objects == nil:
+			return nil, fmt.Errorf("%w: this sender reads no files", ErrUnsendable)
+		}
+		f, err := s.store.GetReplyFile(ctx, row.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: the file is no longer in the conversation", ErrUnsendable)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading the reply's file: %w", err)
+		}
+		data, err := s.objects.Get(ctx, f.TeamID, f.ObjectKey)
+		if errors.Is(err, objects.ErrNotFound) {
+			return nil, fmt.Errorf("%w: the file %s is no longer stored", ErrUnsendable, f.Filename)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading the file %s: %w", f.Filename, err)
+		}
+		return &OutFile{Name: f.Filename, MediaType: f.MediaType, Data: data}, nil
+	}
 }
 
 // notice is one request: a notice is a sentence, never split, so it has no
@@ -262,7 +327,7 @@ func (s *Sender) notice(row db.ClaimDueNoticesRow) outgoing {
 	return outgoing{
 		what: "notice", id: row.ID, attempts: row.Attempts, tries: replyAttempts,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,
-		build: func(creds Credentials) ([]OutboundRequest, error) {
+		build: func(creds Credentials, _ *OutFile) ([]OutboundRequest, error) {
 			n, ok := s.reg.Notifier(row.Provider)
 			if !ok {
 				return nil, fmt.Errorf("the %s provider sends no notices", row.Provider)
@@ -335,7 +400,13 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 		return err
 	}
 
-	parts, err := o.build(creds)
+	var file *OutFile
+	if o.load != nil {
+		if file, err = o.load(ctx); err != nil {
+			return err
+		}
+	}
+	parts, err := o.build(creds, file)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnsendable, err)
 	}

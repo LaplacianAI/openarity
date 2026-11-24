@@ -32,6 +32,7 @@ type Client interface {
 	SendChatPresence(ctx context.Context, jid types.JID, state types.ChatPresence, media types.ChatPresenceMedia) error
 	DownloadAny(ctx context.Context, msg *waE2E.Message) ([]byte, error)
 	BuildPollCreation(name string, optionNames []string, selectableOptionCount int) *waE2E.Message
+	Upload(ctx context.Context, plaintext []byte, appInfo whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
 	DecryptPollVote(ctx context.Context, vote *events.Message) (*waE2E.PollVoteMessage, error)
 	ParseWebMessage(chatJID types.JID, webMsg *waWeb.WebMessageInfo) (*events.Message, error)
 }

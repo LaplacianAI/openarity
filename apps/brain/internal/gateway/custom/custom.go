@@ -236,6 +236,8 @@ type replyBody struct {
 	// posting "yes <code>" or "no <code>" back as a message. Text already says
 	// so, for a receiver that shows text alone.
 	Approval *approval.Prompt `json:"approval,omitempty"`
+	// File is a file a run sent (kind "file"), inline; Text is its name.
+	File *replyFile `json:"file,omitempty"`
 }
 
 // Reply is the signed POST of out to the channel's reply URL. The id lets the
@@ -252,7 +254,11 @@ func (provider) Reply(
 		return nil, errors.New("custom: no signing secret")
 	}
 
-	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text, Approval: out.Prompt}
+	file, err := fileOf(out)
+	if err != nil {
+		return nil, err
+	}
+	b := replyBody{ID: out.ID, InReplyTo: out.InReplyTo, Kind: out.Kind, Text: out.Text, Approval: out.Prompt, File: file}
 	b.Session.Ref, b.Session.Kind = out.Session.Ref, string(out.Session.Kind)
 	raw, err := json.Marshal(b)
 	if err != nil {
