@@ -138,8 +138,9 @@ an image or a PDF the model may see is attached as a `Blob` with the keeper's
 ```
 
 Which files the model may see, and how, is as without a keeper; a text file
-is kept whole and shown cut. A call keeps eight files at most, and each up to
-`MaxKeptBytes`, 25 MiB. A keeper that returns an error does not fail the call:
+is kept whole and shown cut. A call asks the keeper eight times at most, a
+file it refused counting as one, and hands it files up to `MaxKeptBytes`,
+25 MiB. A keeper that returns an error does not fail the call:
 the tool's work is done, so its text stands and the file is named as not
 kept. The keeper's error is never shown to the model, since it may name a
 store; log it there. The call's id is on the context, `agent.ToolCallID(ctx)`,

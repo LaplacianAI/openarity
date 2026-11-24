@@ -213,3 +213,42 @@ func TestNoBytePastTheLineIsReadWithoutTheSlot(t *testing.T) {
 		t.Errorf("read %d more bytes, err %v; want none until the slot is free", n, err)
 	}
 }
+
+// A Close while a read waits for the slot leaves the slot free once the
+// read gives up: the waiting read either takes it before Close, which gives
+// it back, or after, and sees the body closed.
+func TestClosingAnAnswerThatWaitsForTheSlotFreesIt(t *testing.T) {
+	t.Parallel()
+	srv := sized(t)
+	for range 50 {
+		large := make(chan struct{}, 1)
+		c := cappedClient(&http.Client{}, large)
+
+		a := open(t, c, srv, http.MethodPost, 2*largeAnswer)
+		t.Cleanup(func() { _ = a.Body.Close() })
+		if _, err := io.ReadFull(a.Body, make([]byte, largeAnswer+1)); err != nil {
+			t.Fatal(err)
+		}
+		b := open(t, c, srv, http.MethodPost, 2*largeAnswer)
+		t.Cleanup(func() { _ = b.Body.Close() })
+		if _, err := io.ReadFull(b.Body, make([]byte, largeAnswer)); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = b.Body.Read(make([]byte, 8)) // waits for the slot a holds
+		}()
+		go func() { _ = b.Body.Close() }()
+		_ = a.Body.Close()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the waiting read never ended")
+		}
+		_ = b.Body.Close()
+		if len(large) != 0 {
+			t.Fatalf("the slot holds %d after both closed, want 0", len(large))
+		}
+	}
+}

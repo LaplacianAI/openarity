@@ -40,7 +40,8 @@ type ObjectWriter interface {
 }
 
 // ToolFiles keeps the files a run's MCP tools return as its conversation's
-// attachments.
+// attachments. Every field is required: a nil Logger panics, as the brain's
+// loggers do.
 type ToolFiles struct {
 	Store   ToolFileStore
 	Objects ObjectWriter

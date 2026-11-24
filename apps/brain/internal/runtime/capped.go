@@ -119,6 +119,11 @@ func (b *cappedBody) past(p []byte) (int, error) {
 func (b *cappedBody) release() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.releaseLocked()
+}
+
+// releaseLocked is release with b.mu held.
+func (b *cappedBody) releaseLocked() {
 	if b.held {
 		<-b.large
 		b.held = false
@@ -152,9 +157,11 @@ func (b *cappedBody) take() error {
 // Close gives the slot back once, however often it is called.
 func (b *cappedBody) Close() error {
 	err := b.body.Close()
-	b.release()
+	// One critical section: a take between a release and closed would hold
+	// the slot with nothing left to give it back.
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.closed = true
+	b.releaseLocked()
 	return err
 }

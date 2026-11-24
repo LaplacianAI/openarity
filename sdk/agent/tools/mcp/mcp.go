@@ -210,7 +210,7 @@ func resultOf(ctx context.Context, keep Keeper, tool string, res *sdk.CallToolRe
 		out   agent.ToolResult
 		lines []string
 		seen  int // every block not text, so each is named apart
-		files int // passed on, attached or as text
+		files int // passed on, attached or as text; with a keeper, asked of it
 		bytes int // of those
 	)
 	for _, c := range res.Content {

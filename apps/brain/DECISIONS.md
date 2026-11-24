@@ -695,7 +695,10 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   database. The transcript holds only `attachment:<id>`; the model is shown
   an image or a PDF it may read by reference, fetched for each request by the
   rule above, and every other file is a line with its id, which
-  `read_attachment` and `attachments` reach from the run's start. A keeper
+  `read_attachment` and `attachments` reach from the run's start when the
+  run has MCP tools; a run without them, such as a delegate with none, binds
+  them only when the session already has files, so one built before a
+  sibling's first file cannot read it. A keeper
   that fails does not fail the call, since the tool's work is done: the file
   is named as not kept, and the cause logged, never shown. The SDK decides
   what a file is and how its line reads (`mcp.Keeper`), so the brain never
