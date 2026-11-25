@@ -30,7 +30,12 @@ The dashboard does the same under **Channels → Connect channel**.
 ## Slack
 
 Create a Slack app, give its bot the scopes it needs to read and post in the
-places it is added, and install it. Then connect the channel with the app's
+places it is added, and install it. The bot scopes are `channels:history`,
+`groups:history`, `im:history`, `mpim:history`, `chat:write`, `files:read`
+(to read a file a person sends) and `files:write` (to send one back). An app
+made before `files:write` was needed takes it under **OAuth & Permissions**,
+then **Reinstall to Workspace**; until then a file the agent sends is given up,
+and the reply's error says `missing_scope`. Then connect the channel with the app's
 **Signing Secret** (Basic Information) and its **Bot User OAuth Token**
 (`xoxb-…`). The token goes in on stdin and the secret from a file, as there
 is one stdin:
@@ -540,8 +545,9 @@ a caption of 1024 characters at most, and a `custom` channel only when it has
 a reply URL. A file is tried twice, a minute apart, then given up, so it never
 holds the answer behind it for long. Telegram sends the file as a document and
 WhatsApp as a document message; Telegram drops no repeat, so a file whose
-answer was lost on the way can arrive twice there. On Slack, an agent cannot
-send files yet. On the dashboard the file shows above the run's answer, and its
+answer was lost on the way can arrive twice there. Slack uploads the file into
+the thread with the caption as its comment, which needs the `files:write`
+scope; Slack drops no repeat either. On the dashboard the file shows above the run's answer, and its
 bytes are `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}`.
 
 It carries the same two headers as a message, signed under a different prefix:

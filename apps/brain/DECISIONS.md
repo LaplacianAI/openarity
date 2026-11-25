@@ -719,9 +719,10 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   only it answers the conversation, and only where the file can arrive: a
   conversation read on its stream (no channel, or the dashboard's) or a
   channel the run answers whose provider is a `gateway.FileReplier` and, for
-  `custom`, has a reply URL; never on Slack until its three-call upload is
-  built (F3b). Not gated by approvals: it reaches no further than the
-  answer. A run event `file_sent` puts a chip under the run on the dashboard;
+  `custom`, has a reply URL. Slack's upload is three calls, each built from
+  the answer before it, so it is a `gateway.FileUploader` the sender runs a
+  step at a time (F3b; the gateway's DECISIONS has why). Not gated by
+  approvals: it reaches no further than the answer. A run event `file_sent` puts a chip under the run on the dashboard;
   on a channel the file is also a reply of kind `file`, in the session's
   order, so a file sent while the run works goes out before its answer, one
   per call (`replies_one_per_file_call`) and kicked at once. Ten a run, a

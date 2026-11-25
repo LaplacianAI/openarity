@@ -1258,3 +1258,242 @@ func TestAPostOutlastsItsClientsTimeout(t *testing.T) {
 		t.Errorf("the caller's client was changed: timeout %v", client.Timeout)
 	}
 }
+
+// --- a file sent in steps, each built from the answers before it ---
+
+// uploadRelay is a FileUploader whose upload is final at step last (0-based,
+// default 2), each step's request naming its step. buildErr fails every
+// step; refuse is what its own Accepted says of each answer.
+type uploadRelay struct {
+	fileRelay
+	last     int
+	buildErr error
+	refuse   error
+
+	mu    sync.Mutex
+	asked [][]string
+}
+
+func (*uploadRelay) Name() string { return "uploader" }
+
+func (u *uploadRelay) FileRequest(ch Channel, out Outbound, _ Credentials, answers [][]byte) (OutboundRequest, bool, error) {
+	got := make([]string, len(answers))
+	for i, a := range answers {
+		got[i] = string(a)
+	}
+	u.mu.Lock()
+	u.asked = append(u.asked, got)
+	u.mu.Unlock()
+	if u.buildErr != nil {
+		return OutboundRequest{}, false, u.buildErr
+	}
+	n := len(answers)
+	return OutboundRequest{
+		URL: ch.ReplyURL, Body: []byte(fmt.Sprintf("%s step %d", out.File.Name, n)),
+		Accepted: func(int, []byte) error { return u.refuse },
+	}, n == u.last, nil
+}
+
+func (u *uploadRelay) steps() [][]string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return slices.Clone(u.asked)
+}
+
+// stepPoster is a Poster that answers the nth request it is handed with the
+// nth answer, through the request's own Accepted, or fails the request at
+// failAt (1-based) with err.
+type stepPoster struct {
+	mu     sync.Mutex
+	reqs   []OutboundRequest
+	failAt int
+	err    error
+}
+
+func (a *stepPoster) Post(_ context.Context, _ uuid.UUID, req OutboundRequest) error {
+	a.mu.Lock()
+	a.reqs = append(a.reqs, req)
+	n := len(a.reqs)
+	a.mu.Unlock()
+	if n == a.failAt {
+		return a.err
+	}
+	if req.Accepted != nil {
+		return req.Accepted(http.StatusOK, []byte(fmt.Sprintf("answer %d", n)))
+	}
+	return nil
+}
+
+func (a *stepPoster) posted() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []string
+	for _, r := range a.reqs {
+		out = append(out, string(r.Body))
+	}
+	return out
+}
+
+func uploadSending(t *testing.T) (*sending, *uploadRelay, *stepPoster, db.ClaimDueRepliesRow) {
+	t.Helper()
+	u := &uploadRelay{last: 2}
+	s, _, objs, row, _ := fileSending(t)
+	reg, err := NewRegistry(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.Provider = "uploader"
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	p := &stepPoster{}
+	s.sender = senderWith(t, s, reg, p, Scope{}).WithFiles(objs)
+	return s, u, p, row
+}
+
+// Each step is built from every answer before it, and the upload is one
+// part: recorded once, when its last step is answered.
+func TestAFileUploadsInStepsEachFromTheAnswersBefore(t *testing.T) {
+	t.Parallel()
+
+	s, u, p, _ := uploadSending(t)
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{{}, {"answer 1"}, {"answer 1", "answer 2"}}; !reflect.DeepEqual(u.steps(), want) {
+		t.Errorf("steps were handed %q, want %q", u.steps(), want)
+	}
+	if want := []string{"report.pdf step 0", "report.pdf step 1", "report.pdf step 2"}; !reflect.DeepEqual(p.posted(), want) {
+		t.Errorf("posted %q", p.posted())
+	}
+	if len(s.store.parts) != 1 || s.store.parts[0].PartsSent != 1 || len(s.store.sent) != 1 {
+		t.Errorf("parts %+v, sent %+v", s.store.parts, s.store.sent)
+	}
+}
+
+// A step that fails retries the upload, which starts again from the first
+// step: an upload left part way is never shared.
+func TestAFailedStepRetriesTheUploadFromTheStart(t *testing.T) {
+	t.Parallel()
+
+	s, u, p, row := uploadSending(t)
+	p.failAt, p.err = 2, errors.New("connection reset")
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.store.retried) != 1 || len(s.store.parts)+len(s.store.sent)+len(s.store.gaveUp) != 0 {
+		t.Fatalf("retried %+v, parts %+v, sent %+v, gave up %+v", s.store.retried, s.store.parts, s.store.sent, s.store.gaveUp)
+	}
+
+	row.Attempts = 2
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{{}, {"answer 1"}, {}, {"answer 3"}, {"answer 3", "answer 4"}}; !reflect.DeepEqual(u.steps(), want) {
+		t.Errorf("steps were handed %q, want the retry from the first", u.steps())
+	}
+	if len(s.store.sent) != 1 {
+		t.Errorf("sent %+v after the retry", s.store.sent)
+	}
+}
+
+// The provider's own reading of an answer still decides: a refusal no retry
+// fixes gives the file up, and one it might is tried again.
+func TestAStepsRefusalIsTheUploads(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		refuse  error
+		gaveUp  bool
+		retried bool
+	}{
+		"final":     {fmt.Errorf("%w: missing_scope", ErrUnsendable), true, false},
+		"transient": {errors.New("ratelimited"), false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, u, p, _ := uploadSending(t)
+			u.refuse = c.refuse
+			if _, err := s.sender.Drain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(p.posted()) != 1 || (len(s.store.gaveUp) == 1) != c.gaveUp || (len(s.store.retried) == 1) != c.retried {
+				t.Errorf("posted %d, gave up %+v, retried %+v", len(p.posted()), s.store.gaveUp, s.store.retried)
+			}
+		})
+	}
+}
+
+// An upload that is not done by its third step is a provider's mistake, not
+// a loop: given up, its fourth never sent.
+func TestAnUploadPastItsStepsIsGivenUp(t *testing.T) {
+	t.Parallel()
+
+	s, u, p, _ := uploadSending(t)
+	u.last = 99
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.posted()) != uploadSteps || len(s.store.gaveUp) != 1 || len(s.store.sent) != 0 {
+		t.Errorf("posted %d, gave up %+v, sent %+v", len(p.posted()), s.store.gaveUp, s.store.sent)
+	}
+}
+
+// A step that cannot be built is given up: the same inputs build it the
+// same way.
+func TestAStepThatCannotBeBuiltIsGivenUp(t *testing.T) {
+	t.Parallel()
+
+	s, u, p, _ := uploadSending(t)
+	u.buildErr = errors.New("no bot token")
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.posted()) != 0 || len(s.store.gaveUp) != 1 {
+		t.Errorf("posted %d, gave up %+v", len(p.posted()), s.store.gaveUp)
+	}
+}
+
+// An upload already recorded, whose sent mark was lost, is not sent again.
+func TestAnUploadAlreadyRecordedIsNotSentAgain(t *testing.T) {
+	t.Parallel()
+
+	s, _, p, row := uploadSending(t)
+	row.PartsSent = 1
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.posted()) != 0 || len(s.store.sent) != 1 {
+		t.Errorf("posted %d, sent %+v", len(p.posted()), s.store.sent)
+	}
+}
+
+// An upload whose lease another sender took marks nothing: the row is theirs.
+func TestAnUploadWhoseLeaseIsLostMarksNothing(t *testing.T) {
+	t.Parallel()
+
+	s, _, _, _ := uploadSending(t)
+	s.store.partLost = true
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.store.sent)+len(s.store.retried)+len(s.store.gaveUp) != 0 {
+		t.Errorf("sent %+v, retried %+v, gave up %+v", s.store.sent, s.store.retried, s.store.gaveUp)
+	}
+}
+
+// An uploader's answer is a reply like any other, built by Reply: only its
+// files go in steps.
+func TestAnUploadersAnswerIsBuiltByReply(t *testing.T) {
+	t.Parallel()
+
+	s, u, p, row := uploadSending(t)
+	row.Kind, row.Detail = "answer", nil
+	s.store.due = []db.ClaimDueRepliesRow{row}
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.steps()) != 0 || len(u.outs) != 1 || len(p.posted()) != 1 {
+		t.Errorf("steps %d, replies built %d, posted %d", len(u.steps()), len(u.outs), len(p.posted()))
+	}
+}
