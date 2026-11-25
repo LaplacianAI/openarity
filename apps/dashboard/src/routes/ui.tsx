@@ -372,7 +372,7 @@ function Shell({ pathname }: { pathname: string }) {
               <Mark className="size-5" />
             )}
           </div>
-          <div className="flex-1 overflow-y-auto px-2 pt-1 pb-3">
+          <div className="flex-1 relative overflow-y-auto px-2 pt-1 pb-3">
             <Nav groups={groups} pathname={pathname} waiting={waiting} rail={layout === "rail"} />
           </div>
           <div className="px-2 pb-3">
@@ -404,7 +404,7 @@ function Shell({ pathname }: { pathname: string }) {
         className={
           phone
             ? "min-w-0 flex-1"
-            : "col-start-2 mr-2 mb-2 min-h-0 min-w-0 overflow-y-auto rounded-2xl border border-sheet-edge bg-sheet"
+            : "col-start-2 mr-2 mb-2 min-h-0 min-w-0 relative overflow-y-auto rounded-2xl border border-sheet-edge bg-sheet"
         }
       >
         <div className={phone ? "px-4 pt-5 pb-24" : "px-6 py-6 has-[[data-fills-sheet]]:h-full"}>
@@ -786,7 +786,7 @@ function QuickBar({
             <DialogPrimitive.Description className="sr-only">
               Every screen of the dashboard, and your account.
             </DialogPrimitive.Description>
-            <div className="flex-1 space-y-4 overflow-y-auto px-2 pb-4">
+            <div className="flex-1 space-y-4 relative overflow-y-auto px-2 pb-4">
               <Nav
                 groups={groups}
                 pathname={pathname}

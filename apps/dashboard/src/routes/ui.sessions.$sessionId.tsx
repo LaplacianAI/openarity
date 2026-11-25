@@ -326,7 +326,7 @@ function Conversation({
     <section aria-label="Messages" className={pane ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
       <div
         data-scroller={pane ? "" : undefined}
-        className={pane ? "min-h-0 flex-1 overflow-y-auto pr-3" : undefined}
+        className={pane ? "min-h-0 flex-1 relative overflow-y-auto pr-3" : undefined}
       >
         <div ref={body} className="space-y-4">
           {stream.failed !== null ? (
@@ -604,7 +604,7 @@ function Runs({
         key={chosenId ?? "none"}
         data-testid="run-pane"
         data-scroller={pane ? "" : undefined}
-        className={pane ? "min-h-0 flex-1 overflow-y-auto pr-3" : undefined}
+        className={pane ? "min-h-0 flex-1 relative overflow-y-auto pr-3" : undefined}
       >
         {chosen && chosen.session_id === sessionId ? (
           <RunDetail teamId={teamId} run={chosen} canCancel={canCancel} onChanged={changed} />

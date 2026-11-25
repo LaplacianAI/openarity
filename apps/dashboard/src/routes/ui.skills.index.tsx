@@ -451,7 +451,7 @@ function SkillDetail({
             </h3>
             {/* The team's markdown, shown as text: rendering it as HTML would
                 run whatever an imported skill's author put there. */}
-            <pre className="max-h-80 overflow-auto rounded-lg bg-card p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+            <pre className="max-h-80 relative overflow-auto rounded-lg bg-card p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
               {s.body}
             </pre>
           </section>

@@ -228,7 +228,7 @@ export function CommandPalette({
             id={listId}
             role="listbox"
             aria-label="Results"
-            className="max-h-80 overflow-y-auto p-1.5"
+            className="max-h-80 relative overflow-y-auto p-1.5"
           >
             {choices === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">

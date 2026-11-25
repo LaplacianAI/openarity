@@ -249,7 +249,7 @@ Warm graphite paper with a single cool teal: BRAND's Spectral palette, copied in
 **The timeline.** Each step is a 24px numbered circle on a 1px rule that runs down to the next, with the step's name, its token bar (112px track at 390, 192px from 640) and its count on one line. Tool calls under a step sit in one card, one line each, divided by rules; a delegation's child run nests under its call.
 
 ### Named Rules
-**The Two Panes Rule.** At 1280px and wider the session page is two panes, each its own scroll; the composer and the run switcher sit outside them, so neither scrolls away. Narrower, a trace is read in the sheet's (or, on a phone, the page's) own scroll. Nothing else on a page scrolls in a box, except raw output (320-384px) and a menu's list.
+**The Two Panes Rule.** At 1280px and wider the session page is two panes, each its own scroll; the composer and the run switcher sit outside them, so neither scrolls away. Narrower, a trace is read in the sheet's (or, on a phone, the page's) own scroll. Nothing else on a page scrolls in a box, except raw output (320-384px) and a menu's list. Every box that scrolls, the sheet and the panes included, is also positioned (`relative`), so an absolutely placed child such as a screen-reader label stays inside it rather than stretching the window.
 
 ## Elevation & Depth
 
