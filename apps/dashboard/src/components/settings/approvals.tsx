@@ -328,7 +328,7 @@ const BUILT_INS: ChoiceGroup<string>[] = [
       {
         value: "keep_file",
         label: "keep_file",
-        hint: "Keeps a file a tool wrote in its room as a file of the conversation. From a command server's shared room, asks for a guest and is refused when nobody is present.",
+        hint: "Keeps a file a tool wrote in its room as a file of the conversation. In a run with a command MCP server, whose room the team shares, asks for a guest and is refused when nobody is present.",
       },
     ],
   },

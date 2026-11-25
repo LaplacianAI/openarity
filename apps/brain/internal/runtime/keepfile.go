@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"path"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -36,7 +35,8 @@ const (
 	// megabyte a second, and then some.
 	keepTimeout = 2 * time.Minute
 	// maxName is the most of a file's name kept, in runes: a name a person
-	// reads, well inside the 512 an attachment's filename may be.
+	// reads, well inside the 512 an attachment's filename may be. Keep it
+	// equal to the SDK's maxNameRunes, so a file is named alike either way.
 	maxName = 100
 )
 
@@ -79,8 +79,9 @@ type keepFile struct {
 	team    uuid.UUID
 	kept    atomic.Int64
 	// one keeps a run's files one at a time: each is held whole, up to
-	// 25 MiB, and a model can ask for twenty at once.
-	one sync.Mutex
+	// 25 MiB, and a model can ask for twenty at once. A channel, so a call
+	// waiting its turn can be given up on.
+	one chan struct{}
 }
 
 func (k *keepFile) tool() agent.Tool {
@@ -130,8 +131,12 @@ func (k *keepFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if k.kept.Add(1) > keptPerRun {
 		return "", fmt.Errorf("this run has tried to keep %d files, the most one run keeps; say where the rest are instead", keptPerRun)
 	}
-	k.one.Lock()
-	defer k.one.Unlock()
+	select {
+	case k.one <- struct{}{}:
+		defer func() { <-k.one }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	reading, cancel := context.WithTimeout(ctx, keepTimeout)
 	data, err := read(reading, p)
 	cancel()
@@ -161,7 +166,7 @@ func nameOf(p string) string {
 		return r
 	}, path.Base(p)))
 	if r := []rune(name); len(r) > maxName {
-		name = string(r[:maxName])
+		name = strings.TrimSpace(string(r[:maxName]))
 	}
 	if name == "" || name == "." || name == ".." || name == "/" {
 		return "file"
@@ -262,6 +267,7 @@ func (b *Builder) keepFileFor(
 	k := &keepFile{
 		keep: b.keeperFor(run), ws: ws, team: run.TeamID,
 		rooms: b.roomFiles.Servers, client: b.roomFiles.Client, servers: b.serverRooms(commands),
+		one: make(chan struct{}, 1),
 	}
 	n, err := b.roomFiles.Store.CountRunKeptFiles(ctx, db.CountRunKeptFilesParams{RunID: run.ID, Tool: KeepFileToolName})
 	if err != nil {

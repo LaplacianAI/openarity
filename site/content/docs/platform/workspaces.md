@@ -177,8 +177,8 @@ send_file    {"id": "7c2e…"}            → the person gets chart.png
 A path is from `/workspace` unless it is absolute; any regular file in the
 room can be kept, up to 25 MiB, apart from those under `/proc`. A run tries
 twenty at most, a try that fails among them. A run that holds `keep_file` holds
-`read_attachment` and `send_file` with it, so a file kept is read or sent in
-the same run. A file kept stays with the conversation however long the room
+`read_attachment` with it, and `send_file` wherever it can send, so a file
+kept is read or sent in the same run. A file kept stays with the conversation however long the room
 does. A room replaced since the file was written no longer has it, and the
 agent is told so.
 

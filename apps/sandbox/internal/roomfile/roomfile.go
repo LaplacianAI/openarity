@@ -19,7 +19,7 @@ import (
 
 const (
 	// MaxDownload is the largest file handed over whole: the most the brain
-	// keeps as an attachment.
+	// keeps as an attachment. Keep it equal to the brain's roomfile.Max.
 	MaxDownload = 25 << 20
 	// ProblemHeader marks an answer as the room's own refusal, whose text is
 	// for the model, whatever its status.
@@ -168,8 +168,8 @@ func Download(w http.ResponseWriter, root, path string) error {
 }
 
 // Serve answers GET /file?path= for a room whose files are under root, once
-// the caller is known to be the brain: the file whole, or why not. logf
-// hears what failed on the room's side.
+// the caller is known to be the brain: the file whole, or why not. The
+// logger hears what failed on the room's side.
 func Serve(w http.ResponseWriter, r *http.Request, root string, logger *slog.Logger) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")

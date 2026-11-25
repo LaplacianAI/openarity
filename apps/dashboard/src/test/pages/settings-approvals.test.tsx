@@ -405,7 +405,7 @@ it("names keep_file, the tool that keeps a file a tool wrote", async () => {
   await choose(within(section).getByLabelText("Tool"), "keep_file");
   expect(
     within(section).getByText(
-      "Keeps a file a tool wrote in its room as a file of the conversation. From a command server's shared room, asks for a guest and is refused when nobody is present.",
+      "Keeps a file a tool wrote in its room as a file of the conversation. In a run with a command MCP server, whose room the team shares, asks for a guest and is refused when nobody is present.",
     ),
   ).toBeInTheDocument();
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));

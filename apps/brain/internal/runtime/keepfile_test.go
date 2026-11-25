@@ -403,3 +403,23 @@ func TestAFileIsKeptUnderItsCleanName(t *testing.T) {
 		t.Errorf("kept %+v, told %q", k.rows.rows, out)
 	}
 }
+
+// A call waiting its turn behind another's read can be given up on: it
+// returns the caller's error and asks no room.
+func TestAKeepWaitingItsTurnCanBeGivenUpOn(t *testing.T) {
+	rooms := newServerRooms(t)
+	k := &keepFile{
+		servers: map[string]db.McpServer{"mail": {Name: "mail"}},
+		rooms:   rooms, client: http.DefaultClient, one: make(chan struct{}, 1),
+	}
+	k.one <- struct{}{} // another call is reading
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if _, err := k.invoke(ctx, []byte(`{"path":"a.pdf","server":"mail"}`)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("invoke = %v, want context.Canceled", err)
+	}
+	if len(rooms.asked) != 0 {
+		t.Errorf("a room was asked: %v", rooms.asked)
+	}
+}
