@@ -91,7 +91,7 @@ func newSendFixture(reach db.GetSessionFileReachRow) *sendFixture {
 	f.sends = &fileSends{fakeStore: f.store, reach: reach, inserted: 1}
 	f.builder.WithFileSends(FileSends{
 		Store:      f.sends,
-		SendsFiles: func(p string) bool { return p == "telegram" || p == "custom" },
+		SendsFiles: func(p string) bool { return p == "telegram" || p == "custom" || p == "slack" },
 		Logger:     slog.New(slog.NewTextHandler(f.log, nil)),
 	})
 	f.builder.note = func(_ context.Context, _ uuid.UUID, _, kind string, p any) error {
@@ -145,6 +145,7 @@ func TestSendFileIsGivenWhereTheFileCanArrive(t *testing.T) {
 		"the dashboard":                     {dashboard, nil, true},
 		"a telegram chat":                   {telegram, nil, true},
 		"a custom channel with a reply URL": {db.GetSessionFileReachRow{Provider: "custom", Postable: true}, nil, true},
+		"a slack thread":                    {db.GetSessionFileReachRow{Provider: "slack", Postable: true}, nil, true},
 		"a provider that sends none":        {db.GetSessionFileReachRow{Provider: "noreply", Postable: true}, nil, false},
 		"a channel with no reply URL":       {db.GetSessionFileReachRow{Provider: "custom"}, nil, false},
 		"a channel the run answers not":     {telegram, func(f *sendFixture) { f.run.ReplyToChannel = false }, false},

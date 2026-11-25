@@ -502,6 +502,9 @@ func (o outgoing) recordPart(ctx context.Context, parts int32) error {
 // from the first on the retry, which a platform that shares a file only once
 // its upload completes shows once; one whose last answer was lost, twice.
 func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file *OutFile) error {
+	// The posts keep to the deadline; the mark after them does not, so one
+	// landing at its edge is still recorded rather than shared again.
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, uploadDeadline)
 	defer cancel()
 	var answers [][]byte
@@ -525,7 +528,7 @@ func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file
 			return err
 		}
 		if final {
-			return o.recordPart(ctx, 1)
+			return o.recordPart(parent, 1)
 		}
 		answers = append(answers, answer)
 	}
