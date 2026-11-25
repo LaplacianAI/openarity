@@ -1,6 +1,6 @@
 //go:build linux
 
-package workspace
+package roomfile
 
 import (
 	"os"
@@ -10,10 +10,10 @@ import (
 // procSuperMagic is PROC_SUPER_MAGIC, from <linux/magic.h>.
 const procSuperMagic = 0x9fa0
 
-// onProc is whether the open file is on procfs. It is asked of the file
+// OnProc is whether the open file is on procfs. It is asked of the file
 // opened, not its path, so a link swapped in between a check of the path
 // and the open is still caught.
-func onProc(f *os.File) bool {
+func OnProc(f *os.File) bool {
 	rc, err := f.SyscallConn()
 	if err != nil {
 		return true // unknown is refused

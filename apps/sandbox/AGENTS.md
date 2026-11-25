@@ -34,10 +34,12 @@ apps/sandbox/
     files.go        read (numbered lines, binary refused), write, edit (one match unless replace_all)
     search.go       glob with **, grep with RE2; .git and node_modules left out
     handler.go      the routes, the bearer token, a mistake the model can fix as 422
+  internal/roomfile/
+    roomfile.go     a path resolved (links followed, /proc refused), a regular file opened, GET /file: the file whole, up to 25 MiB
   internal/shim/
     child.go        the server on stdio: one MCP session, ids of the shim's own, answers routed back
     sessions.go     the callers sharing it: session ids, idle expiry, requests in flight
-    handler.go      the HTTP side: POST, DELETE, the bearer token, /healthz
+    handler.go      the HTTP side: POST, DELETE, the bearer token, /healthz, and /file for what the server saved
   internal/api/     sandboxd's HTTP: the rooms API (bearer), the proxy to a room's port (X-Sandboxd-Token)
   internal/rooms/   rooms on Docker: create, start, delete, the memory budget, the image allow-list and pulls, Harden (every container's fixed settings)
   internal/guard/   the egress guard: a listener per room and port, SNI routing, the private-address refusal; proxy.go, a public room's forward proxy
@@ -129,6 +131,18 @@ run in the workspace process itself.
 A path is relative to `/workspace` unless absolute, with its links followed:
 the room is the boundary, not the directory, and `/proc` the one place the
 file tools refuse.
+
+## A room's files
+
+Both roles serve `GET /file?path=` behind the room's token: a regular file
+whole, up to 25 MiB, for the brain's `keep_file` to keep as an attachment. A
+relative path is from the role's root, `/workspace` or the directory the
+shim's server runs in. `/proc` is refused by path and by the file opened, as
+the workspace's file tools refuse it. A refusal (missing, a directory, too
+large) is answered with `X-Room-Problem: 1`, so the brain tells a file that
+is not there from a room that is not there, which a provider's proxy also
+answers 404. The shim's token is one its server can read: the route hands
+over only that room's files, which the server can already read.
 
 ## How the shim works
 

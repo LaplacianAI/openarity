@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -44,7 +45,7 @@ func startShim(t *testing.T) shimmed {
 	if err := child.Initialize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(child, token, slog.New(slog.DiscardHandler))
+	h := NewHandler(child, token, t.TempDir(), slog.New(slog.DiscardHandler))
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return shimmed{child: child, handler: h, url: srv.URL}
@@ -391,5 +392,37 @@ func waitFor(t *testing.T, ok func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A file the server saved in its room is handed over at /file, from where
+// the server runs, and only with the shim's token.
+func TestAFileTheServerSavedIsDownloadedWithTheToken(t *testing.T) {
+	s := startShim(t)
+	if err := os.WriteFile(filepath.Join(s.handler.root, "invoice.pdf"), []byte("%PDF-1.7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		auth   string
+		status int
+	}{
+		"with the token": {"Bearer " + token, http.StatusOK},
+		"without one":    {"", http.StatusUnauthorized},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, s.url+"/file?path=invoice.pdf", nil)
+			if c.auth != "" {
+				req.Header.Set("Authorization", c.auth)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			got, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != c.status || (c.status == http.StatusOK && string(got) != "%PDF-1.7\n") {
+				t.Errorf("%d %q", resp.StatusCode, got)
+			}
+		})
 	}
 }

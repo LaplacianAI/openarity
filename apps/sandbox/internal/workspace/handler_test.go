@@ -560,3 +560,37 @@ func TestAnAnswerDoesNotEscapeCode(t *testing.T) {
 		t.Fatalf("the answer escaped the code: %s", raw)
 	}
 }
+
+// A file in the workspace is handed over whole at /file, by its path from the
+// workspace, and only to whoever holds the room's token.
+func TestAWorkspaceFileIsDownloadedWithTheToken(t *testing.T) {
+	r := newRoom(t)
+	if err := os.WriteFile(filepath.Join(r.root, "chart.png"), []byte("\x89PNG\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		auth   string
+		status int
+		body   string
+	}{
+		"with the token":   {"Bearer " + token, http.StatusOK, "\x89PNG\r\n"},
+		"without one":      {"", http.StatusUnauthorized, ""},
+		"with another one": {"Bearer nope", http.StatusUnauthorized, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, r.url+"/file?path=chart.png", nil)
+			if c.auth != "" {
+				req.Header.Set("Authorization", c.auth)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			got, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != c.status || (c.body != "" && string(got) != c.body) {
+				t.Errorf("%d %q", resp.StatusCode, got)
+			}
+		})
+	}
+}

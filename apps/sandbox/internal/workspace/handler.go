@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/roomfile"
 )
 
 // maxBody is the largest request read: a file written whole is the largest.
@@ -50,6 +52,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.URL.Path == "/file" {
+		if !h.authorized(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		roomfile.Serve(w, r, h.root, h.logger)
 		return
 	}
 	route, ok := h.routes()[r.URL.Path]
@@ -201,37 +211,7 @@ func (h *Handler) grep(r *http.Request) (any, error) {
 // workspace directory, with one exception: /proc. These tools run in the
 // workspace process, which can always read its own environ, where the token
 // it was started with stays; Harden keeps it from everything else.
-func (h *Handler) resolve(p string) (string, error) {
-	if strings.TrimSpace(p) == "" {
-		return "", problem("path is empty")
-	}
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(h.root, p)
-	}
-	p = filepath.Clean(p)
-	if real, err := realPath(p); err == nil {
-		p = real
-	}
-	if inProc(p) {
-		return "", problem("%s is under /proc, which these tools do not read; use Bash", p)
-	}
-	return p, nil
-}
-
-// realPath is p with every link followed, or, for a file not there yet, its
-// directory's.
-func realPath(p string) (string, error) {
-	if real, err := filepath.EvalSymlinks(p); err == nil {
-		return real, nil
-	}
-	dir, err := filepath.EvalSymlinks(filepath.Dir(p))
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, filepath.Base(p)), nil
-}
-
-func inProc(p string) bool { return p == "/proc" || strings.HasPrefix(p, "/proc/") }
+func (h *Handler) resolve(p string) (string, error) { return roomfile.Resolve(h.root, p) }
 
 // base is where a search starts: the workspace when no path is given. It is
 // the path as given, so what is found is named as the caller named it, but
@@ -280,7 +260,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var p *Problem
 	if errors.As(err, &p) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		_ = encoder(w).Encode(map[string]string{"error": p.msg})
+		_ = encoder(w).Encode(map[string]string{"error": p.Error()})
 		return
 	}
 	h.logger.Error("workspace: request failed", "path", r.URL.Path, "error", err)

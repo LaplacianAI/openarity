@@ -56,3 +56,8 @@ VALUES (
     sqlc.arg('object_key'), 1, sqlc.arg('media_type'), sqlc.arg('size_bytes'), sqlc.arg('filename')
 )
 RETURNING *;
+
+-- How many files a run kept with one tool, keep_file's: a run resumed keeps
+-- to the twenty it may keep, counting those before.
+-- name: CountRunKeptFiles :one
+SELECT count(*) FROM attachments WHERE run_id = sqlc.arg('run_id')::uuid AND tool = sqlc.arg('tool')::text;

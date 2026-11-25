@@ -38,7 +38,7 @@ never asked: see [A command server](#a-command-server).
 **Tool names.** A server's tools reach the model as `<server>__<tool>`, unless
 it is registered `--bare`. A bare tool named like one of the brain's own on
 that run — `graph`, `delegate`, `plan`, `web_search`, `web_fetch`,
-`send_file` — is left out of the run with a `tool_unavailable` event rather
+`send_file`, `keep_file` — is left out of the run with a `tool_unavailable` event rather
 than shadowing the brain's.
 
 ## A command server
@@ -79,6 +79,22 @@ oa mcp-servers discover platform mail
   whole network, which would open Postgres and OpenBao to any URL a team saves.
 - **Pin the package.** `mcp-mail-server@2.1.3`, not `mcp-mail-server`, so an
   update cannot change what runs.
+
+**A file a command server saves** stays in its room. Some servers write a file
+to disk and answer with its path rather than its bytes, as `mcp-mail-server`'s
+`save_attachment` does. The agent keeps one with
+`keep_file(path, server: "<server's name>")`, a path from where the server runs
+or absolute, then reads it with `read_attachment` or sends it with `send_file`.
+The room is one per server, shared by the team's runs, and its files go when it
+is replaced or deleted after `OPENARITY_SANDBOX_IDLE`. `keep_file` never starts
+a room to look: a room that is stopped is told to the agent, which can call one
+of the server's tools to start it again. A file is kept up to 25 MiB.
+
+Because the room is shared, any file in it can be kept from any of the team's
+conversations. So a run that holds a command server is judged on `keep_file`
+as it is on `send_file`: a read for a member who is there, a write for a guest
+or a run nobody is present for, which asks or is refused with the team's mode
+at `writes`. A rule on `keep_file` decides for a member.
 
 A command server can still be registered, with its command after `--` and its
 environment as references, so a team can record what it uses:

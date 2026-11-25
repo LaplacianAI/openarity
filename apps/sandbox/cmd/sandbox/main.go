@@ -79,8 +79,13 @@ func runShim(ctx context.Context, cmd command, logger *slog.Logger, stderr io.Wr
 	if err != nil {
 		return err
 	}
+	// The server runs where the shim was started, and saves its files there.
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
-		Handler:           shim.NewHandler(child, cmd.token, logger),
+		Handler:           shim.NewHandler(child, cmd.token, root, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	served := make(chan error, 1)

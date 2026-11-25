@@ -21,10 +21,17 @@ type recordingKeeper struct {
 	want  keeper.Want
 	ep    sandbox.Endpoint
 	err   error
+	found bool
 }
 
 func (r *recordingKeeper) Ensure(_ context.Context, o keeper.Owner, team uuid.UUID, w keeper.Want) (sandbox.Endpoint, error) {
 	r.owner, r.team, r.want = o, team, w
+	return r.ep, r.err
+}
+
+func (r *recordingKeeper) Find(_ context.Context, o keeper.Owner, team uuid.UUID, w keeper.Want) (sandbox.Endpoint, error) {
+	r.owner, r.team, r.want = o, team, w
+	r.found = true
 	return r.ep, r.err
 }
 
@@ -244,5 +251,26 @@ func TestEnsureRefusesAServerWithNoCommandBeforeAskingTheKeeper(t *testing.T) {
 	}
 	if k.owner != (keeper.Owner{}) {
 		t.Error("the keeper was asked")
+	}
+}
+
+// A server's files are asked of its room as it runs, at the shim's /file:
+// found, never started, and no secret is read for it, as nothing is made.
+func TestAServersFilesAreAskedOfItsRunningRoom(t *testing.T) {
+	t.Parallel()
+
+	k := &recordingKeeper{}
+	s := server("npx", "mcp-mail-server")
+	if _, err := New(k, fakeSecrets{}).Files(t.Context(), s.TeamID, s); err != nil {
+		t.Fatal(err)
+	}
+	if !k.found || k.owner != (keeper.Owner{Kind: OwnerKind, ID: s.ID}) || k.team != s.TeamID {
+		t.Fatalf("found %v, owner %+v, team %v", k.found, k.owner, k.team)
+	}
+	if k.want.Path != "/file" || k.want.Port != sandbox.ShimPort || k.want.HealthPath != "/healthz" {
+		t.Errorf("want %+v", k.want)
+	}
+	if len(k.want.Secrets) != 0 {
+		t.Errorf("secrets were read for a file: %v", k.want.Secrets)
 	}
 }

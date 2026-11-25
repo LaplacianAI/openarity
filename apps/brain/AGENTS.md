@@ -138,6 +138,7 @@ apps/brain/
     resolve.go         Resolving: the model client that fetches those files' bytes for each request
     keep.go            a tool's file kept as its conversation's attachment: reserved, sealed, its call recorded
     sendfile.go        send_file(id, caption): a conversation's file handed to its person, a file_sent event and, on a channel, a reply
+    keepfile.go        keep_file(path, server?): a file a tool wrote in the workspace or a command server's room, kept as F2 keeps a returned one
     capped.go          an MCP client's answers capped at 40 MiB, one large answer read at a time per worker
     history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
@@ -174,7 +175,8 @@ apps/brain/
                        proxy.go: the worker's forward proxy, a self-hosted browser's one way out, to public addresses on web ports only
   internal/sandbox/    the port: Rooms, Spec (a listed or a public network), Endpoint; where command MCP servers and workspaces run
     <provider>/        e2b, daytona, sandboxd: each exports New
-    keeper/            a team's rooms, for any owner: the lock, the spec hash, the health wait, the token; Ensure
+    keeper/            a team's rooms, for any owner: the lock, the spec hash, the health wait, the token; Ensure, and Find, which starts nothing
+    roomfile/          one file read out of a room's /file, the room's refusal told from a room gone
     mcproom/           a command MCP server's Want for the keeper: the shim, npx's settings
     workroom/          a session's workspace: the room running the workspace role, public and sized for work, and a client for its API
     contract/          what every provider must do for a workspace, as a test each provider's integration test runs

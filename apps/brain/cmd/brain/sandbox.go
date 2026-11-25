@@ -110,8 +110,21 @@ func newWorkspaces(k *keeper.Keeper, cfg *config.Config) *runtime.WorkspaceDeps 
 	}
 	return &runtime.WorkspaceDeps{
 		Rooms:  workroom.New(k),
-		Client: discovery.PlainClient(discovery.Policy{Allow: reachable(cfg.MCPPrivateNetworks)}),
+		Client: discovery.RoomClient(discovery.Policy{Allow: reachable(cfg.MCPPrivateNetworks)}),
 	}
+}
+
+// newRoomFiles is where a run reads a file a tool wrote in a room: the
+// workspace's through its own client, and a command server's through its room
+// as it runs, called as the server is. With no keeper, only the store: no
+// command server runs, so none has a room to read.
+func newRoomFiles(k *keeper.Keeper, cfg *config.Config, dbStore *store.Store, secretStore secrets.Store) runtime.RoomFiles {
+	files := runtime.RoomFiles{Store: dbStore}
+	if k != nil {
+		files.Servers = mcproom.New(k, secretStore)
+		files.Client = discovery.RoomClient(discovery.Policy{Allow: reachable(cfg.MCPPrivateNetworks)})
+	}
+	return files
 }
 
 // newKeeper is the keeper of a team's rooms, or nil when the secret store
