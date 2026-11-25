@@ -350,6 +350,21 @@ file. The sender's name is the `user_profile` Slack sends beside a message,
 which is not in its reference, so a message without one is a sender with no
 name.
 
+A file the agent sends is Slack's external upload, three calls a step at a
+time (`FileUploader`), because the second and third are built from the first's
+answer and `Reply` builds every request up front: `files.getUploadURLExternal`
+for an address and a file id, the raw bytes to that address, which must be
+`https` on `files.slack.com` and is sent no token, then
+`files.completeUploadExternal` into the thread with the caption, through
+`Sanitize`, as its comment. Slack shares a file only when its upload completes,
+so a retry starts again from the first step and an upload abandoned part way is
+never seen; one whose last answer was lost is shared twice, as Slack does not
+deduplicate. The upload's three posts share one deadline inside the reply's
+lease, so no second sender claims it midway. An app without `files:write` answers `missing_scope`, which gives the
+file up: `send_file` is offered on every Slack channel rather than only where
+the token has the scope, since telling them apart means reading `auth.test`'s
+`x-oauth-scopes` header at setup and reconnecting every existing channel.
+
 ## An answer in the chat decides only its person's request
 
 A run that waits for a person sends its conversation a reply of kind
