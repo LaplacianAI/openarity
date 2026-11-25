@@ -133,6 +133,15 @@ type FileReplier interface {
 	RepliesWithFiles()
 }
 
+// FileUploader is a FileReplier whose platform takes a file in steps, each
+// built from the answers before it: Slack's upload address, then the bytes,
+// then the share. FileRequest is pure, like Reply: the step is len(answers),
+// and every answer is passed, as a late step can need an early one's.
+type FileUploader interface {
+	FileReplier
+	FileRequest(ch Channel, out Outbound, creds Credentials, answers [][]byte) (req OutboundRequest, final bool, err error)
+}
+
 // SecretIssuer is a provider whose platform issues the signing secret, as
 // Slack's app settings do. The brain cannot generate one for it: a delivery
 // is signed with the platform's, so a channel is refused without it.
@@ -261,6 +270,7 @@ type Registry struct {
 	toURL     map[string]bool
 	events    map[string]bool
 	files     map[string]bool
+	uploaders map[string]FileUploader
 	connects  map[string]Connector
 	notifiers map[string]Notifier
 	sockets   map[string]bool
@@ -270,7 +280,7 @@ type Registry struct {
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
-		toURL: map[string]bool{}, events: map[string]bool{}, files: map[string]bool{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
+		toURL: map[string]bool{}, events: map[string]bool{}, files: map[string]bool{}, uploaders: map[string]FileUploader{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
 		sockets: map[string]bool{}, issuers: map[string]bool{},
 	}
 	for _, p := range providers {
@@ -308,6 +318,9 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if _, ok := p.(FileReplier); ok {
 			reg.files[name] = true
 		}
+		if u, ok := p.(FileUploader); ok {
+			reg.uploaders[name] = u
+		}
 		if c, ok := p.(Connector); ok {
 			reg.connects[name] = c
 		}
@@ -338,6 +351,12 @@ func (r Registry) Get(name string) (Provider, bool) {
 func (r Registry) Replier(name string) (Replier, bool) {
 	rp, ok := r.repliers[name]
 	return rp, ok
+}
+
+// Uploader is how the named provider sends a file in steps, if it does.
+func (r Registry) Uploader(name string) (FileUploader, bool) {
+	u, ok := r.uploaders[name]
+	return u, ok
 }
 
 // Connector is how the named provider is pointed at a channel, if it can be.

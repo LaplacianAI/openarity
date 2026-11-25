@@ -26,8 +26,10 @@ const (
 	replyBatch = 20
 	// eventAttempts is how often an event or a file is tried: a broken one
 	// must not hold its conversation's answer back through the answer's six.
-	eventAttempts  = 2
-	replyLease     = 2 * time.Minute // longer than one post's deadline
+	eventAttempts = 2
+	// replyLease is longer than one post's deadline, and than an upload's
+	// (uploadDeadline), so neither outlives the claim it is sent under.
+	replyLease     = 2 * time.Minute
 	replyAttempts  = 6
 	replyReadLimit = 64 << 10
 
@@ -37,6 +39,14 @@ const (
 	postBase    = 10 * time.Second
 	postPerByte = 512 << 10
 	maxPost     = time.Minute
+
+	// An upload is several posts under one claim, so it has a deadline of
+	// its own, short of the lease: past it another sender could claim the
+	// row and upload the file again. Each post keeps its own inside it.
+	uploadDeadline = replyLease - 20*time.Second
+	// maxUploadSteps stops a provider that never says its upload is done;
+	// how many steps an upload has is the provider's (Slack's is three).
+	maxUploadSteps = 8
 )
 
 // PostTimeout is how long a post of n bytes may take: a poster that is not
@@ -81,7 +91,9 @@ type Sender struct {
 }
 
 // Poster sends one part a provider built, for a channel. An error is retried
-// unless it wraps ErrUnsendable.
+// unless it wraps ErrUnsendable. On a 2xx it calls the request's Accepted,
+// when set, with the answer's body: a FileUploader's next step is built from
+// it, so a poster for one must.
 type Poster interface {
 	Post(ctx context.Context, channel uuid.UUID, req OutboundRequest) error
 }
@@ -200,8 +212,12 @@ type outgoing struct {
 	// load reads what the requests carry beyond the row, a file reply's
 	// file, before they are built: an error is retried unless it wraps
 	// ErrUnsendable. Nil for everything else.
-	load     func(ctx context.Context) (*OutFile, error)
-	build    func(creds Credentials, file *OutFile) ([]OutboundRequest, error)
+	load  func(ctx context.Context) (*OutFile, error)
+	build func(creds Credentials, file *OutFile) ([]OutboundRequest, error)
+	// step builds a file reply's requests one at a time, from the answers
+	// before it, for a provider that is a FileUploader. When set, build is
+	// not called.
+	step     func(creds Credentials, file *OutFile, answers [][]byte) (OutboundRequest, bool, error)
 	sent     func(ctx context.Context) (int64, error)
 	partSent func(ctx context.Context, parts int32) (int64, error)
 	retry    func(ctx context.Context, msg string, after time.Duration) (int64, error)
@@ -234,7 +250,19 @@ func replyID(row db.ClaimDueRepliesRow) (string, int32) {
 func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 	at := db.ReplySentParams{ID: row.ID, Attempts: row.Attempts}
 	id, tries := replyID(row)
-	return outgoing{
+	ch := Channel{ID: row.ChannelID, TeamID: row.TeamID, ReplyURL: deref(row.ReplyUrl)}
+	outbound := func(file *OutFile) (Outbound, error) {
+		out := Outbound{
+			ID:        id,
+			Session:   Session{Ref: deref(row.SessionRef), Kind: SessionKind(row.SessionKind)},
+			InReplyTo: deref(row.InReplyTo),
+			Kind:      row.Kind,
+			Text:      row.Text,
+			File:      file,
+		}
+		return out, withDetail(&out, row.Detail)
+	}
+	o := outgoing{
 		what: "reply", id: row.ID, attempts: row.Attempts, tries: tries, partsSent: row.PartsSent,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,
 		load: s.fileOf(row),
@@ -243,16 +271,8 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 			if !ok {
 				return nil, fmt.Errorf("the %s provider sends no replies", row.Provider)
 			}
-			ch := Channel{ID: row.ChannelID, TeamID: row.TeamID, ReplyURL: deref(row.ReplyUrl)}
-			out := Outbound{
-				ID:        id,
-				Session:   Session{Ref: deref(row.SessionRef), Kind: SessionKind(row.SessionKind)},
-				InReplyTo: deref(row.InReplyTo),
-				Kind:      row.Kind,
-				Text:      row.Text,
-				File:      file,
-			}
-			if err := withDetail(&out, row.Detail); err != nil {
+			out, err := outbound(file)
+			if err != nil {
 				return nil, err
 			}
 			return rp.Reply(ch, out, creds, time.Now())
@@ -270,6 +290,16 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 			return s.store.GiveUpReply(ctx, db.GiveUpReplyParams{ID: row.ID, Attempts: row.Attempts, Error: msg})
 		},
 	}
+	if u, ok := s.reg.Uploader(row.Provider); ok && row.Kind == "file" {
+		o.step = func(creds Credentials, file *OutFile, answers [][]byte) (OutboundRequest, bool, error) {
+			out, err := outbound(file)
+			if err != nil {
+				return OutboundRequest{}, false, err
+			}
+			return u.FileRequest(ch, out, creds, answers)
+		}
+	}
+	return o
 }
 
 // withDetail reads what a prompt or a notice carries beyond its text. One
@@ -420,11 +450,19 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 		return err
 	}
 
+	if o.step != nil && o.partsSent > 0 {
+		// Uploaded, and only its sent mark was lost: nothing to read again,
+		// and a file deleted since must not give up what was delivered.
+		return nil
+	}
 	var file *OutFile
 	if o.load != nil {
 		if file, err = o.load(ctx); err != nil {
 			return err
 		}
+	}
+	if o.step != nil {
+		return s.upload(ctx, o, creds, file)
 	}
 	parts, err := o.build(creds, file)
 	if err != nil {
@@ -439,15 +477,62 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 		if err := s.poster.Post(ctx, o.channelID, parts[i]); err != nil {
 			return err
 		}
-		n, err := o.partSent(ctx, int32(i+1)) //nolint:gosec // G115: parts are few
-		switch {
-		case err != nil:
-			return fmt.Errorf("recording part %d of %s %d: %w", i+1, o.what, o.id, err)
-		case n == 0:
-			return errLeaseLost
+		if err := o.recordPart(ctx, int32(i+1)); err != nil { //nolint:gosec // G115: parts are few
+			return err
 		}
 	}
 	return nil
+}
+
+// recordPart marks the first parts of o sent; none matched is a lease
+// another sender now holds.
+func (o outgoing) recordPart(ctx context.Context, parts int32) error {
+	n, err := o.partSent(ctx, parts)
+	switch {
+	case err != nil:
+		return fmt.Errorf("recording part %d of %s %d: %w", parts, o.what, o.id, err)
+	case n == 0:
+		return errLeaseLost
+	}
+	return nil
+}
+
+// upload sends a file in the provider's steps, each built from the answers
+// before it. The whole upload is one part: a failure at any step starts again
+// from the first on the retry, which a platform that shares a file only once
+// its upload completes shows once; one whose last answer was lost, twice.
+func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file *OutFile) error {
+	// The posts keep to the deadline; the mark after them does not, so one
+	// landing at its edge is still recorded rather than shared again.
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, uploadDeadline)
+	defer cancel()
+	var answers [][]byte
+	for range maxUploadSteps {
+		req, final, err := o.step(creds, file, answers)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrUnsendable, err)
+		}
+		// The provider's own reading still decides; this keeps the answer
+		// for the step after.
+		var answer []byte
+		accept := req.Accepted
+		req.Accepted = func(status int, body []byte) error {
+			answer = bytes.Clone(body)
+			if accept != nil {
+				return accept(status, body)
+			}
+			return nil
+		}
+		if err := s.poster.Post(ctx, o.channelID, req); err != nil {
+			return err
+		}
+		if final {
+			return o.recordPart(parent, 1)
+		}
+		answers = append(answers, answer)
+	}
+	return fmt.Errorf("%w: the %s provider's upload took more than %d requests", ErrUnsendable, o.provider, maxUploadSteps)
 }
 
 func (s *Sender) credentials(ctx context.Context, o outgoing, keys []string) (Credentials, error) {

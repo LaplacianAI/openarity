@@ -274,7 +274,11 @@ run given `send_file`. The sender loads the file's bytes and decrypts them
 before it builds the requests, one file at a time, so `Reply` stays pure; each
 provider's `file.go` builds its own file message (Telegram's `sendDocument`,
 WhatsApp's document, `custom`'s inline base64). A file gone since is given up;
-a store that fails is retried. Slack is not one yet.
+a store that fails is retried. A `FileUploader` is a `FileReplier` whose
+platform takes a file in steps, each built from the answers before it:
+`FileRequest` is pure like `Reply`, and the sender runs the steps as one part,
+starting again from the first on a retry. Slack is one: upload address, bytes,
+share.
 
 A channel takes a `reply_url` only when its provider is a `URLReplier`, which
 posts to an address the channel names. `custom` is; `telegram` replies into

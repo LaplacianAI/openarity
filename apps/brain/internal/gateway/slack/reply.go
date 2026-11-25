@@ -47,6 +47,11 @@ func (provider) Reply(
 		}
 		return []gateway.OutboundRequest{req}, nil
 	}
+	if out.Kind == "file" {
+		// A file goes in FileRequest's steps, each built from the answer
+		// before it, which a list built up front cannot be.
+		return nil, errors.New("slack: a file is sent by FileRequest, in steps")
+	}
 	channel, thread, err := target(out.Session.Ref)
 	if err != nil {
 		return nil, err
@@ -128,7 +133,7 @@ var final = []string{
 	"channel_not_found", "not_in_channel", "is_archived", "msg_too_long", "no_text",
 	"invalid_arguments", "markdown_text_conflict", "invalid_blocks", "restricted_action",
 	"cannot_reply_to_message", "invalid_auth", "not_authed", "account_inactive",
-	"token_revoked", "missing_scope", "expired_trigger_id", "invalid_trigger_id", "trigger_exchanged",
+	"token_revoked", "missing_scope", "file_uploads_disabled", "expired_trigger_id", "invalid_trigger_id", "trigger_exchanged",
 }
 
 // accepted reads chat.postMessage's answer: Slack says no with a 200 and

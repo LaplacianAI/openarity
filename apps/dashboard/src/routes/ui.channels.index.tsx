@@ -950,6 +950,7 @@ export function slackManifestURL(channelName: string): string {
           "mpim:history",
           "chat:write",
           "files:read",
+          "files:write",
         ],
       },
     },
