@@ -358,6 +358,32 @@ it("names a browser tool, and says what a rule on the open covers", async () => 
   });
 });
 
+it("names send_file, the tool that hands the person a file", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "POST /teams/{id}/approval-rules": { body: { ...RULE, id: "ru6" } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
+
+  await chooseServer(section, "Built-in tools");
+  await choose(within(section).getByLabelText("Tool"), "send_file");
+  expect(
+    within(section).getByText(
+      "Hands the person a file of the conversation, in the chat they asked in.",
+    ),
+  ).toBeInTheDocument();
+  await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
+    target_kind: "tool",
+    target: "send_file",
+    mode: "ask",
+  });
+});
+
 it("names a workspace's command, and says why it asks", async () => {
   const seen = brain({
     ...team(["team:settings"]),

@@ -190,6 +190,10 @@ func TestReachingTheInternetIsAReadOnlyForAPersonWhoIsThere(t *testing.T) {
 		{Egress, person, Read},
 		{Egress, Actor{}, Write},
 		{Egress, Actor{CanSelf: true, Unattended: true}, Write},
+		// Handing the person a file is judged as reaching out is.
+		{Shares, person, Read},
+		{Shares, Actor{}, Write},
+		{Shares, Actor{CanSelf: true, Unattended: true}, Write},
 		// Acting on a page can submit or buy, for a person who is there too.
 		{Acts, person, Write},
 		{Acts, Actor{}, Write},

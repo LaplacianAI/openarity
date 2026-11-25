@@ -549,6 +549,12 @@ It carries the same two headers as a message, signed under a different prefix:
 `reply:v1:<timestamp>:<body>`. The prefix keeps a captured reply from verifying
 as a message if it is posted back to the webhook.
 
+`send_file` is behind the team's approvals like the web tools: a read when the
+person who asked is there, so the `writes` mode asks only for a guest's run or
+one nobody is watching, such as a schedule's. A rule on `send_file` (**Always
+ask** or **Never allow**, under **Built-in tools** in the approval rules) holds
+on every channel at once.
+
 ### Verifying a reply
 
 Check the reply before you act on it. The signature is the only thing that
