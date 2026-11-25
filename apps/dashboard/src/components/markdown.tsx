@@ -73,7 +73,7 @@ const components: Components = {
   ),
   hr: () => <hr className="my-4 border-border" />,
   pre: ({ children }) => (
-    <pre className="my-2 relative overflow-x-auto rounded-md border border-border bg-surface p-3 font-mono text-xs leading-relaxed [&>code]:bg-transparent [&>code]:p-0">
+    <pre className="relative my-2 overflow-x-auto rounded-md border border-border bg-surface p-3 font-mono text-xs leading-relaxed [&>code]:bg-transparent [&>code]:p-0">
       {children}
     </pre>
   ),
@@ -83,7 +83,7 @@ const components: Components = {
     </code>
   ),
   table: ({ children }) => (
-    <div className="my-3 relative overflow-x-auto rounded-md border border-border">
+    <div className="relative my-3 overflow-x-auto rounded-md border border-border">
       <table className="w-full border-collapse text-left text-xs">{children}</table>
     </div>
   ),

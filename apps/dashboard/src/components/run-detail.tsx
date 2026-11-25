@@ -32,7 +32,6 @@ import { OutcomeLine } from "@/components/run-outcome";
 import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fileSize } from "@/lib/format";
 import { explainRunError } from "@/lib/run-error";
 import {
   argumentPairs,
@@ -672,21 +671,6 @@ function TraceView({
                 ) : null}
               </Note>
             );
-          case "sent":
-            return (
-              <Note key={key} kind="file_sent">
-                <span className="font-medium text-foreground">Sent the person a file</span>
-                {item.filename ? (
-                  <>
-                    : <span className="break-all">{item.filename}</span>
-                  </>
-                ) : null}
-                {` (${[item.mediaType, fileSize(item.size)].filter(Boolean).join(", ")})`}
-                {item.caption ? (
-                  <span className="mt-0.5 block whitespace-pre-wrap">{item.caption}</span>
-                ) : null}
-              </Note>
-            );
           default:
             return (
               <Note key={key} kind={item.event.kind}>
@@ -1168,7 +1152,7 @@ function RawToggle({ raw }: { raw: string }) {
       {open ? (
         <pre
           data-raw
-          className="mt-1.5 max-h-80 relative overflow-auto rounded-md bg-sheet p-3 font-mono text-xs leading-relaxed shadow-[inset_0_0_0_1px_var(--color-rule)]"
+          className="relative mt-1.5 max-h-80 overflow-auto rounded-md bg-sheet p-3 font-mono text-xs leading-relaxed shadow-[inset_0_0_0_1px_var(--color-rule)]"
         >
           {pretty(raw)}
         </pre>
@@ -1399,7 +1383,7 @@ function PageView({ page, raw }: { page: FetchedPage; raw: string }) {
         {open ? (
           <pre
             data-page-body
-            className="mt-1.5 max-h-96 relative overflow-auto whitespace-pre-wrap break-words rounded-md bg-sheet p-3 font-mono text-xs leading-relaxed shadow-[inset_0_0_0_1px_var(--color-rule)]"
+            className="relative mt-1.5 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-sheet p-3 font-mono text-xs leading-relaxed shadow-[inset_0_0_0_1px_var(--color-rule)]"
           >
             {page.markdown}
           </pre>

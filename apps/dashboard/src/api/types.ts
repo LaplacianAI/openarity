@@ -509,16 +509,6 @@ export type SessionEvent =
       };
     }
   | { kind: "run_waiting"; data: { at: string; run_id: string; reason: string; said?: string } }
-  | {
-      kind: "file_sent";
-      data: {
-        at: string;
-        run_id: string;
-        tool_call_id: string;
-        file: SessionEventFile;
-        caption?: string;
-      };
-    }
   | { kind: "other"; name: string; data: unknown };
 
 export type RunRequest = {

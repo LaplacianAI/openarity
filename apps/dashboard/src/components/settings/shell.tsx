@@ -93,7 +93,7 @@ export function SettingsNav({
       aria-label="Team settings"
       className={row ? "border-b border-rule" : "lg:sticky lg:top-0 lg:self-start"}
     >
-      <ul className={row ? "-mb-px flex gap-4 relative overflow-x-auto" : "flex flex-col gap-0.5"}>
+      <ul className={row ? "relative -mb-px flex gap-4 overflow-x-auto" : "flex flex-col gap-0.5"}>
         {SETTINGS_PAGES.map((p) => {
           const on = p.id === current;
           return (

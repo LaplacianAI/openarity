@@ -77,7 +77,6 @@ export type TraceItem =
   | { type: "requested"; request: TraceRequest }
   | { type: "decided"; decision: TraceDecision }
   | { type: "waiting"; reason: string; said: string }
-  | { type: "sent"; filename: string; mediaType: string; size: number; caption: string }
   | { type: "other"; event: RunEvent };
 
 /** The run asking a person before a call: the call is not made. */
@@ -307,17 +306,6 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
       case "waiting":
         trace.items.push({ type: "waiting", reason: text(d.reason), said: text(d.said) });
         break;
-      case "file_sent": {
-        const f = record(d.file);
-        trace.items.push({
-          type: "sent",
-          filename: text(f.filename),
-          mediaType: text(f.media_type),
-          size: count(f.size),
-          caption: text(d.caption),
-        });
-        break;
-      }
       case "plan": {
         // Each plan replaces the last; each stays where it was kept.
         const items = planItems(d.items);
