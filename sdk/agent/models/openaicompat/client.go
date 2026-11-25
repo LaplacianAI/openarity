@@ -243,10 +243,21 @@ func (s *stream) assembled() []agent.ToolCall {
 			continue
 		}
 		out = append(out, agent.ToolCall{
-			ID: f.id, Name: f.name, Arguments: json.RawMessage(f.args),
+			ID: f.id, Name: f.name, Arguments: argumentsOf(f.args),
 		})
 	}
 	return out
+}
+
+// argumentsOf is a call's arguments as JSON. A tool that takes none is
+// called with no argument text at all by some models behind this API
+// (Anthropic's, streamed through a compatible gateway), which is an empty
+// object, not invalid JSON.
+func argumentsOf(s string) json.RawMessage {
+	if strings.TrimSpace(s) == "" {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(s)
 }
 
 // repair replaces whatever the accumulator lost. What was tracked here is
@@ -555,7 +566,7 @@ func fromCompletion(c openai.ChatCompletion, model string) (agent.Response, erro
 		msg.ToolCalls = append(msg.ToolCalls, agent.ToolCall{
 			ID:        call.ID,
 			Name:      call.Function.Name,
-			Arguments: json.RawMessage(call.Function.Arguments),
+			Arguments: argumentsOf(call.Function.Arguments),
 		})
 	}
 
