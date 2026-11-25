@@ -5,9 +5,10 @@ package workspace
 import (
 	"errors"
 	"io/fs"
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/roomfile"
 )
 
 // A search from / passes /proc by: Glob and Grep run in the workspace
@@ -31,36 +32,15 @@ func TestASearchFromTheRootPassesProcBy(t *testing.T) {
 	}
 }
 
-// The open file is asked, not its path: a file on procfs is known for one
-// however it was reached.
-func TestAFileOpenedOnProcIsKnownForOne(t *testing.T) {
-	f, err := os.Open("/proc/self/status")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	if !onProc(f) {
-		t.Error("/proc/self/status is not known to be on procfs")
-	}
-	g, err := os.CreateTemp(t.TempDir(), "x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer g.Close()
-	if onProc(g) {
-		t.Error("a temporary file is taken for procfs")
-	}
-}
-
 // open refuses procfs by itself, not only behind resolve's check of the path.
 func TestOpenRefusesProcByTheFile(t *testing.T) {
-	f, err := open("/proc/self/environ")
+	f, err := roomfile.Open("/proc/self/environ")
 	if err == nil {
 		_ = f.Close()
 		t.Fatal("open read the process's environ")
 	}
 	var p *Problem
-	if !errors.As(err, &p) || !strings.Contains(p.msg, "/proc") {
+	if !errors.As(err, &p) || !strings.Contains(p.Error(), "/proc") {
 		t.Fatalf("open: %v, want it refused for /proc", err)
 	}
 }

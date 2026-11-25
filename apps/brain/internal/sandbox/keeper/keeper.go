@@ -275,6 +275,63 @@ func (k *Keeper) ensure(ctx context.Context, o Owner, team uuid.UUID, w Want) (s
 	return ep, err
 }
 
+// Find is the endpoint of the owner's room as it runs now, at w's port and
+// path, for reading what is in it. It makes, resumes and replaces nothing: a
+// room's files go with it, and a fresh one has none. A room it cannot use as
+// it is (none, a stopped one, one that does not answer) is ErrNoRoom. One made from another spec is still found,
+// as its files are still there; the next Ensure replaces it.
+func (k *Keeper) Find(ctx context.Context, o Owner, team uuid.UUID, w Want) (sandbox.Endpoint, error) {
+	cfg, err := k.settings(ctx, team)
+	if err != nil {
+		return sandbox.Endpoint{}, err
+	}
+	row, err := k.store.GetSandboxRoom(ctx, db.GetSandboxRoomParams{OwnerKind: o.Kind, OwnerID: o.ID})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return sandbox.Endpoint{}, sandbox.ErrNoRoom
+	case err != nil:
+		return sandbox.Endpoint{}, fmt.Errorf("reading the room: %w", err)
+	}
+	// A stopped room is not asked of the provider: its files are kept, but
+	// only a resume, Ensure's to make, brings them back. A room made at
+	// another provider or key is not here to find: changing either deletes
+	// the team's rows.
+	if row.StoppedAt != nil {
+		return sandbox.Endpoint{}, sandbox.ErrNoRoom
+	}
+	token, err := k.secrets.Get(ctx, secrets.RoomPath(team, row.ID), TokenKey)
+	switch {
+	case errors.Is(err, secrets.ErrNotFound) || (err == nil && token == ""):
+		return sandbox.Endpoint{}, sandbox.ErrNoRoom
+	case err != nil:
+		return sandbox.Endpoint{}, fmt.Errorf("reading the room's token: %w", err)
+	}
+	rooms, err := k.rooms(ctx, team, cfg.provider, cfg.url, cfg.keyID)
+	if err != nil {
+		return sandbox.Endpoint{}, err
+	}
+	base, err := rooms.URL(ctx, row.RoomID, w.Port)
+	switch {
+	case errors.Is(err, sandbox.ErrNotFound):
+		return sandbox.Endpoint{}, sandbox.ErrNoRoom
+	case err != nil:
+		return sandbox.Endpoint{}, fmt.Errorf("finding the room: %w", err)
+	}
+	if err := k.healthy(ctx, base, w, token); err != nil {
+		// A caller that gave up is not told the room is gone: it may run
+		// the tool that saved the file again.
+		if ctx.Err() != nil {
+			return sandbox.Endpoint{}, ctx.Err()
+		}
+		return sandbox.Endpoint{}, fmt.Errorf("%w: %w", sandbox.ErrNoRoom, err)
+	}
+	if err := k.store.TouchSandboxRoom(ctx, row.ID); err != nil {
+		k.logger.WarnContext(ctx, "keeper: a room's use was not recorded",
+			"owner_kind", row.OwnerKind, "owner_id", row.OwnerID, "error", err)
+	}
+	return endpointOf(base, w, token), nil
+}
+
 // reuse is the owner's room as it is, when it is the one wanted and it
 // answers. A room the provider lost, or that does not answer, is not an
 // error: the caller makes another. Any other trouble is, because replacing a

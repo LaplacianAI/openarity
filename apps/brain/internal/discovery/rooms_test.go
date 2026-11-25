@@ -3,9 +3,12 @@ package discovery
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -216,4 +219,42 @@ func TestThePlainClientHoldsThePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
+}
+
+// The room client dials only what the policy allows, takes no redirect, and
+// reads a body whole past the plain client's 8 MiB: a room's file is up to
+// 25 MiB, and its reader bounds it.
+func TestTheRoomClientHoldsThePolicyAndReadsAFileWhole(t *testing.T) {
+	t.Parallel()
+
+	big := strings.Repeat("x", 9<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere" {
+			http.Redirect(w, r, "/file", http.StatusFound)
+			return
+		}
+		_, _ = io.WriteString(w, big)
+	}))
+	t.Cleanup(srv.Close)
+	allow := Policy{Allow: func(netip.Addr) bool { return true }}
+	get := func(c *http.Client, path string) (string, error) {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+path, http.NoBody)
+		resp, err := c.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		return string(b), err
+	}
+
+	if _, err := get(RoomClient(Policy{Allow: func(netip.Addr) bool { return false }}), "/file"); !errors.Is(err, ErrRefused) {
+		t.Errorf("a refused address = %v, want ErrRefused", err)
+	}
+	if _, err := get(RoomClient(allow), "/elsewhere"); !errors.Is(err, ErrRefused) {
+		t.Errorf("a redirect = %v, want ErrRefused", err)
+	}
+	if got, err := get(RoomClient(allow), "/file"); err != nil || len(got) != len(big) {
+		t.Errorf("a 9 MiB body = %d bytes, %v", len(got), err)
+	}
 }

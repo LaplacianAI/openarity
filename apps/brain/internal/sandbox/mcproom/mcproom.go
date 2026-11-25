@@ -19,6 +19,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/roomfile"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
@@ -38,19 +39,21 @@ const (
 // ErrNotACommand is a server with no command to run.
 var ErrNotACommand = errors.New("the server has no command to run")
 
-// Ensurer is the keeper, as this package uses it.
-type Ensurer interface {
+// Keeper is the keeper, as this package uses it: Ensure starts a server's
+// room, and Find reads one that runs, starting none.
+type Keeper interface {
 	Ensure(ctx context.Context, o keeper.Owner, team uuid.UUID, w keeper.Want) (sandbox.Endpoint, error)
+	Find(ctx context.Context, o keeper.Owner, team uuid.UUID, w keeper.Want) (sandbox.Endpoint, error)
 }
 
 // Rooms runs command servers in their team's sandbox.
 type Rooms struct {
-	keeper  Ensurer
+	keeper  Keeper
 	secrets secrets.Store
 }
 
 // New takes the secret store a server's env references are read from.
-func New(k Ensurer, sec secrets.Store) *Rooms {
+func New(k Keeper, sec secrets.Store) *Rooms {
 	return &Rooms{keeper: k, secrets: sec}
 }
 
@@ -65,6 +68,18 @@ func (r *Rooms) Ensure(ctx context.Context, team uuid.UUID, s db.McpServer) (san
 		return sandbox.Endpoint{}, err
 	}
 	return r.keeper.Ensure(ctx, keeper.Owner{Kind: OwnerKind, ID: s.ID}, team, w)
+}
+
+// Files is where the server's room hands over a file the server saved in it:
+// the shim's /file, in the room as it runs now. A room that is not running
+// has none of what the server saved, so none is started: sandbox.ErrNoRoom.
+func (r *Rooms) Files(ctx context.Context, team uuid.UUID, s db.McpServer) (sandbox.Endpoint, error) {
+	w, err := Want(s)
+	if err != nil {
+		return sandbox.Endpoint{}, err
+	}
+	w.Path = roomfile.Route
+	return r.keeper.Find(ctx, keeper.Owner{Kind: OwnerKind, ID: s.ID}, team, w)
 }
 
 // Want is what a command server needs of its room: the shim, started with the

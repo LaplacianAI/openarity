@@ -62,6 +62,7 @@ type Builder struct {
 	fetch      *FetchDeps
 	browsers   *BrowserDeps
 	workspaces *WorkspaceDeps
+	roomFiles  *RoomFiles
 	delegates  *DelegateDeps
 	workshop   Workshop
 	registry   Registry
@@ -270,10 +271,10 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	}
 
 	// Bound only where there is something to read, or may be: a run whose
-	// MCP tools' files are kept can be handed its first file mid-run, and the
-	// tool list is fixed for the run. The builder too: the tools read and
-	// write nothing.
-	readable := b.files != nil && len(held.tools) > 0
+	// MCP tools' files are kept, or that holds keep_file, can be handed its
+	// first file mid-run, and the tool list is fixed for the run. The builder
+	// too: the tools read and write nothing.
+	readable := (b.files != nil && len(held.tools) > 0) || b.keepsRoomFiles(run, work, held.commands)
 	if !readable {
 		files, err := b.store.ListAttachmentsBySession(ctx, db.ListAttachmentsBySessionParams{SessionID: run.SessionID, PageSize: 1})
 		if err != nil {
@@ -359,12 +360,13 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		built.Spec.Tools = append(built.Spec.Tools, gated...)
 	}
 
+	var ws *runWorkspace
 	switch {
 	case work && b.replay:
 		// The workspace has moved on since: the replay's are stand-ins.
 		built.Spec.Tools = append(built.Spec.Tools, (&runWorkspace{}).tools()...)
 	case work:
-		ws := &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID}
+		ws = &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID}
 		for _, t := range ws.tools() {
 			built.answerable[t.Name] = t
 			gated, refused := gates.gate(t, target{name: t.Name, class: workspaceClass(t.Name)})
@@ -381,6 +383,30 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		}
 		for _, n := range WorkspaceToolNames {
 			built.Unavailable = append(built.Unavailable, Unavailable{Name: n, Reason: reason})
+		}
+	}
+
+	// A file a tool wrote in a room, kept as the conversation's. The
+	// workspace is the session's own room: a read, as its other reads are. A
+	// command server's room is the server's, shared by the team's sessions,
+	// so a run that can reach one is judged as send_file is: a read for a
+	// person present, a write for a guest or a run nobody watches.
+	keep, ok, err := b.keepFileFor(ctx, run, ws, work, held.commands)
+	if err != nil {
+		built.Close()
+		return Built{}, err
+	}
+	if ok {
+		built.answerable[keep.Name] = keep
+		class := approval.ClassFor(approval.Room, actor)
+		if len(held.commands) > 0 && (b.replay || len(b.serverRooms(held.commands)) > 0) {
+			class = approval.ClassFor(approval.Shares, actor)
+		}
+		gated, refused := gates.gate(keep, target{name: keep.Name, class: class})
+		if refused != nil {
+			built.Unavailable = append(built.Unavailable, *refused)
+		} else {
+			built.Spec.Tools = append(built.Spec.Tools, gated)
 		}
 	}
 
@@ -471,6 +497,9 @@ type catalogue struct {
 	groups   []agent.Group
 	names    map[uuid.UUID]string
 	byServer map[string][]uuid.UUID
+	// commands are the command servers the run holds tools of, by name:
+	// those whose rooms keep_file may read.
+	commands map[string]db.McpServer
 }
 
 func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, r reservedFor, gates *policy, built *Built) (catalogue, error) {
@@ -505,7 +534,7 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, r 
 		offered[r.McpServerID] = append(offered[r.McpServerID], r)
 	}
 
-	out := catalogue{names: map[uuid.UUID]string{}, byServer: map[string][]uuid.UUID{}}
+	out := catalogue{names: map[uuid.UUID]string{}, byServer: map[string][]uuid.UUID{}, commands: map[string]db.McpServer{}}
 	owner := map[string]string{}
 	for _, g := range grants {
 		// A command server is offered like a URL server: its room in the
@@ -571,6 +600,9 @@ func (b *Builder) tools(ctx context.Context, agentID uuid.UUID, n *Narrowing, r 
 		}
 		if len(group.Tools) > 0 {
 			out.groups = append(out.groups, group)
+			if s.Url == nil {
+				out.commands[s.Name] = s
+			}
 		}
 	}
 	return out, nil
@@ -588,7 +620,7 @@ func reserved(name string, r reservedFor) bool {
 	switch name {
 	// Every run compacts, and the SDK refuses a second read_output.
 	case GraphToolName, DelegateToolName, agent.ReadOutputToolName, AttachmentsToolName, ReadAttachmentToolName,
-		SendFileToolName:
+		SendFileToolName, KeepFileToolName:
 		return true
 	// The names the SDK gives the tools that find, describe and run the rest,
 	// and open skills: a server's tool under one would stop the run.

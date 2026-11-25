@@ -776,6 +776,31 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   only this conversation's people, who
   could already be shown the tool's text in the answer; a team that wants a
   person between the two sets a rule on `send_file`.
+- **A file a tool wrote in a room is kept with `keep_file` (F4).** Some
+  tools never return a file: `mcp-mail-server`'s `save_attachment` writes
+  it into the server's room and answers with its path, and a script in the
+  workspace draws a chart into `/workspace`. `keep_file(path, server?)`
+  reads it from that room's `/file` route, which the shim and the workspace
+  role serve alike (`apps/sandbox/internal/roomfile`), and keeps it through
+  F2's keeper, under the tool name `keep_file`. The model names the path:
+  nothing finds paths or base64 in a tool's text, as no rule for that holds
+  across servers. A command server's room is read as it runs
+  (`keeper.Find`), never started to look: a fresh room holds none of the
+  old one's files, and the model is told the file is gone. The shim's token
+  is one the server can read; the route hands over only that room's files,
+  which the server can already read. A room's own refusal carries
+  `X-Room-Problem`, so a missing file is told from a missing room, which a
+  provider's proxy also answers 404. Behind the gate: class `Room`, a read,
+  for the session's own workspace; `Shares`, as `send_file`, for a run that
+  holds a command server, whose room is the server's and shared by the
+  team's sessions, so a guest or an unattended run would bring in another
+  conversation's file unseen. The class is the tool's, so a workspace read in
+  such a run is judged that way too. A run holding `keep_file` holds the
+  attachment tools, as its tool list is fixed and its first file comes
+  mid-run. Twenty tries a run, a failed one counted, counted from the run's
+  earlier ones; one file read at a time; 25 MiB, as every
+  attachment, read by a client with the dial policy and no 8 MiB cap of its
+  own (`discovery.RoomClient`). Files over 25 MiB are F4b.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes
   sniff as, never the server's word, and so is the extension a name lacks.
   Any type is kept, unlike a person's: one sniffed as nothing better is

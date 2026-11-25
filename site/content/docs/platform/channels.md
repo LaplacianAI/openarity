@@ -550,6 +550,11 @@ Telegram nor Slack deduplicates, so a file whose answer was lost on the way
 can arrive twice there. On the dashboard the file shows above the run's answer,
 and its bytes are `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}`.
 
+A file a tool wrote in a room rather than returned is kept first with
+`keep_file`, which gives it an id `send_file` takes: see
+[A file the agent made](workspaces.md#a-file-the-agent-made) and
+[A command server](mcp-servers.md#a-command-server).
+
 `send_file` is behind the team's approvals like the web tools: a read for the
 person who asked when they are there and may approve their own calls. The
 `writes` mode asks for a guest's run and refuses the call in a run nobody is
