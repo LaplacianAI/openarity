@@ -1142,3 +1142,17 @@ func TestAWrapUpSaysWhichLimit(t *testing.T) {
 		}
 	}
 }
+
+// A file the run sent is one line naming it, with its caption under it,
+// each the brain's text made safe like everything else.
+func TestAFileSentIsALineNamingIt(t *testing.T) {
+	stream := frameOf("1", "file_sent", `{"tool_call_id":"c1","file":{"id":"f1","filename":"report\u001b[2J.pdf",`+
+		`"media_type":"application/pdf","size":48213},"caption":"The Q3\nnumbers"}`) +
+		frameOf("", "end", `{"status":"succeeded"}`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if !strings.HasPrefix(out, "↗ sent report.pdf (application/pdf, 47 KiB)\n"+elbow+"The Q3 numbers\n") {
+		t.Errorf("out = %q", out)
+	}
+}

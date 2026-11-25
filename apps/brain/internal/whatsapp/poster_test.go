@@ -26,6 +26,18 @@ func part(t *testing.T, p gwa.Part) gateway.OutboundRequest {
 	return reqs[0]
 }
 
+// filePart is a file reply's part, built by the adapter as the outbox does.
+func filePart(t *testing.T, to string, f *gateway.OutFile) gateway.OutboundRequest {
+	t.Helper()
+	reqs, err := gwa.New().(gateway.Replier).Reply(gateway.Channel{}, gateway.Outbound{ //nolint:errcheck // it is a Replier
+		ID: "run-1", Session: gateway.Session{Ref: to, Kind: gateway.SessionDirect}, Kind: "file", Text: f.Name, File: f,
+	}, nil, time.Time{})
+	if err != nil || len(reqs) != 1 {
+		t.Fatalf("Reply = %d requests, %v", len(reqs), err)
+	}
+	return reqs[0]
+}
+
 func TestAPartIsTypedThenSentAndRecorded(t *testing.T) {
 	f, ch, cli := connected(t)
 	if err := f.a.Post(t.Context(), ch, part(t, gwa.Part{To: priya.String(), Text: "It waited on the lock."})); err != nil {
@@ -168,5 +180,62 @@ func TestAPollPartIsSentAsASingleChoicePoll(t *testing.T) {
 	}
 	if _, ok := f.store.sent[ch.String()+"/run-1:1"]; !ok {
 		t.Error("the poll was not recorded as sent")
+	}
+}
+
+// A file is uploaded, then sent as a document naming the upload, with the
+// run's name for it, its type and its caption.
+func TestAFilePartIsUploadedAndSentAsADocument(t *testing.T) {
+	f, ch, cli := connected(t)
+	req := filePart(t, priya.String(), &gateway.OutFile{
+		Name: "report.pdf", MediaType: "application/pdf", Caption: "The Q3 numbers", Data: []byte("%PDF-1.7\n"),
+	})
+	if err := f.a.Post(t.Context(), ch, req); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if len(cli.uploads) != 1 || string(cli.uploads[0]) != "%PDF-1.7\n" || len(cli.sent) != 1 {
+		t.Fatalf("uploaded %q, sent %+v", cli.uploads, cli.sent)
+	}
+	doc := cli.sent[0].msg.GetDocumentMessage()
+	if doc == nil || doc.GetFileName() != "report.pdf" || doc.GetMimetype() != "application/pdf" ||
+		doc.GetCaption() != "The Q3 numbers" || doc.GetDirectPath() != "/v/t62/upload" || doc.GetFileLength() != 9 {
+		t.Fatalf("sent %+v; want a document naming the upload", cli.sent[0].msg)
+	}
+	if _, ok := f.store.sent[ch.String()+"/run-1:0"]; !ok {
+		t.Error("the document was not recorded as sent")
+	}
+}
+
+// An upload that fails sends nothing, and is the outbox's to retry.
+func TestAFileWhoseUploadFailsSendsNothing(t *testing.T) {
+	f, ch, cli := connected(t)
+	cli.uploadErr = errors.New("media server unreachable")
+	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf", Data: []byte("x")})
+	err := f.a.Post(t.Context(), ch, req)
+	if err == nil || errors.Is(err, gateway.ErrUnsendable) {
+		t.Fatalf("err = %v; want one the outbox retries", err)
+	}
+	if len(cli.sent) != 0 {
+		t.Errorf("sent %+v after a failed upload", cli.sent)
+	}
+	if _, ok := f.store.sent[ch.String()+"/run-1:0"]; ok {
+		t.Error("a part never sent was recorded as sent")
+	}
+}
+
+// The upload runs under a deadline by its size, as an HTTP post does: one
+// that hangs would hold up every channel this process sends for.
+func TestAFileUploadHasADeadline(t *testing.T) {
+	f, ch, cli := connected(t)
+	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf", Data: []byte("x")})
+	before := time.Now()
+	if err := f.a.Post(t.Context(), ch, req); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if cli.uploadDeadline.IsZero() {
+		t.Fatal("the upload had no deadline")
+	}
+	if left := cli.uploadDeadline.Sub(before); left > gateway.PostTimeout(len(req.Body))+time.Second {
+		t.Errorf("deadline %v away, want at most %v", left, gateway.PostTimeout(len(req.Body)))
 	}
 }

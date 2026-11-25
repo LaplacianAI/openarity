@@ -125,6 +125,16 @@ func TestEveryRecordedKindBecomesItsEvent(t *testing.T) {
 			stream.ApprovalDecided{ApprovalID: "a3", Decision: "cancelled", By: "u1", Via: "channel", Superseded: true},
 		},
 		{eventRow(21, "waiting", &run, `{"reason":"approval","said":"May I send it?"}`), stream.RunWaiting{Reason: "approval", Said: "May I send it?"}},
+		// As the runtime writes it (sendfile.go): the file by the names a
+		// message's file has, beside the call that sent it.
+		{
+			eventRow(22, "file_sent", &run, `{"tool_call_id":"c9","file":{"id":"f1","filename":"report.pdf",`+
+				`"media_type":"application/pdf","size":9},"caption":"Q3"}`),
+			stream.FileSent{
+				ToolCallID: "c9", Caption: "Q3",
+				File: stream.File{ID: "f1", Filename: "report.pdf", MediaType: "application/pdf", Size: 9},
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.row.Kind, func(t *testing.T) {
@@ -162,6 +172,7 @@ func TestARowThatCannotBeReadIsAnError(t *testing.T) {
 		"a broken finish":    eventRow(6, "finished", &run, `[`),
 		"a broken request":   eventRow(8, "approval_requested", &run, `[`),
 		"a broken decision":  eventRow(9, "approval_decided", &run, `[`),
+		"a broken file sent": eventRow(10, "file_sent", &run, `[`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := envelopeOf(row); err == nil {

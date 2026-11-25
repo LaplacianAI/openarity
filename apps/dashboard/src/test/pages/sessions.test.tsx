@@ -2175,6 +2175,33 @@ describe("the hub in the trace", () => {
 
 /* ------------------------------------------------------------ fetched page */
 
+describe("a file sent in the trace", () => {
+  function sent(file: Record<string, unknown>) {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "hub", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(frame(1, "file_sent", { tool_call_id: "c1", file, caption: "Q3" }), END),
+      }),
+    });
+  }
+
+  it("names the file, its type and size, and its caption", async () => {
+    sent({ id: "f7", filename: "export.csv", media_type: "text/csv", size: 2048 });
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const note = pane().querySelector('[data-event="file_sent"]') as HTMLElement;
+    expect(note).toHaveTextContent("Sent the person a file: export.csv (text/csv, 2 KB)Q3");
+  });
+
+  it("leaves no dangling colon for a file without a name", async () => {
+    sent({ id: "f7", size: 10 });
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const note = pane().querySelector('[data-event="file_sent"]') as HTMLElement;
+    expect(note).toHaveTextContent(/^Sent the person a file \(10 B\)Q3$/);
+  });
+});
+
 describe("a fetched page in the trace", () => {
   function fetched(output: string) {
     listed({
@@ -3178,6 +3205,64 @@ describe("writing in a conversation", () => {
         true,
       ),
     );
+  });
+
+  it("shows a file a run sent under its answer, and downloads it", async () => {
+    const seen = writer({
+      [SESSION]: { body: MINE },
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "hub" }),
+          sf("file_sent", {
+            run_id: "r1",
+            tool_call_id: "c1",
+            file: { id: "f7", filename: "export.csv", media_type: "text/csv", size: 2048 },
+            caption: "Last week's sign-ups",
+          }),
+          sf("run_finished", { run_id: "r1", status: "succeeded", output: "Here is the export." }),
+        ),
+      "GET /teams/{id}/sessions/{sid}/attachments/{aid}": { text: "a,b\n" },
+    });
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, { createObjectURL: vi.fn(() => "blob:fake"), revokeObjectURL: vi.fn() }),
+    );
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await open("?tab=messages");
+
+    const files = await screen.findByRole("region", { name: "Files hub sent" });
+    expect(within(files).getByText("export.csv: Last week's sign-ups")).toBeInTheDocument();
+    await userEvent.click(within(files).getByRole("button", { name: "Download export.csv" }));
+    await waitFor(() =>
+      expect(seen.some((x) => x.path === `/teams/${TEAM}/sessions/${SID}/attachments/f7`)).toBe(
+        true,
+      ),
+    );
+  });
+
+  it("shows one file sent twice as two, above the answer", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const export1 = { id: "f7", filename: "export.csv", media_type: "text/csv", size: 2048 };
+    writer({
+      [SESSION]: { body: MINE },
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "hub" }),
+          sf("file_sent", { run_id: "r1", tool_call_id: "c1", file: export1 }),
+          sf("file_sent", { run_id: "r1", tool_call_id: "c2", file: export1 }),
+          sf("run_finished", { run_id: "r1", status: "succeeded", output: "Here is the export." }),
+        ),
+    });
+    await open("?tab=messages");
+
+    const files = await screen.findByRole("region", { name: "Files hub sent" });
+    const chips = within(within(files).getByRole("list", { name: "Files hub sent" })).getAllByRole(
+      "listitem",
+    );
+    expect(chips).toHaveLength(2);
+    const answer = await screen.findByText("Here is the export.");
+    expect(files.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(error.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
   });
 
   it("offers no reply in someone else's conversation on the dashboard", async () => {

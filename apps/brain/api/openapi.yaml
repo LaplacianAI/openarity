@@ -1417,6 +1417,7 @@ paths:
         A run that asks a person before a call says so in
         `approval_requested`, waits in `run_waiting` with what it told them,
         and hears the answer in `approval_decided`.
+        A file a run hands the person is `file_sent`.
         Events the catalog has no kind for are `custom`, named by the kind
         the run recorded. The stream does not end: it follows the
         conversation until the client leaves, with a `: keep-alive` comment
@@ -5641,6 +5642,24 @@ components:
         reason:
           type: string
         said:
+          type: string
+    SessionEventFileSent:
+      type: object
+      description: |
+        The data of a `file_sent` frame on a session's stream. A run handing the person a file of the conversation with `send_file`, named as a message's file is, with the call that sent it; its bytes are read with `getSessionAttachment`. In a channel's conversation the file is also posted to the channel.
+      required: [tool_call_id, file]
+      properties:
+        at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          format: uuid
+        tool_call_id:
+          type: string
+        file:
+          $ref: "#/components/schemas/SessionEventPart/properties/file"
+        caption:
           type: string
     SessionEventCustom:
       type: object

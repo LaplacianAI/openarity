@@ -333,6 +333,8 @@ func (provider) Reply(
 		return tapNotice(token, chatID, thread, out)
 	case out.Kind == "approval" && out.Prompt != nil:
 		return texts(token, chatID, thread, out, keyboardOf(out.Prompt))
+	case out.Kind == "file":
+		return document(token, chatID, thread, out)
 	}
 	return texts(token, chatID, thread, out, nil)
 }

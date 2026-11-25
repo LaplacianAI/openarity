@@ -118,6 +118,8 @@ func decodeEvent(kind Kind, data []byte) (Event, error) {
 		return as[ApprovalDecided](data)
 	case KindRunWaiting:
 		return as[RunWaiting](data)
+	case KindFileSent:
+		return as[FileSent](data)
 	case KindCustom:
 		return as[Custom](data)
 	}

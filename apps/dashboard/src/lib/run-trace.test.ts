@@ -228,6 +228,27 @@ describe("groupTrace", () => {
     expect(stepsOf(t)[0]?.other).toEqual([during]);
   });
 
+  it("names a file the run sent, and reads one with no file as nameless", () => {
+    const trace = groupTrace([
+      e("file_sent", {
+        tool_call_id: "c1",
+        file: { id: "f1", filename: "report.pdf", media_type: "application/pdf", size: 9 },
+        caption: "Q3",
+      }),
+      e("file_sent", { tool_call_id: "c2" }),
+    ]);
+    expect(trace.items).toEqual([
+      {
+        type: "sent",
+        filename: "report.pdf",
+        mediaType: "application/pdf",
+        size: 9,
+        caption: "Q3",
+      },
+      { type: "sent", filename: "", mediaType: "", size: 0, caption: "" },
+    ]);
+  });
+
   it("reads data that is not an object as empty", () => {
     const t = groupTrace([
       e("step", null),

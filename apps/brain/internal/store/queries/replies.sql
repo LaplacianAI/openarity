@@ -171,3 +171,58 @@ FROM channels ch
 WHERE ch.id = sqlc.arg('channel_id')::uuid
   AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 ON CONFLICT (in_reply_to) WHERE kind = 'notice' DO NOTHING;
+
+-- A file a run hands its person (send_file): written for a run that answers a
+-- channel which can be posted back to, as InsertReply is, and only for a file
+-- of the run's own session, so another conversation's id inserts nothing. It
+-- quotes nothing, as a step does. text is the file's name and detail its
+-- caption. A call made again is still one reply.
+-- name: InsertFileReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, detail, attachment_id, call_id)
+SELECT r.team_id, r.id, r.session_id, s.channel_id, 'file', a.filename,
+       sqlc.narg('detail')::jsonb, a.id, sqlc.arg('call_id')::text
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+JOIN attachments a ON a.id = sqlc.arg('attachment_id')::uuid AND a.session_id = r.session_id
+WHERE r.id = sqlc.arg('run_id')::uuid
+  AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, call_id) WHERE kind = 'file' DO NOTHING;
+
+-- Whether a call's file reply was written: what InsertFileReply writing
+-- none means, a call made again, or a channel that can no longer be posted
+-- to. Rides replies_one_per_file_call.
+-- name: FileReplyExists :one
+SELECT EXISTS (
+    SELECT 1 FROM replies
+    WHERE run_id = sqlc.arg('run_id')::uuid AND call_id = sqlc.arg('call_id')::text AND kind = 'file')::bool;
+
+-- How many files a run has sent, each call once whether its reply or its
+-- event was written: a run resumed holds to the ten it may send, counting
+-- those before.
+-- name: CountRunFilesSent :one
+SELECT count(*) FROM (
+    SELECT call_id FROM replies WHERE run_id = sqlc.arg('run_id')::uuid AND kind = 'file'
+    UNION
+    SELECT payload->>'tool_call_id' FROM run_events WHERE run_id = sqlc.arg('run_id')::uuid AND kind = 'file_sent'
+) AS sent;
+
+-- Where a conversation's files can reach. One read on its stream, the
+-- dashboard's or the API's, takes them there: it has no channel, or the
+-- team's dashboard channel, which nothing posts to. Any other is its
+-- channel's provider, and whether that channel can be posted back to.
+-- name: GetSessionFileReach :one
+SELECT (s.channel_id IS NULL OR ch.provider = 'dashboard')::bool AS streamed,
+       COALESCE(ch.provider, '')::text AS provider,
+       (ch.provider IS NOT NULL AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL))::bool AS postable
+FROM sessions s
+LEFT JOIN channels ch ON ch.id = s.channel_id
+WHERE s.id = sqlc.arg('session_id')::uuid;
+
+-- The file a reply sends, read by the sender just before it posts it.
+-- name: GetReplyFile :one
+SELECT a.team_id, a.object_key, a.filename, a.media_type, a.size_bytes
+FROM replies r
+JOIN attachments a ON a.id = r.attachment_id AND a.session_id = r.session_id
+WHERE r.id = sqlc.arg('id');

@@ -195,6 +195,17 @@
         "said": { "type": "string", "description": "What the run told the person, in its own words." }
       }
     },
+    "file_sent": {
+      "type": "object",
+      "required": ["tool_call_id", "file"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "tool_call_id": { "type": "string", "description": "The call that sent it." },
+        "file": { "$ref": "#/$defs/part/properties/file" },
+        "caption": { "type": "string" }
+      }
+    },
     "custom": {
       "type": "object",
       "required": ["name"],

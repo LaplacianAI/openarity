@@ -72,7 +72,8 @@ func runWhatsApp(ctx context.Context, cfg *config.Config, logger *slog.Logger, d
 		NewClient: func(d *wastore.Device) whatsapp.Client { return whatsmeow.NewClient(d, waLogger) },
 		Provider:  provider, Receiver: receiver, Ingest: ingest, Logger: logger,
 	})
-	sender := gateway.NewSender(dbStore, secretStore, registry, accounts, gateway.Scope{Held: accounts.Held}, logger)
+	sender := gateway.NewSender(dbStore, secretStore, registry, accounts, gateway.Scope{Held: accounts.Held}, logger).
+		WithFiles(attachments)
 	return accounts.Run(ctx, sender.Drain)
 }
 

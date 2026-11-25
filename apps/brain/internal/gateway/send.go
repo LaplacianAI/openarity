@@ -14,21 +14,36 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 const (
 	replyBatch = 20
-	// eventAttempts is how often an event is tried: a broken one must not hold
-	// its conversation's answer back through the answer's six.
+	// eventAttempts is how often an event or a file is tried: a broken one
+	// must not hold its conversation's answer back through the answer's six.
 	eventAttempts  = 2
-	replyLease     = 2 * time.Minute // longer than the client's 10 s timeout
+	replyLease     = 2 * time.Minute // longer than one post's deadline
 	replyAttempts  = 6
 	replyReadLimit = 64 << 10
+
+	// A post's deadline is 10 s, and a second more for each 512 KiB it
+	// carries, at most a minute: a 25 MiB file is about 34 MB of base64.
+	// HTTPPoster sets it per post, so its client should have none.
+	postBase    = 10 * time.Second
+	postPerByte = 512 << 10
+	maxPost     = time.Minute
 )
+
+// PostTimeout is how long a post of n bytes may take: a poster that is not
+// HTTP, as WhatsApp's, keeps to it too.
+func PostTimeout(n int) time.Duration {
+	return min(postBase+time.Duration(n/postPerByte)*time.Second, maxPost)
+}
 
 // retryAfter is the wait after each failed attempt, the first at index 0.
 var retryAfter = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute, time.Hour, time.Hour}
@@ -44,6 +59,13 @@ type ReplyStore interface {
 	NoticeSent(ctx context.Context, arg db.NoticeSentParams) (int64, error)
 	RetryNotice(ctx context.Context, arg db.RetryNoticeParams) (int64, error)
 	GiveUpNotice(ctx context.Context, arg db.GiveUpNoticeParams) (int64, error)
+
+	GetReplyFile(ctx context.Context, id int64) (db.GetReplyFileRow, error)
+}
+
+// FileReader reads a file's bytes: the attachment store, which decrypts them.
+type FileReader interface {
+	Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error)
 }
 
 // Sender posts the outbox's replies, one conversation's in order, and the
@@ -55,6 +77,7 @@ type Sender struct {
 	poster  Poster
 	scope   Scope
 	logger  *slog.Logger
+	objects FileReader
 }
 
 // Poster sends one part a provider built, for a channel. An error is retried
@@ -74,6 +97,13 @@ type Scope struct {
 
 func NewSender(s ReplyStore, sec Secrets, reg Registry, poster Poster, scope Scope, logger *slog.Logger) *Sender {
 	return &Sender{store: s, secrets: sec, reg: reg, poster: poster, scope: scope, logger: logger}
+}
+
+// WithFiles lets the sender send the files runs hand their people. Without
+// it a file reply is given up, as nothing could read its bytes.
+func (s *Sender) WithFiles(o FileReader) *Sender {
+	s.objects = o
+	return s
 }
 
 // claimScope is the scope as a claim's arguments.
@@ -167,11 +197,15 @@ type outgoing struct {
 	teamID    uuid.UUID
 	channelID uuid.UUID
 	provider  string
-	build     func(creds Credentials) ([]OutboundRequest, error)
-	sent      func(ctx context.Context) (int64, error)
-	partSent  func(ctx context.Context, parts int32) (int64, error)
-	retry     func(ctx context.Context, msg string, after time.Duration) (int64, error)
-	giveUp    func(ctx context.Context, msg string) (int64, error)
+	// load reads what the requests carry beyond the row, a file reply's
+	// file, before they are built: an error is retried unless it wraps
+	// ErrUnsendable. Nil for everything else.
+	load     func(ctx context.Context) (*OutFile, error)
+	build    func(creds Credentials, file *OutFile) ([]OutboundRequest, error)
+	sent     func(ctx context.Context) (int64, error)
+	partSent func(ctx context.Context, parts int32) (int64, error)
+	retry    func(ctx context.Context, msg string, after time.Duration) (int64, error)
+	giveUp   func(ctx context.Context, msg string) (int64, error)
 }
 
 // replyID is the id a reply is sent under, for a receiver to drop a repeat,
@@ -188,6 +222,10 @@ func replyID(row db.ClaimDueRepliesRow) (string, int32) {
 		return run + ":" + strconv.Itoa(int(*row.EventSeq)), eventAttempts
 	case row.Kind == "answer" || row.Kind == "apology":
 		return run, replyAttempts
+	case row.Kind == "file":
+		// Twice, like a step: a file that cannot go must not hold the answer
+		// behind it for hours.
+		return run + ":file:" + strconv.FormatInt(row.ID, 10), eventAttempts
 	default:
 		return run + ":" + row.Kind + ":" + strconv.FormatInt(row.ID, 10), replyAttempts
 	}
@@ -199,7 +237,8 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 	return outgoing{
 		what: "reply", id: row.ID, attempts: row.Attempts, tries: tries, partsSent: row.PartsSent,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,
-		build: func(creds Credentials) ([]OutboundRequest, error) {
+		load: s.fileOf(row),
+		build: func(creds Credentials, file *OutFile) ([]OutboundRequest, error) {
 			rp, ok := s.reg.Replier(row.Provider)
 			if !ok {
 				return nil, fmt.Errorf("the %s provider sends no replies", row.Provider)
@@ -211,6 +250,7 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 				InReplyTo: deref(row.InReplyTo),
 				Kind:      row.Kind,
 				Text:      row.Text,
+				File:      file,
 			}
 			if err := withDetail(&out, row.Detail); err != nil {
 				return nil, err
@@ -255,6 +295,51 @@ func withDetail(out *Outbound, detail []byte) error {
 	return nil
 }
 
+// fileOf loads a file reply's file, just before it is sent: one at a time,
+// so a sender holds one file's bytes. A file gone since, or a provider that
+// sends none, is given up; a store that fails is tried again.
+func (s *Sender) fileOf(row db.ClaimDueRepliesRow) func(ctx context.Context) (*OutFile, error) {
+	if row.Kind != "file" {
+		return nil
+	}
+	return func(ctx context.Context) (*OutFile, error) {
+		switch {
+		case !s.reg.SendsFiles(row.Provider):
+			return nil, fmt.Errorf("%w: the %s provider sends no files", ErrUnsendable, row.Provider)
+		case s.objects == nil:
+			return nil, fmt.Errorf("%w: this sender reads no files", ErrUnsendable)
+		}
+		f, err := s.store.GetReplyFile(ctx, row.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: the file is no longer in the conversation", ErrUnsendable)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading the reply's file: %w", err)
+		}
+		data, err := s.objects.Get(ctx, f.TeamID, f.ObjectKey)
+		switch {
+		case errors.Is(err, objects.ErrNotFound):
+			return nil, fmt.Errorf("%w: the file %s is no longer stored", ErrUnsendable, f.Filename)
+		case errors.Is(err, objects.ErrCorrupt), errors.Is(err, objects.ErrWrongTeam):
+			// The same bytes fail the same way every time.
+			return nil, fmt.Errorf("%w: the file %s cannot be read: %w", ErrUnsendable, f.Filename, err)
+		case err != nil:
+			return nil, fmt.Errorf("reading the file %s: %w", f.Filename, err)
+		case len(data) == 0:
+			return nil, fmt.Errorf("%w: the file %s is empty", ErrUnsendable, f.Filename)
+		}
+		var detail struct {
+			Caption string `json:"caption"`
+		}
+		if len(row.Detail) > 0 {
+			if err := json.Unmarshal(row.Detail, &detail); err != nil {
+				return nil, fmt.Errorf("%w: reading the file's caption: %w", ErrUnsendable, err)
+			}
+		}
+		return &OutFile{Name: f.Filename, MediaType: f.MediaType, Caption: detail.Caption, Data: data}, nil
+	}
+}
+
 // notice is one request: a notice is a sentence, never split, so it has no
 // parts to record and a retry sends it whole.
 func (s *Sender) notice(row db.ClaimDueNoticesRow) outgoing {
@@ -262,7 +347,7 @@ func (s *Sender) notice(row db.ClaimDueNoticesRow) outgoing {
 	return outgoing{
 		what: "notice", id: row.ID, attempts: row.Attempts, tries: replyAttempts,
 		teamID: row.TeamID, channelID: row.ChannelID, provider: row.Provider,
-		build: func(creds Credentials) ([]OutboundRequest, error) {
+		build: func(creds Credentials, _ *OutFile) ([]OutboundRequest, error) {
 			n, ok := s.reg.Notifier(row.Provider)
 			if !ok {
 				return nil, fmt.Errorf("the %s provider sends no notices", row.Provider)
@@ -335,7 +420,13 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 		return err
 	}
 
-	parts, err := o.build(creds)
+	var file *OutFile
+	if o.load != nil {
+		if file, err = o.load(ctx); err != nil {
+			return err
+		}
+	}
+	parts, err := o.build(creds, file)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnsendable, err)
 	}
@@ -374,12 +465,21 @@ func (s *Sender) credentials(ctx context.Context, o outgoing, keys []string) (Cr
 
 // HTTPPoster posts each part with client, which must refuse what a team may
 // not reach at dial time and follow no redirect: a 302 would turn the POST
-// into a GET somewhere else.
-func HTTPPoster(client *http.Client) Poster { return httpPoster{client: client} }
+// into a GET somewhere else. Each post has a deadline of its own, by its
+// size (PostTimeout), so the poster drops the client's Timeout from its own
+// copy: it would cut a file short however long its deadline.
+func HTTPPoster(client *http.Client) Poster {
+	c := *client
+	c.Timeout = 0
+	return httpPoster{client: &c}
+}
 
 type httpPoster struct{ client *http.Client }
 
 func (p httpPoster) Post(ctx context.Context, _ uuid.UUID, out OutboundRequest) error {
+	// Held until the answer is read: the deadline covers the whole exchange.
+	ctx, cancel := context.WithTimeout(ctx, PostTimeout(len(out.Body)))
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, out.URL, bytes.NewReader(out.Body))
 	if err != nil {
 		return fmt.Errorf("%w: the reply URL: %w", ErrUnsendable, err)
