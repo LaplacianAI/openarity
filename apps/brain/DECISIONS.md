@@ -724,8 +724,10 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   answer. A run event `file_sent` puts a chip under the run on the dashboard;
   on a channel the file is also a reply of kind `file`, in the session's
   order, so a file sent while the run works goes out before its answer, one
-  per call (`replies_one_per_file_call`) and kicked at once. Ten a run,
-  counted per attempt, and a caption of 1024 characters, Telegram's. The
+  per call (`replies_one_per_file_call`) and kicked at once. Ten a run, a
+  try at a file found counting whether it went or not, and a caption of
+  1024 characters, Telegram's. The name is reserved on every run, so a
+  team's MCP tool already named `send_file` is refused from then on. The
   sender loads and decrypts the bytes just before it builds the requests,
   one file at a time; a file gone since is given up, a store that fails is
   retried. Telegram sends a document, never a photo, which it recompresses;
@@ -735,15 +737,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   at least once, as every reply's: Telegram drops no repeat, so a post whose
   answer was lost sends the file twice there. A file is tried twice, as a
   step is, so one that cannot go holds its answer back a minute, not hours;
-  bytes that cannot be decrypted are given up at once. Each post has a
-  deadline by its size, ten seconds and a second per 512 KiB, a minute at
-  most, under the two-minute lease; a claimed batch is sent one row at a
+  bytes that cannot be decrypted are given up at once. A file given up is
+  not sent, and nobody is told: the model was told it was sent when it was
+  queued, and the reply shows as given up only in the database until the
+  dashboard shows a reply's delivery. Each post has a deadline by its size,
+  ten seconds and a second per 512 KiB, a minute at most, under the
+  two-minute lease, on WhatsApp's upload and send as on an HTTP post; a claimed batch is sent one row at a
   time, so rows late in a slow batch can outlive the lease and be sent by a
   second sender too, as text replies always could. A sender holds one file's
   bytes at a time, about three copies of it on `custom` (the bytes, base64,
   the body): some 100 MB at 25 MiB, four replies to a worker at once.
-  Ten files a run, the count read from the run's `file_sent` events when it
-  is built, so a resume keeps to it. A reply not written and not queued is
+  Ten files a run, the count read when it is built from its file calls,
+  each once whether its reply or its event was written, so a resume keeps
+  to it. A reply not written and not queued is
   the model told the file did not go; on a channel, a `file_sent` event that
   fails after the reply is queued is logged, not the call's failure, as the
   model would send the file again. Deleting a file deletes its file replies,

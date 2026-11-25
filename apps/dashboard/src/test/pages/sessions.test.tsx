@@ -2175,6 +2175,33 @@ describe("the hub in the trace", () => {
 
 /* ------------------------------------------------------------ fetched page */
 
+describe("a file sent in the trace", () => {
+  function sent(file: Record<string, unknown>) {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "hub", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(frame(1, "file_sent", { tool_call_id: "c1", file, caption: "Q3" }), END),
+      }),
+    });
+  }
+
+  it("names the file, its type and size, and its caption", async () => {
+    sent({ id: "f7", filename: "export.csv", media_type: "text/csv", size: 2048 });
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const note = pane().querySelector('[data-event="file_sent"]') as HTMLElement;
+    expect(note).toHaveTextContent("Sent the person a file: export.csv (text/csv, 2 KB)Q3");
+  });
+
+  it("leaves no dangling colon for a file without a name", async () => {
+    sent({ id: "f7", size: 10 });
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const note = pane().querySelector('[data-event="file_sent"]') as HTMLElement;
+    expect(note).toHaveTextContent(/^Sent the person a file \(10 B\)Q3$/);
+  });
+});
+
 describe("a fetched page in the trace", () => {
   function fetched(output: string) {
     listed({
@@ -3236,7 +3263,6 @@ describe("writing in a conversation", () => {
     const answer = await screen.findByText("Here is the export.");
     expect(files.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(error.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
-    error.mockRestore();
   });
 
   it("offers no reply in someone else's conversation on the dashboard", async () => {

@@ -313,7 +313,7 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
           type: "sent",
           filename: text(f.filename),
           mediaType: text(f.media_type),
-          size: typeof f.size === "number" ? f.size : 0,
+          size: count(f.size),
           caption: text(d.caption),
         });
         break;

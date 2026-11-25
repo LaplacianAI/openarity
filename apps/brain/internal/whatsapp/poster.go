@@ -59,13 +59,17 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 	if err := a.sleep(ctx, typing(spoken(p), a.jitter())); err != nil {
 		return err
 	}
-	msg, err := a.message(ctx, c, cli, p)
+	// The upload and the send have a deadline by size, as an HTTP post has:
+	// one stuck would hold up every channel this process sends for.
+	sendCtx, cancel := context.WithTimeout(ctx, gateway.PostTimeout(len(req.Body)))
+	defer cancel()
+	msg, err := a.message(sendCtx, c, cli, p)
 	if err != nil {
 		return err
 	}
 	id := cli.GenerateMessageID()
 	c.sending(id)
-	resp, err := cli.SendMessage(ctx, to, msg, whatsmeow.SendRequestExtra{ID: id})
+	resp, err := cli.SendMessage(sendCtx, to, msg, whatsmeow.SendRequestExtra{ID: id})
 	_ = cli.SendChatPresence(ctx, to, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
 		return fmt.Errorf("sending: %w", err)

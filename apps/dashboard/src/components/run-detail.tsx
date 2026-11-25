@@ -675,9 +675,13 @@ function TraceView({
           case "sent":
             return (
               <Note key={key} kind="file_sent">
-                <span className="font-medium text-foreground">Sent the person a file</span>:{" "}
-                <span className="break-all">{item.filename}</span>
-                {item.mediaType ? ` (${item.mediaType}, ${fileSize(item.size)})` : null}
+                <span className="font-medium text-foreground">Sent the person a file</span>
+                {item.filename ? (
+                  <>
+                    : <span className="break-all">{item.filename}</span>
+                  </>
+                ) : null}
+                {` (${[item.mediaType, fileSize(item.size)].filter(Boolean).join(", ")})`}
                 {item.caption ? (
                   <span className="mt-0.5 block whitespace-pre-wrap">{item.caption}</span>
                 ) : null}

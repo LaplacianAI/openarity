@@ -39,8 +39,9 @@ const (
 	maxPost     = time.Minute
 )
 
-// postTimeout is how long a post of n bytes may take.
-func postTimeout(n int) time.Duration {
+// PostTimeout is how long a post of n bytes may take: a poster that is not
+// HTTP, as WhatsApp's, keeps to it too.
+func PostTimeout(n int) time.Duration {
 	return min(postBase+time.Duration(n/postPerByte)*time.Second, maxPost)
 }
 
@@ -465,15 +466,19 @@ func (s *Sender) credentials(ctx context.Context, o outgoing, keys []string) (Cr
 // HTTPPoster posts each part with client, which must refuse what a team may
 // not reach at dial time and follow no redirect: a 302 would turn the POST
 // into a GET somewhere else. Each post has a deadline of its own, by its
-// size (postTimeout), so the client's Timeout should be none: it would cut a
-// file short however long its deadline.
-func HTTPPoster(client *http.Client) Poster { return httpPoster{client: client} }
+// size (PostTimeout), so the poster drops the client's Timeout from its own
+// copy: it would cut a file short however long its deadline.
+func HTTPPoster(client *http.Client) Poster {
+	c := *client
+	c.Timeout = 0
+	return httpPoster{client: &c}
+}
 
 type httpPoster struct{ client *http.Client }
 
 func (p httpPoster) Post(ctx context.Context, _ uuid.UUID, out OutboundRequest) error {
 	// Held until the answer is read: the deadline covers the whole exchange.
-	ctx, cancel := context.WithTimeout(ctx, postTimeout(len(out.Body)))
+	ctx, cancel := context.WithTimeout(ctx, PostTimeout(len(out.Body)))
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, out.URL, bytes.NewReader(out.Body))
 	if err != nil {

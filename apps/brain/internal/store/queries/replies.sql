@@ -198,10 +198,15 @@ SELECT EXISTS (
     SELECT 1 FROM replies
     WHERE run_id = sqlc.arg('run_id')::uuid AND call_id = sqlc.arg('call_id')::text AND kind = 'file')::bool;
 
--- How many files a run has sent, by its file_sent events: a run resumed
--- holds to the ten it may send, counting those before.
+-- How many files a run has sent, each call once whether its reply or its
+-- event was written: a run resumed holds to the ten it may send, counting
+-- those before.
 -- name: CountRunFilesSent :one
-SELECT count(*) FROM run_events WHERE run_id = sqlc.arg('run_id')::uuid AND kind = 'file_sent';
+SELECT count(*) FROM (
+    SELECT call_id FROM replies WHERE run_id = sqlc.arg('run_id')::uuid AND kind = 'file'
+    UNION
+    SELECT payload->>'tool_call_id' FROM run_events WHERE run_id = sqlc.arg('run_id')::uuid AND kind = 'file_sent'
+) AS sent;
 
 -- Where a conversation's files can reach. One read on its stream, the
 -- dashboard's or the API's, takes them there: it has no channel, or the

@@ -225,15 +225,27 @@ func TestARunCountsTheFilesItSent(t *testing.T) {
 
 	s := queryStore(t)
 	c := newConversation(t, s, "file-count")
+	file := c.sentFile(t, s, "m-file", "teams/x/objects/export")
 	r := c.working(t, s, "m-1")
 	other := c.working(t, s, "m-2")
-	for i, run := range []uuid.UUID{r.ID, r.ID, other.ID} {
+	// c1 has an event alone, c2 two events and its reply, c3 its reply alone,
+	// as a channel file whose event was never written: three calls.
+	for i, e := range []struct {
+		run  uuid.UUID
+		call string
+	}{{r.ID, "c1"}, {r.ID, "c2"}, {r.ID, "c2"}, {other.ID, "c4"}} {
 		if _, err := s.pool.Exec(t.Context(),
-			`INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, $2, 'file_sent', '{}')`, run, 100+i); err != nil {
+			`INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, $2, 'file_sent', jsonb_build_object('tool_call_id', $3::text))`,
+			e.run, 100+i, e.call); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n, err := s.CountRunFilesSent(t.Context(), r.ID); err != nil || n != 2 {
-		t.Errorf("CountRunFilesSent = %d, %v; want the run's 2", n, err)
+	for _, call := range []string{"c2", "c3"} {
+		if n := sendFile(t, s, r.ID, file.ID, call, nil); n != 1 {
+			t.Fatalf("reply for %s: wrote %d", call, n)
+		}
+	}
+	if n, err := s.CountRunFilesSent(t.Context(), r.ID); err != nil || n != 3 {
+		t.Errorf("CountRunFilesSent = %d, %v; want the run's 3 calls", n, err)
 	}
 }

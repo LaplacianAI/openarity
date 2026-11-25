@@ -1211,8 +1211,8 @@ func TestAPostsDeadlineIsByItsSize(t *testing.T) {
 		25 << 20:    maxPost,
 		35_000_000:  maxPost,
 	} {
-		if got := postTimeout(n); got != want {
-			t.Errorf("postTimeout(%d) = %v, want %v", n, got, want)
+		if got := PostTimeout(n); got != want {
+			t.Errorf("PostTimeout(%d) = %v, want %v", n, got, want)
 		}
 	}
 	if maxPost >= replyLease {
@@ -1232,10 +1232,29 @@ func TestAPostThatHangsMeetsItsDeadline(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	err := HTTPPoster(&http.Client{Transport: &http.Transport{}}).Post(ctx, uuid.New(), OutboundRequest{URL: srv.URL, Body: []byte("hi")})
-	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want the post's deadline", err)
 	}
-	if took := time.Since(start); took < postBase-time.Second || took > postBase+5*time.Second {
+	// Its own deadline, not the caller's thirty seconds.
+	if took := time.Since(start); took < postBase-time.Second || took >= 25*time.Second {
 		t.Errorf("gave up after %v, want about %v", took, postBase)
+	}
+}
+
+// The poster keeps no client Timeout: one would cut a large file short
+// however long its own deadline.
+func TestAPostOutlastsItsClientsTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+	client := &http.Client{Timeout: 50 * time.Millisecond, Transport: &http.Transport{}}
+	if err := HTTPPoster(client).Post(t.Context(), uuid.New(), OutboundRequest{URL: srv.URL, Body: []byte("hi")}); err != nil {
+		t.Fatalf("Post: %v, want the client's timeout dropped", err)
+	}
+	if client.Timeout != 50*time.Millisecond {
+		t.Errorf("the caller's client was changed: timeout %v", client.Timeout)
 	}
 }

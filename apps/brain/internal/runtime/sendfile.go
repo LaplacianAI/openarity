@@ -40,10 +40,10 @@ type FileSendStore interface {
 	GetSessionFileReach(ctx context.Context, sessionID uuid.UUID) (db.GetSessionFileReachRow, error)
 }
 
-// FileSends is where a run's files can go. Every field is required.
-// SendsFiles says whether a channel provider posts a file; the gateway's
-// registry answers it. Logger hears of a file sent whose event was not
-// recorded.
+// FileSends is where a run's files can go. Store and SendsFiles are
+// required: SendsFiles says whether a channel provider posts a file, and the
+// gateway's registry answers it. Logger hears of a file sent whose event was
+// not recorded; with none, nothing is offered.
 type FileSends struct {
 	Store      FileSendStore
 	SendsFiles func(provider string) bool
@@ -61,7 +61,8 @@ type sendFile struct {
 	toChannel bool
 	note      func(ctx context.Context, kind string, payload any) error
 	kick      func(callID string)
-	// sent counts this run's sends, those before a resume among them.
+	// sent counts this attempt's tries at a file that was found, on top of
+	// the files sent before a resume.
 	sent atomic.Int64
 }
 
@@ -100,18 +101,18 @@ func (s *sendFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if call == "" || len(call) > maxCallID {
 		return "", errors.New("this call has no id the reply can be kept by, so the file was not sent")
 	}
-	// Counted before anything is read, so each attempt counts: a store that
-	// is down is not asked an eleventh time.
-	if s.sent.Add(1) > filesPerRun {
-		return "", fmt.Errorf("this run has sent %d files, the most one run sends; say where the rest are instead", filesPerRun)
-	}
-
 	row, err := s.store.GetAttachmentInSession(ctx, db.GetAttachmentInSessionParams{ID: id, SessionID: s.run.SessionID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("there is no file %s in this conversation; %s lists them", id, AttachmentsToolName)
 	}
 	if err != nil {
 		return "", fmt.Errorf("reading file %s: %w", id, err)
+	}
+	// Counted once the file is found, so a wrong id costs no slot; a send that
+	// then fails still does, so a channel that is down is not tried an
+	// eleventh time.
+	if s.sent.Add(1) > filesPerRun {
+		return "", fmt.Errorf("this run has tried to send %d files, the most one run sends; say where the rest are instead", filesPerRun)
 	}
 
 	if s.toChannel {
@@ -173,7 +174,7 @@ func (s *sendFile) post(ctx context.Context, call string, id uuid.UUID, caption 
 // no control characters but line breaks, and short enough for every one.
 func captionOf(s string) (string, error) {
 	s = strings.TrimSpace(strings.Map(func(r rune) rune {
-		if r == '\n' || !unicode.IsControl(r) && r != ' ' && r != ' ' {
+		if r == '\n' || !unicode.IsControl(r) && r != '\u2028' && r != '\u2029' {
 			return r
 		}
 		return -1
@@ -195,7 +196,7 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 	if b.replay {
 		return (&sendFile{run: run}).tool(), true, nil
 	}
-	if b.sends == nil || b.note == nil {
+	if b.sends == nil || b.sends.Store == nil || b.sends.SendsFiles == nil || b.sends.Logger == nil || b.note == nil {
 		return agent.Tool{}, false, nil
 	}
 	reach, err := b.sends.Store.GetSessionFileReach(ctx, run.SessionID)

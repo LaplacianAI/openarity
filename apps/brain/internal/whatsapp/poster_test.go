@@ -222,3 +222,20 @@ func TestAFileWhoseUploadFailsSendsNothing(t *testing.T) {
 		t.Error("a part never sent was recorded as sent")
 	}
 }
+
+// The upload runs under a deadline by its size, as an HTTP post does: one
+// that hangs would hold up every channel this process sends for.
+func TestAFileUploadHasADeadline(t *testing.T) {
+	f, ch, cli := connected(t)
+	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf", Data: []byte("x")})
+	before := time.Now()
+	if err := f.a.Post(t.Context(), ch, req); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if cli.uploadDeadline.IsZero() {
+		t.Fatal("the upload had no deadline")
+	}
+	if left := cli.uploadDeadline.Sub(before); left > gateway.PostTimeout(len(req.Body))+time.Second {
+		t.Errorf("deadline %v away, want at most %v", left, gateway.PostTimeout(len(req.Body)))
+	}
+}

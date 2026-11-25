@@ -131,11 +131,16 @@ func (q *Queries) ClaimDueReplies(ctx context.Context, arg ClaimDueRepliesParams
 }
 
 const countRunFilesSent = `-- name: CountRunFilesSent :one
-SELECT count(*) FROM run_events WHERE run_id = $1::uuid AND kind = 'file_sent'
+SELECT count(*) FROM (
+    SELECT call_id FROM replies WHERE run_id = $1::uuid AND kind = 'file'
+    UNION
+    SELECT payload->>'tool_call_id' FROM run_events WHERE run_id = $1::uuid AND kind = 'file_sent'
+) AS sent
 `
 
-// How many files a run has sent, by its file_sent events: a run resumed
-// holds to the ten it may send, counting those before.
+// How many files a run has sent, each call once whether its reply or its
+// event was written: a run resumed holds to the ten it may send, counting
+// those before.
 func (q *Queries) CountRunFilesSent(ctx context.Context, runID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countRunFilesSent, runID)
 	var count int64

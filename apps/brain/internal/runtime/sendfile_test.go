@@ -409,6 +409,39 @@ func TestElevenCallsAtOnceSendTen(t *testing.T) {
 	}
 }
 
+// A wrong id costs no slot: the ten are for files found.
+func TestAWrongIDCostsNoSlot(t *testing.T) {
+	f := newSendFixture(telegram)
+	send := tool(t, f.build(t), SendFileToolName)
+	missing := json.RawMessage(`{"id":"` + uuid.NewString() + `"}`)
+	for i := range filesPerRun {
+		if _, err := send.Invoke(agent.WithToolCallID(t.Context(), "x"+strconv.Itoa(i)), missing); err == nil {
+			t.Fatal("a file not in the conversation was sent")
+		}
+	}
+	if _, err := send.Invoke(agent.WithToolCallID(t.Context(), "c1"), f.args()); err != nil {
+		t.Fatalf("a file after ten wrong ids: %v", err)
+	}
+}
+
+// FileSends missing what it needs offers nothing, rather than a tool that
+// panics on the path that uses it.
+func TestFileSendsMissingAPartOffersNothing(t *testing.T) {
+	for name, drop := range map[string]func(*FileSends){
+		"store":       func(s *FileSends) { s.Store = nil },
+		"sends files": func(s *FileSends) { s.SendsFiles = nil },
+		"logger":      func(s *FileSends) { s.Logger = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newSendFixture(telegram)
+			drop(f.builder.sends)
+			if held(f.build(t), SendFileToolName) {
+				t.Error("send_file was offered")
+			}
+		})
+	}
+}
+
 // A run resumed is built again, and keeps to the ten it may send, counting
 // those it sent before.
 func TestAResumedRunCountsTheFilesItSentBefore(t *testing.T) {
@@ -433,7 +466,7 @@ func TestSendFileIsReservedOnEveryRun(t *testing.T) {
 // A caption is what every platform takes: no control characters but line
 // breaks, trimmed, and counted in characters, not bytes.
 func TestACaptionIsCleanedAndCountedInCharacters(t *testing.T) {
-	got, err := captionOf("  one\x00 two\nthree\t ")
+	got, err := captionOf("  one\x00\u2028two\nthree\t ")
 	if err != nil || got != "onetwo\nthree" {
 		t.Errorf("caption = %q, %v", got, err)
 	}
