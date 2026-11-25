@@ -1,32 +1,21 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, TriangleAlert } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 import { getTeamSettings } from "@/api";
-import { usePermissions } from "@/api/permissions";
+import { TEAM_SETTINGS, usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import type { TeamSettings } from "@/api/types";
 import { ReadOnlyNote } from "@/components/registry-bits";
-import { SettingsForm } from "@/components/settings/form";
+import type { SettingsFormProps } from "@/components/settings/use-settings-draft";
 import { ErrorState } from "@/components/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, PageHeader } from "@/components/ui-bits";
 import { NO_MODEL } from "@/lib/ask";
 import { useMediaQuery } from "@/lib/media";
 import { SETTINGS_PAGES, type SettingsPage, type SettingsPageId } from "@/lib/settings-pages";
-import type { Group } from "@/lib/team-settings";
 import { cn } from "@/lib/utils";
-
-export const WRITE = "team:settings";
-
-/** The settings groups each page holds; Approvals keeps its own. */
-export const PAGE_GROUPS: Record<SettingsPageId, readonly Group[]> = {
-  general: ["model", "hub", "compaction"],
-  tools: ["search", "sandbox", "browser"],
-  approvals: [],
-  improvement: ["improvement"],
-};
 
 export function useTeamSettings(teamId: string | null) {
   return useQuery({
@@ -148,7 +137,7 @@ export function SettingsShell({
   const { teamId, teams } = useCurrentTeam();
   const teamName = teams.find((t) => t.id === teamId)?.name;
   const perms = usePermissions(teamId);
-  const canWrite = perms.can(WRITE);
+  const canWrite = perms.can(TEAM_SETTINGS);
   const settings = useTeamSettings(teamId);
   const noModel = settings.data?.model === null;
   const tablet = useMediaQuery("(min-width: 48rem)");
@@ -190,7 +179,7 @@ export function SettingsShell({
       />
 
       {teamId && !perms.isPending && !canWrite ? (
-        <ReadOnlyNote permission={WRITE} what="settings" />
+        <ReadOnlyNote permission={TEAM_SETTINGS} what="settings" />
       ) : null}
 
       {page === null ? (
@@ -212,8 +201,14 @@ export function SettingsShell({
   );
 }
 
-/** A page of settings groups: loading, failure, or the form for its groups. */
-export function SettingsBody({ ready, page }: { ready: Ready; page: SettingsPageId }) {
+/** A page of settings groups: loading, failure, or its form. */
+export function SettingsBody({
+  ready,
+  form: Form,
+}: {
+  ready: Ready;
+  form: ComponentType<SettingsFormProps>;
+}) {
   const { teamId, canWrite, settings } = ready;
   if (settings.isPending) {
     return (
@@ -235,13 +230,5 @@ export function SettingsBody({ ready, page }: { ready: Ready; page: SettingsPage
   }
   // Keyed on the team: another team's settings start a fresh form. A save
   // does not remount it, so another group's unsaved edits stay.
-  return (
-    <SettingsForm
-      key={teamId}
-      teamId={teamId}
-      stored={settings.data}
-      canWrite={canWrite}
-      groups={PAGE_GROUPS[page]}
-    />
-  );
+  return <Form key={teamId} teamId={teamId} stored={settings.data} canWrite={canWrite} />;
 }

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, Check, Clock, Info, TriangleAlert } from "lucide-react";
 import { RadioGroup } from "radix-ui";
-import { useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
 import {
   createApprovalRule,
@@ -22,7 +22,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SwitchField } from "@/components/ui/switch";
-import { PICK_PAGE } from "@/lib/team-settings";
+import { LeaveGuard } from "@/components/unsaved";
+import { PICK_PAGE } from "@/lib/team-settings/catalogue";
 import { cn } from "@/lib/utils";
 import { waitWords } from "@/lib/wait";
 
@@ -63,8 +64,14 @@ export function ApprovalSections({ teamId, canWrite }: { teamId: string; canWrit
     queryKey: ["approval-settings", teamId],
     queryFn: () => getApprovalSettings(teamId),
   });
+  // Each section says whether it holds a change, so leaving with either one
+  // asks first, as every other settings page does.
+  const [unsaved, setUnsaved] = useState({ mode: false, rule: false });
+  const modeDirty = useCallback((mode: boolean) => setUnsaved((u) => ({ ...u, mode })), []);
+  const ruleDirty = useCallback((rule: boolean) => setUnsaved((u) => ({ ...u, rule })), []);
   return (
     <>
+      <LeaveGuard dirty={() => unsaved.mode || unsaved.rule} what="the approval settings" />
       {stored.isError ? (
         <section className="border-t border-rule py-6">
           <ErrorState
@@ -75,11 +82,21 @@ export function ApprovalSections({ teamId, canWrite }: { teamId: string; canWrit
           />
         </section>
       ) : stored.data ? (
-        <ApprovalModeSection teamId={teamId} stored={stored.data} canWrite={canWrite} />
+        <ApprovalModeSection
+          teamId={teamId}
+          stored={stored.data}
+          canWrite={canWrite}
+          onDirty={modeDirty}
+        />
       ) : (
         <Skeleton className="mt-6 h-24 w-full" role="status" aria-label="Loading approvals" />
       )}
-      <ApprovalRulesSection teamId={teamId} canWrite={canWrite} mode={stored.data?.mode} />
+      <ApprovalRulesSection
+        teamId={teamId}
+        canWrite={canWrite}
+        mode={stored.data?.mode}
+        onDirty={ruleDirty}
+      />
     </>
   );
 }
@@ -88,10 +105,13 @@ function ApprovalModeSection({
   teamId,
   stored,
   canWrite,
+  onDirty,
 }: {
   teamId: string;
   stored: ApprovalSettings;
   canWrite: boolean;
+  /** Told whether the mode or the wait differs from what the brain holds. */
+  onDirty: (dirty: boolean) => void;
 }) {
   const qc = useQueryClient();
   const [mode, setMode] = useState<ApprovalMode>(stored.mode);
@@ -103,6 +123,7 @@ function ApprovalModeSection({
   const dirty =
     mode !== stored.mode ||
     (valid ? minutes !== stored.ttl_minutes : ttl !== String(stored.ttl_minutes));
+  useEffect(() => onDirty(dirty), [dirty, onDirty]);
   const labelId = useId();
 
   const save = useMutation({
@@ -411,11 +432,14 @@ function ApprovalRulesSection({
   teamId,
   canWrite,
   mode: teamMode,
+  onDirty,
 }: {
   teamId: string;
   canWrite: boolean;
   /** The team's mode, once read: with approvals off, no rule applies. */
   mode?: ApprovalMode;
+  /** Told whether a rule is begun and not yet added. */
+  onDirty: (dirty: boolean) => void;
 }) {
   const qc = useQueryClient();
   const rules = useQuery({
@@ -429,6 +453,10 @@ function ApprovalRulesSection({
   const [mode, setMode] = useState<ApprovalRuleMode>("ask");
   const [other, setOther] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // A rule is begun once a tool is named or a server picked; adding it, or
+  // clearing both, ends it.
+  const begun = target.trim() !== "" || server !== null;
+  useEffect(() => onDirty(begun), [begun, onDirty]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["approval-rules", teamId] });
   const add = useMutation({

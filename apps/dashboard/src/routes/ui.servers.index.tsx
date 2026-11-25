@@ -17,7 +17,7 @@ import {
   startMCPServerOAuth,
 } from "@/api";
 import { ApiError, nextCursorOf } from "@/api/client";
-import { usePermissions } from "@/api/permissions";
+import { TEAM_SETTINGS, usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
 import type { MCPServer, MCPServerRequest } from "@/api/types";
@@ -648,8 +648,6 @@ function ServerDetail({
   );
 }
 
-const TRUST = "team:settings";
-
 /**
  * Whether the server's own read-only hints are believed when its calls are
  * classed for approval. A server that calls a tool read-only is taking its own
@@ -665,7 +663,7 @@ function TrustHints({
   onChanged: () => void;
 }) {
   const perms = usePermissions(teamId);
-  const may = perms.can(TRUST);
+  const may = perms.can(TEAM_SETTINGS);
   const trust = useMutation({
     mutationFn: (on: boolean) => setServerTrustHints(teamId, server.id, on),
     onSuccess: () => onChanged(),
@@ -686,7 +684,8 @@ function TrustHints({
       />
       {!may && !perms.isPending ? (
         <p className="text-xs text-muted-foreground">
-          Changing it needs <span className="font-mono text-foreground">{TRUST}</span> in the team.
+          Changing it needs <span className="font-mono text-foreground">{TEAM_SETTINGS}</span> in
+          the team.
         </p>
       ) : null}
     </section>

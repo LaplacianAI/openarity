@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-
+import { ImprovementForm } from "@/components/settings/improvement-form";
 import { SettingsBody, SettingsShell } from "@/components/settings/shell";
 
 export const Route = createFileRoute("/ui/settings/improvement")({
@@ -10,7 +10,7 @@ export const Route = createFileRoute("/ui/settings/improvement")({
 function Improvement() {
   return (
     <SettingsShell page="improvement">
-      {(ready) => <SettingsBody ready={ready} page="improvement" />}
+      {(ready) => <SettingsBody ready={ready} form={ImprovementForm} />}
     </SettingsShell>
   );
 }

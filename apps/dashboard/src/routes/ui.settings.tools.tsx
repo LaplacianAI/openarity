@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { SettingsBody, SettingsShell } from "@/components/settings/shell";
+import { ToolsForm } from "@/components/settings/tools-form";
 
 export const Route = createFileRoute("/ui/settings/tools")({
   component: Tools,
@@ -10,7 +11,7 @@ export const Route = createFileRoute("/ui/settings/tools")({
 function Tools() {
   return (
     <SettingsShell page="tools">
-      {(ready) => <SettingsBody ready={ready} page="tools" />}
+      {(ready) => <SettingsBody ready={ready} form={ToolsForm} />}
     </SettingsShell>
   );
 }
