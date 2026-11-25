@@ -38,7 +38,7 @@ never asked: see [A command server](#a-command-server).
 **Tool names.** A server's tools reach the model as `<server>__<tool>`, unless
 it is registered `--bare`. A bare tool named like one of the brain's own on
 that run — `graph`, `delegate`, `plan`, `web_search`, `web_fetch`,
-`send_file` — is left out of the run with a `tool_unavailable` event rather
+`send_file`, `keep_file` — is left out of the run with a `tool_unavailable` event rather
 than shadowing the brain's.
 
 ## A command server
@@ -79,6 +79,15 @@ oa mcp-servers discover platform mail
   whole network, which would open Postgres and OpenBao to any URL a team saves.
 - **Pin the package.** `mcp-mail-server@2.1.3`, not `mcp-mail-server`, so an
   update cannot change what runs.
+
+**A file a command server saves** stays in its room. Some servers write a file
+to disk and answer with its path rather than its bytes, as `mcp-mail-server`'s
+`save_attachment` does. The agent keeps one with
+`keep_file(path, server: "<server's name>")`, a path from where the server runs
+or absolute, then reads it with `read_attachment` or sends it with `send_file`.
+The room is one per server, shared by the team's runs, and its files go when it
+is replaced or deleted after `OPENARITY_SANDBOX_IDLE`: `keep_file` never starts
+a room to look, and says the file is gone instead. A file is kept up to 25 MiB.
 
 A command server can still be registered, with its command after `--` and its
 environment as references, so a team can record what it uses:

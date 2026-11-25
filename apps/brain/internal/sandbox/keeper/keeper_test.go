@@ -757,3 +757,112 @@ func TestARoomIsMadeWithItsNetworkAndAsAWorkspace(t *testing.T) {
 		t.Errorf("spec = %+v, want a public workspace", got)
 	}
 }
+
+// Find reads the room as it runs: the running room's endpoint, at the path
+// asked for, with its token, and nothing made.
+func TestFindIsTheRunningRoomAndMakesNone(t *testing.T) {
+	t.Parallel()
+
+	w := newWorld(t)
+	k := w.keeper()
+	ran := w.ensure(k, want())
+	files := want()
+	files.Path = "/file"
+
+	ep, err := k.Find(t.Context(), w.owner, w.team, files)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if want := strings.TrimSuffix(ran.URL, "/mcp") + "/file"; ep.URL != want {
+		t.Errorf("Find = %q, want %q", ep.URL, want)
+	}
+	if ep.Header.Get("Authorization") != ran.Header.Get("Authorization") {
+		t.Error("Find's endpoint does not carry the room's token")
+	}
+	if n := len(w.rooms.Created()); n != 1 {
+		t.Errorf("%d rooms were made, want the one already there", n)
+	}
+}
+
+// A room changed since is still the room its files are in: Find returns it,
+// where Ensure would replace it.
+func TestFindReadsARoomMadeFromAnotherSpec(t *testing.T) {
+	t.Parallel()
+
+	w := newWorld(t)
+	k := w.keeper()
+	w.ensure(k, want())
+	changed := want()
+	changed.Env = map[string]string{"IMAP_HOST": "imap2.example"}
+
+	if _, err := k.Find(t.Context(), w.owner, w.team, changed); err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if n := len(w.rooms.Created()); n != 1 {
+		t.Errorf("%d rooms were made, want 1", n)
+	}
+}
+
+// Whatever leaves no room to read is ErrNoRoom, and nothing is made for it:
+// a fresh room holds none of what the old one had. A room it can tell is
+// unusable from its row (stopped, made at another provider) is not asked
+// of any provider: another provider is never sent this one's room.
+func TestFindStartsNoRoomWhenThereIsNone(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		set   func(w *world, k *keeper.Keeper)
+		asked bool // whether a provider is asked
+	}{
+		"none was ever made": {func(*world, *keeper.Keeper) {}, false},
+		"the provider lost it": {func(w *world, k *keeper.Keeper) {
+			w.ensure(k, want())
+			w.rooms.Lose(rowOf(t, w).RoomID)
+		}, true},
+		"it does not answer": {func(w *world, k *keeper.Keeper) {
+			w.ensure(k, want())
+			w.rooms.Break(rowOf(t, w).RoomID)
+		}, true},
+		"its token is gone": {func(w *world, k *keeper.Keeper) {
+			w.ensure(k, want())
+			if err := w.secrets.Delete(t.Context(), secrets.RoomPath(w.team, rowOf(t, w).ID)); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"it was stopped": {func(w *world, k *keeper.Keeper) {
+			w.ensure(k, want())
+			if err := k.Stop(t.Context(), w.owner, w.team, func(context.Context) (bool, error) { return true, nil }); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"it is at another provider": {func(w *world, k *keeper.Keeper) {
+			w.ensure(k, want())
+			w.useSandbox("sandboxd", "https://other.example")
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			w := newWorld(t)
+			k := w.keeper()
+			tc.set(w, k)
+			made := len(w.rooms.Created())
+			w.mu.Lock()
+			before := len(w.connected)
+			w.mu.Unlock()
+
+			_, err := k.Find(t.Context(), w.owner, w.team, want())
+			if !errors.Is(err, sandbox.ErrNoRoom) {
+				t.Fatalf("Find = %v, want ErrNoRoom", err)
+			}
+			if n := len(w.rooms.Created()); n != made {
+				t.Errorf("Find made %d rooms", n-made)
+			}
+			w.mu.Lock()
+			asked := len(w.connected) > before
+			w.mu.Unlock()
+			if asked != tc.asked {
+				t.Errorf("a provider was asked: %v, want %v", asked, tc.asked)
+			}
+		})
+	}
+}

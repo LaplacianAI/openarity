@@ -141,6 +141,10 @@ var (
 	// memory or disk is in use. A later call may find one.
 	ErrFull = errors.New("the team's sandbox is full: every room's share is in use. Nothing ran; " +
 		"try again once another conversation's workspace is idle")
+	// ErrNoRoom is an owner with no room running now: none was made, and
+	// none is started to find a file, as a fresh room holds none of the old
+	// one's.
+	ErrNoRoom = errors.New("no room is running for it")
 	// ErrPreparing is a room that cannot be made yet, because what it starts
 	// from is still being built: an E2B team's template, the first time and
 	// after an upgrade. Nothing was made; a later call can be.

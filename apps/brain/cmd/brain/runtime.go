@@ -89,6 +89,8 @@ func newRunJob(
 	if ws := newWorkspaces(d.rooms, cfg); ws != nil {
 		builder.WithWorkspaces(ws)
 	}
+	// A file a tool wrote in its room, kept as F2 keeps a returned one.
+	builder.WithRoomFiles(newRoomFiles(d.rooms, cfg, dbStore, secretStore))
 	streamer, err := agent.New(d.clients, runtime.StreamingPatterns()...)
 	if err != nil {
 		return nil, fmt.Errorf("building the streaming agent runner: %w", err)

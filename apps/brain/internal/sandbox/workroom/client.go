@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/roomfile"
 )
 
 // maxAnswer is the largest answer read from a workspace. Its outputs are
@@ -128,6 +129,21 @@ func (c *Client) Grep(ctx context.Context, q GrepQuery) (Grep, error) {
 	var out Grep
 	err := c.post(ctx, "/grep", q, &out)
 	return out, err
+}
+
+// File is a file in the workspace whole, up to roomfile.Max, for keeping as
+// an attachment: any file, text or not, by its path from the workspace.
+func (c *Client) File(ctx context.Context, path string) ([]byte, error) {
+	ep := sandbox.Endpoint{URL: strings.TrimRight(c.ep.URL, "/") + roomfile.Route, Header: c.ep.Header}
+	data, err := roomfile.Get(ctx, c.http, ep, path)
+	var p *roomfile.Problem
+	switch {
+	case errors.As(err, &p):
+		return nil, &Problem{Msg: p.Msg}
+	case errors.Is(err, roomfile.ErrGone):
+		return nil, fmt.Errorf("%w: %w", ErrGone, err)
+	}
+	return data, err
 }
 
 func (c *Client) post(ctx context.Context, route string, body, out any) error {

@@ -12,6 +12,19 @@ import (
 	"github.com/google/uuid"
 )
 
+const countRunKeptFiles = `-- name: CountRunKeptFiles :one
+SELECT count(*) FROM attachments WHERE run_id = $1::uuid AND tool = 'keep_file'
+`
+
+// How many files a run kept from its rooms with keep_file: a run resumed
+// keeps to the twenty it may keep, counting those before.
+func (q *Queries) CountRunKeptFiles(ctx context.Context, runID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunKeptFiles, runID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAttachment = `-- name: CreateAttachment :one
 INSERT INTO attachments (
     message_id, session_id, team_id,

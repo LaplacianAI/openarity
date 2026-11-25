@@ -10,7 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/roomfile"
 )
 
 const (
@@ -34,11 +35,9 @@ const (
 // A Problem is the caller's to fix: a path that is not there, an edit that
 // matches twice. It is answered as 422 with its message, which the model
 // reads.
-type Problem struct{ msg string }
+type Problem = roomfile.Problem
 
-func (p *Problem) Error() string { return p.msg }
-
-func problem(format string, a ...any) error { return &Problem{msg: fmt.Sprintf(format, a...)} }
+func problem(format string, a ...any) error { return roomfile.Problemf(format, a...) }
 
 // ReadResult is a part of a text file, its lines numbered as cat -n numbers
 // them.
@@ -221,34 +220,7 @@ func replaceFile(path string, data []byte, perm fs.FileMode) error {
 }
 
 // open opens a regular file for reading, or says why it cannot.
-func open(path string) (*os.File, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, asProblem(err)
-	}
-	if info.IsDir() {
-		return nil, problem("%s is a directory; use Glob or Bash ls to list it", path)
-	}
-	if !info.Mode().IsRegular() {
-		// A FIFO or a device would hold the call until it gave something.
-		return nil, problem("%s is not a regular file (%s); use Bash", path, info.Mode().Type())
-	}
-	// Opened without blocking, so a FIFO swapped in after the check above
-	// cannot hold the call; the open file is asked again below.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // any path in the room is the agent's to read
-	if err != nil {
-		return nil, asProblem(err)
-	}
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
-		_ = f.Close()
-		return nil, problem("%s is not a regular file; use Bash", path)
-	}
-	if onProc(f) {
-		_ = f.Close()
-		return nil, problem("%s is under /proc, which these tools do not read; use Bash", path)
-	}
-	return f, nil
-}
+func open(path string) (*os.File, error) { return roomfile.Open(path) }
 
 // binary is whether the start of a file looks like anything but text: a NUL
 // byte, as git and grep judge it.
@@ -256,19 +228,4 @@ func binary(head []byte) bool { return bytes.IndexByte(head, 0) >= 0 }
 
 // asProblem turns a missing file or a refused one into the caller's
 // problem, which it is; anything else stays an error of the room's.
-func asProblem(err error) error {
-	var pe *fs.PathError
-	var le *os.LinkError
-	switch {
-	case errors.As(err, &le):
-		// A rename: the file replaced, or the one put in its place.
-		return problem("%s could not be replaced: %v", le.New, le.Err)
-	case errors.Is(err, fs.ErrNotExist) && errors.As(err, &pe):
-		return problem("%s does not exist", pe.Path)
-	case errors.Is(err, fs.ErrPermission) && errors.As(err, &pe):
-		return problem("%s may not be read or written here", pe.Path)
-	case errors.As(err, &pe):
-		return problem("%s: %v", pe.Path, pe.Err)
-	}
-	return err
-}
+func asProblem(err error) error { return roomfile.AsProblem(err) }

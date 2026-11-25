@@ -325,6 +325,11 @@ const BUILT_INS: ChoiceGroup<string>[] = [
         label: "send_file",
         hint: "Hands the person a file of the conversation. Asks for a guest; refused when nobody is present.",
       },
+      {
+        value: "keep_file",
+        label: "keep_file",
+        hint: "Keeps a file a tool wrote in its room as a file of the conversation, so it can be read or sent.",
+      },
     ],
   },
   {

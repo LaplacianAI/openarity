@@ -161,12 +161,31 @@ After an upgrade, rooms start from the last template built at the same size
 while the new one builds, so nothing waits. A team that names its own E2B
 template gets that template's size, whatever size it sets.
 
+## A file the agent made
+
+A file in the room, such as a chart a script drew or a report it wrote, is
+handed to the person in two steps. `keep_file(path)` reads it out of the room
+and keeps it as a file of the conversation, which `read_attachment` reads and
+`send_file` sends:
+
+```text
+Bash         python3 plot.py            → wrote out/chart.png
+keep_file    {"path": "out/chart.png"}  → Kept chart.png (image/png, 48 KB) as file 7c2e…
+send_file    {"id": "7c2e…"}            → the person gets chart.png
+```
+
+A path is from `/workspace` unless it is absolute; any regular file in the
+room can be kept, up to 25 MiB, apart from those under `/proc`. A run keeps
+twenty at most. A file kept stays with the conversation however long the room
+does. A room replaced since the file was written no longer has it, and the
+agent is told so.
+
 ## Approvals
 
 Every call passes the team's approval policy.
 `Bash` is a write: a command can send anything to any public host. `Read`,
-`Write`, `Edit`, `Glob` and `Grep` read or change only the conversation's own
-room, which nothing outside it sees, so they are reads. With the team's mode at
+`Write`, `Edit`, `Glob`, `Grep` and `keep_file` read or change only the
+conversation's own room, which nothing outside it sees, so they are reads. With the team's mode at
 `writes`, every command asks a person; a rule `allow Bash` turns that off. A run
 nobody is present for is refused a command that would ask.
 
@@ -179,5 +198,4 @@ grants it.
   sandboxd when its disk budget is spent. Saving
   `/workspace` somewhere longer-lived comes later.
 - **A granted skill's scripts** are not yet copied into the room.
-- **A file in the room cannot yet be sent** to the person or read as an
-  attachment.
+- **A file over 25 MiB** cannot yet be kept.

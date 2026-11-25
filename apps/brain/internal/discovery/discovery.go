@@ -73,6 +73,20 @@ func (d *Discoverer) RunsCommandsIn(r Rooms) *Discoverer {
 	return d
 }
 
+// RoomClient is a client for a sandbox room's own routes, a workspace's or a
+// room's files: it dials only what the policy allows and takes no redirect,
+// as PlainClient does, but reads as much as its caller does. Each caller
+// bounds its own answers (a workspace's at 4 MiB, a room's file at 25 MiB),
+// where PlainClient's 8 MiB would cut a file short.
+func RoomClient(p Policy) *http.Client {
+	return &http.Client{
+		Transport: newTransport(p, callHeaderTimeout),
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("%w: a sandbox room may not redirect", ErrRefused)
+		},
+	}
+}
+
 // PlainClient is a client for calls that carry no server's credentials, such
 // as asking a sandbox room whether it is ready, or a sandbox provider for a
 // room: it dials only what the policy allows, takes no redirect and reads at

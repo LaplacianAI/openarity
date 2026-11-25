@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/roomfile"
 )
 
 // maxBody is the largest request the shim reads: a tool call's arguments,
@@ -20,17 +22,22 @@ const sessionHeader = "Mcp-Session-Id"
 // each request with JSON rather than a stream: the protocol allows it, and
 // nothing here pushes.
 type Handler struct {
-	child    *Child
-	token    string
-	logger   *slog.Logger
+	child  *Child
+	token  string
+	logger *slog.Logger
+	// root is where a relative path for /file starts: the directory the
+	// server was started in, where it writes what it saves.
+	root     string
 	sessions *sessions
 }
 
-func NewHandler(child *Child, token string, logger *slog.Logger) *Handler {
+// NewHandler serves the server child as MCP at /mcp, and the room's files at
+// /file, from root, both behind token.
+func NewHandler(child *Child, token, root string, logger *slog.Logger) *Handler {
 	if logger == nil {
 		panic("shim: a nil logger")
 	}
-	return &Handler{child: child, token: token, logger: logger, sessions: newSessions(time.Now)}
+	return &Handler{child: child, token: token, root: root, logger: logger, sessions: newSessions(time.Now)}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,12 +45,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.health(w)
 		return
 	}
-	if r.URL.Path != "/mcp" {
+	if r.URL.Path != "/mcp" && r.URL.Path != "/file" {
 		http.NotFound(w, r)
 		return
 	}
 	if !h.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.URL.Path == "/file" {
+		// A file the server wrote in this room, which it can read itself.
+		roomfile.Serve(w, r, h.root, func(msg string, args ...any) { h.logger.Error(msg, args...) })
 		return
 	}
 	switch r.Method {

@@ -391,6 +391,32 @@ it("names send_file, the tool that hands the person a file", async () => {
   });
 });
 
+it("names keep_file, the tool that keeps a file a tool wrote", async () => {
+  const seen = brain({
+    ...team(["team:settings"]),
+    ...ROUTES,
+    "POST /teams/{id}/approval-rules": { body: { ...RULE, id: "ru8" } },
+  });
+  open();
+  const section = await screen.findByRole("region", { name: "Tool approval rules" });
+  await within(section).findByRole("list", { name: "Tool approval rules" });
+
+  await chooseServer(section, "Built-in tools");
+  await choose(within(section).getByLabelText("Tool"), "keep_file");
+  expect(
+    within(section).getByText(
+      "Keeps a file a tool wrote in its room as a file of the conversation, so it can be read or sent.",
+    ),
+  ).toBeInTheDocument();
+  await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+  await waitFor(() => expect(seen.some((s) => s.method === "POST")).toBe(true));
+  expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
+    target_kind: "tool",
+    target: "keep_file",
+    mode: "ask",
+  });
+});
+
 it("names a workspace's command, and says why it asks", async () => {
   const seen = brain({
     ...team(["team:settings"]),
