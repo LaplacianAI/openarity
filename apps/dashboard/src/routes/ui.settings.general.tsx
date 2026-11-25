@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { usePermissions } from "@/api/permissions";
 import { useCurrentTeam } from "@/api/session";
 import { DangerZone } from "@/components/settings/danger-zone";
+import { GeneralForm } from "@/components/settings/general-form";
 import { SettingsBody, SettingsShell } from "@/components/settings/shell";
 
 export const Route = createFileRoute("/ui/settings/general")({
@@ -18,7 +19,7 @@ function General() {
     <SettingsShell page="general">
       {(ready) => (
         <div className="space-y-6">
-          <SettingsBody ready={ready} page="general" />
+          <SettingsBody ready={ready} form={GeneralForm} />
           {teamName && superAdmin ? <DangerZone teamId={ready.teamId} teamName={teamName} /> : null}
         </div>
       )}

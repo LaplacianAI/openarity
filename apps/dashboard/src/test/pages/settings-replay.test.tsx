@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
-import { draftOf, isDirty, settingsRequest } from "@/lib/team-settings";
+import { draftOf, isDirty } from "@/lib/team-settings/draft";
+import { settingsRequest } from "@/lib/team-settings/request";
 import { brain, team } from "@/test/brain";
 import { showSettings } from "@/test/settings";
 

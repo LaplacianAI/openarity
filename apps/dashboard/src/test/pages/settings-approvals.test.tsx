@@ -1,11 +1,12 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { createRoute } from "@tanstack/react-router";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setToken } from "@/api/token";
 import type { ApprovalRule, TeamSettings } from "@/api/types";
 import { brain, choose, team } from "@/test/brain";
-import { showSettings } from "@/test/settings";
+import { SETTINGS_INDEX, showSettings } from "@/test/settings";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -67,8 +68,14 @@ async function chooseServer(section: HTMLElement, name: string) {
   await userEvent.keyboard("{Escape}");
 }
 
+const Elsewhere = createRoute({
+  getParentRoute: () => SETTINGS_INDEX,
+  path: "/ui/elsewhere",
+  component: () => <p>elsewhere</p>,
+});
+
 function open() {
-  return showSettings("/ui/settings/approvals");
+  return showSettings("/ui/settings/approvals", [["/ui/elsewhere", Elsewhere]]);
 }
 
 const approvals = () => screen.findByRole("region", { name: "Tool approvals" });
@@ -463,5 +470,117 @@ it("forgets someone else's answer once the rule no longer asks", async () => {
   expect(JSON.parse(String(seen.find((s) => s.method === "POST")?.body))).toMatchObject({
     mode: "ask",
     require_other: false,
+  });
+});
+
+describe("leaving the page", () => {
+  type Router = ReturnType<typeof open>;
+
+  /** Follows a link away; not awaited, since a blocked move settles only once answered. */
+  function leave(router: Router) {
+    act(() => {
+      void router.navigate({ to: "/ui/elsewhere" } as never);
+    });
+  }
+
+  async function keptOn(router: Router) {
+    expect(
+      await screen.findByRole("heading", { name: "Leave without saving?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/your changes to the approval settings/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: /leave/i })).toBeNull());
+    expect(router.state.location.pathname).toBe("/ui/settings/approvals");
+  }
+
+  it("asks first with a changed mode, and not once it is saved", async () => {
+    brain({
+      ...team(["team:settings"]),
+      ...ROUTES,
+      "PUT /teams/{id}/approval-settings": { body: { mode: "destructive", ttl_minutes: 60 } },
+    });
+    const router = open();
+    const section = await approvals();
+    await userEvent.click(within(section).getByRole("radio", { name: "Destructive calls only" }));
+    leave(router);
+    await keptOn(router);
+
+    await userEvent.click(within(section).getByRole("button", { name: /^save$/i }));
+    expect(await within(section).findByText("Saved")).toBeInTheDocument();
+    leave(router);
+    expect(await screen.findByText("elsewhere")).toBeInTheDocument();
+  });
+
+  it("asks first with a changed wait", async () => {
+    brain({ ...team(["team:settings"]), ...ROUTES });
+    const router = open();
+    const ttl = within(await approvals()).getByLabelText("Minutes a request waits");
+    await userEvent.clear(ttl);
+    await userEvent.type(ttl, "30");
+    leave(router);
+    await keptOn(router);
+  });
+
+  it("asks first with a rule begun, and not once it is added", async () => {
+    let rules = [RULE];
+    brain({
+      ...team(["team:settings"]),
+      ...ROUTES,
+      "GET /teams/{id}/approval-rules": () => ({ body: { items: rules } }),
+      "POST /teams/{id}/approval-rules": () => {
+        rules = [...rules, { ...RULE, id: "ru2", target: "shell" }];
+        return { status: 201, body: rules[1] };
+      },
+    });
+    const router = open();
+    const section = await screen.findByRole("region", { name: "Tool approval rules" });
+    await userEvent.click(
+      await within(section).findByRole("radio", { name: "Every tool of a server" }),
+    );
+    await chooseServer(section, "shell");
+    leave(router);
+    await keptOn(router);
+
+    await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));
+    await waitFor(() =>
+      expect(within(section).queryByRole("button", { name: /^Server shell/ })).toBeNull(),
+    );
+    leave(router);
+    expect(await screen.findByText("elsewhere")).toBeInTheDocument();
+  });
+
+  it("forgets a change whose section a failed read took away", async () => {
+    let reads = 0;
+    brain({
+      ...team(["team:settings"]),
+      ...ROUTES,
+      "GET /teams/{id}/approval-settings": () =>
+        reads++ === 0
+          ? { body: { mode: "writes", ttl_minutes: 60 } }
+          : { status: 500, text: "the brain is down" },
+    });
+    const router = open();
+    const section = await approvals();
+    await userEvent.click(within(section).getByRole("radio", { name: "Destructive calls only" }));
+
+    // Coming back to the tab reads the settings again, and this read fails.
+    act(() => {
+      window.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(await screen.findByText(/the brain is down/)).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Destructive calls only" })).toBeNull();
+
+    leave(router);
+    expect(await screen.findByText("elsewhere")).toBeInTheDocument();
+  });
+
+  it("leaves without asking when nothing changed", async () => {
+    brain({ ...team(["team:settings"]), ...ROUTES });
+    const router = open();
+    await approvals();
+    await screen.findByRole("list", { name: "Tool approval rules" });
+    leave(router);
+    expect(await screen.findByText("elsewhere")).toBeInTheDocument();
   });
 });

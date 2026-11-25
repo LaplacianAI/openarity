@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setToken } from "@/api/token";
 import type { TeamSettings } from "@/api/types";
 import { NO_MODEL } from "@/lib/ask";
-import { draftOf, groupRequest, isDirty, settingsRequest } from "@/lib/team-settings";
+import { draftOf, isDirty } from "@/lib/team-settings/draft";
+import { groupRequest, settingsRequest } from "@/lib/team-settings/request";
 import { brain, choose, team } from "@/test/brain";
 import { SETTINGS_INDEX, showSettings } from "@/test/settings";
 

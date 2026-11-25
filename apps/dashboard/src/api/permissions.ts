@@ -13,6 +13,9 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getPermissions } from "./index";
 
+/** Changing a team's settings, and which servers it trusts. */
+export const TEAM_SETTINGS = "team:settings";
+
 export type Permissions = {
   /** True when the brain says this person holds the permission in the team. */
   can: (permission: string) => boolean;
