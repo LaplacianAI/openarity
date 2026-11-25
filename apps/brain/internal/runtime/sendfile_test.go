@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/stream"
@@ -171,8 +174,13 @@ func TestSendFileIsGivenWhereTheFileCanArrive(t *testing.T) {
 func TestAReplayHoldsSendFileAsAStandIn(t *testing.T) {
 	f := newSendFixture(dashboard)
 	f.builder.sends, f.builder.note, f.builder.replay = nil, nil, true
-	if !held(f.build(t), SendFileToolName) {
+	b := f.build(t)
+	if !held(b, SendFileToolName) {
 		t.Error("a replay of a run that could send files holds no send_file")
+	}
+	// Not a read: a replay never makes it live, as it would hand a file over.
+	if b.reads[SendFileToolName] {
+		t.Error("a replay may make send_file live")
 	}
 	f.run.ParentRunID = new(uuid.New())
 	if held(f.build(t), SendFileToolName) {
@@ -485,5 +493,161 @@ func TestSendFileSaysItsLimits(t *testing.T) {
 	}
 	if !json.Valid(tl.Schema) {
 		t.Errorf("schema %s is not JSON", tl.Schema)
+	}
+}
+
+// ruled is the approval desk of a team whose person may approve their own
+// calls, with the team's rules.
+type ruled struct {
+	*desk
+	rules []db.ApprovalRule
+}
+
+func (*ruled) FindTeamMember(context.Context, db.FindTeamMemberParams) (string, error) {
+	return "member", nil
+}
+
+func (*ruled) ListRolePermissions(context.Context, string) ([]string, error) {
+	return []string{"approval:self"}, nil
+}
+
+func (r *ruled) ListApprovalRules(context.Context, uuid.UUID) ([]db.ApprovalRule, error) {
+	return r.rules, nil
+}
+
+// sendOutcome is what came of a send_file call: made, asked, refused with nobody
+// present, or denied by a rule.
+func sendOutcome(err error) string {
+	switch {
+	case err == nil:
+		return "made"
+	case err.Error() == askedTop:
+		return "asks"
+	case strings.Contains(err.Error(), "Nobody is present"):
+		return "refused"
+	case strings.Contains(err.Error(), "does not allow send_file"):
+		return "denied"
+	}
+	return err.Error()
+}
+
+// gatedSend is a send fixture behind the approval gate in mode, for who: a
+// guest (no person on the run), a member who may approve their own, or that
+// member's run with nobody present; with rule, if any, on send_file.
+func gatedSend(reach db.GetSessionFileReachRow, mode approval.Mode, who, rule string) *sendFixture {
+	f := newSendFixture(reach)
+	f.store.settings = &db.TeamSetting{TeamID: f.run.TeamID, ApprovalMode: string(mode), ApprovalTtlMinutes: 60}
+	d := &ruled{desk: &desk{byCall: map[string]db.Approval{}}}
+	if rule != "" {
+		d.rules = []db.ApprovalRule{{TargetKind: "tool", Target: SendFileToolName, Mode: rule}}
+	}
+	f.run.UserID = nil
+	if who != "a guest" {
+		person := uuid.New()
+		f.run.UserID = &person
+		f.run.Unattended = who == "nobody present"
+	}
+	f.builder.WithApprovals(d)
+	return f
+}
+
+// send_file is judged as reaching out is: a read for a member who is there,
+// a write for a guest, who is asked in every mode but off, and nobody present
+// is refused where it would ask. A rule decides for a member; a guest's write
+// asks however a rule allows it. Nothing is sent unless the call is made.
+func TestSendFileIsBehindTheApprovalGate(t *testing.T) {
+	for _, tc := range []struct {
+		mode approval.Mode
+		who  string
+		rule string
+		want string
+	}{
+		{approval.Off, "a guest", "deny", "made"},
+		{approval.Writes, "a member", "", "made"},
+		{approval.Writes, "a guest", "", "asks"},
+		{approval.Writes, "nobody present", "", "refused"},
+		{approval.All, "a member", "", "asks"},
+		{approval.All, "a guest", "", "asks"},
+		{approval.All, "nobody present", "", "refused"},
+		{approval.DestructiveOnly, "a member", "", "made"},
+		{approval.DestructiveOnly, "a guest", "", "asks"},
+		{approval.Writes, "a member", "ask", "asks"},
+		{approval.Writes, "a member", "deny", "denied"},
+		{approval.Writes, "a guest", "allow", "asks"},
+		{approval.Writes, "nobody present", "ask", "refused"},
+	} {
+		t.Run(fmt.Sprintf("%s, %s, rule %q", tc.mode, tc.who, tc.rule), func(t *testing.T) {
+			f := gatedSend(dashboard, tc.mode, tc.who, tc.rule)
+			_, err := f.send(t, string(f.args()))
+			if got := sendOutcome(err); got != tc.want {
+				t.Fatalf("%s, want %s", got, tc.want)
+			}
+			sent := slices.ContainsFunc(f.notes, func(n sentNote) bool { return n.kind == "file_sent" })
+			if sent != (tc.want == "made") {
+				t.Errorf("file_sent written: %v", sent)
+			}
+		})
+	}
+}
+
+// A rule holds wherever the file would go: on a channel too, where a call
+// not made queues no reply.
+func TestARuleOnSendFileHoldsOnEveryChannel(t *testing.T) {
+	for _, tc := range []struct {
+		rule string
+		want string
+	}{
+		{"", "made"},
+		{"ask", "asks"},
+		{"deny", "denied"},
+	} {
+		t.Run(fmt.Sprintf("telegram, rule %q", tc.rule), func(t *testing.T) {
+			f := gatedSend(telegram, approval.Writes, "a member", tc.rule)
+			_, err := f.send(t, string(f.args()))
+			if got := sendOutcome(err); got != tc.want {
+				t.Fatalf("%s, want %s", got, tc.want)
+			}
+			wantReplies := 0
+			if tc.want == "made" {
+				wantReplies = 1
+			}
+			if f.sends.written() != wantReplies {
+				t.Errorf("%d replies, want %d", f.sends.written(), wantReplies)
+			}
+		})
+	}
+}
+
+// A send_file a person approved is made on the resume, by the tool as it
+// was built, so the run must keep it answerable.
+func TestAnApprovedSendFileCanBeMadeOnResume(t *testing.T) {
+	f := newSendFixture(telegram)
+	f.store.settings = &db.TeamSetting{TeamID: f.run.TeamID, ApprovalMode: string(approval.All), ApprovalTtlMinutes: 60}
+	f.builder.WithApprovals(&desk{byCall: map[string]db.Approval{}})
+	b := f.build(t)
+	send, ok := b.answerable[SendFileToolName]
+	if !ok {
+		t.Fatal("an approved send_file would find no tool to make it")
+	}
+	if _, err := callAs(t, send, "c1", string(f.args())); err != nil {
+		t.Fatalf("the approved call: %v", err)
+	}
+	if f.sends.written() != 1 {
+		t.Errorf("%d replies written, want the file", f.sends.written())
+	}
+}
+
+// A pattern that plans every call first cannot wait for a person: a
+// send_file that would ask is left out, and the run is told why.
+func TestASendFileThatWouldAskIsLeftOutOfAPlannedRun(t *testing.T) {
+	f := newSendFixture(dashboard)
+	a := f.store.agents[*f.run.AgentID]
+	a.Pattern = string(agent.PatternReWOO)
+	f.store.agents[*f.run.AgentID] = a
+	f.store.settings = &db.TeamSetting{TeamID: f.run.TeamID, ApprovalMode: string(approval.All), ApprovalTtlMinutes: 60}
+	f.builder.WithApprovals(&desk{byCall: map[string]db.Approval{}})
+	b := f.build(t)
+	if held(b, SendFileToolName) || !slices.ContainsFunc(b.Unavailable, func(u Unavailable) bool { return u.Name == SendFileToolName }) {
+		t.Errorf("send_file held %v, unavailable %+v", held(b, SendFileToolName), b.Unavailable)
 	}
 }

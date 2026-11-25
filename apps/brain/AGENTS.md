@@ -139,7 +139,7 @@ apps/brain/
     capped.go          an MCP client's answers capped at 40 MiB, one large answer read at a time per worker
     history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
-    gate.go            tool-call approvals: each MCP and web tool's verdict when the run is built; a call that asks makes nothing, and the model says so in its own words
+    gate.go            tool-call approvals: each MCP and built-in tool's verdict when the run is built; a call that asks makes nothing, and the model says so in its own words
     answers.go         a resume's catch-up: waiting children carried on, each answer acted on (an approved call made then) and told to the model
     approvals.go       parking a waiting run, and answering a request: each one transaction, the session taken first
     decide.go          Decide: the one way a request is answered, from the API or the chat; who may answer

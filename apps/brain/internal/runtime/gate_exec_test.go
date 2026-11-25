@@ -346,3 +346,74 @@ func TestAToolThatAsksIsNotGivenToAPlanThatCannotWait(t *testing.T) {
 	}
 	_ = agent.PatternReWOO
 }
+
+// A send_file that asks makes nothing until a person says yes; the resume
+// then makes it once, as the run built it: the file is sent, its event
+// written, and the request spent.
+func TestAnApprovedSendFileIsMadeOnTheResume(t *testing.T) {
+	f := newExecFixture(t, nil)
+	var session, channel, sam, message uuid.UUID
+	f.mustScan(t, `SELECT session_id FROM runs WHERE id = $1`, []any{f.run}, &session)
+	f.mustScan(t, `INSERT INTO users (issuer, subject) VALUES ('dev', 'sam') RETURNING id`, nil, &sam)
+	f.mustExec(t, `INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'member')`, f.team, sam)
+	f.mustExec(t, `UPDATE runs SET user_id = $2 WHERE id = $1`, f.run, sam)
+	f.mustScan(t, `SELECT id FROM channels WHERE team_id = $1 AND provider = 'dashboard'`, []any{f.team}, &channel)
+	f.mustExec(t, `UPDATE sessions SET channel_id = $1, provider_ref = 'dash-1' WHERE id = $2`, channel, session)
+	f.mustScan(t, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text)
+		VALUES ($1, $2, $3, 'ext-1', 'send me the export') RETURNING id`, []any{channel, session, sam}, &message)
+	export, err := f.store.CreateAttachment(t.Context(), db.CreateAttachmentParams{
+		MessageID: &message, SessionID: session, TeamID: f.team, ObjectKey: "teams/x/objects/export", KeyVersion: 1,
+		MediaType: "text/csv", SizeBytes: 4, Filename: "export.csv",
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment: %v", err)
+	}
+	f.objects.data[export.ObjectKey] = "a,b\n"
+	if _, err := f.store.SetTeamApproval(t.Context(), db.SetTeamApprovalParams{
+		TeamID: f.team, ApprovalMode: "all", ApprovalTtlMinutes: 60,
+	}); err != nil {
+		t.Fatalf("SetTeamApproval: %v", err)
+	}
+	f.model = newScripted(
+		callTool("c1", SendFileToolName, `{"id":"`+export.ID.String()+`"}`),
+		answer("May I send you the export?", 10, 5),
+		answer("Sent.", 10, 5),
+	)
+	f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil },
+		agent.Endpoint{BaseURL: "http://model.test"})
+	f.exec.builder.WithApprovals(f.store)
+	f.exec.builder.WithFileSends(FileSends{Store: f.store, SendsFiles: func(string) bool { return false }, Logger: quietLogger()})
+
+	sentEvents := func() int {
+		var n int
+		f.mustScan(t, `SELECT count(*) FROM run_events WHERE run_id = $1 AND kind = 'file_sent'`, []any{f.run}, &n)
+		return n
+	}
+
+	f.mustExecute(t)
+	if row := f.row(t); row.Status != "waiting" {
+		t.Fatalf("after asking the run is %s, want waiting", row.Status)
+	}
+	if n := sentEvents(); n != 0 {
+		t.Fatalf("%d files sent before anyone answered", n)
+	}
+	req := f.request(t)
+	if req.Tool != SendFileToolName || req.Class != "read" || req.CallID != "c1" {
+		t.Fatalf("request = %+v", req)
+	}
+
+	if _, err := Decide(t.Context(), f.store, &resumes{}, Answer{
+		ApprovalID: req.ID, TeamID: f.team, By: sam, Approve: true, Via: "dashboard", MaySelf: true,
+	}); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	if n := sentEvents(); n != 1 {
+		t.Errorf("%d files sent on the resume, want one", n)
+	}
+	if req := f.request(t); req.Status != "approved" || req.UsedAt == nil {
+		t.Errorf("request after the call = %s, used %v; want approved and spent", req.Status, req.UsedAt)
+	}
+}

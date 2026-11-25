@@ -67,6 +67,11 @@ const (
 	// Room reads or changes only the session's own sandbox room, which no one
 	// outside it sees: a workspace's files.
 	Room Builtin = "room"
+	// Shares hands the run's person a file of the conversation: send_file.
+	// Judged as Egress is, though it reaches only the conversation's own
+	// people: which file goes is the model's choice, a tool's content can
+	// steer it, and a guest or a schedule is who it would go to unseen.
+	Shares Builtin = "shares"
 )
 
 // An Actor is who a run's calls are made for.
@@ -78,15 +83,15 @@ type Actor struct {
 	Unattended bool
 }
 
-// ClassFor is a built-in tool's class. Reaching the internet is a read for a
-// person, and a write for a guest or a run with nobody present: a search
-// query or a fetched URL is a way to carry data out, and they are who it
-// would be carried out for unseen.
+// ClassFor is a built-in tool's class. Reaching the internet, or handing the
+// person a file, is a read for a person, and a write for a guest or a run with
+// nobody present: a search query, a fetched URL or a file sent is a way to
+// carry data out, and they are who it would be carried out for unseen.
 func ClassFor(b Builtin, a Actor) Class {
 	switch b {
 	case Looks, Room:
 		return Read
-	case Egress:
+	case Egress, Shares:
 		if a.CanSelf && !a.Unattended {
 			return Read
 		}

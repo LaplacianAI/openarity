@@ -550,6 +550,13 @@ Telegram nor Slack deduplicates, so a file whose answer was lost on the way
 can arrive twice there. On the dashboard the file shows above the run's answer,
 and its bytes are `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}`.
 
+`send_file` is behind the team's approvals like the web tools: a read for the
+person who asked when they are there and may approve their own calls. The
+`writes` mode asks for a guest's run and refuses the call in a run nobody is
+present for, such as a schedule's; `all` asks every time for anyone present. A
+rule on `send_file` (**Always ask** or **Never allow**, under **Built-in tools**
+in the approval rules) holds on every channel at once.
+
 It carries the same two headers as a message, signed under a different prefix:
 `X-Openarity-Signature` is `v1=` and the hex HMAC-SHA256 of
 `reply:v1:<timestamp>:<body>`. The prefix keeps a captured reply from verifying

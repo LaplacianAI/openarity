@@ -294,7 +294,15 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			return Built{}, err
 		}
 		if ok {
-			built.Spec.Tools = append(built.Spec.Tools, send)
+			// Judged like the web: a read for a person present, a write for
+			// a guest or a run nobody watches; a rule can ask or deny.
+			built.answerable[send.Name] = send
+			gated, refused := gates.gate(send, target{name: send.Name, class: approval.ClassFor(approval.Shares, actor)})
+			if refused != nil {
+				built.Unavailable = append(built.Unavailable, *refused)
+			} else {
+				built.Spec.Tools = append(built.Spec.Tools, gated)
+			}
 		}
 	}
 
