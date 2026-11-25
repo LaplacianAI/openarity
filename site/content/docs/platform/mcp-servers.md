@@ -37,7 +37,7 @@ never asked: see [A command server](#a-command-server).
 
 **Tool names.** A server's tools reach the model as `<server>__<tool>`, unless
 it is registered `--bare`. A bare tool named like one of the brain's own on
-that run — `graph`, `delegate`, `plan`, `web_search`, `web_fetch` — is left out
+that run — `graph`, `delegate`, `plan`, `web_search`, `web_fetch`, `send_file` — is left out
 of the run with a `tool_unavailable` event rather than shadowing the brain's.
 
 ## A command server

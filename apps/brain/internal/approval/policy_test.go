@@ -177,7 +177,7 @@ func TestAServersHintsAreBelievedOnlyWhenItIsTrusted(t *testing.T) {
 	}
 }
 
-func TestReachingTheInternetIsAReadOnlyForAPersonWhoIsThere(t *testing.T) {
+func TestBuiltinsAreJudgedByWhoIsThere(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
@@ -190,10 +190,6 @@ func TestReachingTheInternetIsAReadOnlyForAPersonWhoIsThere(t *testing.T) {
 		{Egress, person, Read},
 		{Egress, Actor{}, Write},
 		{Egress, Actor{CanSelf: true, Unattended: true}, Write},
-		// Handing the person a file is judged as reaching out is.
-		{Shares, person, Read},
-		{Shares, Actor{}, Write},
-		{Shares, Actor{CanSelf: true, Unattended: true}, Write},
 		// Acting on a page can submit or buy, for a person who is there too.
 		{Acts, person, Write},
 		{Acts, Actor{}, Write},
@@ -212,4 +208,61 @@ func ExampleDecide() {
 	})
 	fmt.Println(d.Verdict, d.Why)
 	// Output: ask mode
+}
+
+// Handing the person a file is judged as reaching out is: a read only for a
+// person who is there and may approve their own calls.
+func TestSendingAFileIsAReadOnlyForAPersonWhoIsThere(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		a    Actor
+		want Class
+	}{
+		{"a person present", person, Read},
+		{"a guest", Actor{}, Write},
+		{"nobody present", Actor{CanSelf: true, Unattended: true}, Write},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ClassFor(Shares, c.a); got != c.want {
+				t.Errorf("ClassFor(%s, %+v) = %s, want %s", Shares, c.a, got, c.want)
+			}
+		})
+	}
+}
+
+// What each mode does with send_file, by who the run is for: what the docs
+// say of it, pinned.
+func TestWhatEachModeDoesWithAFileSent(t *testing.T) {
+	t.Parallel()
+
+	nobody := Actor{CanSelf: true, Unattended: true}
+	for _, c := range []struct {
+		mode  Mode
+		actor Actor
+		rules []Rule
+		want  Verdict
+	}{
+		{Off, Actor{}, []Rule{{Kind: "tool", Target: "send_file", Verdict: Deny}}, Allow},
+		{Writes, person, nil, Allow},
+		{Writes, Actor{}, nil, Ask},
+		{Writes, nobody, nil, Deny},
+		{All, person, nil, Ask},
+		{All, nobody, nil, Deny},
+		{DestructiveOnly, person, nil, Allow},
+		{DestructiveOnly, Actor{}, nil, Ask},
+		// A rule decides for a person; a guest's write still asks however
+		// a rule allows it, and nobody present is still refused.
+		{Writes, person, []Rule{{Kind: "tool", Target: "SEND_FILE", Verdict: Deny}}, Deny},
+		{Writes, person, []Rule{{Kind: "tool", Target: "send_file", Verdict: Ask}}, Ask},
+		{Writes, Actor{}, []Rule{{Kind: "tool", Target: "send_file", Verdict: Allow}}, Ask},
+		{Writes, nobody, []Rule{{Kind: "tool", Target: "send_file", Verdict: Allow}}, Allow},
+	} {
+		got := Decide(Input{Tool: "send_file", Class: ClassFor(Shares, c.actor), Mode: c.mode, Rules: c.rules, Actor: c.actor})
+		if got.Verdict != c.want {
+			t.Errorf("%s, %+v, rules %+v: %s, want %s", c.mode, c.actor, c.rules, got.Verdict, c.want)
+		}
+	}
 }

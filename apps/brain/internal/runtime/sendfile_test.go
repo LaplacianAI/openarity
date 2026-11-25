@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -172,8 +173,13 @@ func TestSendFileIsGivenWhereTheFileCanArrive(t *testing.T) {
 func TestAReplayHoldsSendFileAsAStandIn(t *testing.T) {
 	f := newSendFixture(dashboard)
 	f.builder.sends, f.builder.note, f.builder.replay = nil, nil, true
-	if !held(f.build(t), SendFileToolName) {
+	b := f.build(t)
+	if !held(b, SendFileToolName) {
 		t.Error("a replay of a run that could send files holds no send_file")
+	}
+	// Not a read: a replay never makes it live, as it would hand a file over.
+	if b.reads[SendFileToolName] {
+		t.Error("a replay may make send_file live")
 	}
 	f.run.ParentRunID = new(uuid.New())
 	if held(f.build(t), SendFileToolName) {
@@ -508,86 +514,106 @@ func (r *ruled) ListApprovalRules(context.Context, uuid.UUID) ([]db.ApprovalRule
 	return r.rules, nil
 }
 
-// send_file is judged as reaching out is: a write for a guest, whom the
-// fixture's run is for, so a guest is asked in every mode but off, and with
-// nobody present the call is refused.
+// sendOutcome is what came of a send_file call: made, asked, refused with nobody
+// present, or denied by a rule.
+func sendOutcome(err error) string {
+	switch {
+	case err == nil:
+		return "made"
+	case err.Error() == askedTop:
+		return "asks"
+	case strings.Contains(err.Error(), "Nobody is present"):
+		return "refused"
+	case strings.Contains(err.Error(), "does not allow send_file"):
+		return "denied"
+	}
+	return err.Error()
+}
+
+// gatedSend is a send fixture behind the approval gate in mode, for who: a
+// guest (no person on the run), a member who may approve their own, or that
+// member's run with nobody present; with rule, if any, on send_file.
+func gatedSend(reach db.GetSessionFileReachRow, mode approval.Mode, who, rule string) *sendFixture {
+	f := newSendFixture(reach)
+	f.store.settings = &db.TeamSetting{TeamID: f.run.TeamID, ApprovalMode: string(mode), ApprovalTtlMinutes: 60}
+	d := &ruled{desk: &desk{byCall: map[string]db.Approval{}}}
+	if rule != "" {
+		d.rules = []db.ApprovalRule{{TargetKind: "tool", Target: SendFileToolName, Mode: rule}}
+	}
+	f.run.UserID = nil
+	if who != "a guest" {
+		person := uuid.New()
+		f.run.UserID = &person
+		f.run.Unattended = who == "nobody present"
+	}
+	f.builder.WithApprovals(d)
+	return f
+}
+
+// send_file is judged as reaching out is: a read for a member who is there,
+// a write for a guest, who is asked in every mode but off, and nobody present
+// is refused where it would ask. A rule decides for a member; a guest's write
+// asks however a rule allows it. Nothing is sent unless the call is made.
 func TestSendFileIsBehindTheApprovalGate(t *testing.T) {
 	for _, tc := range []struct {
-		mode       approval.Mode
-		unattended bool
-		want       string
+		mode approval.Mode
+		who  string
+		rule string
+		want string
 	}{
-		{approval.All, false, "asks"},
-		{approval.Writes, false, "asks"},
-		{approval.Writes, true, "refused"},
-		{approval.DestructiveOnly, false, "asks"},
-		{approval.Off, true, "made"},
+		{approval.Off, "a guest", "deny", "made"},
+		{approval.Writes, "a member", "", "made"},
+		{approval.Writes, "a guest", "", "asks"},
+		{approval.Writes, "nobody present", "", "refused"},
+		{approval.All, "a member", "", "asks"},
+		{approval.All, "a guest", "", "asks"},
+		{approval.All, "nobody present", "", "refused"},
+		{approval.DestructiveOnly, "a member", "", "made"},
+		{approval.DestructiveOnly, "a guest", "", "asks"},
+		{approval.Writes, "a member", "ask", "asks"},
+		{approval.Writes, "a member", "deny", "denied"},
+		{approval.Writes, "a guest", "allow", "asks"},
+		{approval.Writes, "nobody present", "ask", "refused"},
 	} {
-		f := newSendFixture(dashboard)
-		f.store.settings = &db.TeamSetting{TeamID: f.run.TeamID, ApprovalMode: string(tc.mode), ApprovalTtlMinutes: 60}
-		f.run.Unattended = tc.unattended
-		f.builder.WithApprovals(&desk{byCall: map[string]db.Approval{}})
-
-		_, err := f.send(t, string(f.args()))
-		said := "made"
-		switch {
-		case err != nil && strings.Contains(err.Error(), "Nobody is present"):
-			said = "refused"
-		case err != nil && err.Error() == askedTop:
-			said = "asks"
-		case err != nil:
-			said = err.Error()
-		}
-		if said != tc.want {
-			t.Errorf("%s, unattended %v: %s, want %s", tc.mode, tc.unattended, said, tc.want)
-		}
-		if made := slices.ContainsFunc(f.notes, func(n sentNote) bool { return n.kind == "file_sent" }); made != (tc.want == "made") {
-			t.Errorf("%s, unattended %v: file_sent written %v", tc.mode, tc.unattended, made)
-		}
+		t.Run(fmt.Sprintf("%s, %s, rule %q", tc.mode, tc.who, tc.rule), func(t *testing.T) {
+			f := gatedSend(dashboard, tc.mode, tc.who, tc.rule)
+			_, err := f.send(t, string(f.args()))
+			if got := sendOutcome(err); got != tc.want {
+				t.Fatalf("%s, want %s", got, tc.want)
+			}
+			sent := slices.ContainsFunc(f.notes, func(n sentNote) bool { return n.kind == "file_sent" })
+			if sent != (tc.want == "made") {
+				t.Errorf("file_sent written: %v", sent)
+			}
+		})
 	}
 }
 
-// For a person who is there, a file is a read, sent unasked under writes;
-// the team's rule on send_file asks, or refuses the call and says why,
-// whichever channel the file would go to.
+// A rule holds wherever the file would go: on a channel too, where a call
+// not made queues no reply.
 func TestARuleOnSendFileHoldsOnEveryChannel(t *testing.T) {
-	for name, reach := range map[string]db.GetSessionFileReachRow{"dashboard": dashboard, "telegram": telegram} {
-		for _, tc := range []struct {
-			rule string
-			want string
-		}{
-			{"", "made"},
-			{"ask", "asks"},
-			{"deny", "denied"},
-		} {
-			f := newSendFixture(reach)
-			f.store.settings = &db.TeamSetting{TeamID: f.run.TeamID, ApprovalMode: string(approval.Writes), ApprovalTtlMinutes: 60}
-			person := uuid.New()
-			f.run.UserID = &person
-			d := &ruled{desk: &desk{byCall: map[string]db.Approval{}}}
-			if tc.rule != "" {
-				d.rules = []db.ApprovalRule{{TargetKind: "tool", Target: SendFileToolName, Mode: tc.rule}}
-			}
-			f.builder.WithApprovals(d)
-
+	for _, tc := range []struct {
+		rule string
+		want string
+	}{
+		{"", "made"},
+		{"ask", "asks"},
+		{"deny", "denied"},
+	} {
+		t.Run(fmt.Sprintf("telegram, rule %q", tc.rule), func(t *testing.T) {
+			f := gatedSend(telegram, approval.Writes, "a member", tc.rule)
 			_, err := f.send(t, string(f.args()))
-			said := "made"
-			switch {
-			case err != nil && err.Error() == askedTop:
-				said = "asks"
-			case err != nil && strings.Contains(err.Error(), "does not allow send_file"):
-				said = "denied"
-			case err != nil:
-				said = err.Error()
+			if got := sendOutcome(err); got != tc.want {
+				t.Fatalf("%s, want %s", got, tc.want)
 			}
-			if said != tc.want {
-				t.Errorf("%s, rule %q: %s, want %s", name, tc.rule, said, tc.want)
+			wantReplies := 0
+			if tc.want == "made" {
+				wantReplies = 1
 			}
-			noted := slices.ContainsFunc(f.notes, func(n sentNote) bool { return n.kind == "file_sent" })
-			if noted != (tc.want == "made") || (f.sends.written() > 0) != (tc.want == "made" && name == "telegram") {
-				t.Errorf("%s, rule %q: %d replies, file_sent %v", name, tc.rule, f.sends.written(), noted)
+			if f.sends.written() != wantReplies {
+				t.Errorf("%d replies, want %d", f.sends.written(), wantReplies)
 			}
-		}
+		})
 	}
 }
 

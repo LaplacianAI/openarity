@@ -721,11 +721,16 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   channel the run answers whose provider is a `gateway.FileReplier` and, for
   `custom`, has a reply URL; never on Slack until its three-call upload is
   built (F3b). Behind the approval gate as a built-in (`approval.Shares`),
-  judged like the web: a read for a person present, a write for a guest or
-  a run nobody watches, so `writes` asks for those, and a team's rule on
-  `send_file` asks or denies on every channel at once. Not a channel
-  setting: who may send a file is a question about the tool, and the
-  answer is the same wherever the file goes. A run event `file_sent` puts a chip under the run on the dashboard;
+  judged like the web: a read for a person who is there and may approve
+  their own calls, a write for a guest or a run nobody is present for. So
+  `writes` asks for a guest and refuses the call in a run nobody is present
+  for (`approval.Decide` turns an ask into a deny there), `all` asks every
+  time for anyone present, and a team's rule on `send_file` asks or denies
+  on every channel at once. Not a channel setting: who may send a file is
+  a question about the tool, and the answer is the same wherever the file
+  goes. A request names the file by its id alone, and approving for the run
+  covers any file the run sends after; naming the file a call chose would
+  need a lookup when the request is made, left for later. A run event `file_sent` puts a chip under the run on the dashboard;
   on a channel the file is also a reply of kind `file`, in the session's
   order, so a file sent while the run works goes out before its answer, one
   per call (`replies_one_per_file_call`) and kicked at once. Ten a run, a
@@ -759,9 +764,9 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   model would send the file again. Deleting a file deletes its file replies,
   sent ones too: a file goes only with its conversation, its message or its
   run, and the record of its sending goes with it. The risk accepted: for a
-  person present the call is a read, so under the default mode an
-  instruction a tool's content plants could send them a file of the
-  conversation unasked. It reaches only this conversation's people, who
+  person who is there and may approve their own, the call is a read, so
+  under `off`, `writes` and `destructive` an instruction a tool's content
+  plants could send them a file of the conversation unasked. It reaches only this conversation's people, who
   could already be shown the tool's text in the answer; a team that wants a
   person between the two sets a rule on `send_file`.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes

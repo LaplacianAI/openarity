@@ -372,7 +372,7 @@ it("names send_file, the tool that hands the person a file", async () => {
   await choose(within(section).getByLabelText("Tool"), "send_file");
   expect(
     within(section).getByText(
-      "Hands the person a file of the conversation, in the chat they asked in.",
+      "Hands the person a file of the conversation. Asks for a guest; refused when nobody is present.",
     ),
   ).toBeInTheDocument();
   await userEvent.click(within(section).getByRole("button", { name: "Add rule" }));

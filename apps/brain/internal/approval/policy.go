@@ -67,9 +67,10 @@ const (
 	// Room reads or changes only the session's own sandbox room, which no one
 	// outside it sees: a workspace's files.
 	Room Builtin = "room"
-	// Shares hands the run's person a file of the conversation: send_file. It
-	// reaches only the conversation's own people, but which file is the
-	// model's choice, and a tool's content can steer it.
+	// Shares hands the run's person a file of the conversation: send_file.
+	// Judged as Egress is, though it reaches only the conversation's own
+	// people: which file goes is the model's choice, a tool's content can
+	// steer it, and a guest or a schedule is who it would go to unseen.
 	Shares Builtin = "shares"
 )
 
