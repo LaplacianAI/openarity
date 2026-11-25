@@ -268,7 +268,7 @@ export function RequestCard({
       {open ? (
         <pre
           id={argsId}
-          className="max-h-60 overflow-auto rounded-md bg-sheet px-3 py-2 font-mono text-xs break-words whitespace-pre-wrap"
+          className="relative max-h-60 overflow-auto rounded-md bg-sheet px-3 py-2 font-mono text-xs break-words whitespace-pre-wrap"
         >
           {args
             ? JSON.stringify(args, null, 2)
