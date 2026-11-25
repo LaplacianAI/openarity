@@ -85,7 +85,12 @@ export type RunTurn = {
   waiting: { reason: string; said: string } | null;
   /** The requests it made, in order. */
   requests: string[];
+  /** The files it handed the person, in the order sent, each once. */
+  files: SentFile[];
 };
+
+/** A file a run handed the person, by the call that sent it. */
+export type SentFile = { toolCallId: string; file: SessionEventFile; caption: string };
 
 export type Entry = { kind: "said"; id: string } | { kind: "run"; id: string };
 
@@ -172,6 +177,7 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
         error: "",
         waiting: null,
         requests: [],
+        files: [],
       };
       const runs = { ...c.runs, [run.id]: run };
       if (parent) {
@@ -281,6 +287,20 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
         status: "waiting",
         waiting: { reason: d.reason, said: d.said ?? "" },
       }));
+    }
+    case "file_sent": {
+      const d = env.data;
+      return withRun(next, d.run_id, (r) =>
+        r.files.some((f) => f.toolCallId === d.tool_call_id)
+          ? r
+          : {
+              ...r,
+              files: [
+                ...r.files,
+                { toolCallId: d.tool_call_id, file: d.file, caption: d.caption ?? "" },
+              ],
+            },
+      );
     }
     case "run_finished": {
       const d = env.data;
