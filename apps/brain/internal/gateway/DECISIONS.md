@@ -358,8 +358,9 @@ for an address and a file id, the raw bytes to that address, which must be
 `files.completeUploadExternal` into the thread with the caption, through
 `Sanitize`, as its comment. Slack shares a file only when its upload completes,
 so a retry starts again from the first step and an upload abandoned part way is
-never seen; one whose last answer was lost is shared twice, as Slack drops no
-repeat. An app without `files:write` answers `missing_scope`, which gives the
+never seen; one whose last answer was lost is shared twice, as Slack does not
+deduplicate. The upload's three posts share one deadline inside the reply's
+lease, so no second sender claims it midway. An app without `files:write` answers `missing_scope`, which gives the
 file up: `send_file` is offered on every Slack channel rather than only where
 the token has the scope, since telling them apart means reading `auth.test`'s
 `x-oauth-scopes` header at setup and reconnecting every existing channel.

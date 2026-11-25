@@ -1218,6 +1218,11 @@ func TestAPostsDeadlineIsByItsSize(t *testing.T) {
 	if maxPost >= replyLease {
 		t.Errorf("a post may take %v, past the %v lease it is sent under", maxPost, replyLease)
 	}
+	// An upload is several posts under one claim: its own deadline holds the
+	// whole of it inside the lease, and still leaves room for its longest post.
+	if uploadDeadline >= replyLease || maxPost >= uploadDeadline {
+		t.Errorf("an upload may take %v, under a %v lease with %v posts", uploadDeadline, replyLease, maxPost)
+	}
 }
 
 // The deadline holds over a receiver that never answers, whatever the
@@ -1269,6 +1274,8 @@ type uploadRelay struct {
 	last     int
 	buildErr error
 	refuse   error
+	// bare is the step (0-based) built with no Accepted; -1 is none.
+	bare int
 
 	mu    sync.Mutex
 	asked [][]string
@@ -1288,10 +1295,14 @@ func (u *uploadRelay) FileRequest(ch Channel, out Outbound, _ Credentials, answe
 		return OutboundRequest{}, false, u.buildErr
 	}
 	n := len(answers)
-	return OutboundRequest{
+	req := OutboundRequest{
 		URL: ch.ReplyURL, Body: []byte(fmt.Sprintf("%s step %d", out.File.Name, n)),
 		Accepted: func(int, []byte) error { return u.refuse },
-	}, n == u.last, nil
+	}
+	if n == u.bare {
+		req.Accepted = nil
+	}
+	return req, n == u.last, nil
 }
 
 func (u *uploadRelay) steps() [][]string {
@@ -1308,11 +1319,14 @@ type stepPoster struct {
 	reqs   []OutboundRequest
 	failAt int
 	err    error
+	// deadlines is each post's context deadline, zero for none.
+	deadlines []time.Time
 }
 
-func (a *stepPoster) Post(_ context.Context, _ uuid.UUID, req OutboundRequest) error {
+func (a *stepPoster) Post(ctx context.Context, _ uuid.UUID, req OutboundRequest) error {
+	at, _ := ctx.Deadline()
 	a.mu.Lock()
-	a.reqs = append(a.reqs, req)
+	a.reqs, a.deadlines = append(a.reqs, req), append(a.deadlines, at)
 	n := len(a.reqs)
 	a.mu.Unlock()
 	if n == a.failAt {
@@ -1336,7 +1350,7 @@ func (a *stepPoster) posted() []string {
 
 func uploadSending(t *testing.T) (*sending, *uploadRelay, *stepPoster, db.ClaimDueRepliesRow) {
 	t.Helper()
-	u := &uploadRelay{last: 2}
+	u := &uploadRelay{last: 2, bare: -1}
 	s, _, objs, row, _ := fileSending(t)
 	reg, err := NewRegistry(u)
 	if err != nil {
@@ -1366,6 +1380,12 @@ func TestAFileUploadsInStepsEachFromTheAnswersBefore(t *testing.T) {
 	}
 	if len(s.store.parts) != 1 || s.store.parts[0].PartsSent != 1 || len(s.store.sent) != 1 {
 		t.Errorf("parts %+v, sent %+v", s.store.parts, s.store.sent)
+	}
+	// One deadline holds the whole upload inside its lease, every step alike.
+	for i, at := range p.deadlines {
+		if at.IsZero() || time.Until(at) > uploadDeadline || !at.Equal(p.deadlines[0]) {
+			t.Errorf("step %d's deadline is %v away, want the upload's, at most %v", i+1, time.Until(at), uploadDeadline)
+		}
 	}
 }
 
@@ -1433,7 +1453,7 @@ func TestAnUploadPastItsStepsIsGivenUp(t *testing.T) {
 	if _, err := s.sender.Drain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.posted()) != uploadSteps || len(s.store.gaveUp) != 1 || len(s.store.sent) != 0 {
+	if len(p.posted()) != maxUploadSteps || len(s.store.gaveUp) != 1 || len(s.store.sent) != 0 {
 		t.Errorf("posted %d, gave up %+v, sent %+v", len(p.posted()), s.store.gaveUp, s.store.sent)
 	}
 }
@@ -1453,18 +1473,36 @@ func TestAStepThatCannotBeBuiltIsGivenUp(t *testing.T) {
 	}
 }
 
-// An upload already recorded, whose sent mark was lost, is not sent again.
+// An upload already recorded, whose sent mark was lost, is not sent again,
+// and its file is not read again: one deleted since must not give up what
+// was delivered.
 func TestAnUploadAlreadyRecordedIsNotSentAgain(t *testing.T) {
 	t.Parallel()
 
 	s, _, p, row := uploadSending(t)
 	row.PartsSent = 1
 	s.store.due = []db.ClaimDueRepliesRow{row}
+	s.store.files = nil
 	if _, err := s.sender.Drain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.posted()) != 0 || len(s.store.sent) != 1 {
-		t.Errorf("posted %d, sent %+v", len(p.posted()), s.store.sent)
+	if len(p.posted()) != 0 || len(s.store.sent) != 1 || len(s.store.gaveUp) != 0 || len(s.store.fileReads) != 0 {
+		t.Errorf("posted %d, sent %+v, gave up %+v, file read %v", len(p.posted()), s.store.sent, s.store.gaveUp, s.store.fileReads)
+	}
+}
+
+// A step whose answer the provider does not read, as Slack's bytes, still
+// hands its answer to the next.
+func TestAStepWithNoReadingStillPassesItsAnswerOn(t *testing.T) {
+	t.Parallel()
+
+	s, u, _, _ := uploadSending(t)
+	u.bare = 1
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{{}, {"answer 1"}, {"answer 1", "answer 2"}}; !reflect.DeepEqual(u.steps(), want) || len(s.store.sent) != 1 {
+		t.Errorf("steps were handed %q, sent %+v", u.steps(), s.store.sent)
 	}
 }
 

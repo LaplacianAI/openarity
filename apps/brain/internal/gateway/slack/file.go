@@ -22,7 +22,9 @@ const uploadHost = "files.slack.com"
 
 // fileID is the id Slack names an upload by, as completeUploadExternal is
 // handed it back.
-var fileID = regexp.MustCompile(`^F[A-Z0-9]{1,30}$`)
+// Only its shape is checked, letters, digits, '-' and '_', not Slack's own
+// format, which may change: it goes back inside JSON, never into a URL.
+var fileID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // FileRequest is Slack's upload, a step at a time: ask where the bytes go,
 // send them there, then share the file in the thread with its caption. Slack
@@ -55,7 +57,7 @@ func (provider) FileRequest(
 		}
 		h := http.Header{}
 		h.Set("Content-Type", "application/octet-stream")
-		return gateway.OutboundRequest{URL: up.URL, Header: h, Body: out.File.Data}, false, nil
+		return gateway.OutboundRequest{URL: up.url, Header: h, Body: out.File.Data}, false, nil
 	case 2:
 		up, err := uploadOf(answers[0])
 		if err != nil {
@@ -64,7 +66,7 @@ func (provider) FileRequest(
 		files, err := json.Marshal([]struct {
 			ID    string `json:"id"`
 			Title string `json:"title"`
-		}{{up.FileID, out.File.Name}})
+		}{{up.fileID, out.File.Name}})
 		if err != nil {
 			return gateway.OutboundRequest{}, false, fmt.Errorf("slack: encoding the file: %w", err)
 		}
@@ -81,29 +83,26 @@ func (provider) FileRequest(
 	}
 }
 
-type upload struct {
-	URL    string
-	FileID string
-}
+type slot struct{ url, fileID string }
 
 // uploadOf reads getUploadURLExternal's answer, which accepted has already
 // found ok: where the bytes go, and the file they make.
-func uploadOf(answer []byte) (upload, error) {
+func uploadOf(answer []byte) (slot, error) {
 	var a struct {
 		UploadURL string `json:"upload_url"`
 		FileID    string `json:"file_id"`
 	}
 	if err := json.Unmarshal(answer, &a); err != nil {
-		return upload{}, errors.New("slack: the upload address could not be read")
+		return slot{}, errors.New("slack: the upload address could not be read")
 	}
 	u, err := url.Parse(a.UploadURL)
 	if err != nil || u.Scheme != "https" || u.Host != uploadHost || u.User != nil {
-		return upload{}, fmt.Errorf("slack: the upload address is not on %s", uploadHost)
+		return slot{}, fmt.Errorf("slack: the upload address is not on %s", uploadHost)
 	}
 	if !fileID.MatchString(a.FileID) {
-		return upload{}, errors.New("slack: the upload names no file")
+		return slot{}, errors.New("slack: the upload names no file")
 	}
-	return upload{URL: u.String(), FileID: a.FileID}, nil
+	return slot{url: u.String(), fileID: a.FileID}, nil
 }
 
 // form is a Web API call with a form body, as the upload methods take.

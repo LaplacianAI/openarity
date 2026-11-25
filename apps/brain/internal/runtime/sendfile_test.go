@@ -145,7 +145,7 @@ func TestSendFileIsGivenWhereTheFileCanArrive(t *testing.T) {
 		"the dashboard":                     {dashboard, nil, true},
 		"a telegram chat":                   {telegram, nil, true},
 		"a custom channel with a reply URL": {db.GetSessionFileReachRow{Provider: "custom", Postable: true}, nil, true},
-		"a provider that sends none":        {db.GetSessionFileReachRow{Provider: "slack", Postable: true}, nil, false},
+		"a provider that sends none":        {db.GetSessionFileReachRow{Provider: "noreply", Postable: true}, nil, false},
 		"a channel with no reply URL":       {db.GetSessionFileReachRow{Provider: "custom"}, nil, false},
 		"a channel the run answers not":     {telegram, func(f *sendFixture) { f.run.ReplyToChannel = false }, false},
 		"a delegate":                        {dashboard, func(f *sendFixture) { f.run.ParentRunID = new(uuid.New()) }, false},

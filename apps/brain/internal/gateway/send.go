@@ -26,8 +26,10 @@ const (
 	replyBatch = 20
 	// eventAttempts is how often an event or a file is tried: a broken one
 	// must not hold its conversation's answer back through the answer's six.
-	eventAttempts  = 2
-	replyLease     = 2 * time.Minute // longer than one post's deadline
+	eventAttempts = 2
+	// replyLease is longer than one post's deadline, and than an upload's
+	// (uploadDeadline), so neither outlives the claim it is sent under.
+	replyLease     = 2 * time.Minute
 	replyAttempts  = 6
 	replyReadLimit = 64 << 10
 
@@ -37,6 +39,14 @@ const (
 	postBase    = 10 * time.Second
 	postPerByte = 512 << 10
 	maxPost     = time.Minute
+
+	// An upload is several posts under one claim, so it has a deadline of
+	// its own, short of the lease: past it another sender could claim the
+	// row and upload the file again. Each post keeps its own inside it.
+	uploadDeadline = replyLease - 20*time.Second
+	// maxUploadSteps stops a provider that never says its upload is done;
+	// how many steps an upload has is the provider's (Slack's is three).
+	maxUploadSteps = 8
 )
 
 // PostTimeout is how long a post of n bytes may take: a poster that is not
@@ -81,7 +91,9 @@ type Sender struct {
 }
 
 // Poster sends one part a provider built, for a channel. An error is retried
-// unless it wraps ErrUnsendable.
+// unless it wraps ErrUnsendable. On a 2xx it calls the request's Accepted,
+// when set, with the answer's body: a FileUploader's next step is built from
+// it, so a poster for one must.
 type Poster interface {
 	Post(ctx context.Context, channel uuid.UUID, req OutboundRequest) error
 }
@@ -438,6 +450,11 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 		return err
 	}
 
+	if o.step != nil && o.partsSent > 0 {
+		// Uploaded, and only its sent mark was lost: nothing to read again,
+		// and a file deleted since must not give up what was delivered.
+		return nil
+	}
 	var file *OutFile
 	if o.load != nil {
 		if file, err = o.load(ctx); err != nil {
@@ -460,30 +477,35 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 		if err := s.poster.Post(ctx, o.channelID, parts[i]); err != nil {
 			return err
 		}
-		n, err := o.partSent(ctx, int32(i+1)) //nolint:gosec // G115: parts are few
-		switch {
-		case err != nil:
-			return fmt.Errorf("recording part %d of %s %d: %w", i+1, o.what, o.id, err)
-		case n == 0:
-			return errLeaseLost
+		if err := o.recordPart(ctx, int32(i+1)); err != nil { //nolint:gosec // G115: parts are few
+			return err
 		}
 	}
 	return nil
 }
 
-// uploadSteps is the most requests one file's upload is: Slack's is three.
-const uploadSteps = 3
+// recordPart marks the first parts of o sent; none matched is a lease
+// another sender now holds.
+func (o outgoing) recordPart(ctx context.Context, parts int32) error {
+	n, err := o.partSent(ctx, parts)
+	switch {
+	case err != nil:
+		return fmt.Errorf("recording part %d of %s %d: %w", parts, o.what, o.id, err)
+	case n == 0:
+		return errLeaseLost
+	}
+	return nil
+}
 
 // upload sends a file in the provider's steps, each built from the answers
 // before it. The whole upload is one part: a failure at any step starts again
 // from the first on the retry, which a platform that shares a file only once
 // its upload completes shows once; one whose last answer was lost, twice.
 func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file *OutFile) error {
-	if o.partsSent > 0 {
-		return nil
-	}
+	ctx, cancel := context.WithTimeout(ctx, uploadDeadline)
+	defer cancel()
 	var answers [][]byte
-	for range uploadSteps {
+	for range maxUploadSteps {
 		req, final, err := o.step(creds, file, answers)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrUnsendable, err)
@@ -503,18 +525,11 @@ func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file
 			return err
 		}
 		if final {
-			n, err := o.partSent(ctx, 1)
-			switch {
-			case err != nil:
-				return fmt.Errorf("recording %s %d sent: %w", o.what, o.id, err)
-			case n == 0:
-				return errLeaseLost
-			}
-			return nil
+			return o.recordPart(ctx, 1)
 		}
 		answers = append(answers, answer)
 	}
-	return fmt.Errorf("%w: the %s provider's upload took more than %d requests", ErrUnsendable, o.provider, uploadSteps)
+	return fmt.Errorf("%w: the %s provider's upload took more than %d requests", ErrUnsendable, o.provider, maxUploadSteps)
 }
 
 func (s *Sender) credentials(ctx context.Context, o outgoing, keys []string) (Credentials, error) {

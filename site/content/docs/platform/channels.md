@@ -544,11 +544,11 @@ Only the run that answers the conversation sends files, ten at most, each with
 a caption of 1024 characters at most, and a `custom` channel only when it has
 a reply URL. A file is tried twice, a minute apart, then given up, so it never
 holds the answer behind it for long. Telegram sends the file as a document and
-WhatsApp as a document message; Telegram drops no repeat, so a file whose
-answer was lost on the way can arrive twice there. Slack uploads the file into
-the thread with the caption as its comment, which needs the `files:write`
-scope; Slack drops no repeat either. On the dashboard the file shows above the run's answer, and its
-bytes are `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}`.
+WhatsApp as a document message. Slack uploads the file into the thread with
+the caption as its comment, which needs the `files:write` scope. Neither
+Telegram nor Slack deduplicates, so a file whose answer was lost on the way
+can arrive twice there. On the dashboard the file shows above the run's answer,
+and its bytes are `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}`.
 
 It carries the same two headers as a message, signed under a different prefix:
 `X-Openarity-Signature` is `v1=` and the hex HMAC-SHA256 of

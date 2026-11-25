@@ -735,16 +735,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   `custom` sends the bytes inline in the signed reply rather than a link,
   which would be a route serving files to whoever holds it. A replay holds
   `send_file` as a stand-in, as it holds the workspace's tools. Delivery is
-  at least once, as every reply's: Telegram drops no repeat, so a post whose
-  answer was lost sends the file twice there. A file is tried twice, as a
+  at least once, as every reply's: neither Telegram nor Slack deduplicates,
+  so a post (on Slack, the upload's last step) whose answer was lost sends
+  the file twice there. A file is tried twice, as a
   step is, so one that cannot go holds its answer back a minute, not hours;
   bytes that cannot be decrypted are given up at once. A file given up is
   not sent, and nobody is told: the model was told it was sent when it was
   queued, and the reply shows as given up only in the database until the
   dashboard shows a reply's delivery. Each post has a deadline by its size,
   ten seconds and a second per 512 KiB, a minute at most, under the
-  two-minute lease, on WhatsApp's upload and send as on an HTTP post; a claimed batch is sent one row at a
-  time, so rows late in a slow batch can outlive the lease and be sent by a
+  two-minute lease, on WhatsApp's upload and send as on an HTTP post. An
+  upload in steps, Slack's, is several posts under one claim, so the whole
+  of it has a deadline of its own, 100 seconds, inside the lease. A claimed
+  batch is sent one row at a time, so rows late in a slow batch can outlive the lease and be sent by a
   second sender too, as text replies always could. A sender holds one file's
   bytes at a time, about three copies of it on `custom` (the bytes, base64,
   the body): some 100 MB at 25 MiB, four replies to a worker at once.

@@ -202,3 +202,18 @@ func TestReplyRefusesAFile(t *testing.T) {
 		t.Errorf("Reply built %d requests for a file", len(reqs))
 	}
 }
+
+// Slack registers as a provider that sends files, in steps, and still
+// replies as before.
+func TestSlackSendsFilesInSteps(t *testing.T) {
+	reg, err := gateway.NewRegistry(slack.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Uploader("slack"); !ok || !reg.SendsFiles("slack") {
+		t.Error("slack is not registered as sending files in steps")
+	}
+	if _, ok := reg.Replier("slack"); !ok {
+		t.Error("slack no longer replies")
+	}
+}
