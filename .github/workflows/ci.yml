@@ -69,6 +69,29 @@ jobs:
               - 'go.work.sum'
               - '.github/workflows/ci.yml'
 
+  # A pull request's new migrations must sort after its base's newest: why is
+  # in apps/brain/scripts/migrations-after.sh. Its own job, so the answer
+  # comes before the brain's databases have started.
+  migrations:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # Depth 2, so the merge commit's base side is here: the base as this
+      # merge would find it, which a base sha from the event is not once the
+      # base has moved.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - name: The check's own cases
+        run: apps/brain/scripts/migrations-after_test.sh
+
+      - name: New migrations sort after the base's
+        run: |
+          [ "$(git rev-list --parents -n1 HEAD | wc -w)" -eq 3 ] || { echo "HEAD is not a merge commit" >&2; exit 2; }
+          apps/brain/scripts/migrations-after.sh HEAD^1
+
   brain:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
