@@ -549,6 +549,32 @@ describe("leaving the page", () => {
     expect(await screen.findByText("elsewhere")).toBeInTheDocument();
   });
 
+  it("forgets a change whose section a failed read took away", async () => {
+    let reads = 0;
+    brain({
+      ...team(["team:settings"]),
+      ...ROUTES,
+      "GET /teams/{id}/approval-settings": () =>
+        reads++ === 0
+          ? { body: { mode: "writes", ttl_minutes: 60 } }
+          : { status: 500, text: "the brain is down" },
+    });
+    const router = open();
+    const section = await approvals();
+    await userEvent.click(within(section).getByRole("radio", { name: "Destructive calls only" }));
+
+    // Coming back to the tab reads the settings again, and this read fails.
+    act(() => {
+      window.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(await screen.findByText(/the brain is down/)).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Destructive calls only" })).toBeNull();
+
+    leave(router);
+    expect(await screen.findByText("elsewhere")).toBeInTheDocument();
+  });
+
   it("leaves without asking when nothing changed", async () => {
     brain({ ...team(["team:settings"]), ...ROUTES });
     const router = open();

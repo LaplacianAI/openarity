@@ -83,6 +83,7 @@ export function ApprovalSections({ teamId, canWrite }: { teamId: string; canWrit
         </section>
       ) : stored.data ? (
         <ApprovalModeSection
+          key={`mode-${teamId}`}
           teamId={teamId}
           stored={stored.data}
           canWrite={canWrite}
@@ -92,6 +93,7 @@ export function ApprovalSections({ teamId, canWrite }: { teamId: string; canWrit
         <Skeleton className="mt-6 h-24 w-full" role="status" aria-label="Loading approvals" />
       )}
       <ApprovalRulesSection
+        key={`rules-${teamId}`}
         teamId={teamId}
         canWrite={canWrite}
         mode={stored.data?.mode}
@@ -123,7 +125,11 @@ function ApprovalModeSection({
   const dirty =
     mode !== stored.mode ||
     (valid ? minutes !== stored.ttl_minutes : ttl !== String(stored.ttl_minutes));
-  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  // Unmounted (a failed read swaps in the error), it holds nothing to save.
+  useEffect(() => {
+    onDirty(dirty);
+    return () => onDirty(false);
+  }, [dirty, onDirty]);
   const labelId = useId();
 
   const save = useMutation({
@@ -456,7 +462,10 @@ function ApprovalRulesSection({
   // A rule is begun once a tool is named or a server picked; adding it, or
   // clearing both, ends it.
   const begun = target.trim() !== "" || server !== null;
-  useEffect(() => onDirty(begun), [begun, onDirty]);
+  useEffect(() => {
+    onDirty(begun);
+    return () => onDirty(false);
+  }, [begun, onDirty]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["approval-rules", teamId] });
   const add = useMutation({

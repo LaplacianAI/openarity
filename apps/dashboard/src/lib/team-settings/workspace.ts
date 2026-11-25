@@ -19,7 +19,21 @@ const IDLE_START = 30;
 /** What a brain that predates stopping keeps a stopped workspace for. */
 const KEEP_HOURS = 24;
 
-export function workspaceOf(s: TeamSettings["sandbox"] | undefined) {
+/** A workspace's size and times as the page holds them, typed. */
+export type WorkspaceDraft = {
+  /** Whether workspaces get the team's own size, not the provider's. */
+  sizeCustom: boolean;
+  /** Memory and disk in GB, CPUs whole, as typed. */
+  sizeMemory: string;
+  sizeCPUs: string;
+  sizeDisk: string;
+  /** Whether a workspace left running stops after the team's own time, not the deployment's. */
+  idleOwn: boolean;
+  idleMinutes: string;
+  keepHours: string;
+};
+
+export function workspaceOf(s: TeamSettings["sandbox"] | undefined): WorkspaceDraft {
   const size = s?.workspace_size ?? null;
   const shown = size ?? SIZE_START;
   return {
@@ -138,6 +152,3 @@ export function workspaceRequest(
   }
   return out;
 }
-
-/** A workspace's size and times as the page holds them, typed. */
-export type WorkspaceDraft = ReturnType<typeof workspaceOf>;

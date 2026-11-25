@@ -245,9 +245,9 @@ function sandboxRequest(
     sandbox.template = template;
   }
 
-  const life = workspaceRequest(d, stored);
-  if (typeof life === "string") return life;
-  Object.assign(sandbox, life);
+  const workspace = workspaceRequest(d, stored);
+  if (typeof workspace === "string") return workspace;
+  Object.assign(sandbox, workspace);
 
   const was = stored.sandbox;
   const keeps =
@@ -266,7 +266,7 @@ function sandboxRequest(
  * The browser as the brain takes it. A hosted one needs its key; a
  * self-hosted one may have none, and its key stays with its address.
  */
-export function browserRequest(
+function browserRequest(
   d: SettingsDraft,
   stored: TeamSettings,
 ): TeamSettingsRequest["browser"] | string {

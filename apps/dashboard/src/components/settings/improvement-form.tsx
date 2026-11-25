@@ -8,12 +8,7 @@ export function ImprovementForm({ teamId, stored, canWrite }: SettingsFormProps)
   return (
     <div>
       <LeaveGuard dirty={s.anyDirty} what="the team settings" />
-      <ImprovementSection
-        draft={s.draft}
-        set={(patch) => s.set("improvement", patch)}
-        section={s.section("improvement")}
-        effChecked={s.effChecked}
-      />
+      <ImprovementSection {...s.bind("improvement")} effChecked={s.effChecked} />
     </div>
   );
 }

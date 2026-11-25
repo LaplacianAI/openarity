@@ -10,24 +10,9 @@ export function ToolsForm({ teamId, stored, canWrite }: SettingsFormProps) {
   return (
     <div>
       <LeaveGuard dirty={s.anyDirty} what="the team settings" />
-      <SearchSection
-        stored={stored}
-        draft={s.draft}
-        set={(patch) => s.set("search", patch)}
-        section={s.section("search")}
-      />
-      <SandboxSection
-        stored={stored}
-        draft={s.draft}
-        set={(patch) => s.set("sandbox", patch)}
-        section={s.section("sandbox")}
-      />
-      <BrowserSection
-        stored={stored}
-        draft={s.draft}
-        set={(patch) => s.set("browser", patch)}
-        section={s.section("browser")}
-      />
+      <SearchSection stored={stored} {...s.bind("search")} />
+      <SandboxSection stored={stored} {...s.bind("sandbox")} />
+      <BrowserSection stored={stored} {...s.bind("browser")} />
     </div>
   );
 }

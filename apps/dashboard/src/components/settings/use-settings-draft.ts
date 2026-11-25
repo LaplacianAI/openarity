@@ -81,8 +81,16 @@ export function useSettingsDraft(
     onSave: () => void save(group),
   });
 
+  /** What a section is handed: the draft, its group's edits, and its group's Save. */
+  const bind = (group: Group) => ({
+    draft,
+    set: (patch: Partial<SettingsDraft>) => set(group, patch),
+    section: section(group),
+  });
+
   return {
     draft,
+    bind,
     /** Changes a group's fields; its own refusal and "Saved" go with the edit. */
     set,
     section,

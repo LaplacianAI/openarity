@@ -7,62 +7,54 @@ import {
   sameWorkspace,
   WORKSPACE_FIELD_SET,
   WORKSPACE_FIELDS,
+  type WorkspaceDraft,
   workspaceOf,
 } from "@/lib/team-settings/workspace";
 
-type DraftFields = EfficiencyDraft & {
-  modelOn: boolean;
-  modelName: string;
-  maxTokens: string;
-  temperature: string;
-  provider: SearchProvider;
-  url: string;
-  key: string;
-  dropKey: boolean;
-  sandbox: SandboxProvider;
-  sandboxURL: string;
-  /** E2B only; empty for the default template. */
-  sandboxTemplate: string;
-  /** Typed only; the stored key is never read back. */
-  sandboxKey: string;
-  /** Whether workspaces get the team's own size, not the provider's. */
-  sizeCustom: boolean;
-  /** Memory and disk in GB, CPUs whole, as typed. */
-  sizeMemory: string;
-  sizeCPUs: string;
-  sizeDisk: string;
-  /** Whether a workspace left running stops after the team's own time, not the deployment's. */
-  idleOwn: boolean;
-  idleMinutes: string;
-  keepHours: string;
-  browser: BrowserProvider;
-  browserURL: string;
-  /** Typed only; the stored key is never read back. */
-  browserKey: string;
-  /** A self-hosted browser only: reach it with no key. */
-  dropBrowserKey: boolean;
-  improvement: boolean;
-  /** Whether runs are judged on a model of their own, not the team's. */
-  judgeOn: boolean;
-  judgeName: string;
-  judgeMaxTokens: string;
-  judgeTemperature: string;
-  /** The share of good runs studied, as typed. */
-  sampleShare: string;
-  /** The most improver passes in a day, as typed. */
-  dailyPasses: string;
-  /** What one try at a pass may spend, as typed. */
-  passTokens: string;
-  passMinutes: string;
-  /** The judged runs a daily pass waits for, as typed. */
-  dailyRuns: string;
-  /** Messages, and the token lines, as typed: compared by value. */
-  compaction: string;
-  tokensMin: string;
-  tokensMax: string;
-  /** The chosen hub agent; null for the built-in orchestrator. */
-  hub: Picked | null;
-};
+type DraftFields = EfficiencyDraft &
+  WorkspaceDraft & {
+    modelOn: boolean;
+    modelName: string;
+    maxTokens: string;
+    temperature: string;
+    provider: SearchProvider;
+    url: string;
+    key: string;
+    dropKey: boolean;
+    sandbox: SandboxProvider;
+    sandboxURL: string;
+    /** E2B only; empty for the default template. */
+    sandboxTemplate: string;
+    /** Typed only; the stored key is never read back. */
+    sandboxKey: string;
+    browser: BrowserProvider;
+    browserURL: string;
+    /** Typed only; the stored key is never read back. */
+    browserKey: string;
+    /** A self-hosted browser only: reach it with no key. */
+    dropBrowserKey: boolean;
+    improvement: boolean;
+    /** Whether runs are judged on a model of their own, not the team's. */
+    judgeOn: boolean;
+    judgeName: string;
+    judgeMaxTokens: string;
+    judgeTemperature: string;
+    /** The share of good runs studied, as typed. */
+    sampleShare: string;
+    /** The most improver passes in a day, as typed. */
+    dailyPasses: string;
+    /** What one try at a pass may spend, as typed. */
+    passTokens: string;
+    passMinutes: string;
+    /** The judged runs a daily pass waits for, as typed. */
+    dailyRuns: string;
+    /** Messages, and the token lines, as typed: compared by value. */
+    compaction: string;
+    tokensMin: string;
+    tokensMax: string;
+    /** The chosen hub agent; null for the built-in orchestrator. */
+    hub: Picked | null;
+  };
 
 export type SettingsDraft = DraftFields & ReplayDraft;
 
@@ -162,7 +154,7 @@ export function sameValue(
 }
 
 /** Fields compared by the number they hold: "60000" is the stored 60,000. */
-const NUMERIC_FIELDS = new Set<keyof SettingsDraft>([
+const WHOLE_NUMBER_FIELDS = new Set<keyof SettingsDraft>([
   "compaction",
   "tokensMin",
   "tokensMax",
@@ -181,7 +173,7 @@ const NUMERIC_FIELDS = new Set<keyof SettingsDraft>([
 ]);
 
 /** The efficiency pass's numbers: hidden, and never sent, while it is off. */
-const EFFICIENCY_NUMBERS: ReadonlySet<keyof SettingsDraft> = new Set([
+const EFFICIENCY_NUMBER_FIELDS: ReadonlySet<keyof SettingsDraft> = new Set([
   "effRuns",
   "effDays",
   "effSpread",
@@ -190,19 +182,19 @@ const EFFICIENCY_NUMBERS: ReadonlySet<keyof SettingsDraft> = new Set([
 ]);
 
 /** Trying on past runs' numbers: hidden, and never sent, while it is off. */
-const REPLAY_FIELDS: ReadonlySet<keyof SettingsDraft> = new Set(REPLAY_NUMBERS);
+const REPLAY_NUMBER_FIELDS: ReadonlySet<keyof SettingsDraft> = new Set(REPLAY_NUMBERS);
 
 /** Whether a group's fields differ from what the brain holds. */
 export function isDirty(group: Group, d: SettingsDraft, stored: TeamSettings): boolean {
   const base = draftOf(stored);
   const changed = FIELDS[group].some((f) =>
     WORKSPACE_FIELD_SET.has(f) ||
-    (EFFICIENCY_NUMBERS.has(f) && !d.efficiency) ||
-    (REPLAY_FIELDS.has(f) && !d.replay)
+    (EFFICIENCY_NUMBER_FIELDS.has(f) && !d.efficiency) ||
+    (REPLAY_NUMBER_FIELDS.has(f) && !d.replay)
       ? false
       : f === "effSpread"
         ? spreadOf(d.effSpread) !== spreadOf(base.effSpread)
-        : NUMERIC_FIELDS.has(f)
+        : WHOLE_NUMBER_FIELDS.has(f)
           ? (parseWhole(d[f] as string) ?? d[f]) !== (parseWhole(base[f] as string) ?? base[f])
           : !sameValue(d[f], base[f]),
   );
@@ -234,4 +226,13 @@ export function withFields(
 
 function copyField<K extends keyof SettingsDraft>(to: SettingsDraft, from: SettingsDraft, k: K) {
   to[k] = from[k];
+}
+
+/** The draft's compaction fields from lib/compaction's names: the inverse of compactionOf. */
+export function compactionPatch(p: Partial<CompactionDraft>): Partial<SettingsDraft> {
+  return {
+    ...(p.messages === undefined ? {} : { compaction: p.messages }),
+    ...(p.least === undefined ? {} : { tokensMin: p.least }),
+    ...(p.most === undefined ? {} : { tokensMax: p.most }),
+  };
 }
