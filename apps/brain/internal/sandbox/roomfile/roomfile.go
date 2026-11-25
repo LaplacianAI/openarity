@@ -14,11 +14,12 @@ import (
 	"strings"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
+	"github.com/LaplacianAI/openarity/sdk/agent/tools/mcp"
 )
 
 const (
 	// Max is the largest file read: the most kept as an attachment.
-	Max = 25 << 20
+	Max = mcp.MaxKeptBytes
 	// Route is where a room serves its files.
 	Route = "/file"
 	// problemHeader marks an answer as the room's own refusal.
@@ -40,10 +41,18 @@ var ErrGone = errors.New("the room is gone")
 // Get reads the file at path from the room whose /file route is ep. A path is
 // the room's to resolve: relative to where its process runs, or absolute.
 func Get(ctx context.Context, hc *http.Client, ep sandbox.Endpoint, path string) ([]byte, error) {
-	u := strings.TrimRight(ep.URL, "/") + "?" + url.Values{"path": {path}}.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
+	// Added to the address's own query, which can hold a provider's token.
+	u, err := url.Parse(ep.URL)
 	if err != nil {
-		return nil, err
+		// Never the URL, or url's error, which quotes it.
+		return nil, errors.New("the room's address is not a URL")
+	}
+	q := u.Query()
+	q.Set("path", path)
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
+	if err != nil {
+		return nil, errors.New("the room's address is not one a request can be made to")
 	}
 	for k, vs := range ep.Header {
 		for _, v := range vs {
@@ -71,8 +80,9 @@ func Get(ctx context.Context, hc *http.Client, ep sandbox.Endpoint, path string)
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		// Unmarked, so the provider's: it has no such room.
-		return nil, fmt.Errorf("%w: %d", ErrGone, resp.StatusCode)
+		// Unmarked, so not the room's /file: the provider has no such room,
+		// or the room's image is older than the route.
+		return nil, fmt.Errorf("%w: it answered %d without the room's mark", ErrGone, resp.StatusCode)
 	default:
 		return nil, fmt.Errorf("the room answered %d", resp.StatusCode)
 	}

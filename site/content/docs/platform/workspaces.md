@@ -175,8 +175,10 @@ send_file    {"id": "7c2e…"}            → the person gets chart.png
 ```
 
 A path is from `/workspace` unless it is absolute; any regular file in the
-room can be kept, up to 25 MiB, apart from those under `/proc`. A run keeps
-twenty at most. A file kept stays with the conversation however long the room
+room can be kept, up to 25 MiB, apart from those under `/proc`. A run tries
+twenty at most, a try that fails among them. A run that holds `keep_file` holds
+`read_attachment` and `send_file` with it, so a file kept is read or sent in
+the same run. A file kept stays with the conversation however long the room
 does. A room replaced since the file was written no longer has it, and the
 agent is told so.
 
@@ -185,7 +187,10 @@ agent is told so.
 Every call passes the team's approval policy.
 `Bash` is a write: a command can send anything to any public host. `Read`,
 `Write`, `Edit`, `Glob`, `Grep` and `keep_file` read or change only the
-conversation's own room, which nothing outside it sees, so they are reads. With the team's mode at
+conversation's own room, which nothing outside it sees, so they are reads. A
+run that also holds a command MCP server is judged on `keep_file` as on
+`send_file`, since that server's room is shared by the team's conversations:
+see [MCP servers](mcp-servers.md). With the team's mode at
 `writes`, every command asks a person; a rule `allow Bash` turns that off. A run
 nobody is present for is refused a command that would ask.
 

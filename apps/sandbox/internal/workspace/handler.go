@@ -59,7 +59,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		roomfile.Serve(w, r, h.root, func(msg string, args ...any) { h.logger.Error(msg, args...) })
+		roomfile.Serve(w, r, h.root, h.logger)
 		return
 	}
 	route, ok := h.routes()[r.URL.Path]
@@ -212,8 +212,6 @@ func (h *Handler) grep(r *http.Request) (any, error) {
 // workspace process, which can always read its own environ, where the token
 // it was started with stays; Harden keeps it from everything else.
 func (h *Handler) resolve(p string) (string, error) { return roomfile.Resolve(h.root, p) }
-
-func inProc(p string) bool { return roomfile.InProc(p) }
 
 // base is where a search starts: the workspace when no path is given. It is
 // the path as given, so what is found is named as the caller named it, but

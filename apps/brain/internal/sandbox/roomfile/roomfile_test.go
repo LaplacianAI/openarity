@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -117,5 +118,30 @@ func TestAnErrorNamesNoAddress(t *testing.T) {
 	_, err := Get(t.Context(), http.DefaultClient, ep, "x")
 	if err == nil || strings.Contains(err.Error(), "secret-key") {
 		t.Errorf("Get = %v", err)
+	}
+}
+
+// The path is added to the address's own query, which a provider's address
+// can hold; one asked for already is replaced, never sent twice.
+func TestThePathJoinsTheAddresssQuery(t *testing.T) {
+	t.Parallel()
+
+	var query url.Values
+	ep := room(t, func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query()
+		_, _ = w.Write([]byte("x"))
+	})
+	ep.URL += "?sig=abc&path=old"
+	if _, err := Get(t.Context(), http.DefaultClient, ep, "a&b=c#d.txt"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if query.Get("sig") != "abc" || len(query["path"]) != 1 || query.Get("path") != "a&b=c#d.txt" {
+		t.Errorf("asked with %v", query)
+	}
+
+	// An address that is not one says so, without the address.
+	_, err := Get(t.Context(), http.DefaultClient, sandbox.Endpoint{URL: "http://secret-key@a b\x7f"}, "x")
+	if err == nil || strings.Contains(err.Error(), "secret-key") {
+		t.Errorf("a bad address = %v", err)
 	}
 }

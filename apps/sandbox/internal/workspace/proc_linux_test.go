@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/roomfile"
 )
 
 // A search from / passes /proc by: Glob and Grep run in the workspace
@@ -32,7 +34,7 @@ func TestASearchFromTheRootPassesProcBy(t *testing.T) {
 
 // open refuses procfs by itself, not only behind resolve's check of the path.
 func TestOpenRefusesProcByTheFile(t *testing.T) {
-	f, err := open("/proc/self/environ")
+	f, err := roomfile.Open("/proc/self/environ")
 	if err == nil {
 		_ = f.Close()
 		t.Fatal("open read the process's environ")

@@ -53,7 +53,7 @@ type ReadResult struct {
 // maxLine bytes and maxRead bytes of output, however the file is shaped: one
 // that has no newline is one line, cut.
 func read(path string, offset, limit int) (ReadResult, error) {
-	f, err := open(path)
+	f, err := roomfile.Open(path)
 	if err != nil {
 		return ReadResult{}, err
 	}
@@ -134,7 +134,7 @@ func readLine(br *bufio.Reader) (line string, more bool, err error) {
 // it whole and a write never goes through a link into /proc.
 func write(path, content string) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // the room is the boundary: its files are the agent's
-		return 0, asProblem(err)
+		return 0, roomfile.AsProblem(err)
 	}
 	perm := fs.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
@@ -144,7 +144,7 @@ func write(path, content string) (int, error) {
 		perm = info.Mode().Perm()
 	}
 	if err := replaceFile(path, []byte(content), perm); err != nil {
-		return 0, asProblem(err)
+		return 0, roomfile.AsProblem(err)
 	}
 	return len(content), nil
 }
@@ -159,21 +159,21 @@ func edit(path, old, new string, all bool) (int, error) {
 	if old == new {
 		return 0, problem("old_string and new_string are the same; nothing would change")
 	}
-	f, err := open(path)
+	f, err := roomfile.Open(path)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return 0, asProblem(err)
+		return 0, roomfile.AsProblem(err)
 	}
 	if info.Size() > maxEdit {
 		return 0, problem("%s is %d bytes, over the %d MiB Edit takes; change it with Bash (sed, a script)", path, info.Size(), maxEdit>>20)
 	}
 	body, err := io.ReadAll(io.LimitReader(f, maxEdit+1))
 	if err != nil {
-		return 0, asProblem(err)
+		return 0, roomfile.AsProblem(err)
 	}
 	n := strings.Count(string(body), old)
 	switch {
@@ -187,7 +187,7 @@ func edit(path, old, new string, all bool) (int, error) {
 	}
 	out := strings.Replace(string(body), old, new, n)
 	if err := replaceFile(path, []byte(out), info.Mode().Perm()); err != nil {
-		return 0, asProblem(err)
+		return 0, roomfile.AsProblem(err)
 	}
 	return n, nil
 }
@@ -219,13 +219,6 @@ func replaceFile(path string, data []byte, perm fs.FileMode) error {
 	return err
 }
 
-// open opens a regular file for reading, or says why it cannot.
-func open(path string) (*os.File, error) { return roomfile.Open(path) }
-
 // binary is whether the start of a file looks like anything but text: a NUL
 // byte, as git and grep judge it.
 func binary(head []byte) bool { return bytes.IndexByte(head, 0) >= 0 }
-
-// asProblem turns a missing file or a refused one into the caller's
-// problem, which it is; anything else stays an error of the room's.
-func asProblem(err error) error { return roomfile.AsProblem(err) }

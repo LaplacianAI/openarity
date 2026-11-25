@@ -86,8 +86,15 @@ to disk and answer with its path rather than its bytes, as `mcp-mail-server`'s
 `keep_file(path, server: "<server's name>")`, a path from where the server runs
 or absolute, then reads it with `read_attachment` or sends it with `send_file`.
 The room is one per server, shared by the team's runs, and its files go when it
-is replaced or deleted after `OPENARITY_SANDBOX_IDLE`: `keep_file` never starts
-a room to look, and says the file is gone instead. A file is kept up to 25 MiB.
+is replaced or deleted after `OPENARITY_SANDBOX_IDLE`. `keep_file` never starts
+a room to look: a room that is stopped is told to the agent, which can call one
+of the server's tools to start it again. A file is kept up to 25 MiB.
+
+Because the room is shared, any file in it can be kept from any of the team's
+conversations. So a run that holds a command server is judged on `keep_file`
+as it is on `send_file`: a read for a member who is there, a write for a guest
+or a run nobody is present for, which asks or is refused with the team's mode
+at `writes`. A rule on `keep_file` decides for a member.
 
 A command server can still be registered, with its command after `--` and its
 environment as references, so a team can record what it uses:

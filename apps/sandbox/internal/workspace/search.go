@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/LaplacianAI/openarity/apps/sandbox/internal/roomfile"
 )
 
 const (
@@ -251,7 +253,7 @@ func spans(hits []int, context, n int) []spanLine {
 func walk(base string, fn func(p, rel string, d fs.DirEntry) error) error {
 	info, err := os.Stat(base)
 	if err != nil {
-		return asProblem(err)
+		return roomfile.AsProblem(err)
 	}
 	if !info.IsDir() {
 		return ignoreSkipAll(fn(base, filepath.Base(base), fs.FileInfoToDirEntry(info)))
@@ -265,7 +267,7 @@ func walk(base string, fn func(p, rel string, d fs.DirEntry) error) error {
 			return nil
 		}
 		if d.IsDir() {
-			if p != base && (skipped[d.Name()] || inProc(p)) {
+			if p != base && (skipped[d.Name()] || roomfile.InProc(p)) {
 				return fs.SkipDir
 			}
 			return nil
@@ -284,7 +286,7 @@ func walk(base string, fn func(p, rel string, d fs.DirEntry) error) error {
 // readWhole is a file searched: opened as Read opens one, so not on /proc,
 // and no more than maxGrepFile of it.
 func readWhole(p string) ([]byte, error) {
-	f, err := open(p)
+	f, err := roomfile.Open(p)
 	if err != nil {
 		return nil, err
 	}

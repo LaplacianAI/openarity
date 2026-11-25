@@ -57,7 +57,7 @@ VALUES (
 )
 RETURNING *;
 
--- How many files a run kept from its rooms with keep_file: a run resumed
--- keeps to the twenty it may keep, counting those before.
+-- How many files a run kept with one tool, keep_file's: a run resumed keeps
+-- to the twenty it may keep, counting those before.
 -- name: CountRunKeptFiles :one
-SELECT count(*) FROM attachments WHERE run_id = sqlc.arg('run_id')::uuid AND tool = 'keep_file';
+SELECT count(*) FROM attachments WHERE run_id = sqlc.arg('run_id')::uuid AND tool = sqlc.arg('tool')::text;

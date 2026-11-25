@@ -790,8 +790,15 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   is one the server can read; the route hands over only that room's files,
   which the server can already read. A room's own refusal carries
   `X-Room-Problem`, so a missing file is told from a missing room, which a
-  provider's proxy also answers 404. A read, class `Room`, behind the gate;
-  twenty a run, counted from the run's earlier ones; 25 MiB, as every
+  provider's proxy also answers 404. Behind the gate: class `Room`, a read,
+  for the session's own workspace; `Shares`, as `send_file`, for a run that
+  holds a command server, whose room is the server's and shared by the
+  team's sessions, so a guest or an unattended run would bring in another
+  conversation's file unseen. The class is the tool's, so a workspace read in
+  such a run is judged that way too. A run holding `keep_file` holds the
+  attachment tools, as its tool list is fixed and its first file comes
+  mid-run. Twenty tries a run, a failed one counted, counted from the run's
+  earlier ones; one file read at a time; 25 MiB, as every
   attachment, read by a client with the dial policy and no 8 MiB cap of its
   own (`discovery.RoomClient`). Files over 25 MiB are F4b.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes

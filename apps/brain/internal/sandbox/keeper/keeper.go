@@ -318,6 +318,11 @@ func (k *Keeper) Find(ctx context.Context, o Owner, team uuid.UUID, w Want) (san
 		return sandbox.Endpoint{}, fmt.Errorf("finding the room: %w", err)
 	}
 	if err := k.healthy(ctx, base, w, token); err != nil {
+		// A caller that gave up is not told the room is gone: it may run
+		// the tool that saved the file again.
+		if ctx.Err() != nil {
+			return sandbox.Endpoint{}, ctx.Err()
+		}
 		return sandbox.Endpoint{}, fmt.Errorf("%w: %w", sandbox.ErrNoRoom, err)
 	}
 	if err := k.store.TouchSandboxRoom(ctx, row.ID); err != nil {

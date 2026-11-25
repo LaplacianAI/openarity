@@ -55,7 +55,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/file" {
 		// A file the server wrote in this room, which it can read itself.
-		roomfile.Serve(w, r, h.root, func(msg string, args ...any) { h.logger.Error(msg, args...) })
+		roomfile.Serve(w, r, h.root, h.logger)
 		return
 	}
 	switch r.Method {

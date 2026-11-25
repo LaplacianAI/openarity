@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -169,7 +170,7 @@ func Download(w http.ResponseWriter, root, path string) error {
 // Serve answers GET /file?path= for a room whose files are under root, once
 // the caller is known to be the brain: the file whole, or why not. logf
 // hears what failed on the room's side.
-func Serve(w http.ResponseWriter, r *http.Request, root string, logf func(msg string, args ...any)) {
+func Serve(w http.ResponseWriter, r *http.Request, root string, logger *slog.Logger) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
@@ -188,6 +189,6 @@ func Serve(w http.ResponseWriter, r *http.Request, root string, logf func(msg st
 		http.Error(w, p.Error(), p.Status())
 		return
 	}
-	logf("room: a file could not be read", "error", err)
+	logger.ErrorContext(r.Context(), "room: a file could not be read", "error", err)
 	http.Error(w, "the file could not be read: "+err.Error(), http.StatusInternalServerError)
 }

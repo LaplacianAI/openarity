@@ -866,3 +866,32 @@ func TestFindStartsNoRoomWhenThereIsNone(t *testing.T) {
 		})
 	}
 }
+
+// A caller that gave up is told so, never that the room is gone: told that,
+// a model may run the tool that saved its file again.
+func TestFindGivenUpOnIsNotARoomGone(t *testing.T) {
+	t.Parallel()
+
+	w := newWorld(t)
+	w.ensure(w.keeper(), want())
+	ctx, cancel := context.WithCancel(t.Context())
+	// The caller gives up while the room's health is asked, after the rows
+	// and the provider are read.
+	quits := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		cancel()
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	connect := func(sandbox.Provider, string, string) (sandbox.Rooms, error) { return w.rooms, nil }
+	k := keeper.New(w.store, w.secrets, connect, quits, keeper.Images{}, logger)
+
+	_, err := k.Find(ctx, w.owner, w.team, want())
+	if !errors.Is(err, context.Canceled) || errors.Is(err, sandbox.ErrNoRoom) {
+		t.Fatalf("Find = %v, want context.Canceled and not ErrNoRoom", err)
+	}
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

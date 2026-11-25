@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +23,12 @@ type keptCount struct {
 	err error
 }
 
-func (c keptCount) CountRunKeptFiles(context.Context, uuid.UUID) (int64, error) { return c.n, c.err }
+func (c keptCount) CountRunKeptFiles(_ context.Context, arg db.CountRunKeptFilesParams) (int64, error) {
+	if arg.Tool != KeepFileToolName {
+		return 0, fmt.Errorf("counted %q's files, not keep_file's", arg.Tool)
+	}
+	return c.n, c.err
+}
 
 // serverRooms are command servers' rooms: each server's files as its room
 // serves them, a room not running, or one that cannot be reached.
@@ -192,14 +198,15 @@ func TestAFileThatCannotBeKeptSaysWhy(t *testing.T) {
 		says    string
 		noAsked bool
 	}{
-		"no path":              {false, nil, `{"path":"  ","server":"mail"}`, "path is empty", true},
-		"another server":       {false, nil, `{"path":"a.pdf","server":"github"}`, `no command MCP server named "github"`, true},
-		"no workspace":         {false, nil, `{"path":"a.pdf"}`, "no workspace", true},
-		"a missing file":       {false, nil, `{"path":"nope.pdf","server":"mail"}`, "nope.pdf does not exist", false},
-		"a room not running":   {false, func(k *keepFixture) { k.rooms.down["mail"] = sandbox.ErrNoRoom }, `{"path":"a.pdf","server":"mail"}`, "is gone", false},
-		"a room unreachable":   {false, func(k *keepFixture) { k.rooms.down["mail"] = errors.New("provider down") }, `{"path":"a.pdf","server":"mail"}`, "could not be reached", false},
-		"a workspace replaced": {true, func(k *keepFixture) { k.ws.ensureErr = sandbox.ErrReplaced }, `{"path":"a.png"}`, "is gone", true},
-		"not the arguments":    {false, nil, `{"path":5}`, "arguments are not", true},
+		"no path":              {args: `{"path":"  ","server":"mail"}`, says: "path is empty", noAsked: true},
+		"another server":       {args: `{"path":"a.pdf","server":"github"}`, says: `no command MCP server named "github"`, noAsked: true},
+		"no workspace":         {args: `{"path":"a.pdf"}`, says: "no workspace", noAsked: true},
+		"a missing file":       {args: `{"path":"nope.pdf","server":"mail"}`, says: "nope.pdf does not exist"},
+		"a room not running":   {setup: func(k *keepFixture) { k.rooms.down["mail"] = sandbox.ErrNoRoom }, args: `{"path":"a.pdf","server":"mail"}`, says: "room is not running"},
+		"an empty file":        {setup: func(k *keepFixture) { k.rooms.files["mail"] = map[string]string{"e.txt": ""} }, args: `{"path":"e.txt","server":"mail"}`, says: "e.txt is empty"},
+		"a room unreachable":   {setup: func(k *keepFixture) { k.rooms.down["mail"] = errors.New("provider down") }, args: `{"path":"a.pdf","server":"mail"}`, says: "could not be reached"},
+		"a workspace replaced": {work: true, setup: func(k *keepFixture) { k.ws.ensureErr = sandbox.ErrReplaced }, args: `{"path":"a.png"}`, says: "is gone", noAsked: true},
+		"not the arguments":    {args: `{"path":5}`, says: "arguments are not", noAsked: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			k := newKeepFixture(t, tc.work, "mail").withRoomFiles()
@@ -293,5 +300,106 @@ func TestKeepFileInAReplayAndAsAName(t *testing.T) {
 	none.builder.replay = true
 	if held(none.build(t), KeepFileToolName) {
 		t.Error("a replay of a run with no room holds keep_file")
+	}
+}
+
+// A file is kept under its path's last part, without what could end a line
+// of the tool's answer, and named something when nothing is left.
+func TestAKeptFileIsNamedCleanly(t *testing.T) {
+	for path, want := range map[string]string{
+		"out/chart.png":                   "chart.png",
+		"out/a\nb\u202e.png":              "ab.png",
+		"out/[x].csv":                     "x.csv",
+		"out/" + strings.Repeat("é", 300): strings.Repeat("é", maxName),
+		"/":                               "file",
+		"..":                              "file",
+	} {
+		if got := nameOf(path); got != want {
+			t.Errorf("nameOf(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// A run that holds keep_file holds the attachment tools with it, though its
+// conversation has no file yet and it holds no MCP tool: the tool list is
+// fixed for the run, and the file it keeps is read in that same run.
+func TestKeepFileComesWithTheAttachmentTools(t *testing.T) {
+	for name, tc := range map[string]struct {
+		k    func(t *testing.T) *keepFixture
+		want bool
+	}{
+		"a workspace":  {func(t *testing.T) *keepFixture { return newKeepFixture(t, true).withRoomFiles() }, true},
+		"no keep_file": {func(t *testing.T) *keepFixture { return newKeepFixture(t, true) }, false},
+		"a replay of a run": {func(t *testing.T) *keepFixture {
+			k := newKeepFixture(t, true).withRoomFiles()
+			k.builder.replay = true
+			return k
+		}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := tc.k(t).build(t)
+			if held(b, KeepFileToolName) != tc.want {
+				t.Fatalf("keep_file held %v, want %v", held(b, KeepFileToolName), tc.want)
+			}
+			for _, n := range []string{AttachmentsToolName, ReadAttachmentToolName} {
+				if held(b, n) != tc.want {
+					t.Errorf("%s held %v, want %v", n, held(b, n), tc.want)
+				}
+			}
+		})
+	}
+}
+
+// The workspace is the session's own room, so keeping from it is a read. A
+// command server's room is shared by the team's sessions, so a run that can
+// reach one is judged as send_file is: a guest is asked, a run nobody watches
+// is refused where it would ask.
+func TestKeepFileFromASharedRoomIsJudgedAsSharing(t *testing.T) {
+	for _, tc := range []struct {
+		servers []string
+		who     string
+		want    string
+	}{
+		{nil, "a member", "made"},
+		{nil, "a guest", "made"},
+		{nil, "nobody present", "made"},
+		{[]string{"mail"}, "a member", "made"},
+		{[]string{"mail"}, "a guest", "asks"},
+		{[]string{"mail"}, "nobody present", "refused"},
+	} {
+		t.Run(fmt.Sprintf("%v, %s", tc.servers, tc.who), func(t *testing.T) {
+			k := newKeepFixture(t, true, tc.servers...).withRoomFiles()
+			k.ws.room.answer("/file", http.StatusOK, "%PDF-1.7\n")
+			k.store.settings.ApprovalMode = string(approval.Writes)
+			k.store.settings.ApprovalTtlMinutes = 60
+			k.run.UserID = nil
+			if tc.who != "a guest" {
+				person := uuid.New()
+				k.run.UserID = &person
+				k.run.Unattended = tc.who == "nobody present"
+			}
+			k.builder.WithApprovals(&ruled{desk: &desk{byCall: map[string]db.Approval{}}})
+
+			_, err := k.keep(t, `{"path":"a.pdf"}`)
+			if got := sendOutcome(err); got != tc.want {
+				t.Fatalf("%s, want %s", got, tc.want)
+			}
+			if kept := len(k.rows.rows) == 1; kept != (tc.want == "made") {
+				t.Errorf("kept %v", kept)
+			}
+		})
+	}
+}
+
+// The name kept is the cleaned one, in the row as in the answer.
+func TestAFileIsKeptUnderItsCleanName(t *testing.T) {
+	k := newKeepFixture(t, true).withRoomFiles()
+	k.ws.room.answer("/file", http.StatusOK, "%PDF-1.7\n")
+	out, err := k.keep(t, `{"path":"out/a\nb.pdf"}`)
+	if err != nil {
+		t.Fatalf("keep_file: %v", err)
+	}
+	if len(k.rows.rows) != 1 || k.rows.rows[0].Filename != "ab.pdf" || !strings.HasPrefix(out, "Kept ab.pdf ") {
+		t.Errorf("kept %+v, told %q", k.rows.rows, out)
 	}
 }

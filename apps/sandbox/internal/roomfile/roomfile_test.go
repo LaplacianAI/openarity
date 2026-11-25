@@ -1,8 +1,11 @@
 package roomfile
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,11 +14,13 @@ import (
 	"testing"
 )
 
+var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
+
 func get(t *testing.T, root, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/file?path="+path, nil)
-	Serve(w, r, root, func(string, ...any) {})
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/file?path="+url.QueryEscape(path), nil)
+	Serve(w, r, root, quiet)
 	return w
 }
 
@@ -119,7 +124,7 @@ func TestALinkIsJudgedByWhatItNames(t *testing.T) {
 // Only GET: nothing else is a download.
 func TestOnlyAGetIsADownload(t *testing.T) {
 	w := httptest.NewRecorder()
-	Serve(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/file?path=x", nil), t.TempDir(), func(string, ...any) {})
+	Serve(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/file?path=x", nil), t.TempDir(), quiet)
 	if w.Code != http.StatusMethodNotAllowed || w.Header().Get("Allow") != "GET" {
 		t.Errorf("%d, Allow %q", w.Code, w.Header().Get("Allow"))
 	}

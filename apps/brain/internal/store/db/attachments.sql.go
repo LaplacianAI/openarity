@@ -13,13 +13,18 @@ import (
 )
 
 const countRunKeptFiles = `-- name: CountRunKeptFiles :one
-SELECT count(*) FROM attachments WHERE run_id = $1::uuid AND tool = 'keep_file'
+SELECT count(*) FROM attachments WHERE run_id = $1::uuid AND tool = $2::text
 `
 
-// How many files a run kept from its rooms with keep_file: a run resumed
-// keeps to the twenty it may keep, counting those before.
-func (q *Queries) CountRunKeptFiles(ctx context.Context, runID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countRunKeptFiles, runID)
+type CountRunKeptFilesParams struct {
+	RunID uuid.UUID
+	Tool  string
+}
+
+// How many files a run kept with one tool, keep_file's: a run resumed keeps
+// to the twenty it may keep, counting those before.
+func (q *Queries) CountRunKeptFiles(ctx context.Context, arg CountRunKeptFilesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunKeptFiles, arg.RunID, arg.Tool)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

@@ -22,10 +22,9 @@ import (
 const maxAnswer = 4 << 20
 
 // A Problem is the model's to fix: a path that is not there, an edit that
-// matched twice. Its text is the workspace's, written for the model.
-type Problem struct{ Msg string }
-
-func (p *Problem) Error() string { return p.Msg }
+// matched twice. Its text is the workspace's, written for the model. It is a
+// room's file's refusal too, so both come back as one type.
+type Problem = roomfile.Problem
 
 var (
 	// ErrGone is a call that never reached the workspace: nothing listens at
@@ -136,11 +135,7 @@ func (c *Client) Grep(ctx context.Context, q GrepQuery) (Grep, error) {
 func (c *Client) File(ctx context.Context, path string) ([]byte, error) {
 	ep := sandbox.Endpoint{URL: strings.TrimRight(c.ep.URL, "/") + roomfile.Route, Header: c.ep.Header}
 	data, err := roomfile.Get(ctx, c.http, ep, path)
-	var p *roomfile.Problem
-	switch {
-	case errors.As(err, &p):
-		return nil, &Problem{Msg: p.Msg}
-	case errors.Is(err, roomfile.ErrGone):
+	if errors.Is(err, roomfile.ErrGone) {
 		return nil, fmt.Errorf("%w: %w", ErrGone, err)
 	}
 	return data, err

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -166,5 +167,29 @@ func TestDeletingARunTombstonesItsFiles(t *testing.T) {
 	}
 	if n := scalar[int](t, s, `SELECT count(*) FROM attachments WHERE id = $1`, person.ID); n != 1 {
 		t.Error("the person's file went with the run")
+	}
+}
+
+// A run's count is of its own files kept with the tool asked about: not
+// another tool's, and not another run's.
+func TestCountRunKeptFilesCountsOneRunsOneTool(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	_, session, _ := seedMessage(t, s, "kept-count")
+	run, other := seedRun(t, s, session), seedRun(t, s, session)
+	for i, f := range []struct {
+		run  uuid.UUID
+		tool string
+	}{{run, "keep_file"}, {run, "keep_file"}, {run, "mail__fetch"}, {other, "keep_file"}} {
+		p := toolFile(t, s, session, f.run, "teams/x/objects/count-"+uuid.NewString())
+		p.Tool, p.CallID = ptrTo(f.tool), ptrTo(fmt.Sprintf("call-%d", i))
+		if _, err := s.CreateToolAttachment(t.Context(), p); err != nil {
+			t.Fatalf("CreateToolAttachment: %v", err)
+		}
+	}
+	n, err := s.CountRunKeptFiles(t.Context(), db.CountRunKeptFilesParams{RunID: run, Tool: "keep_file"})
+	if err != nil || n != 2 {
+		t.Errorf("CountRunKeptFiles = %d, %v; want the run's two keep_file files", n, err)
 	}
 }

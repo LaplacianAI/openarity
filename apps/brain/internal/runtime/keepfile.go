@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -33,12 +35,15 @@ const (
 	// keepTimeout bounds reading one file from its room: 25 MiB at a slow
 	// megabyte a second, and then some.
 	keepTimeout = 2 * time.Minute
+	// maxName is the most of a file's name kept, in runes: a name a person
+	// reads, well inside the 512 an attachment's filename may be.
+	maxName = 100
 )
 
 // RoomFileStore is what keeping a room's file reads beyond F2's keeper: how
 // many the run has kept before.
 type RoomFileStore interface {
-	CountRunKeptFiles(ctx context.Context, runID uuid.UUID) (int64, error)
+	CountRunKeptFiles(ctx context.Context, arg db.CountRunKeptFilesParams) (int64, error)
 }
 
 // ServerRooms is where a command MCP server's room hands over its files: the
@@ -73,6 +78,9 @@ type keepFile struct {
 	client  *http.Client
 	team    uuid.UUID
 	kept    atomic.Int64
+	// one keeps a run's files one at a time: each is held whole, up to
+	// 25 MiB, and a model can ask for twenty at once.
+	one sync.Mutex
 }
 
 func (k *keepFile) tool() agent.Tool {
@@ -88,7 +96,7 @@ func (k *keepFile) tool() agent.Tool {
 		Description: fmt.Sprintf("Keep a file a tool wrote, in %s, as a file of this conversation: "+
 			"it returns the file's id, which send_file sends to the person and read_attachment reads. "+
 			"Use it when a tool saved a file and said where rather than returning it. "+
-			"A file is kept up to 25 MiB, and %d a run.", strings.Join(from, " or "), keptPerRun),
+			"A file is kept up to 25 MiB; a run tries at most %d, and a try that fails counts.", strings.Join(from, " or "), keptPerRun),
 		Schema: json.RawMessage(`{"type":"object","properties":{` +
 			`"path":{"type":"string","description":"the file's path in the room"},` +
 			`"server":{"type":"string","description":"the MCP server whose room it is in; leave out for the workspace"}},` +
@@ -122,18 +130,43 @@ func (k *keepFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if k.kept.Add(1) > keptPerRun {
 		return "", fmt.Errorf("this run has tried to keep %d files, the most one run keeps; say where the rest are instead", keptPerRun)
 	}
+	k.one.Lock()
+	defer k.one.Unlock()
 	reading, cancel := context.WithTimeout(ctx, keepTimeout)
 	data, err := read(reading, p)
 	cancel()
 	if err != nil {
 		return "", err
 	}
-	name := path.Base(p)
+	if len(data) == 0 {
+		return "", fmt.Errorf("%s is empty: there is nothing to keep", p)
+	}
+	name := nameOf(p)
 	kept, err := k.keep.Keep(ctx, mcp.File{Tool: KeepFileToolName, Name: name, Data: data})
 	if err != nil {
+		// The cause is logged by the keeper: it can name the store.
 		return "", fmt.Errorf("%s was read but could not be kept", p)
 	}
 	return fmt.Sprintf("Kept %s (%s, %s) as file %s.", name, objects.Sniff(data), sizeOf(int64(len(data))), kept.ID), nil
+}
+
+// nameOf is the name a file is kept under: its path's last element, without
+// anything that could end a line of the tool's answer, as an MCP tool's
+// file's name is cleaned.
+func nameOf(p string) string {
+	name := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) || r == '[' || r == ']' || r == unicode.ReplacementChar {
+			return -1
+		}
+		return r
+	}, path.Base(p)))
+	if r := []rune(name); len(r) > maxName {
+		name = string(r[:maxName])
+	}
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return "file"
+	}
+	return name
 }
 
 // reader is how the file is read: from the workspace with no server, or from
@@ -168,8 +201,9 @@ func (k *keepFile) fromWorkspace(ctx context.Context, p string) ([]byte, error) 
 func (k *keepFile) fromServer(ctx context.Context, s db.McpServer, p string) ([]byte, error) {
 	ep, err := k.rooms.Files(ctx, k.team, s)
 	if errors.Is(err, sandbox.ErrNoRoom) {
-		return nil, fmt.Errorf("%s is gone: %s's room is not running, and a room's files go with it. "+
-			"Call the tool that saved it again, then keep it", p, s.Name)
+		return nil, fmt.Errorf("%s cannot be read: %s's room is not running. "+
+			"Call one of %s's tools, which starts its room again, then keep the file; "+
+			"if it is not there, call the tool that saved it again", p, s.Name, s.Name)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s's room could not be reached: %w", s.Name, err)
@@ -178,39 +212,58 @@ func (k *keepFile) fromServer(ctx context.Context, s db.McpServer, p string) ([]
 	var prob *roomfile.Problem
 	switch {
 	case errors.As(err, &prob):
-		return nil, errors.New(prob.Msg)
+		return nil, err
 	case errors.Is(err, roomfile.ErrGone):
-		return nil, fmt.Errorf("%s is gone: %s's room went away, and a room's files go with it", p, s.Name)
+		return nil, fmt.Errorf("%s is gone: %s's room went away, and a room's files go with it "+
+			"(or its room runs an image from before keep_file)", p, s.Name)
 	case err != nil:
 		return nil, fmt.Errorf("%s could not be read from %s's room: %w", p, s.Name, err)
 	}
 	return data, nil
 }
 
-// keepFileFor is the tool for a run that can keep a file from a room: one
-// with a workspace or a command server, where F2's keeper keeps tool files.
+// keepsRoomFiles is whether a run holds keep_file: one with a workspace or a
+// command server whose room can be read, where F2's keeper keeps tool files.
 // A replay holds a stand-in wherever a run might, as its rooms have moved on.
+// The attachment tools are held with it, so the file it keeps can be read
+// and sent in the same run.
+func (b *Builder) keepsRoomFiles(run db.Run, work bool, commands map[string]db.McpServer) bool {
+	if !work && len(commands) == 0 {
+		return false
+	}
+	if b.replay {
+		return true
+	}
+	if b.keeperFor(run) == nil || b.roomFiles == nil {
+		return false
+	}
+	return work || len(b.serverRooms(commands)) > 0
+}
+
+// serverRooms is the command servers whose rooms keep_file reads: none
+// without the rooms or the client to call them with.
+func (b *Builder) serverRooms(commands map[string]db.McpServer) map[string]db.McpServer {
+	if b.roomFiles == nil || b.roomFiles.Servers == nil || b.roomFiles.Client == nil {
+		return nil
+	}
+	return commands
+}
+
+// keepFileFor is keep_file, for a run keepsRoomFiles says holds it.
 func (b *Builder) keepFileFor(
 	ctx context.Context, run db.Run, ws *runWorkspace, work bool, commands map[string]db.McpServer,
 ) (agent.Tool, bool, error) {
-	if !work && len(commands) == 0 {
+	if !b.keepsRoomFiles(run, work, commands) {
 		return agent.Tool{}, false, nil
 	}
 	if b.replay {
 		return (&keepFile{}).tool(), true, nil
 	}
-	keep := b.keeperFor(run)
-	if keep == nil || b.roomFiles == nil {
-		return agent.Tool{}, false, nil
+	k := &keepFile{
+		keep: b.keeperFor(run), ws: ws, team: run.TeamID,
+		rooms: b.roomFiles.Servers, client: b.roomFiles.Client, servers: b.serverRooms(commands),
 	}
-	k := &keepFile{keep: keep, ws: ws, team: run.TeamID, rooms: b.roomFiles.Servers, client: b.roomFiles.Client}
-	if k.rooms != nil && k.client != nil {
-		k.servers = commands
-	}
-	if k.ws == nil && len(k.servers) == 0 {
-		return agent.Tool{}, false, nil
-	}
-	n, err := b.roomFiles.Store.CountRunKeptFiles(ctx, run.ID)
+	n, err := b.roomFiles.Store.CountRunKeptFiles(ctx, db.CountRunKeptFilesParams{RunID: run.ID, Tool: KeepFileToolName})
 	if err != nil {
 		return agent.Tool{}, false, fmt.Errorf("reading how many files the run has kept: %w", err)
 	}
