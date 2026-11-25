@@ -36,7 +36,7 @@ WITH claimed AS (
         ORDER BY d.next_attempt_at, d.id
         LIMIT $5
         FOR UPDATE SKIP LOCKED)
-    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq, r.detail, r.attachment_id, r.call_id
+    RETURNING r.id, r.team_id, r.run_id, r.session_id, r.channel_id, r.in_reply_to, r.kind, r.text, r.status, r.attempts, r.last_error, r.next_attempt_at, r.created_at, r.sent_at, r.parts_sent, r.event_seq, r.detail, r.attachment_id, r.call_id, r.posted_ref
 )
 SELECT c.id, c.run_id, c.team_id, c.channel_id, c.kind, c.text, c.attempts, c.parts_sent, c.event_seq, c.detail,
        ch.provider, ch.reply_url,
@@ -407,7 +407,7 @@ JOIN sessions s ON s.id = r.session_id
 JOIN channels ch ON ch.id = s.channel_id
 WHERE r.id = $4::uuid AND r.reply_to_channel
   AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
-RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq, detail, attachment_id, call_id
+RETURNING id, team_id, run_id, session_id, channel_id, in_reply_to, kind, text, status, attempts, last_error, next_attempt_at, created_at, sent_at, parts_sent, event_seq, detail, attachment_id, call_id, posted_ref
 `
 
 type InsertReplyParams struct {
@@ -455,6 +455,7 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 		&i.Detail,
 		&i.AttachmentID,
 		&i.CallID,
+		&i.PostedRef,
 	)
 	return i, err
 }

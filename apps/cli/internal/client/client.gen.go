@@ -1389,6 +1389,138 @@ func (e SandboxTemplateBuildStatus) Valid() bool {
 	}
 }
 
+// Defines values for SchedulePausedReason.
+const (
+	ByPerson       SchedulePausedReason = "by_person"
+	Failing        SchedulePausedReason = "failing"
+	MakerCannotRun SchedulePausedReason = "maker_cannot_run"
+	MakerGone      SchedulePausedReason = "maker_gone"
+	TargetGone     SchedulePausedReason = "target_gone"
+)
+
+// Valid indicates whether the value is a known member of the SchedulePausedReason enum.
+func (e SchedulePausedReason) Valid() bool {
+	switch e {
+	case ByPerson:
+		return true
+	case Failing:
+		return true
+	case MakerCannotRun:
+		return true
+	case MakerGone:
+		return true
+	case TargetGone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleStatus.
+const (
+	ScheduleStatusActive   ScheduleStatus = "active"
+	ScheduleStatusDeleted  ScheduleStatus = "deleted"
+	ScheduleStatusDone     ScheduleStatus = "done"
+	ScheduleStatusPaused   ScheduleStatus = "paused"
+	ScheduleStatusProposed ScheduleStatus = "proposed"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleStatus enum.
+func (e ScheduleStatus) Valid() bool {
+	switch e {
+	case ScheduleStatusActive:
+		return true
+	case ScheduleStatusDeleted:
+		return true
+	case ScheduleStatusDone:
+		return true
+	case ScheduleStatusPaused:
+		return true
+	case ScheduleStatusProposed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleFireOutcome.
+const (
+	ScheduleFireOutcomeAnswered     ScheduleFireOutcome = "answered"
+	ScheduleFireOutcomeCatchUp      ScheduleFireOutcome = "catch_up"
+	ScheduleFireOutcomeFailed       ScheduleFireOutcome = "failed"
+	ScheduleFireOutcomeLate         ScheduleFireOutcome = "late"
+	ScheduleFireOutcomeMissed       ScheduleFireOutcome = "missed"
+	ScheduleFireOutcomeSilent       ScheduleFireOutcome = "silent"
+	ScheduleFireOutcomeSkippedBusy  ScheduleFireOutcome = "skipped_busy"
+	ScheduleFireOutcomeSkippedCap   ScheduleFireOutcome = "skipped_cap"
+	ScheduleFireOutcomeSkippedMaker ScheduleFireOutcome = "skipped_maker"
+	ScheduleFireOutcomeStarted      ScheduleFireOutcome = "started"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleFireOutcome enum.
+func (e ScheduleFireOutcome) Valid() bool {
+	switch e {
+	case ScheduleFireOutcomeAnswered:
+		return true
+	case ScheduleFireOutcomeCatchUp:
+		return true
+	case ScheduleFireOutcomeFailed:
+		return true
+	case ScheduleFireOutcomeLate:
+		return true
+	case ScheduleFireOutcomeMissed:
+		return true
+	case ScheduleFireOutcomeSilent:
+		return true
+	case ScheduleFireOutcomeSkippedBusy:
+		return true
+	case ScheduleFireOutcomeSkippedCap:
+		return true
+	case ScheduleFireOutcomeSkippedMaker:
+		return true
+	case ScheduleFireOutcomeStarted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleTargetKind.
+const (
+	Own ScheduleTargetKind = "own"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleTargetKind enum.
+func (e ScheduleTargetKind) Valid() bool {
+	switch e {
+	case Own:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleWhenKind.
+const (
+	At    ScheduleWhenKind = "at"
+	Cron  ScheduleWhenKind = "cron"
+	Every ScheduleWhenKind = "every"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleWhenKind enum.
+func (e ScheduleWhenKind) Valid() bool {
+	switch e {
+	case At:
+		return true
+	case Cron:
+		return true
+	case Every:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchProvider.
 const (
 	SearchProviderBrave          SearchProvider = "brave"
@@ -1536,6 +1668,24 @@ func (e UpdateChannelRequestReplyMode) Valid() bool {
 	}
 }
 
+// Defines values for UpdateScheduleRequestStatus.
+const (
+	UpdateScheduleRequestStatusActive UpdateScheduleRequestStatus = "active"
+	UpdateScheduleRequestStatusPaused UpdateScheduleRequestStatus = "paused"
+)
+
+// Valid indicates whether the value is a known member of the UpdateScheduleRequestStatus enum.
+func (e UpdateScheduleRequestStatus) Valid() bool {
+	switch e {
+	case UpdateScheduleRequestStatusActive:
+		return true
+	case UpdateScheduleRequestStatusPaused:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WhoamiKind.
 const (
 	WhoamiKindDev     WhoamiKind = "dev"
@@ -1551,6 +1701,33 @@ func (e WhoamiKind) Valid() bool {
 	case WhoamiKindService:
 		return true
 	case WhoamiKindUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListSchedulesParamsStatus.
+const (
+	ListSchedulesParamsStatusActive   ListSchedulesParamsStatus = "active"
+	ListSchedulesParamsStatusDeleted  ListSchedulesParamsStatus = "deleted"
+	ListSchedulesParamsStatusDone     ListSchedulesParamsStatus = "done"
+	ListSchedulesParamsStatusPaused   ListSchedulesParamsStatus = "paused"
+	ListSchedulesParamsStatusProposed ListSchedulesParamsStatus = "proposed"
+)
+
+// Valid indicates whether the value is a known member of the ListSchedulesParamsStatus enum.
+func (e ListSchedulesParamsStatus) Valid() bool {
+	switch e {
+	case ListSchedulesParamsStatusActive:
+		return true
+	case ListSchedulesParamsStatusDeleted:
+		return true
+	case ListSchedulesParamsStatusDone:
+		return true
+	case ListSchedulesParamsStatusPaused:
+		return true
+	case ListSchedulesParamsStatusProposed:
 		return true
 	default:
 		return false
@@ -2488,6 +2665,23 @@ type CreateChannelRequest struct {
 	//
 	// Examples: @Fduv
 	TriggerWord *TriggerWord `json:"trigger_word,omitempty" yaml:"trigger_word,omitempty"`
+}
+
+// CreateScheduleRequest defines model for CreateScheduleRequest.
+type CreateScheduleRequest struct {
+	// AgentID Absent is the team's hub.
+	AgentID *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
+
+	// Name Yours once; it is how you pick it later.
+	Name      string          `json:"name" yaml:"name"`
+	Objective string          `json:"objective" yaml:"objective"`
+	Target    *ScheduleTarget `json:"target,omitempty" yaml:"target,omitempty"`
+
+	// Timezone An IANA zone. Absent is the team's.
+	Timezone *string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
+
+	// When When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
+	When ScheduleWhen `json:"when" yaml:"when"`
 }
 
 // CreateTeamRequest defines model for CreateTeamRequest.
@@ -3663,6 +3857,14 @@ type PendingSenderPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// PreviewScheduleRequest defines model for PreviewScheduleRequest.
+type PreviewScheduleRequest struct {
+	Timezone *string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
+
+	// When When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
+	When ScheduleWhen `json:"when" yaml:"when"`
+}
+
 // Proposal defines model for Proposal.
 type Proposal struct {
 	AppliedAt *time.Time `json:"applied_at,omitempty" yaml:"applied_at,omitempty"`
@@ -4059,6 +4261,175 @@ type SayUpload struct {
 
 	// Text What the person says, as in `SayRequest`. It may be empty when a file is sent.
 	Text *string `json:"text,omitempty" yaml:"text,omitempty"`
+}
+
+// Schedule defines model for Schedule.
+type Schedule struct {
+	// AgentID The agent that answers. Absent is the team's hub.
+	AgentID   *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
+	CreatedAt time.Time           `json:"created_at" yaml:"created_at"`
+
+	// CreatedBy Whom it runs as. Absent once they have left.
+	CreatedBy   *openapi_types.UUID `json:"created_by,omitempty" yaml:"created_by,omitempty"`
+	ID          openapi_types.UUID  `json:"id" yaml:"id"`
+	LastFiredAt *time.Time          `json:"last_fired_at,omitempty" yaml:"last_fired_at,omitempty"`
+
+	// LastOutcome What its newest fire did; see ScheduleFire.
+	LastOutcome *string    `json:"last_outcome,omitempty" yaml:"last_outcome,omitempty"`
+	Name        string     `json:"name" yaml:"name"`
+	NextFireAt  *time.Time `json:"next_fire_at,omitempty" yaml:"next_fire_at,omitempty"`
+
+	// Objective What to do each time it runs.
+	Objective string `json:"objective" yaml:"objective"`
+
+	// PausedReason Why it is paused. `failing` is five failed runs in a row.
+	PausedReason *SchedulePausedReason `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
+
+	// SessionID The conversation its runs answer in.
+	SessionID openapi_types.UUID `json:"session_id" yaml:"session_id"`
+
+	// Status `proposed` waits for its maker to confirm what an agent proposed;
+	// `done` is a one-shot that has run or was missed.
+	Status ScheduleStatus `json:"status" yaml:"status"`
+	Target ScheduleTarget `json:"target" yaml:"target"`
+
+	// Timezone The IANA zone its rule is read in.
+	//
+	// Examples: Europe/London
+	Timezone string `json:"timezone" yaml:"timezone"`
+
+	// Upcoming Its next three fires, for an active or proposed schedule.
+	Upcoming  []time.Time `json:"upcoming" yaml:"upcoming"`
+	UpdatedAt time.Time   `json:"updated_at" yaml:"updated_at"`
+
+	// When When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
+	When ScheduleWhen `json:"when" yaml:"when"`
+}
+
+// SchedulePausedReason Why it is paused. `failing` is five failed runs in a row.
+type SchedulePausedReason string
+
+// ScheduleStatus `proposed` waits for its maker to confirm what an agent proposed;
+// `done` is a one-shot that has run or was missed.
+type ScheduleStatus string
+
+// ScheduleFire defines model for ScheduleFire.
+type ScheduleFire struct {
+	FiredAt time.Time `json:"fired_at" yaml:"fired_at"`
+
+	// Outcome `started`, `late` and `catch_up` are runs still going; `answered`,
+	// `silent` (nothing to say) and `failed` how one ended. `missed`
+	// came and went while the team was not running; `skipped_busy`
+	// found its last run still working; `skipped_cap` was over the
+	// team's hourly limit; `skipped_maker` found its maker could no
+	// longer start runs.
+	Outcome      ScheduleFireOutcome `json:"outcome" yaml:"outcome"`
+	RunID        *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+	ScheduledFor time.Time           `json:"scheduled_for" yaml:"scheduled_for"`
+}
+
+// ScheduleFireOutcome `started`, `late` and `catch_up` are runs still going; `answered`,
+// `silent` (nothing to say) and `failed` how one ended. `missed`
+// came and went while the team was not running; `skipped_busy`
+// found its last run still working; `skipped_cap` was over the
+// team's hourly limit; `skipped_maker` found its maker could no
+// longer start runs.
+type ScheduleFireOutcome string
+
+// ScheduleFirePage defines model for ScheduleFirePage.
+type ScheduleFirePage struct {
+	Items      []ScheduleFire `json:"items" yaml:"items"`
+	NextCursor *string        `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// SchedulePage defines model for SchedulePage.
+type SchedulePage struct {
+	Items []Schedule `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page.
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// SchedulePreview defines model for SchedulePreview.
+type SchedulePreview struct {
+	Timezone string      `json:"timezone" yaml:"timezone"`
+	Upcoming []time.Time `json:"upcoming" yaml:"upcoming"`
+}
+
+// ScheduleRun defines model for ScheduleRun.
+type ScheduleRun struct {
+	RunID openapi_types.UUID `json:"run_id" yaml:"run_id"`
+}
+
+// ScheduleSettings defines model for ScheduleSettings.
+type ScheduleSettings struct {
+	// AgentsMaySchedule Whether agents may propose schedules in a chat.
+	AgentsMaySchedule bool `json:"agents_may_schedule" yaml:"agents_may_schedule"`
+
+	// FiresPerHour Runs the team's schedules and watchers may start in an hour; past it, a fire is skipped and recorded.
+	FiresPerHour               int32 `json:"fires_per_hour" yaml:"fires_per_hour"`
+	ScheduleMinIntervalMinutes int32 `json:"schedule_min_interval_minutes" yaml:"schedule_min_interval_minutes"`
+
+	// SchedulesPerMember Schedules and watchers one person may have.
+	SchedulesPerMember int32 `json:"schedules_per_member" yaml:"schedules_per_member"`
+
+	// SchedulesPerTeam Schedules and watchers the team may have; at least the per-person limit.
+	SchedulesPerTeam int32 `json:"schedules_per_team" yaml:"schedules_per_team"`
+
+	// Timezone The zone a schedule reads its rule in when it names none.
+	Timezone string `json:"timezone" yaml:"timezone"`
+}
+
+// ScheduleTarget defines model for ScheduleTarget.
+type ScheduleTarget struct {
+	// Kind Where it answers. `own` is a conversation of its own on the dashboard, whose answers reach its maker as news.
+	Kind ScheduleTargetKind `json:"kind" yaml:"kind"`
+}
+
+// ScheduleTargetKind Where it answers. `own` is a conversation of its own on the dashboard, whose answers reach its maker as news.
+type ScheduleTargetKind string
+
+// ScheduleWhen When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
+type ScheduleWhen struct {
+	// At Once, at this instant; at most a year away.
+	At *time.Time `json:"at,omitempty" yaml:"at,omitempty"`
+
+	// Cron Five fields, minute hour day month weekday (`0 9 * * 1-5`), or a descriptor such as `@daily`, read in the schedule's zone; firing at most once per the team's minimum interval.
+	//
+	// Examples: 0 9 * * 1-5
+	Cron *string `json:"cron,omitempty" yaml:"cron,omitempty"`
+
+	// EverySeconds Every this many seconds, in whole minutes, from one interval after it was made; at least the team's minimum interval.
+	EverySeconds *int64           `json:"every_seconds,omitempty" yaml:"every_seconds,omitempty"`
+	Kind         ScheduleWhenKind `json:"kind" yaml:"kind"`
+}
+
+// ScheduleWhenKind defines model for ScheduleWhen.Kind.
+type ScheduleWhenKind string
+
+// ScheduledNews defines model for ScheduledNews.
+type ScheduledNews struct {
+	Count int                 `json:"count" yaml:"count"`
+	Items []ScheduledNewsItem `json:"items" yaml:"items"`
+
+	// More There is more than one page shows.
+	More bool `json:"more" yaml:"more"`
+}
+
+// ScheduledNewsItem defines model for ScheduledNewsItem.
+type ScheduledNewsItem struct {
+	FiredAt      time.Time           `json:"fired_at" yaml:"fired_at"`
+	Name         string              `json:"name" yaml:"name"`
+	Outcome      string              `json:"outcome" yaml:"outcome"`
+	RunID        *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+	ScheduleID   openapi_types.UUID  `json:"schedule_id" yaml:"schedule_id"`
+	ScheduledFor time.Time           `json:"scheduled_for" yaml:"scheduled_for"`
+	SessionID    openapi_types.UUID  `json:"session_id" yaml:"session_id"`
+}
+
+// ScheduledNewsSeenRequest defines model for ScheduledNewsSeenRequest.
+type ScheduledNewsSeenRequest struct {
+	ScheduleID openapi_types.UUID `json:"schedule_id" yaml:"schedule_id"`
 }
 
 // SearchProvider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
@@ -4670,6 +5041,26 @@ type UpdateMemberRequest struct {
 	Role *string `json:"role,omitempty" yaml:"role,omitempty"`
 }
 
+// UpdateScheduleRequest Changes only what it names.
+type UpdateScheduleRequest struct {
+	AgentID *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
+
+	// Hub Answer by the team's hub again. Not with `agent_id`.
+	Hub       *bool   `json:"hub,omitempty" yaml:"hub,omitempty"`
+	Name      *string `json:"name,omitempty" yaml:"name,omitempty"`
+	Objective *string `json:"objective,omitempty" yaml:"objective,omitempty"`
+
+	// Status Pause, or resume, it.
+	Status   *UpdateScheduleRequestStatus `json:"status,omitempty" yaml:"status,omitempty"`
+	Timezone *string                      `json:"timezone,omitempty" yaml:"timezone,omitempty"`
+
+	// When When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
+	When *ScheduleWhen `json:"when,omitempty" yaml:"when,omitempty"`
+}
+
+// UpdateScheduleRequestStatus Pause, or resume, it.
+type UpdateScheduleRequestStatus string
+
 // User defines model for User.
 type User struct {
 	// Email Absent when the provider released none
@@ -4763,6 +5154,9 @@ type Query = string
 
 // RunID defines model for RunID.
 type RunID = openapi_types.UUID
+
+// ScheduleID defines model for ScheduleID.
+type ScheduleID = openapi_types.UUID
 
 // ServerID defines model for ServerID.
 type ServerID = openapi_types.UUID
@@ -5025,6 +5419,39 @@ type StreamRunEventsParams struct {
 	LastEventID *int32 `json:"Last-Event-ID,omitempty" yaml:"Last-Event-ID,omitempty"`
 }
 
+// ListSchedulesParams defines parameters for ListSchedules.
+type ListSchedulesParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Status Only schedules in these states.
+	Status *[]ListSchedulesParamsStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
+
+	// All Everyone's, not only the caller's.
+	All *bool `form:"all,omitempty" json:"all,omitempty" yaml:"all,omitempty"`
+}
+
+// ListSchedulesParamsStatus defines parameters for ListSchedules.
+type ListSchedulesParamsStatus string
+
+// ListScheduleFiresParams defines parameters for ListScheduleFires.
+type ListScheduleFiresParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
 // ListTeamPendingSendersParams defines parameters for ListTeamPendingSenders.
 type ListTeamPendingSendersParams struct {
 	// Limit Rows per page. A value above the maximum is clamped rather than
@@ -5202,6 +5629,21 @@ type StartRunJSONRequestBody = RunRequest
 
 // GiveRunFeedbackJSONRequestBody defines body for GiveRunFeedback for application/json ContentType.
 type GiveRunFeedbackJSONRequestBody = RunFeedbackRequest
+
+// SaveScheduleSettingsJSONRequestBody defines body for SaveScheduleSettings for application/json ContentType.
+type SaveScheduleSettingsJSONRequestBody = ScheduleSettings
+
+// MarkScheduledNewsSeenJSONRequestBody defines body for MarkScheduledNewsSeen for application/json ContentType.
+type MarkScheduledNewsSeenJSONRequestBody = ScheduledNewsSeenRequest
+
+// CreateScheduleJSONRequestBody defines body for CreateSchedule for application/json ContentType.
+type CreateScheduleJSONRequestBody = CreateScheduleRequest
+
+// PreviewScheduleJSONRequestBody defines body for PreviewSchedule for application/json ContentType.
+type PreviewScheduleJSONRequestBody = PreviewScheduleRequest
+
+// UpdateScheduleJSONRequestBody defines body for UpdateSchedule for application/json ContentType.
+type UpdateScheduleJSONRequestBody = UpdateScheduleRequest
 
 // StartConversationJSONRequestBody defines body for StartConversation for application/json ContentType.
 type StartConversationJSONRequestBody = SayRequest
@@ -6695,6 +7137,190 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
 	GiveRunFeedback(ctx context.Context, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetScheduleSettings Read a team's limits for schedules
+	//
+	// Any member may read them. A team that never saved them reads the defaults.
+	//
+	// Corresponds with GET /teams/{id}/schedule-settings (the `GetScheduleSettings` operationId).
+	GetScheduleSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveScheduleSettingsWithBody Change a team's limits for schedules
+	//
+	// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+	SaveScheduleSettingsWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SaveScheduleSettings Change a team's limits for schedules
+	//
+	// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+	SaveScheduleSettings(ctx context.Context, id TeamID, body SaveScheduleSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetScheduledNews What the caller's schedules did that they have not seen
+	//
+	// Requires `schedule:read` in this team. Every fire that failed, was
+	// skipped or was missed, wherever the schedule answers, and every
+	// answer kept in a schedule's own conversation. A run with nothing to
+	// say tells nobody.
+	//
+	// Corresponds with GET /teams/{id}/scheduled/news (the `GetScheduledNews` operationId).
+	GetScheduledNews(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkScheduledNewsSeenWithBody Mark what one of the caller's schedules did as seen
+	//
+	// Requires `schedule:read` in this team.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+	MarkScheduledNewsSeenWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkScheduledNewsSeen Mark what one of the caller's schedules did as seen
+	//
+	// Requires `schedule:read` in this team.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+	MarkScheduledNewsSeen(ctx context.Context, id TeamID, body MarkScheduledNewsSeenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSchedules List schedules
+	//
+	// Requires `schedule:read` in this team. The caller's own, newest
+	// first; `all=true` lists everyone's and requires `schedule:manage`.
+	// Deleted schedules are listed only when `status=deleted` is asked for.
+	//
+	// Corresponds with GET /teams/{id}/schedules (the `ListSchedules` operationId).
+	ListSchedules(ctx context.Context, id TeamID, params *ListSchedulesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateScheduleWithBody Make a schedule
+	//
+	// Requires `schedule:write` in this team. The schedule is active at
+	// once, and runs in a conversation of its own as the caller, with
+	// their permissions when it fires. Its rule is held to the team's
+	// minimum interval, and the team's limits on schedules per person and
+	// per team apply.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+	CreateScheduleWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSchedule Make a schedule
+	//
+	// Requires `schedule:write` in this team. The schedule is active at
+	// once, and runs in a conversation of its own as the caller, with
+	// their permissions when it fires. Its rule is held to the team's
+	// minimum interval, and the team's limits on schedules per person and
+	// per team apply.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+	CreateSchedule(ctx context.Context, id TeamID, body CreateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewScheduleWithBody Say when a rule would fire, before saving it
+	//
+	// Requires `schedule:read` in this team. The next three times, and the
+	// zone they are read in: the team's when none is given.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+	PreviewScheduleWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewSchedule Say when a rule would fire, before saving it
+	//
+	// Requires `schedule:read` in this team. The next three times, and the
+	// zone they are read in: the team's when none is given.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+	PreviewSchedule(ctx context.Context, id TeamID, body PreviewScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSchedule Delete a schedule
+	//
+	// Requires `schedule:write` in this team. It fires no more, and its
+	// conversation is closed and kept, with its runs. A run already
+	// working finishes.
+	//
+	// Corresponds with DELETE /teams/{id}/schedules/{scheduleID} (the `DeleteSchedule` operationId).
+	DeleteSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSchedule Read a schedule
+	//
+	// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+	//
+	// Corresponds with GET /teams/{id}/schedules/{scheduleID} (the `GetSchedule` operationId).
+	GetSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateScheduleWithBody Change, pause or resume a schedule
+	//
+	// Requires `schedule:write` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage`. A new rule or
+	// zone moves its next fire. `status` pauses or resumes it; a resumed
+	// schedule fires from now, and what it missed while paused is not
+	// caught up.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+	UpdateScheduleWithBody(ctx context.Context, id TeamID, scheduleID ScheduleID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSchedule Change, pause or resume a schedule
+	//
+	// Requires `schedule:write` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage`. A new rule or
+	// zone moves its next fire. `status` pauses or resumes it; a resumed
+	// schedule fires from now, and what it missed while paused is not
+	// caught up.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+	UpdateSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, body UpdateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmSchedule Confirm a schedule an agent proposed
+	//
+	// Requires `schedule:write` in this team, and the caller to be the
+	// person it was proposed to. A proposal lapses after an hour.
+	//
+	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
+	ConfirmSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListScheduleFires List what a schedule did each time it was due
+	//
+	// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+	//
+	// Corresponds with GET /teams/{id}/schedules/{scheduleID}/fires (the `ListScheduleFires` operationId).
+	ListScheduleFires(ctx context.Context, id TeamID, scheduleID ScheduleID, params *ListScheduleFiresParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunSchedule Run a schedule now
+	//
+	// Requires `schedule:write` in this team. One extra run, now, under the
+	// same checks as a fire: its maker may still start runs, the team is
+	// under its hourly limit, and its last run has finished.
+	//
+	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/run (the `RunSchedule` operationId).
+	RunSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TakeOverSchedule Take over a schedule whose maker left
+	//
+	// Requires `schedule:manage` in this team. Only a schedule paused
+	// because its maker left, or may no longer start runs, is taken over.
+	// It stays paused until the caller resumes it, and runs as them from
+	// then.
+	//
+	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
+	TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamPendingSenders List senders waiting on any of the team's channels
 	//
@@ -9513,6 +10139,380 @@ func (c *Client) GiveRunFeedbackWithBody(ctx context.Context, id TeamID, runID R
 // Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
 func (c *Client) GiveRunFeedback(ctx context.Context, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGiveRunFeedbackRequest(c.Server, id, runID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetScheduleSettings Read a team's limits for schedules
+//
+// Any member may read them. A team that never saved them reads the defaults.
+//
+// Corresponds with GET /teams/{id}/schedule-settings (the `GetScheduleSettings` operationId).
+func (c *Client) GetScheduleSettings(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetScheduleSettingsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveScheduleSettingsWithBody Change a team's limits for schedules
+//
+// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+func (c *Client) SaveScheduleSettingsWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveScheduleSettingsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SaveScheduleSettings Change a team's limits for schedules
+//
+// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+func (c *Client) SaveScheduleSettings(ctx context.Context, id TeamID, body SaveScheduleSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSaveScheduleSettingsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetScheduledNews What the caller's schedules did that they have not seen
+//
+// Requires `schedule:read` in this team. Every fire that failed, was
+// skipped or was missed, wherever the schedule answers, and every
+// answer kept in a schedule's own conversation. A run with nothing to
+// say tells nobody.
+//
+// Corresponds with GET /teams/{id}/scheduled/news (the `GetScheduledNews` operationId).
+func (c *Client) GetScheduledNews(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetScheduledNewsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkScheduledNewsSeenWithBody Mark what one of the caller's schedules did as seen
+//
+// Requires `schedule:read` in this team.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+func (c *Client) MarkScheduledNewsSeenWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkScheduledNewsSeenRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkScheduledNewsSeen Mark what one of the caller's schedules did as seen
+//
+// Requires `schedule:read` in this team.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+func (c *Client) MarkScheduledNewsSeen(ctx context.Context, id TeamID, body MarkScheduledNewsSeenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkScheduledNewsSeenRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSchedules List schedules
+//
+// Requires `schedule:read` in this team. The caller's own, newest
+// first; `all=true` lists everyone's and requires `schedule:manage`.
+// Deleted schedules are listed only when `status=deleted` is asked for.
+//
+// Corresponds with GET /teams/{id}/schedules (the `ListSchedules` operationId).
+func (c *Client) ListSchedules(ctx context.Context, id TeamID, params *ListSchedulesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSchedulesRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateScheduleWithBody Make a schedule
+//
+// Requires `schedule:write` in this team. The schedule is active at
+// once, and runs in a conversation of its own as the caller, with
+// their permissions when it fires. Its rule is held to the team's
+// minimum interval, and the team's limits on schedules per person and
+// per team apply.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+func (c *Client) CreateScheduleWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateScheduleRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSchedule Make a schedule
+//
+// Requires `schedule:write` in this team. The schedule is active at
+// once, and runs in a conversation of its own as the caller, with
+// their permissions when it fires. Its rule is held to the team's
+// minimum interval, and the team's limits on schedules per person and
+// per team apply.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+func (c *Client) CreateSchedule(ctx context.Context, id TeamID, body CreateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateScheduleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewScheduleWithBody Say when a rule would fire, before saving it
+//
+// Requires `schedule:read` in this team. The next three times, and the
+// zone they are read in: the team's when none is given.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+func (c *Client) PreviewScheduleWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewScheduleRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewSchedule Say when a rule would fire, before saving it
+//
+// Requires `schedule:read` in this team. The next three times, and the
+// zone they are read in: the team's when none is given.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+func (c *Client) PreviewSchedule(ctx context.Context, id TeamID, body PreviewScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewScheduleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteSchedule Delete a schedule
+//
+// Requires `schedule:write` in this team. It fires no more, and its
+// conversation is closed and kept, with its runs. A run already
+// working finishes.
+//
+// Corresponds with DELETE /teams/{id}/schedules/{scheduleID} (the `DeleteSchedule` operationId).
+func (c *Client) DeleteSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteScheduleRequest(c.Server, id, scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSchedule Read a schedule
+//
+// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+//
+// Corresponds with GET /teams/{id}/schedules/{scheduleID} (the `GetSchedule` operationId).
+func (c *Client) GetSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetScheduleRequest(c.Server, id, scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateScheduleWithBody Change, pause or resume a schedule
+//
+// Requires `schedule:write` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage`. A new rule or
+// zone moves its next fire. `status` pauses or resumes it; a resumed
+// schedule fires from now, and what it missed while paused is not
+// caught up.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+func (c *Client) UpdateScheduleWithBody(ctx context.Context, id TeamID, scheduleID ScheduleID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateScheduleRequestWithBody(c.Server, id, scheduleID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSchedule Change, pause or resume a schedule
+//
+// Requires `schedule:write` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage`. A new rule or
+// zone moves its next fire. `status` pauses or resumes it; a resumed
+// schedule fires from now, and what it missed while paused is not
+// caught up.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+func (c *Client) UpdateSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, body UpdateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateScheduleRequest(c.Server, id, scheduleID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmSchedule Confirm a schedule an agent proposed
+//
+// Requires `schedule:write` in this team, and the caller to be the
+// person it was proposed to. A proposal lapses after an hour.
+//
+// Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
+func (c *Client) ConfirmSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmScheduleRequest(c.Server, id, scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListScheduleFires List what a schedule did each time it was due
+//
+// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+//
+// Corresponds with GET /teams/{id}/schedules/{scheduleID}/fires (the `ListScheduleFires` operationId).
+func (c *Client) ListScheduleFires(ctx context.Context, id TeamID, scheduleID ScheduleID, params *ListScheduleFiresParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListScheduleFiresRequest(c.Server, id, scheduleID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RunSchedule Run a schedule now
+//
+// Requires `schedule:write` in this team. One extra run, now, under the
+// same checks as a fire: its maker may still start runs, the team is
+// under its hourly limit, and its last run has finished.
+//
+// Corresponds with POST /teams/{id}/schedules/{scheduleID}/run (the `RunSchedule` operationId).
+func (c *Client) RunSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunScheduleRequest(c.Server, id, scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TakeOverSchedule Take over a schedule whose maker left
+//
+// Requires `schedule:manage` in this team. Only a schedule paused
+// because its maker left, or may no longer start runs, is taken over.
+// It stays paused until the caller resumes it, and runs as them from
+// then.
+//
+// Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
+func (c *Client) TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTakeOverScheduleRequest(c.Server, id, scheduleID)
 	if err != nil {
 		return nil, err
 	}
@@ -14072,6 +15072,698 @@ func NewGiveRunFeedbackRequestWithBody(server string, id TeamID, runID RunID, co
 	return req, nil
 }
 
+// NewGetScheduleSettingsRequest constructs an http.Request for the GetScheduleSettings method
+func NewGetScheduleSettingsRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedule-settings", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSaveScheduleSettingsRequest calls the generic SaveScheduleSettings builder with application/json body
+func NewSaveScheduleSettingsRequest(server string, id TeamID, body SaveScheduleSettingsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSaveScheduleSettingsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSaveScheduleSettingsRequestWithBody constructs an http.Request for the SaveScheduleSettings method, with any body, and a specified content type
+func NewSaveScheduleSettingsRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedule-settings", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetScheduledNewsRequest constructs an http.Request for the GetScheduledNews method
+func NewGetScheduledNewsRequest(server string, id TeamID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/scheduled/news", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMarkScheduledNewsSeenRequest calls the generic MarkScheduledNewsSeen builder with application/json body
+func NewMarkScheduledNewsSeenRequest(server string, id TeamID, body MarkScheduledNewsSeenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMarkScheduledNewsSeenRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewMarkScheduledNewsSeenRequestWithBody constructs an http.Request for the MarkScheduledNewsSeen method, with any body, and a specified content type
+func NewMarkScheduledNewsSeenRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/scheduled/news/seen", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListSchedulesRequest constructs an http.Request for the ListSchedules method
+func NewListSchedulesRequest(server string, id TeamID, params *ListSchedulesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.All != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "all", *params.All, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateScheduleRequest calls the generic CreateSchedule builder with application/json body
+func NewCreateScheduleRequest(server string, id TeamID, body CreateScheduleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateScheduleRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateScheduleRequestWithBody constructs an http.Request for the CreateSchedule method, with any body, and a specified content type
+func NewCreateScheduleRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPreviewScheduleRequest calls the generic PreviewSchedule builder with application/json body
+func NewPreviewScheduleRequest(server string, id TeamID, body PreviewScheduleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPreviewScheduleRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPreviewScheduleRequestWithBody constructs an http.Request for the PreviewSchedule method, with any body, and a specified content type
+func NewPreviewScheduleRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/preview", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteScheduleRequest constructs an http.Request for the DeleteSchedule method
+func NewDeleteScheduleRequest(server string, id TeamID, scheduleID ScheduleID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "scheduleID", scheduleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetScheduleRequest constructs an http.Request for the GetSchedule method
+func NewGetScheduleRequest(server string, id TeamID, scheduleID ScheduleID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "scheduleID", scheduleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateScheduleRequest calls the generic UpdateSchedule builder with application/json body
+func NewUpdateScheduleRequest(server string, id TeamID, scheduleID ScheduleID, body UpdateScheduleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateScheduleRequestWithBody(server, id, scheduleID, "application/json", bodyReader)
+}
+
+// NewUpdateScheduleRequestWithBody constructs an http.Request for the UpdateSchedule method, with any body, and a specified content type
+func NewUpdateScheduleRequestWithBody(server string, id TeamID, scheduleID ScheduleID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "scheduleID", scheduleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewConfirmScheduleRequest constructs an http.Request for the ConfirmSchedule method
+func NewConfirmScheduleRequest(server string, id TeamID, scheduleID ScheduleID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "scheduleID", scheduleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/%s/confirm", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListScheduleFiresRequest constructs an http.Request for the ListScheduleFires method
+func NewListScheduleFiresRequest(server string, id TeamID, scheduleID ScheduleID, params *ListScheduleFiresParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "scheduleID", scheduleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/%s/fires", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRunScheduleRequest constructs an http.Request for the RunSchedule method
+func NewRunScheduleRequest(server string, id TeamID, scheduleID ScheduleID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "scheduleID", scheduleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/%s/run", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewTakeOverScheduleRequest constructs an http.Request for the TakeOverSchedule method
+func NewTakeOverScheduleRequest(server string, id TeamID, scheduleID ScheduleID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "scheduleID", scheduleID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedules/%s/take-over", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListTeamPendingSendersRequest constructs an http.Request for the ListTeamPendingSenders method
 func NewListTeamPendingSendersRequest(server string, id TeamID, params *ListTeamPendingSendersParams) (*http.Request, error) {
 	var err error
@@ -16929,6 +18621,208 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /teams/{id}/runs/{runID}/feedback (the `GiveRunFeedback` operationId).
 	GiveRunFeedbackWithResponse(ctx context.Context, id TeamID, runID RunID, body GiveRunFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*GiveRunFeedbackResponse, error)
+
+	// GetScheduleSettingsWithResponse Read a team's limits for schedules
+	//
+	// Any member may read them. A team that never saved them reads the defaults.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/schedule-settings (the `GetScheduleSettings` operationId).
+	GetScheduleSettingsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetScheduleSettingsResponse, error)
+
+	// SaveScheduleSettingsWithBodyWithResponse Change a team's limits for schedules
+	//
+	// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+	SaveScheduleSettingsWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveScheduleSettingsResponse, error)
+
+	// SaveScheduleSettingsWithResponse Change a team's limits for schedules
+	//
+	// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+	SaveScheduleSettingsWithResponse(ctx context.Context, id TeamID, body SaveScheduleSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveScheduleSettingsResponse, error)
+
+	// GetScheduledNewsWithResponse What the caller's schedules did that they have not seen
+	//
+	// Requires `schedule:read` in this team. Every fire that failed, was
+	// skipped or was missed, wherever the schedule answers, and every
+	// answer kept in a schedule's own conversation. A run with nothing to
+	// say tells nobody.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/scheduled/news (the `GetScheduledNews` operationId).
+	GetScheduledNewsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetScheduledNewsResponse, error)
+
+	// MarkScheduledNewsSeenWithBodyWithResponse Mark what one of the caller's schedules did as seen
+	//
+	// Requires `schedule:read` in this team.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+	MarkScheduledNewsSeenWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkScheduledNewsSeenResponse, error)
+
+	// MarkScheduledNewsSeenWithResponse Mark what one of the caller's schedules did as seen
+	//
+	// Requires `schedule:read` in this team.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+	MarkScheduledNewsSeenWithResponse(ctx context.Context, id TeamID, body MarkScheduledNewsSeenJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkScheduledNewsSeenResponse, error)
+
+	// ListSchedulesWithResponse List schedules
+	//
+	// Requires `schedule:read` in this team. The caller's own, newest
+	// first; `all=true` lists everyone's and requires `schedule:manage`.
+	// Deleted schedules are listed only when `status=deleted` is asked for.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/schedules (the `ListSchedules` operationId).
+	ListSchedulesWithResponse(ctx context.Context, id TeamID, params *ListSchedulesParams, reqEditors ...RequestEditorFn) (*ListSchedulesResponse, error)
+
+	// CreateScheduleWithBodyWithResponse Make a schedule
+	//
+	// Requires `schedule:write` in this team. The schedule is active at
+	// once, and runs in a conversation of its own as the caller, with
+	// their permissions when it fires. Its rule is held to the team's
+	// minimum interval, and the team's limits on schedules per person and
+	// per team apply.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+	CreateScheduleWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScheduleResponse, error)
+
+	// CreateScheduleWithResponse Make a schedule
+	//
+	// Requires `schedule:write` in this team. The schedule is active at
+	// once, and runs in a conversation of its own as the caller, with
+	// their permissions when it fires. Its rule is held to the team's
+	// minimum interval, and the team's limits on schedules per person and
+	// per team apply.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+	CreateScheduleWithResponse(ctx context.Context, id TeamID, body CreateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScheduleResponse, error)
+
+	// PreviewScheduleWithBodyWithResponse Say when a rule would fire, before saving it
+	//
+	// Requires `schedule:read` in this team. The next three times, and the
+	// zone they are read in: the team's when none is given.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+	PreviewScheduleWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewScheduleResponse, error)
+
+	// PreviewScheduleWithResponse Say when a rule would fire, before saving it
+	//
+	// Requires `schedule:read` in this team. The next three times, and the
+	// zone they are read in: the team's when none is given.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+	PreviewScheduleWithResponse(ctx context.Context, id TeamID, body PreviewScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewScheduleResponse, error)
+
+	// DeleteScheduleWithResponse Delete a schedule
+	//
+	// Requires `schedule:write` in this team. It fires no more, and its
+	// conversation is closed and kept, with its runs. A run already
+	// working finishes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/schedules/{scheduleID} (the `DeleteSchedule` operationId).
+	DeleteScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*DeleteScheduleResponse, error)
+
+	// GetScheduleWithResponse Read a schedule
+	//
+	// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/schedules/{scheduleID} (the `GetSchedule` operationId).
+	GetScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*GetScheduleResponse, error)
+
+	// UpdateScheduleWithBodyWithResponse Change, pause or resume a schedule
+	//
+	// Requires `schedule:write` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage`. A new rule or
+	// zone moves its next fire. `status` pauses or resumes it; a resumed
+	// schedule fires from now, and what it missed while paused is not
+	// caught up.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+	UpdateScheduleWithBodyWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateScheduleResponse, error)
+
+	// UpdateScheduleWithResponse Change, pause or resume a schedule
+	//
+	// Requires `schedule:write` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage`. A new rule or
+	// zone moves its next fire. `status` pauses or resumes it; a resumed
+	// schedule fires from now, and what it missed while paused is not
+	// caught up.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+	UpdateScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, body UpdateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateScheduleResponse, error)
+
+	// ConfirmScheduleWithResponse Confirm a schedule an agent proposed
+	//
+	// Requires `schedule:write` in this team, and the caller to be the
+	// person it was proposed to. A proposal lapses after an hour.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
+	ConfirmScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*ConfirmScheduleResponse, error)
+
+	// ListScheduleFiresWithResponse List what a schedule did each time it was due
+	//
+	// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/schedules/{scheduleID}/fires (the `ListScheduleFires` operationId).
+	ListScheduleFiresWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, params *ListScheduleFiresParams, reqEditors ...RequestEditorFn) (*ListScheduleFiresResponse, error)
+
+	// RunScheduleWithResponse Run a schedule now
+	//
+	// Requires `schedule:write` in this team. One extra run, now, under the
+	// same checks as a fire: its maker may still start runs, the team is
+	// under its hourly limit, and its last run has finished.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/run (the `RunSchedule` operationId).
+	RunScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*RunScheduleResponse, error)
+
+	// TakeOverScheduleWithResponse Take over a schedule whose maker left
+	//
+	// Requires `schedule:manage` in this team. Only a schedule paused
+	// because its maker left, or may no longer start runs, is taken over.
+	// It stays paused until the caller resumes it, and runs as them from
+	// then.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
+	TakeOverScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*TakeOverScheduleResponse, error)
 
 	// ListTeamPendingSendersWithResponse List senders waiting on any of the team's channels
 	//
@@ -20731,6 +22625,664 @@ func (r GiveRunFeedbackResponse) ContentType() string {
 	return ""
 }
 
+// GetScheduleSettingsResponse401Headers the declared response headers of an HTTP 401 response for GetScheduleSettings
+type GetScheduleSettingsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetScheduleSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduleSettings
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetScheduleSettingsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetScheduleSettingsResponse) GetJSON200() *ScheduleSettings {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetScheduleSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetScheduleSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetScheduleSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetScheduleSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SaveScheduleSettingsResponse401Headers the declared response headers of an HTTP 401 response for SaveScheduleSettings
+type SaveScheduleSettingsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type SaveScheduleSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduleSettings
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SaveScheduleSettingsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SaveScheduleSettingsResponse) GetJSON200() *ScheduleSettings {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r SaveScheduleSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SaveScheduleSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SaveScheduleSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SaveScheduleSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetScheduledNewsResponse401Headers the declared response headers of an HTTP 401 response for GetScheduledNews
+type GetScheduledNewsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetScheduledNewsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduledNews
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetScheduledNewsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetScheduledNewsResponse) GetJSON200() *ScheduledNews {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetScheduledNewsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetScheduledNewsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetScheduledNewsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetScheduledNewsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// MarkScheduledNewsSeenResponse401Headers the declared response headers of an HTTP 401 response for MarkScheduledNewsSeen
+type MarkScheduledNewsSeenResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type MarkScheduledNewsSeenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MarkScheduledNewsSeenResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r MarkScheduledNewsSeenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkScheduledNewsSeenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkScheduledNewsSeenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MarkScheduledNewsSeenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListSchedulesResponse401Headers the declared response headers of an HTTP 401 response for ListSchedules
+type ListSchedulesResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListSchedulesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SchedulePage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListSchedulesResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSchedulesResponse) GetJSON200() *SchedulePage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSchedulesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSchedulesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSchedulesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSchedulesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateScheduleResponse401Headers the declared response headers of an HTTP 401 response for CreateSchedule
+type CreateScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Schedule
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateScheduleResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateScheduleResponse) GetJSON201() *Schedule {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PreviewScheduleResponse401Headers the declared response headers of an HTTP 401 response for PreviewSchedule
+type PreviewScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type PreviewScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SchedulePreview
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *PreviewScheduleResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PreviewScheduleResponse) GetJSON200() *SchedulePreview {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r PreviewScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreviewScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreviewScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreviewScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteScheduleResponse401Headers the declared response headers of an HTTP 401 response for DeleteSchedule
+type DeleteScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteScheduleResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetScheduleResponse401Headers the declared response headers of an HTTP 401 response for GetSchedule
+type GetScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Schedule
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetScheduleResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetScheduleResponse) GetJSON200() *Schedule {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UpdateScheduleResponse401Headers the declared response headers of an HTTP 401 response for UpdateSchedule
+type UpdateScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type UpdateScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Schedule
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *UpdateScheduleResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateScheduleResponse) GetJSON200() *Schedule {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ConfirmScheduleResponse401Headers the declared response headers of an HTTP 401 response for ConfirmSchedule
+type ConfirmScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ConfirmScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Schedule
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ConfirmScheduleResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConfirmScheduleResponse) GetJSON200() *Schedule {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ConfirmScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConfirmScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConfirmScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConfirmScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListScheduleFiresResponse401Headers the declared response headers of an HTTP 401 response for ListScheduleFires
+type ListScheduleFiresResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListScheduleFiresResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ScheduleFirePage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListScheduleFiresResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListScheduleFiresResponse) GetJSON200() *ScheduleFirePage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListScheduleFiresResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListScheduleFiresResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListScheduleFiresResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListScheduleFiresResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RunScheduleResponse401Headers the declared response headers of an HTTP 401 response for RunSchedule
+type RunScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RunScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *ScheduleRun
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RunScheduleResponse401Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r RunScheduleResponse) GetJSON202() *ScheduleRun {
+	return r.JSON202
+}
+
+// GetBody returns the raw response body bytes
+func (r RunScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RunScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RunScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// TakeOverScheduleResponse401Headers the declared response headers of an HTTP 401 response for TakeOverSchedule
+type TakeOverScheduleResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type TakeOverScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Schedule
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *TakeOverScheduleResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TakeOverScheduleResponse) GetJSON200() *Schedule {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r TakeOverScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TakeOverScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TakeOverScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TakeOverScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListTeamPendingSendersResponse401Headers the declared response headers of an HTTP 401 response for ListTeamPendingSenders
 type ListTeamPendingSendersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -23929,6 +26481,322 @@ func (c *ClientWithResponses) GiveRunFeedbackWithResponse(ctx context.Context, i
 		return nil, err
 	}
 	return ParseGiveRunFeedbackResponse(rsp)
+}
+
+// GetScheduleSettingsWithResponse Read a team's limits for schedules
+//
+// Any member may read them. A team that never saved them reads the defaults.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/schedule-settings (the `GetScheduleSettings` operationId).
+func (c *ClientWithResponses) GetScheduleSettingsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetScheduleSettingsResponse, error) {
+	rsp, err := c.GetScheduleSettings(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetScheduleSettingsResponse(rsp)
+}
+
+// SaveScheduleSettingsWithBodyWithResponse Change a team's limits for schedules
+//
+// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+func (c *ClientWithResponses) SaveScheduleSettingsWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SaveScheduleSettingsResponse, error) {
+	rsp, err := c.SaveScheduleSettingsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveScheduleSettingsResponse(rsp)
+}
+
+// SaveScheduleSettingsWithResponse Change a team's limits for schedules
+//
+// Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
+func (c *ClientWithResponses) SaveScheduleSettingsWithResponse(ctx context.Context, id TeamID, body SaveScheduleSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveScheduleSettingsResponse, error) {
+	rsp, err := c.SaveScheduleSettings(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSaveScheduleSettingsResponse(rsp)
+}
+
+// GetScheduledNewsWithResponse What the caller's schedules did that they have not seen
+//
+// Requires `schedule:read` in this team. Every fire that failed, was
+// skipped or was missed, wherever the schedule answers, and every
+// answer kept in a schedule's own conversation. A run with nothing to
+// say tells nobody.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/scheduled/news (the `GetScheduledNews` operationId).
+func (c *ClientWithResponses) GetScheduledNewsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetScheduledNewsResponse, error) {
+	rsp, err := c.GetScheduledNews(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetScheduledNewsResponse(rsp)
+}
+
+// MarkScheduledNewsSeenWithBodyWithResponse Mark what one of the caller's schedules did as seen
+//
+// Requires `schedule:read` in this team.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+func (c *ClientWithResponses) MarkScheduledNewsSeenWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkScheduledNewsSeenResponse, error) {
+	rsp, err := c.MarkScheduledNewsSeenWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkScheduledNewsSeenResponse(rsp)
+}
+
+// MarkScheduledNewsSeenWithResponse Mark what one of the caller's schedules did as seen
+//
+// Requires `schedule:read` in this team.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
+func (c *ClientWithResponses) MarkScheduledNewsSeenWithResponse(ctx context.Context, id TeamID, body MarkScheduledNewsSeenJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkScheduledNewsSeenResponse, error) {
+	rsp, err := c.MarkScheduledNewsSeen(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkScheduledNewsSeenResponse(rsp)
+}
+
+// ListSchedulesWithResponse List schedules
+//
+// Requires `schedule:read` in this team. The caller's own, newest
+// first; `all=true` lists everyone's and requires `schedule:manage`.
+// Deleted schedules are listed only when `status=deleted` is asked for.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/schedules (the `ListSchedules` operationId).
+func (c *ClientWithResponses) ListSchedulesWithResponse(ctx context.Context, id TeamID, params *ListSchedulesParams, reqEditors ...RequestEditorFn) (*ListSchedulesResponse, error) {
+	rsp, err := c.ListSchedules(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSchedulesResponse(rsp)
+}
+
+// CreateScheduleWithBodyWithResponse Make a schedule
+//
+// Requires `schedule:write` in this team. The schedule is active at
+// once, and runs in a conversation of its own as the caller, with
+// their permissions when it fires. Its rule is held to the team's
+// minimum interval, and the team's limits on schedules per person and
+// per team apply.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+func (c *ClientWithResponses) CreateScheduleWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScheduleResponse, error) {
+	rsp, err := c.CreateScheduleWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateScheduleResponse(rsp)
+}
+
+// CreateScheduleWithResponse Make a schedule
+//
+// Requires `schedule:write` in this team. The schedule is active at
+// once, and runs in a conversation of its own as the caller, with
+// their permissions when it fires. Its rule is held to the team's
+// minimum interval, and the team's limits on schedules per person and
+// per team apply.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/schedules (the `CreateSchedule` operationId).
+func (c *ClientWithResponses) CreateScheduleWithResponse(ctx context.Context, id TeamID, body CreateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScheduleResponse, error) {
+	rsp, err := c.CreateSchedule(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateScheduleResponse(rsp)
+}
+
+// PreviewScheduleWithBodyWithResponse Say when a rule would fire, before saving it
+//
+// Requires `schedule:read` in this team. The next three times, and the
+// zone they are read in: the team's when none is given.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+func (c *ClientWithResponses) PreviewScheduleWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewScheduleResponse, error) {
+	rsp, err := c.PreviewScheduleWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewScheduleResponse(rsp)
+}
+
+// PreviewScheduleWithResponse Say when a rule would fire, before saving it
+//
+// Requires `schedule:read` in this team. The next three times, and the
+// zone they are read in: the team's when none is given.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/schedules/preview (the `PreviewSchedule` operationId).
+func (c *ClientWithResponses) PreviewScheduleWithResponse(ctx context.Context, id TeamID, body PreviewScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewScheduleResponse, error) {
+	rsp, err := c.PreviewSchedule(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewScheduleResponse(rsp)
+}
+
+// DeleteScheduleWithResponse Delete a schedule
+//
+// Requires `schedule:write` in this team. It fires no more, and its
+// conversation is closed and kept, with its runs. A run already
+// working finishes.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/schedules/{scheduleID} (the `DeleteSchedule` operationId).
+func (c *ClientWithResponses) DeleteScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*DeleteScheduleResponse, error) {
+	rsp, err := c.DeleteSchedule(ctx, id, scheduleID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteScheduleResponse(rsp)
+}
+
+// GetScheduleWithResponse Read a schedule
+//
+// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/schedules/{scheduleID} (the `GetSchedule` operationId).
+func (c *ClientWithResponses) GetScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*GetScheduleResponse, error) {
+	rsp, err := c.GetSchedule(ctx, id, scheduleID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetScheduleResponse(rsp)
+}
+
+// UpdateScheduleWithBodyWithResponse Change, pause or resume a schedule
+//
+// Requires `schedule:write` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage`. A new rule or
+// zone moves its next fire. `status` pauses or resumes it; a resumed
+// schedule fires from now, and what it missed while paused is not
+// caught up.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+func (c *ClientWithResponses) UpdateScheduleWithBodyWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateScheduleResponse, error) {
+	rsp, err := c.UpdateScheduleWithBody(ctx, id, scheduleID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateScheduleResponse(rsp)
+}
+
+// UpdateScheduleWithResponse Change, pause or resume a schedule
+//
+// Requires `schedule:write` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage`. A new rule or
+// zone moves its next fire. `status` pauses or resumes it; a resumed
+// schedule fires from now, and what it missed while paused is not
+// caught up.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
+func (c *ClientWithResponses) UpdateScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, body UpdateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateScheduleResponse, error) {
+	rsp, err := c.UpdateSchedule(ctx, id, scheduleID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateScheduleResponse(rsp)
+}
+
+// ConfirmScheduleWithResponse Confirm a schedule an agent proposed
+//
+// Requires `schedule:write` in this team, and the caller to be the
+// person it was proposed to. A proposal lapses after an hour.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
+func (c *ClientWithResponses) ConfirmScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*ConfirmScheduleResponse, error) {
+	rsp, err := c.ConfirmSchedule(ctx, id, scheduleID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmScheduleResponse(rsp)
+}
+
+// ListScheduleFiresWithResponse List what a schedule did each time it was due
+//
+// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/schedules/{scheduleID}/fires (the `ListScheduleFires` operationId).
+func (c *ClientWithResponses) ListScheduleFiresWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, params *ListScheduleFiresParams, reqEditors ...RequestEditorFn) (*ListScheduleFiresResponse, error) {
+	rsp, err := c.ListScheduleFires(ctx, id, scheduleID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListScheduleFiresResponse(rsp)
+}
+
+// RunScheduleWithResponse Run a schedule now
+//
+// Requires `schedule:write` in this team. One extra run, now, under the
+// same checks as a fire: its maker may still start runs, the team is
+// under its hourly limit, and its last run has finished.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/schedules/{scheduleID}/run (the `RunSchedule` operationId).
+func (c *ClientWithResponses) RunScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*RunScheduleResponse, error) {
+	rsp, err := c.RunSchedule(ctx, id, scheduleID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunScheduleResponse(rsp)
+}
+
+// TakeOverScheduleWithResponse Take over a schedule whose maker left
+//
+// Requires `schedule:manage` in this team. Only a schedule paused
+// because its maker left, or may no longer start runs, is taken over.
+// It stays paused until the caller resumes it, and runs as them from
+// then.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
+func (c *ClientWithResponses) TakeOverScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*TakeOverScheduleResponse, error) {
+	rsp, err := c.TakeOverSchedule(ctx, id, scheduleID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTakeOverScheduleResponse(rsp)
 }
 
 // ListTeamPendingSendersWithResponse List senders waiting on any of the team's channels
@@ -27187,6 +30055,532 @@ func ParseGiveRunFeedbackResponse(rsp *http.Response) (*GiveRunFeedbackResponse,
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GiveRunFeedbackResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetScheduleSettingsResponse parses an HTTP response from a GetScheduleSettingsWithResponse call
+func ParseGetScheduleSettingsResponse(rsp *http.Response) (*GetScheduleSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetScheduleSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduleSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetScheduleSettingsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSaveScheduleSettingsResponse parses an HTTP response from a SaveScheduleSettingsWithResponse call
+func ParseSaveScheduleSettingsResponse(rsp *http.Response) (*SaveScheduleSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SaveScheduleSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduleSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers SaveScheduleSettingsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetScheduledNewsResponse parses an HTTP response from a GetScheduledNewsWithResponse call
+func ParseGetScheduledNewsResponse(rsp *http.Response) (*GetScheduledNewsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetScheduledNewsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduledNews
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetScheduledNewsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMarkScheduledNewsSeenResponse parses an HTTP response from a MarkScheduledNewsSeenWithResponse call
+func ParseMarkScheduledNewsSeenResponse(rsp *http.Response) (*MarkScheduledNewsSeenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkScheduledNewsSeenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers MarkScheduledNewsSeenResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSchedulesResponse parses an HTTP response from a ListSchedulesWithResponse call
+func ParseListSchedulesResponse(rsp *http.Response) (*ListSchedulesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSchedulesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SchedulePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListSchedulesResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateScheduleResponse parses an HTTP response from a CreateScheduleWithResponse call
+func ParseCreateScheduleResponse(rsp *http.Response) (*CreateScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Schedule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateScheduleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePreviewScheduleResponse parses an HTTP response from a PreviewScheduleWithResponse call
+func ParsePreviewScheduleResponse(rsp *http.Response) (*PreviewScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreviewScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SchedulePreview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers PreviewScheduleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteScheduleResponse parses an HTTP response from a DeleteScheduleWithResponse call
+func ParseDeleteScheduleResponse(rsp *http.Response) (*DeleteScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteScheduleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetScheduleResponse parses an HTTP response from a GetScheduleWithResponse call
+func ParseGetScheduleResponse(rsp *http.Response) (*GetScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Schedule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetScheduleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateScheduleResponse parses an HTTP response from a UpdateScheduleWithResponse call
+func ParseUpdateScheduleResponse(rsp *http.Response) (*UpdateScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Schedule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers UpdateScheduleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseConfirmScheduleResponse parses an HTTP response from a ConfirmScheduleWithResponse call
+func ParseConfirmScheduleResponse(rsp *http.Response) (*ConfirmScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConfirmScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Schedule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ConfirmScheduleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListScheduleFiresResponse parses an HTTP response from a ListScheduleFiresWithResponse call
+func ParseListScheduleFiresResponse(rsp *http.Response) (*ListScheduleFiresResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListScheduleFiresResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ScheduleFirePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListScheduleFiresResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRunScheduleResponse parses an HTTP response from a RunScheduleWithResponse call
+func ParseRunScheduleResponse(rsp *http.Response) (*RunScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest ScheduleRun
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RunScheduleResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseTakeOverScheduleResponse parses an HTTP response from a TakeOverScheduleWithResponse call
+func ParseTakeOverScheduleResponse(rsp *http.Response) (*TakeOverScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TakeOverScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Schedule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers TakeOverScheduleResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

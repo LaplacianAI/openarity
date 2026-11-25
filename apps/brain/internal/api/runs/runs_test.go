@@ -545,6 +545,25 @@ func TestARunCanBeStartedInATeamSession(t *testing.T) {
 	}
 }
 
+// A schedule's conversation has one writer, its schedule; a run started
+// beside a fire would make the next one skip.
+func TestARunCannotBeStartedInASchedulesSession(t *testing.T) {
+	w := newWorld(t)
+	scheduled := w.session("direct", w.me)
+	s := w.store.sessions[scheduled]
+	s.ScheduleID = new(uuid.New())
+	w.store.sessions[scheduled] = s
+
+	rec := w.call(t, w.me, http.MethodPost, w.runs(), start("hi", &scheduled))
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "run the schedule now") {
+		t.Errorf("status %d (%s), want 409", rec.Code, rec.Body)
+	}
+	if len(w.store.started) != 0 {
+		t.Errorf("a run was started: %+v", w.store.started)
+	}
+}
+
 func TestARunCannotBeStartedInSomeoneElsesDirectSession(t *testing.T) {
 	w := newWorld(t)
 	theirs := w.session("direct", w.other)

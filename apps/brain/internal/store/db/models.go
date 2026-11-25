@@ -35,6 +35,7 @@ type Agent struct {
 	Web                bool
 	Browser            bool
 	Workspace          bool
+	Schedule           bool
 }
 
 type AgentDelegate struct {
@@ -486,6 +487,7 @@ type Reply struct {
 	Detail        []byte
 	AttachmentID  *uuid.UUID
 	CallID        *string
+	PostedRef     *string
 }
 
 type Role struct {
@@ -613,6 +615,40 @@ type SandboxRoom struct {
 	StoppedAt       *time.Time
 }
 
+type Schedule struct {
+	ID                  uuid.UUID
+	TeamID              uuid.UUID
+	CreatedBy           *uuid.UUID
+	AgentID             *uuid.UUID
+	Name                string
+	Objective           string
+	Kind                string
+	Rule                string
+	Anchor              time.Time
+	Timezone            string
+	Status              string
+	PausedReason        *string
+	DeletedAt           *time.Time
+	NextFireAt          *time.Time
+	LastFiredAt         *time.Time
+	LastLocal           *string
+	ConsecutiveFailures int32
+	ProposedRun         *uuid.UUID
+	ProposedIn          *uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+type ScheduleFire struct {
+	ScheduleID   uuid.UUID
+	TeamID       uuid.UUID
+	ScheduledFor time.Time
+	FiredAt      time.Time
+	Outcome      string
+	RunID        *uuid.UUID
+	SeenAt       *time.Time
+}
+
 type Session struct {
 	ID            uuid.UUID
 	TeamID        uuid.UUID
@@ -625,6 +661,8 @@ type Session struct {
 	UserID        *uuid.UUID
 	EventSeq      int64
 	Builder       bool
+	ScheduleID    *uuid.UUID
+	WatcherID     *uuid.UUID
 }
 
 type Skill struct {
@@ -719,6 +757,12 @@ type TeamSetting struct {
 	ImprovementReplayTokens       int32
 	ImprovementReplayMinutes      int16
 	ImprovementReplayDaily        int16
+	AgentsMaySchedule             bool
+	Timezone                      string
+	ScheduleMinIntervalMinutes    int32
+	SchedulesPerMember            int32
+	SchedulesPerTeam              int32
+	FiresPerHour                  int32
 }
 
 type User struct {
@@ -730,6 +774,69 @@ type User struct {
 	UpdatedAt    time.Time
 	IsSuperAdmin bool
 	Name         *string
+}
+
+type WatchHost struct {
+	Host         string
+	BusyUntil    time.Time
+	BackoffUntil time.Time
+}
+
+type WatchTarget struct {
+	ID                uuid.UUID
+	Kind              string
+	Url               string
+	Host              string
+	Etag              *string
+	LastModified      *string
+	NextCheckAt       time.Time
+	ConsecutiveErrors int32
+	FailingSince      *time.Time
+}
+
+type Watcher struct {
+	ID                  uuid.UUID
+	TeamID              uuid.UUID
+	CreatedBy           *uuid.UUID
+	AgentID             *uuid.UUID
+	Name                string
+	Objective           string
+	Source              string
+	TargetID            *uuid.UUID
+	Selector            *string
+	HookID              *string
+	EverySeconds        *int32
+	CooldownSeconds     int32
+	State               []byte
+	Status              string
+	PausedReason        *string
+	DeletedAt           *time.Time
+	NextCheckAt         *time.Time
+	LastRunAt           *time.Time
+	ConsecutiveFailures int32
+	ProposedRun         *uuid.UUID
+	ProposedIn          *uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+type WatcherCheck struct {
+	ID        int64
+	WatcherID uuid.UUID
+	TeamID    uuid.UUID
+	CheckedAt time.Time
+	Outcome   string
+	Detail    *string
+	RunID     *uuid.UUID
+	SeenAt    *time.Time
+}
+
+type WatcherDelivery struct {
+	WatcherID  uuid.UUID
+	Key        string
+	ReceivedAt time.Time
+	Body       []byte
+	Held       bool
 }
 
 type WhatsappAccount struct {
