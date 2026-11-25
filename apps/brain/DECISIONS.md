@@ -730,7 +730,8 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   a question about the tool, and the answer is the same wherever the file
   goes. A request names the file by its id alone, and approving for the run
   covers any file the run sends after; naming the file a call chose would
-  need a lookup when the request is made, left for later. A run event `file_sent` puts a chip under the run on the dashboard;
+  need a lookup when the request is made, left for later. A run event
+  `file_sent` puts a chip under the run on the dashboard;
   on a channel the file is also a reply of kind `file`, in the session's
   order, so a file sent while the run works goes out before its answer, one
   per call (`replies_one_per_file_call`) and kicked at once. Ten a run, a
@@ -766,7 +767,8 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   run, and the record of its sending goes with it. The risk accepted: for a
   person who is there and may approve their own, the call is a read, so
   under `off`, `writes` and `destructive` an instruction a tool's content
-  plants could send them a file of the conversation unasked. It reaches only this conversation's people, who
+  plants could send them a file of the conversation unasked. It reaches
+  only this conversation's people, who
   could already be shown the tool's text in the answer; a team that wants a
   person between the two sets a rule on `send_file`.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes
