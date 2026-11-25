@@ -78,7 +78,7 @@ function DeletedTeams() {
           hint="Only a super admin sees deleted teams."
         />
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border bg-card">
+        <div className="relative overflow-x-auto rounded-md border border-border bg-card">
           <table className="w-full text-sm">
             <thead className="border-b border-border text-left text-xs text-muted-foreground">
               <tr>

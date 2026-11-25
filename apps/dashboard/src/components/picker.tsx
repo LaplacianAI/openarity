@@ -220,7 +220,7 @@ export function Picker({
               role="listbox"
               aria-label={label}
               aria-multiselectable={single ? undefined : "true"}
-              className="max-h-64 overflow-y-auto"
+              className="relative max-h-64 overflow-y-auto"
             >
               {options.map((o, i) => (
                 // biome-ignore lint/a11y/useKeyWithClickEvents: the combobox takes the keys, pointing at this option with aria-activedescendant

@@ -174,7 +174,7 @@ function Improvements() {
           className="gap-4"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <TabsList className="min-w-0 max-w-full overflow-x-auto">
+            <TabsList className="relative min-w-0 max-w-full overflow-x-auto">
               {tabsFor(canApprove).map((t) => (
                 <TabsTrigger key={t} value={t}>
                   {TAB_WORDS[t]}

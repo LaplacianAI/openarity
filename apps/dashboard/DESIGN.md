@@ -251,6 +251,8 @@ Warm graphite paper with a single cool teal: BRAND's Spectral palette, copied in
 ### Named Rules
 **The Two Panes Rule.** At 1280px and wider the session page is two panes, each its own scroll; the composer and the run switcher sit outside them, so neither scrolls away. Narrower, a trace is read in the sheet's (or, on a phone, the page's) own scroll. Nothing else on a page scrolls in a box, except raw output (320-384px) and a menu's list.
 
+**The Positioned Scroller Rule.** Every box that scrolls, the sheet and the panes included, is also positioned (`relative`, written first in its class list and never behind a breakpoint). An absolutely placed child, such as a screen-reader label, then stays inside it rather than stretching the window past the frame. `src/test/scrollers.test.ts` fails on any that is not.
+
 ## Elevation & Depth
 
 Flat. Depth is tonal: the frame (Stone) sits behind the sheet (Paper), and on the sheet a card (Stone again) is one step back from the sheet. Edges are 1px hairlines in oklch mixes of Graphite into Paper. Where a hairline must not take layout space (the current nav item, the chosen run, step numbers, argument chips, output blocks), it is drawn as an inset 1px ring rather than a border.

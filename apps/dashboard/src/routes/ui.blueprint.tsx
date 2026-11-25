@@ -422,7 +422,7 @@ function AgentSheet({
 
   return (
     <Sheet open onOpenChange={(o) => (o ? null : onClose())}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
+      <SheetContent className="w-full sm:max-w-3xl">
         <SheetHeader>
           <SheetTitle>
             {existing ? `Change ${existing.name}` : item ? `Edit ${item.name}` : "Draft an agent"}
