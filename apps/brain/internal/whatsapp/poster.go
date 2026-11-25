@@ -59,9 +59,17 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 	if err := a.sleep(ctx, typing(spoken(p), a.jitter())); err != nil {
 		return err
 	}
+	// The upload and the send have a deadline by size, as an HTTP post has:
+	// one stuck would hold up every channel this process sends for.
+	sendCtx, cancel := context.WithTimeout(ctx, gateway.PostTimeout(len(req.Body)))
+	defer cancel()
+	msg, err := a.message(sendCtx, c, cli, p)
+	if err != nil {
+		return err
+	}
 	id := cli.GenerateMessageID()
 	c.sending(id)
-	resp, err := cli.SendMessage(ctx, to, a.message(c, cli, p), whatsmeow.SendRequestExtra{ID: id})
+	resp, err := cli.SendMessage(sendCtx, to, msg, whatsmeow.SendRequestExtra{ID: id})
 	_ = cli.SendChatPresence(ctx, to, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
 		return fmt.Errorf("sending: %w", err)
@@ -75,14 +83,18 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 	return nil
 }
 
-// message is a part as WhatsApp's extended text: the people it mentions, and
-// the message it quotes when this connection still remembers it. A quote it
-// cannot draw is left out rather than shown empty.
-func (a *Accounts) message(c *conn, cli Client, p gwa.Part) *waE2E.Message {
-	if p.Poll != nil {
+// message is a part as WhatsApp sends it: a poll, a document, or extended
+// text with the people it mentions and the message it quotes when this
+// connection still remembers it. A quote it cannot draw is left out rather
+// than shown empty.
+func (a *Accounts) message(ctx context.Context, c *conn, cli Client, p gwa.Part) (*waE2E.Message, error) {
+	switch {
+	case p.Poll != nil:
 		// Single choice. whatsmeow keeps the poll's secret when it sends it,
 		// which is what lets a vote on it be decrypted (SendMessage, send.go).
-		return cli.BuildPollCreation(p.Poll.Question, p.Poll.Options, 1)
+		return cli.BuildPollCreation(p.Poll.Question, p.Poll.Options, 1), nil
+	case p.File != nil:
+		return document(ctx, cli, p.File)
 	}
 	ext := &waE2E.ExtendedTextMessage{Text: &p.Text}
 	ctxInfo := &waE2E.ContextInfo{}
@@ -99,13 +111,35 @@ func (a *Accounts) message(c *conn, cli Client, p gwa.Part) *waE2E.Message {
 	if set {
 		ext.ContextInfo = ctxInfo
 	}
-	return &waE2E.Message{ExtendedTextMessage: ext}
+	return &waE2E.Message{ExtendedTextMessage: ext}, nil
+}
+
+// document uploads a file and is the message naming it. WhatsApp keeps
+// what was uploaded only as long as a message names it, so an upload whose
+// send fails is uploaded again on the retry.
+func document(ctx context.Context, cli Client, f *gwa.File) (*waE2E.Message, error) {
+	up, err := cli.Upload(ctx, f.Data, whatsmeow.MediaDocument)
+	if err != nil {
+		return nil, fmt.Errorf("uploading %s: %w", f.Name, err)
+	}
+	doc := &waE2E.DocumentMessage{
+		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
+		Mimetype: &f.MediaType, FileName: &f.Name, Title: &f.Name,
+	}
+	if f.Caption != "" {
+		doc.Caption = &f.Caption
+	}
+	return &waE2E.Message{DocumentMessage: doc}, nil
 }
 
 // spoken is the words of a part, for how long typing them takes.
 func spoken(p gwa.Part) string {
-	if p.Poll != nil {
+	switch {
+	case p.Poll != nil:
 		return p.Poll.Question
+	case p.File != nil:
+		return p.File.Caption
 	}
 	return p.Text
 }

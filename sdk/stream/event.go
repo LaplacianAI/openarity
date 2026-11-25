@@ -38,6 +38,7 @@ const (
 	KindApprovalRequest  Kind = "approval_requested"
 	KindApprovalDecided  Kind = "approval_decided"
 	KindRunWaiting       Kind = "run_waiting"
+	KindFileSent         Kind = "file_sent"
 	KindCustom           Kind = "custom"
 )
 
@@ -47,7 +48,7 @@ func Kinds() []Kind {
 		KindMessage, KindMessageConsumed, KindRunStarted, KindStepStarted,
 		KindTextMessageChunk, KindReasoningChunk, KindToolCallChunk, KindToolCallResult,
 		KindUsage, KindCompacted, KindRunFinished,
-		KindApprovalRequest, KindApprovalDecided, KindRunWaiting, KindCustom,
+		KindApprovalRequest, KindApprovalDecided, KindRunWaiting, KindFileSent, KindCustom,
 	}
 }
 
@@ -231,6 +232,14 @@ type RunWaiting struct {
 	Said   string `json:"said,omitempty"`
 }
 
+// FileSent is a run handing a person a file of the conversation, by the call
+// that sent it. Like a message's file, it is named rather than carried.
+type FileSent struct {
+	ToolCallID string `json:"tool_call_id"`
+	File       File   `json:"file"`
+	Caption    string `json:"caption,omitempty"`
+}
+
 // Custom is an event the catalog has no kind for: a server's own, named.
 type Custom struct {
 	Name  string          `json:"name"`
@@ -259,5 +268,6 @@ func (RunFinished) Kind() Kind       { return KindRunFinished }
 func (ApprovalRequested) Kind() Kind { return KindApprovalRequest }
 func (ApprovalDecided) Kind() Kind   { return KindApprovalDecided }
 func (RunWaiting) Kind() Kind        { return KindRunWaiting }
+func (FileSent) Kind() Kind          { return KindFileSent }
 func (Custom) Kind() Kind            { return KindCustom }
 func (u Unknown) Kind() Kind         { return u.Of }

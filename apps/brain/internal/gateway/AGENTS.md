@@ -268,6 +268,14 @@ hand it the answer, and its error is the request's, retried unless it wraps
 signing secret (Slack's app settings), so a channel is refused without one
 rather than given one the brain made.
 
+A provider may be a `FileReplier`: it sends a file a run hands its person,
+a reply of kind `file` with `Outbound.File` set, and only on its channels is a
+run given `send_file`. The sender loads the file's bytes and decrypts them
+before it builds the requests, one file at a time, so `Reply` stays pure; each
+provider's `file.go` builds its own file message (Telegram's `sendDocument`,
+WhatsApp's document, `custom`'s inline base64). A file gone since is given up;
+a store that fails is retried. Slack is not one yet.
+
 A channel takes a `reply_url` only when its provider is a `URLReplier`, which
 posts to an address the channel names. `custom` is; `telegram` replies into
 the chat itself, so it can reply and takes no URL.

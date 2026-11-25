@@ -484,6 +484,8 @@ type Reply struct {
 	PartsSent     int32
 	EventSeq      *int32
 	Detail        []byte
+	AttachmentID  *uuid.UUID
+	CallID        *string
 }
 
 type Role struct {

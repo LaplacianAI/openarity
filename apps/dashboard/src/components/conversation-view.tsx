@@ -99,6 +99,7 @@ export function ConversationView({
             sessionId={sessionId}
             people={people}
             now={now}
+            files={files}
             after={afterRun?.(e.id)}
           />
         ),
@@ -113,17 +114,31 @@ export type SentFiles = {
   load: (f: SessionEventFile) => Promise<Blob>;
 };
 
-/** The files sent with a message: pictures as tiles, the rest as chips, each in the order sent. */
-export function SentFilesView({ sent, files }: { sent: SessionEventFile[]; files?: SentFiles }) {
+/** A file to show, keyed apart from its id: one file sent twice is two. */
+export type SentFileItem = SessionEventFile & { key?: string };
+
+/**
+ * Files sent: pictures as tiles, then the rest as chips, each kind in the
+ * order sent. `who` names whose they are, for the lists' labels.
+ */
+export function SentFilesView({
+  sent,
+  files,
+  who = "",
+}: {
+  sent: SentFileItem[];
+  files?: SentFiles;
+  who?: string;
+}) {
   if (sent.length === 0) return null;
   const pictures = files ? sent.filter((f) => isPicture(f.media_type)) : [];
   const others = sent.filter((f) => !pictures.includes(f));
   return (
     <div className="mt-2 space-y-1.5">
       {pictures.length > 0 && files ? (
-        <ul aria-label="Pictures sent" className="flex flex-wrap gap-1.5">
+        <ul aria-label={`Pictures${who} sent`} className="flex flex-wrap gap-1.5">
           {pictures.map((f) => (
-            <li key={f.id}>
+            <li key={f.key ?? f.id}>
               <SentPicture
                 id={f.id}
                 name={f.filename}
@@ -137,9 +152,9 @@ export function SentFilesView({ sent, files }: { sent: SessionEventFile[]; files
         </ul>
       ) : null}
       {others.length > 0 ? (
-        <ul aria-label="Files sent" className="flex flex-wrap gap-1.5">
+        <ul aria-label={`Files${who} sent`} className="flex flex-wrap gap-1.5">
           {others.map((f) => (
-            <li key={f.id} className="min-w-0">
+            <li key={f.key ?? f.id} className="min-w-0">
               <SentChip
                 name={f.filename}
                 size={f.size}
@@ -233,6 +248,7 @@ function RunTurnView({
   sessionId,
   people,
   now,
+  files,
   after,
 }: {
   run: RunTurn;
@@ -242,6 +258,7 @@ function RunTurnView({
   sessionId: string;
   people: People;
   now: number;
+  files?: SentFiles;
   after?: ReactNode;
 }) {
   const running = run.status === "running";
@@ -271,6 +288,26 @@ function RunTurnView({
           sessionId={sessionId}
           now={now}
         />
+      ) : null}
+
+      {run.files.length > 0 ? (
+        // Above the answer, as a channel sends them: the file, then the words.
+        <section aria-label={`Files ${run.agent} sent`}>
+          <SentFilesView
+            sent={run.files.map((s) => ({ ...s.file, key: s.toolCallId }))}
+            files={files}
+            who={` ${run.agent}`}
+          />
+          <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground empty:hidden">
+            {run.files.map((s) =>
+              s.caption ? (
+                <li key={s.toolCallId} className="whitespace-pre-wrap break-words">
+                  {s.file.filename}: {s.caption}
+                </li>
+              ) : null,
+            )}
+          </ul>
+        </section>
       ) : null}
 
       <div data-answer className="max-w-[75ch] text-sm">

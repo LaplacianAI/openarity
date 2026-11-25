@@ -6865,6 +6865,7 @@ type ClientInterface interface {
 	// A run that asks a person before a call says so in
 	// `approval_requested`, waits in `run_waiting` with what it told them,
 	// and hears the answer in `approval_decided`.
+	// A file a run hands the person is `file_sent`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -9761,6 +9762,7 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // A run that asks a person before a call says so in
 // `approval_requested`, waits in `run_waiting` with what it told them,
 // and hears the answer in `approval_decided`.
+// A file a run hands the person is `file_sent`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment
@@ -17107,6 +17109,7 @@ type ClientWithResponsesInterface interface {
 	// A run that asks a person before a call says so in
 	// `approval_requested`, waits in `run_waiting` with what it told them,
 	// and hears the answer in `approval_decided`.
+	// A file a run hands the person is `file_sent`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -24149,6 +24152,7 @@ func (c *ClientWithResponses) GetSessionAttachmentWithResponse(ctx context.Conte
 // A run that asks a person before a call says so in
 // `approval_requested`, waits in `run_waiting` with what it told them,
 // and hears the answer in `approval_decided`.
+// A file a run hands the person is `file_sent`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment

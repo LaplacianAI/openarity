@@ -197,6 +197,8 @@ func eventOf(row db.ListSessionEventsRow) (stream.Event, error) {
 		return p.ApprovalDecided, nil
 	case "waiting":
 		return decode[stream.RunWaiting](row.Payload)
+	case "file_sent":
+		return decode[stream.FileSent](row.Payload)
 	}
 	return stream.Custom{Name: row.Kind, Value: row.Payload}, nil
 }

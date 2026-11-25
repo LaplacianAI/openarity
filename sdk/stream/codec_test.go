@@ -33,6 +33,7 @@ func samples() []Event {
 		},
 		ApprovalDecided{ApprovalID: "a1", Decision: "cancelled", By: "u1", Via: "channel", Scope: "once", Superseded: true},
 		RunWaiting{Reason: "approval", Said: "May I send it?"},
+		FileSent{ToolCallID: "c2", File: File{ID: "f1", Filename: "report.pdf", MediaType: "application/pdf", Size: 3}, Caption: "The report"},
 		Custom{Name: "wrap_up", Value: json.RawMessage(`{"left":40}`)},
 	}
 }

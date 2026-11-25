@@ -189,6 +189,8 @@ func (t *transcript) event(f frame, p payload) error {
 		t.approvalDecided(p)
 	case "waiting":
 		t.waiting(p)
+	case "file_sent":
+		t.fileSent(p)
 	case finishedEvent, endEvent:
 	default:
 		t.block()
@@ -229,6 +231,21 @@ func (t *transcript) waiting(p payload) {
 	t.line(t.paint.warn("⏸ waiting for a person to answer"))
 	for _, l := range answer(t.paint, p.Said) {
 		t.line(strings.TrimRight("  "+l, " "))
+	}
+}
+
+// fileSent is a file the run handed its person, with the line it wrote for
+// it under it.
+func (t *transcript) fileSent(p payload) {
+	t.block()
+	if p.File == nil {
+		t.line(t.paint.muted("↗ sent a file"))
+		return
+	}
+	t.line(t.paint.mark("↗") + " " + t.clipAfter("↗ ", "sent "+cli.Line(p.File.Filename)+
+		" ("+cli.Line(p.File.MediaType)+", "+sizeOf(p.File.Size)+")"))
+	if p.Caption != "" {
+		t.line(elbow + t.clipAfter(elbow, cli.Line(p.Caption)))
 	}
 }
 

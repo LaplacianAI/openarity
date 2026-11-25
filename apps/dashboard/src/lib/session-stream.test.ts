@@ -223,6 +223,29 @@ describe("fold", () => {
     const c = all(frames(consumed("r9", "m9")));
     expect(c.said).toEqual({});
   });
+
+  it("keeps the files a run sent, in order, each call once", () => {
+    const report = { id: "f1", filename: "report.pdf", media_type: "application/pdf", size: 9 };
+    const chart = { id: "f2", filename: "chart.png", media_type: "image/png", size: 30 };
+    const sent = (call: string, file: typeof report, caption?: string): SessionEvent => ({
+      kind: "file_sent",
+      data: { at, run_id: "r1", tool_call_id: call, file, ...(caption ? { caption } : {}) },
+    });
+    const c = all(
+      frames(
+        started("r1"),
+        sent("c1", report, "Q3"),
+        sent("c2", chart),
+        sent("c1", report, "Q3"),
+        finished("r1", "Here."),
+      ),
+    );
+    expect(c.runs.r1?.files).toEqual([
+      { toolCallId: "c1", file: report, caption: "Q3" },
+      { toolCallId: "c2", file: chart, caption: "" },
+    ]);
+    expect(all(frames(sent("c9", report))).runs).toEqual({});
+  });
 });
 
 describe("stepOf", () => {
