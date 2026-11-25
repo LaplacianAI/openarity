@@ -46,8 +46,8 @@ type MemberRoles interface {
 }
 
 // WithApprovals puts every MCP and built-in tool a run is given behind the
-// team's approval policy. Without it, or for a team whose mode is off, nothing is
-// gated.
+// team's approval policy. Without it, or for a team whose mode is off,
+// nothing is gated.
 func (b *Builder) WithApprovals(s ApprovalStore) *Builder {
 	b.approvals = s
 	return b
