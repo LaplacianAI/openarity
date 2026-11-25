@@ -117,7 +117,7 @@ function Change({ change }: { change: ImprovementChange }) {
     // A script is read before it is trusted, so none of it is folded away.
     const lines = isScript(change.field) ? all : withContext(all, 3);
     body = (
-      <pre className="overflow-x-auto rounded-md bg-sheet py-2 font-mono text-xs">
+      <pre className="relative overflow-x-auto rounded-md bg-sheet py-2 font-mono text-xs">
         {lines.map((l, i) => (
           // The diff is fixed once drawn, and lines repeat, so position is the key.
           // biome-ignore lint/suspicious/noArrayIndexKey: a static list of lines
