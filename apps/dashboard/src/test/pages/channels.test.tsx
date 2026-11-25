@@ -227,6 +227,7 @@ describe("the create form", () => {
       "mpim:history",
       "chat:write",
       "files:read",
+      "files:write",
     ]);
     expect(m.settings.event_subscriptions).toEqual({
       request_url: SLACK_PLACEHOLDER_URL,

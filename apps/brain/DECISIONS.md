@@ -719,19 +719,21 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   only it answers the conversation, and only where the file can arrive: a
   conversation read on its stream (no channel, or the dashboard's) or a
   channel the run answers whose provider is a `gateway.FileReplier` and, for
-  `custom`, has a reply URL; never on Slack until its three-call upload is
-  built (F3b). Behind the approval gate as a built-in (`approval.Shares`),
-  judged like the web: a read for a person who is there and may approve
-  their own calls, a write for a guest or a run nobody is present for. So
-  `writes` asks for a guest and refuses the call in a run nobody is present
-  for (`approval.Decide` turns an ask into a deny there), `all` asks every
-  time for anyone present, and a team's rule on `send_file` asks or denies
-  on every channel at once. Not a channel setting: who may send a file is
-  a question about the tool, and the answer is the same wherever the file
-  goes. A request names the file by its id alone, and approving for the run
-  covers any file the run sends after; naming the file a call chose would
-  need a lookup when the request is made, left for later. A run event
-  `file_sent` puts a chip under the run on the dashboard;
+  `custom`, has a reply URL. Slack's upload is three calls, each built from
+  the answer before it, so it is a `gateway.FileUploader` the sender runs a
+  step at a time (F3b; the gateway's DECISIONS has why). Behind the approval
+  gate as a built-in (`approval.Shares`), judged like the web: a read for a
+  person who is there and may approve their own calls, a write for a guest
+  or a run nobody is present for. So `writes` asks for a guest and refuses
+  the call in a run nobody is present for (`approval.Decide` turns an ask
+  into a deny there), `all` asks every time for anyone present, and a
+  team's rule on `send_file` asks or denies on every channel at once. Not a
+  channel setting: who may send a file is a question about the tool, and
+  the answer is the same wherever the file goes. A request names the file
+  by its id alone, and approving for the run covers any file the run sends
+  after; naming the file a call chose would need a lookup when the request
+  is made, left for later. A run event `file_sent` puts a chip under the
+  run on the dashboard;
   on a channel the file is also a reply of kind `file`, in the session's
   order, so a file sent while the run works goes out before its answer, one
   per call (`replies_one_per_file_call`) and kicked at once. Ten a run, a
@@ -744,16 +746,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   `custom` sends the bytes inline in the signed reply rather than a link,
   which would be a route serving files to whoever holds it. A replay holds
   `send_file` as a stand-in, as it holds the workspace's tools. Delivery is
-  at least once, as every reply's: Telegram drops no repeat, so a post whose
-  answer was lost sends the file twice there. A file is tried twice, as a
+  at least once, as every reply's: neither Telegram nor Slack deduplicates,
+  so a post (on Slack, the upload's last step) whose answer was lost sends
+  the file twice there. A file is tried twice, as a
   step is, so one that cannot go holds its answer back a minute, not hours;
   bytes that cannot be decrypted are given up at once. A file given up is
   not sent, and nobody is told: the model was told it was sent when it was
   queued, and the reply shows as given up only in the database until the
   dashboard shows a reply's delivery. Each post has a deadline by its size,
   ten seconds and a second per 512 KiB, a minute at most, under the
-  two-minute lease, on WhatsApp's upload and send as on an HTTP post; a claimed batch is sent one row at a
-  time, so rows late in a slow batch can outlive the lease and be sent by a
+  two-minute lease, on WhatsApp's upload and send as on an HTTP post. An
+  upload in steps, Slack's, is several posts under one claim, so the whole
+  of it has a deadline of its own, 100 seconds, inside the lease. A claimed
+  batch is sent one row at a time, so rows late in a slow batch can outlive the lease and be sent by a
   second sender too, as text replies always could. A sender holds one file's
   bytes at a time, about three copies of it on `custom` (the bytes, base64,
   the body): some 100 MB at 25 MiB, four replies to a worker at once.
