@@ -1491,15 +1491,87 @@ func (e ScheduleFireOutcome) Valid() bool {
 	}
 }
 
+// Defines values for SchedulePlaceKind.
+const (
+	SchedulePlaceKindChannel SchedulePlaceKind = "channel"
+	SchedulePlaceKindChat    SchedulePlaceKind = "chat"
+	SchedulePlaceKindDirect  SchedulePlaceKind = "direct"
+)
+
+// Valid indicates whether the value is a known member of the SchedulePlaceKind enum.
+func (e SchedulePlaceKind) Valid() bool {
+	switch e {
+	case SchedulePlaceKindChannel:
+		return true
+	case SchedulePlaceKindChat:
+		return true
+	case SchedulePlaceKindDirect:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SchedulePlaceReason.
+const (
+	NeedsChannelWrite SchedulePlaceReason = "needs_channel_write"
+	NotInChannel      SchedulePlaceReason = "not_in_channel"
+)
+
+// Valid indicates whether the value is a known member of the SchedulePlaceReason enum.
+func (e SchedulePlaceReason) Valid() bool {
+	switch e {
+	case NeedsChannelWrite:
+		return true
+	case NotInChannel:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ScheduleTargetKind.
 const (
-	Own ScheduleTargetKind = "own"
+	ScheduleTargetKindChannel ScheduleTargetKind = "channel"
+	ScheduleTargetKindChat    ScheduleTargetKind = "chat"
+	ScheduleTargetKindDirect  ScheduleTargetKind = "direct"
+	ScheduleTargetKindOwn     ScheduleTargetKind = "own"
 )
 
 // Valid indicates whether the value is a known member of the ScheduleTargetKind enum.
 func (e ScheduleTargetKind) Valid() bool {
 	switch e {
-	case Own:
+	case ScheduleTargetKindChannel:
+		return true
+	case ScheduleTargetKindChat:
+		return true
+	case ScheduleTargetKindDirect:
+		return true
+	case ScheduleTargetKindOwn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleTargetPickKind.
+const (
+	ScheduleTargetPickKindChannel ScheduleTargetPickKind = "channel"
+	ScheduleTargetPickKindChat    ScheduleTargetPickKind = "chat"
+	ScheduleTargetPickKindDirect  ScheduleTargetPickKind = "direct"
+	ScheduleTargetPickKindOwn     ScheduleTargetPickKind = "own"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleTargetPickKind enum.
+func (e ScheduleTargetPickKind) Valid() bool {
+	switch e {
+	case ScheduleTargetPickKindChannel:
+		return true
+	case ScheduleTargetPickKindChat:
+		return true
+	case ScheduleTargetPickKindDirect:
+		return true
+	case ScheduleTargetPickKindOwn:
 		return true
 	default:
 		return false
@@ -1707,6 +1779,27 @@ func (e WhoamiKind) Valid() bool {
 	case WhoamiKindService:
 		return true
 	case WhoamiKindUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListScheduleTargetsParamsKind.
+const (
+	ListScheduleTargetsParamsKindChannel ListScheduleTargetsParamsKind = "channel"
+	ListScheduleTargetsParamsKindChat    ListScheduleTargetsParamsKind = "chat"
+	ListScheduleTargetsParamsKindDirect  ListScheduleTargetsParamsKind = "direct"
+)
+
+// Valid indicates whether the value is a known member of the ListScheduleTargetsParamsKind enum.
+func (e ListScheduleTargetsParamsKind) Valid() bool {
+	switch e {
+	case ListScheduleTargetsParamsKindChannel:
+		return true
+	case ListScheduleTargetsParamsKindChat:
+		return true
+	case ListScheduleTargetsParamsKindDirect:
 		return true
 	default:
 		return false
@@ -2679,9 +2772,14 @@ type CreateScheduleRequest struct {
 	AgentID *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
 
 	// Name Yours once; it is how you pick it later.
-	Name      string          `json:"name" yaml:"name"`
-	Objective string          `json:"objective" yaml:"objective"`
-	Target    *ScheduleTarget `json:"target,omitempty" yaml:"target,omitempty"`
+	Name      string `json:"name" yaml:"name"`
+	Objective string `json:"objective" yaml:"objective"`
+
+	// Target A place as `listScheduleTargets` lists it, in its `target`, sent back
+	// as it is. It is checked again when the schedule is made: the caller
+	// must still be able to pick it, and a channel or a direct conversation
+	// is looked up on its platform.
+	Target *ScheduleTargetPick `json:"target,omitempty" yaml:"target,omitempty"`
 
 	// Timezone An IANA zone. Absent is the team's.
 	Timezone *string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
@@ -4292,8 +4390,10 @@ type Schedule struct {
 	Objective string `json:"objective" yaml:"objective"`
 
 	// PausedReason Why it is paused. `failing` is five failed runs, or fires that
-	// could not be tried, in a row; `target_gone` is its agent deleted,
-	// until another or the hub is chosen.
+	// could not be tried, in a row; `maker_cannot_run` is its maker no
+	// longer allowed to start runs, or, for one posting where a group
+	// reads it, to write to channels; `target_gone` is its agent
+	// deleted, until another or the hub is chosen.
 	PausedReason *SchedulePausedReason `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
 
 	// SessionID The conversation its runs answer in.
@@ -4318,8 +4418,10 @@ type Schedule struct {
 }
 
 // SchedulePausedReason Why it is paused. `failing` is five failed runs, or fires that
-// could not be tried, in a row; `target_gone` is its agent deleted,
-// until another or the hub is chosen.
+// could not be tried, in a row; `maker_cannot_run` is its maker no
+// longer allowed to start runs, or, for one posting where a group
+// reads it, to write to channels; `target_gone` is its agent
+// deleted, until another or the hub is chosen.
 type SchedulePausedReason string
 
 // ScheduleStatus `proposed` waits for its maker to confirm what an agent proposed;
@@ -4335,7 +4437,7 @@ type ScheduleFire struct {
 	// `missed` came and went while the team was not running;
 	// `skipped_busy` found its last run still working; `skipped_cap`
 	// was over the team's hourly limit; `skipped_maker` found its maker
-	// could no longer start runs; `skipped_target` found its agent
+	// could no longer start runs, or post where it answers; `skipped_target` found its agent
 	// deleted.
 	Outcome      ScheduleFireOutcome `json:"outcome" yaml:"outcome"`
 	RunID        *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
@@ -4347,7 +4449,7 @@ type ScheduleFire struct {
 // `missed` came and went while the team was not running;
 // `skipped_busy` found its last run still working; `skipped_cap`
 // was over the team's hourly limit; `skipped_maker` found its maker
-// could no longer start runs; `skipped_target` found its agent
+// could no longer start runs, or post where it answers; `skipped_target` found its agent
 // deleted.
 type ScheduleFireOutcome string
 
@@ -4363,6 +4465,61 @@ type SchedulePage struct {
 
 	// NextCursor Absent on the last page.
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// SchedulePlace defines model for SchedulePlace.
+type SchedulePlace struct {
+	// At When the caller last talked there, for a chat; when the bot last heard from a group.
+	At *time.Time `json:"at,omitempty" yaml:"at,omitempty"`
+
+	// Available Whether the caller may pick it. One they may not is listed with why.
+	Available bool `json:"available" yaml:"available"`
+	Channel   struct {
+		ID       openapi_types.UUID `json:"id" yaml:"id"`
+		Name     string             `json:"name" yaml:"name"`
+		Provider string             `json:"provider" yaml:"provider"`
+	} `json:"channel" yaml:"channel"`
+
+	// Detail More to know it by, such as `Private · 14 members`, or the caller's last words there.
+	Detail string            `json:"detail" yaml:"detail"`
+	Kind   SchedulePlaceKind `json:"kind" yaml:"kind"`
+
+	// Label The place as its platform names it, such as `#releases`, or `A thread`.
+	Label string `json:"label" yaml:"label"`
+
+	// Reason Why it cannot be picked: posting at a channel's top level, or in a
+	// group's chat, takes `channel:write`; or the app is not in the
+	// channel.
+	Reason *SchedulePlaceReason `json:"reason,omitempty" yaml:"reason,omitempty"`
+
+	// Target A place as `listScheduleTargets` lists it, in its `target`, sent back
+	// as it is. It is checked again when the schedule is made: the caller
+	// must still be able to pick it, and a channel or a direct conversation
+	// is looked up on its platform.
+	Target ScheduleTargetPick `json:"target" yaml:"target"`
+}
+
+// SchedulePlaceKind defines model for SchedulePlace.Kind.
+type SchedulePlaceKind string
+
+// SchedulePlaceReason Why it cannot be picked: posting at a channel's top level, or in a
+// group's chat, takes `channel:write`; or the app is not in the
+// channel.
+type SchedulePlaceReason string
+
+// SchedulePlacePage defines model for SchedulePlacePage.
+type SchedulePlacePage struct {
+	Items []SchedulePlace `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+
+	// Problems Channels whose places could not be listed, with what their platform said, such as a Slack app missing a scope.
+	Problems []struct {
+		ChannelID openapi_types.UUID `json:"channel_id" yaml:"channel_id"`
+		Message   string             `json:"message" yaml:"message"`
+		Provider  string             `json:"provider" yaml:"provider"`
+	} `json:"problems" yaml:"problems"`
 }
 
 // SchedulePreview defines model for SchedulePreview.
@@ -4397,12 +4554,44 @@ type ScheduleSettings struct {
 
 // ScheduleTarget defines model for ScheduleTarget.
 type ScheduleTarget struct {
-	// Kind Where it answers. `own` is a conversation of its own on the dashboard, whose answers reach its maker as news.
+	// ChannelID The channel it answers on; absent for `own`.
+	ChannelID *openapi_types.UUID `json:"channel_id,omitempty" yaml:"channel_id,omitempty"`
+
+	// Kind Where it answers. `own` is a conversation of its own on the
+	// dashboard, whose answers reach its maker as news; `chat` a chat its
+	// maker talked in; `channel` a channel's or a group's top level, a
+	// new post each time; `direct` its maker's direct messages with the
+	// bot.
 	Kind ScheduleTargetKind `json:"kind" yaml:"kind"`
+
+	// Label How the place was shown when it was picked, with its channel's name; absent for `own`.
+	//
+	// Examples: Acme Slack · #releases
+	Label *string `json:"label,omitempty" yaml:"label,omitempty"`
 }
 
-// ScheduleTargetKind Where it answers. `own` is a conversation of its own on the dashboard, whose answers reach its maker as news.
+// ScheduleTargetKind Where it answers. `own` is a conversation of its own on the
+// dashboard, whose answers reach its maker as news; `chat` a chat its
+// maker talked in; `channel` a channel's or a group's top level, a
+// new post each time; `direct` its maker's direct messages with the
+// bot.
 type ScheduleTargetKind string
+
+// ScheduleTargetPick A place as `listScheduleTargets` lists it, in its `target`, sent back
+// as it is. It is checked again when the schedule is made: the caller
+// must still be able to pick it, and a channel or a direct conversation
+// is looked up on its platform.
+type ScheduleTargetPick struct {
+	ChannelID *openapi_types.UUID    `json:"channel_id,omitempty" yaml:"channel_id,omitempty"`
+	Kind      ScheduleTargetPickKind `json:"kind" yaml:"kind"`
+
+	// Ref The platform's id for a listed channel, such as Slack's `C0123ABCD`.
+	Ref       *string             `json:"ref,omitempty" yaml:"ref,omitempty"`
+	SessionID *openapi_types.UUID `json:"session_id,omitempty" yaml:"session_id,omitempty"`
+}
+
+// ScheduleTargetPickKind defines model for ScheduleTargetPick.Kind.
+type ScheduleTargetPickKind string
 
 // ScheduleWhen When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
 type ScheduleWhen struct {
@@ -5433,6 +5622,26 @@ type StreamRunEventsParams struct {
 	// LastEventID Resume after this sequence number. Wins over `after`.
 	LastEventID *int32 `json:"Last-Event-ID,omitempty" yaml:"Last-Event-ID,omitempty"`
 }
+
+// ListScheduleTargetsParams defines parameters for ListScheduleTargets.
+type ListScheduleTargetsParams struct {
+	// Q Only the places whose label, detail or channel name holds this,
+	// ignoring case. At most 200 bytes.
+	Q    *string                        `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
+	Kind *ListScheduleTargetsParamsKind `form:"kind,omitempty" json:"kind,omitempty" yaml:"kind,omitempty"`
+
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
+// ListScheduleTargetsParamsKind defines parameters for ListScheduleTargets.
+type ListScheduleTargetsParamsKind string
 
 // ListSchedulesParams defines parameters for ListSchedules.
 type ListSchedulesParams struct {
@@ -7178,6 +7387,25 @@ type ClientInterface interface {
 	// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
 	SaveScheduleSettings(ctx context.Context, id TeamID, body SaveScheduleSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListScheduleTargets List where a schedule may answer
+	//
+	// Requires `schedule:write` in this team. The places the caller may have
+	// a schedule answer, besides its own conversation: chats they talked in
+	// within 90 days, newest first; then channels and groups (a platform's
+	// own list where it gives one, as Slack does, else the groups the bot
+	// has heard from); then their direct messages, where the platform opens
+	// them. A place the caller cannot use is listed with `available` false
+	// and why, except a private channel, which is left out unless the
+	// caller holds `channel:write`. A group's chat takes `channel:write`
+	// too. A channel whose platform refused to list, could not be asked, or
+	// has more channels than are listed, is one entry in `problems`.
+	// Slack's lists are kept for about five minutes, a refusal for about
+	// thirty seconds. Each kind reads the caller's 200 most recent places
+	// before the search narrows them.
+	//
+	// Corresponds with GET /teams/{id}/schedule-targets (the `ListScheduleTargets` operationId).
+	ListScheduleTargets(ctx context.Context, id TeamID, params *ListScheduleTargetsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetScheduledNews What the caller's schedules did that they have not seen
 	//
 	// Requires `schedule:read` in this team. Every fire that failed, was
@@ -7223,6 +7451,12 @@ type ClientInterface interface {
 	// minimum interval, and the team's limits on schedules per person and
 	// per team apply. A caller who may not start runs in the team is
 	// refused with 403, as the schedule would only pause at its first fire.
+	// `target` is where it answers, a place `listScheduleTargets` listed,
+	// sent back as it is; absent is a conversation of its own. It is
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
+	// a place the caller may no longer pick, or that its platform refuses,
+	// is a 400 saying why.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7237,6 +7471,12 @@ type ClientInterface interface {
 	// minimum interval, and the team's limits on schedules per person and
 	// per team apply. A caller who may not start runs in the team is
 	// refused with 403, as the schedule would only pause at its first fire.
+	// `target` is where it answers, a place `listScheduleTargets` listed,
+	// sent back as it is; absent is a conversation of its own. It is
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
+	// a place the caller may no longer pick, or that its platform refuses,
+	// is a 400 saying why.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7340,11 +7580,14 @@ type ClientInterface interface {
 
 	// TakeOverSchedule Take over a schedule whose maker left
 	//
-	// Requires `schedule:manage` in this team. Only a schedule paused
-	// because its maker left, or may no longer start runs, is taken over.
+	// Requires `schedule:manage` in this team. Only a paused schedule whose
+	// maker left, or may no longer start runs or post where it answers, is
+	// taken over, whoever paused it.
 	// It stays paused until the caller resumes it, and runs as them from
 	// then, so a caller who may not start runs in the team is refused with
-	// 403.
+	// 403, as is one without `channel:write` for a schedule posting where a
+	// group reads it. A schedule answering in its maker's direct messages
+	// or their own thread cannot be handed on: 409.
 	//
 	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
 	TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10235,6 +10478,35 @@ func (c *Client) SaveScheduleSettings(ctx context.Context, id TeamID, body SaveS
 	return c.Client.Do(req)
 }
 
+// ListScheduleTargets List where a schedule may answer
+//
+// Requires `schedule:write` in this team. The places the caller may have
+// a schedule answer, besides its own conversation: chats they talked in
+// within 90 days, newest first; then channels and groups (a platform's
+// own list where it gives one, as Slack does, else the groups the bot
+// has heard from); then their direct messages, where the platform opens
+// them. A place the caller cannot use is listed with `available` false
+// and why, except a private channel, which is left out unless the
+// caller holds `channel:write`. A group's chat takes `channel:write`
+// too. A channel whose platform refused to list, could not be asked, or
+// has more channels than are listed, is one entry in `problems`.
+// Slack's lists are kept for about five minutes, a refusal for about
+// thirty seconds. Each kind reads the caller's 200 most recent places
+// before the search narrows them.
+//
+// Corresponds with GET /teams/{id}/schedule-targets (the `ListScheduleTargets` operationId).
+func (c *Client) ListScheduleTargets(ctx context.Context, id TeamID, params *ListScheduleTargetsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListScheduleTargetsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetScheduledNews What the caller's schedules did that they have not seen
 //
 // Requires `schedule:read` in this team. Every fire that failed, was
@@ -10320,6 +10592,12 @@ func (c *Client) ListSchedules(ctx context.Context, id TeamID, params *ListSched
 // minimum interval, and the team's limits on schedules per person and
 // per team apply. A caller who may not start runs in the team is
 // refused with 403, as the schedule would only pause at its first fire.
+// `target` is where it answers, a place `listScheduleTargets` listed,
+// sent back as it is; absent is a conversation of its own. It is
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
+// a place the caller may no longer pick, or that its platform refuses,
+// is a 400 saying why.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10344,6 +10622,12 @@ func (c *Client) CreateScheduleWithBody(ctx context.Context, id TeamID, contentT
 // minimum interval, and the team's limits on schedules per person and
 // per team apply. A caller who may not start runs in the team is
 // refused with 403, as the schedule would only pause at its first fire.
+// `target` is where it answers, a place `listScheduleTargets` listed,
+// sent back as it is; absent is a conversation of its own. It is
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
+// a place the caller may no longer pick, or that its platform refuses,
+// is a 400 saying why.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10547,11 +10831,14 @@ func (c *Client) RunSchedule(ctx context.Context, id TeamID, scheduleID Schedule
 
 // TakeOverSchedule Take over a schedule whose maker left
 //
-// Requires `schedule:manage` in this team. Only a schedule paused
-// because its maker left, or may no longer start runs, is taken over.
+// Requires `schedule:manage` in this team. Only a paused schedule whose
+// maker left, or may no longer start runs or post where it answers, is
+// taken over, whoever paused it.
 // It stays paused until the caller resumes it, and runs as them from
 // then, so a caller who may not start runs in the team is refused with
-// 403.
+// 403, as is one without `channel:write` for a schedule posting where a
+// group reads it. A schedule answering in its maker's direct messages
+// or their own thread cannot be handed on: 409.
 //
 // Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
 func (c *Client) TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -15200,6 +15487,103 @@ func NewSaveScheduleSettingsRequestWithBody(server string, id TeamID, contentTyp
 	return req, nil
 }
 
+// NewListScheduleTargetsRequest constructs an http.Request for the ListScheduleTargets method
+func NewListScheduleTargetsRequest(server string, id TeamID, params *ListScheduleTargetsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/schedule-targets", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Kind != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "kind", *params.Kind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetScheduledNewsRequest constructs an http.Request for the GetScheduledNews method
 func NewGetScheduledNewsRequest(server string, id TeamID) (*http.Request, error) {
 	var err error
@@ -18696,6 +19080,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /teams/{id}/schedule-settings (the `SaveScheduleSettings` operationId).
 	SaveScheduleSettingsWithResponse(ctx context.Context, id TeamID, body SaveScheduleSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SaveScheduleSettingsResponse, error)
 
+	// ListScheduleTargetsWithResponse List where a schedule may answer
+	//
+	// Requires `schedule:write` in this team. The places the caller may have
+	// a schedule answer, besides its own conversation: chats they talked in
+	// within 90 days, newest first; then channels and groups (a platform's
+	// own list where it gives one, as Slack does, else the groups the bot
+	// has heard from); then their direct messages, where the platform opens
+	// them. A place the caller cannot use is listed with `available` false
+	// and why, except a private channel, which is left out unless the
+	// caller holds `channel:write`. A group's chat takes `channel:write`
+	// too. A channel whose platform refused to list, could not be asked, or
+	// has more channels than are listed, is one entry in `problems`.
+	// Slack's lists are kept for about five minutes, a refusal for about
+	// thirty seconds. Each kind reads the caller's 200 most recent places
+	// before the search narrows them.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/schedule-targets (the `ListScheduleTargets` operationId).
+	ListScheduleTargetsWithResponse(ctx context.Context, id TeamID, params *ListScheduleTargetsParams, reqEditors ...RequestEditorFn) (*ListScheduleTargetsResponse, error)
+
 	// GetScheduledNewsWithResponse What the caller's schedules did that they have not seen
 	//
 	// Requires `schedule:read` in this team. Every fire that failed, was
@@ -18745,6 +19150,12 @@ type ClientWithResponsesInterface interface {
 	// minimum interval, and the team's limits on schedules per person and
 	// per team apply. A caller who may not start runs in the team is
 	// refused with 403, as the schedule would only pause at its first fire.
+	// `target` is where it answers, a place `listScheduleTargets` listed,
+	// sent back as it is; absent is a conversation of its own. It is
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
+	// a place the caller may no longer pick, or that its platform refuses,
+	// is a 400 saying why.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18759,6 +19170,12 @@ type ClientWithResponsesInterface interface {
 	// minimum interval, and the team's limits on schedules per person and
 	// per team apply. A caller who may not start runs in the team is
 	// refused with 403, as the schedule would only pause at its first fire.
+	// `target` is where it answers, a place `listScheduleTargets` listed,
+	// sent back as it is; absent is a conversation of its own. It is
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
+	// a place the caller may no longer pick, or that its platform refuses,
+	// is a 400 saying why.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18872,11 +19289,14 @@ type ClientWithResponsesInterface interface {
 
 	// TakeOverScheduleWithResponse Take over a schedule whose maker left
 	//
-	// Requires `schedule:manage` in this team. Only a schedule paused
-	// because its maker left, or may no longer start runs, is taken over.
+	// Requires `schedule:manage` in this team. Only a paused schedule whose
+	// maker left, or may no longer start runs or post where it answers, is
+	// taken over, whoever paused it.
 	// It stays paused until the caller resumes it, and runs as them from
 	// then, so a caller who may not start runs in the team is refused with
-	// 403.
+	// 403, as is one without `channel:write` for a schedule posting where a
+	// group reads it. A schedule answering in its maker's direct messages
+	// or their own thread cannot be handed on: 409.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -22784,6 +23204,54 @@ func (r SaveScheduleSettingsResponse) ContentType() string {
 	return ""
 }
 
+// ListScheduleTargetsResponse401Headers the declared response headers of an HTTP 401 response for ListScheduleTargets
+type ListScheduleTargetsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListScheduleTargetsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SchedulePlacePage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListScheduleTargetsResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListScheduleTargetsResponse) GetJSON200() *SchedulePlacePage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListScheduleTargetsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListScheduleTargetsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListScheduleTargetsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListScheduleTargetsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetScheduledNewsResponse401Headers the declared response headers of an HTTP 401 response for GetScheduledNews
 type GetScheduledNewsResponse401Headers struct {
 	WWWAuthenticate *string
@@ -26591,6 +27059,33 @@ func (c *ClientWithResponses) SaveScheduleSettingsWithResponse(ctx context.Conte
 	return ParseSaveScheduleSettingsResponse(rsp)
 }
 
+// ListScheduleTargetsWithResponse List where a schedule may answer
+//
+// Requires `schedule:write` in this team. The places the caller may have
+// a schedule answer, besides its own conversation: chats they talked in
+// within 90 days, newest first; then channels and groups (a platform's
+// own list where it gives one, as Slack does, else the groups the bot
+// has heard from); then their direct messages, where the platform opens
+// them. A place the caller cannot use is listed with `available` false
+// and why, except a private channel, which is left out unless the
+// caller holds `channel:write`. A group's chat takes `channel:write`
+// too. A channel whose platform refused to list, could not be asked, or
+// has more channels than are listed, is one entry in `problems`.
+// Slack's lists are kept for about five minutes, a refusal for about
+// thirty seconds. Each kind reads the caller's 200 most recent places
+// before the search narrows them.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/schedule-targets (the `ListScheduleTargets` operationId).
+func (c *ClientWithResponses) ListScheduleTargetsWithResponse(ctx context.Context, id TeamID, params *ListScheduleTargetsParams, reqEditors ...RequestEditorFn) (*ListScheduleTargetsResponse, error) {
+	rsp, err := c.ListScheduleTargets(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListScheduleTargetsResponse(rsp)
+}
+
 // GetScheduledNewsWithResponse What the caller's schedules did that they have not seen
 //
 // Requires `schedule:read` in this team. Every fire that failed, was
@@ -26664,6 +27159,12 @@ func (c *ClientWithResponses) ListSchedulesWithResponse(ctx context.Context, id 
 // minimum interval, and the team's limits on schedules per person and
 // per team apply. A caller who may not start runs in the team is
 // refused with 403, as the schedule would only pause at its first fire.
+// `target` is where it answers, a place `listScheduleTargets` listed,
+// sent back as it is; absent is a conversation of its own. It is
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
+// a place the caller may no longer pick, or that its platform refuses,
+// is a 400 saying why.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26684,6 +27185,12 @@ func (c *ClientWithResponses) CreateScheduleWithBodyWithResponse(ctx context.Con
 // minimum interval, and the team's limits on schedules per person and
 // per team apply. A caller who may not start runs in the team is
 // refused with 403, as the schedule would only pause at its first fire.
+// `target` is where it answers, a place `listScheduleTargets` listed,
+// sent back as it is; absent is a conversation of its own. It is
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
+// a place the caller may no longer pick, or that its platform refuses,
+// is a 400 saying why.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26857,11 +27364,14 @@ func (c *ClientWithResponses) RunScheduleWithResponse(ctx context.Context, id Te
 
 // TakeOverScheduleWithResponse Take over a schedule whose maker left
 //
-// Requires `schedule:manage` in this team. Only a schedule paused
-// because its maker left, or may no longer start runs, is taken over.
+// Requires `schedule:manage` in this team. Only a paused schedule whose
+// maker left, or may no longer start runs or post where it answers, is
+// taken over, whoever paused it.
 // It stays paused until the caller resumes it, and runs as them from
 // then, so a caller who may not start runs in the team is refused with
-// 403.
+// 403, as is one without `channel:write` for a schedule posting where a
+// group reads it. A schedule answering in its maker's direct messages
+// or their own thread cannot be handed on: 409.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30212,6 +30722,45 @@ func ParseSaveScheduleSettingsResponse(rsp *http.Response) (*SaveScheduleSetting
 	switch {
 	case rsp.StatusCode == 401:
 		var headers SaveScheduleSettingsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListScheduleTargetsResponse parses an HTTP response from a ListScheduleTargetsWithResponse call
+func ParseListScheduleTargetsResponse(rsp *http.Response) (*ListScheduleTargetsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListScheduleTargetsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SchedulePlacePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListScheduleTargetsResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -72,9 +72,12 @@ LEFT JOIN messages m ON m.id = c.in_reply_to
 ORDER BY c.id;
 
 -- A part went out. Matched on attempts like every mark, so a sender whose
--- lease ran out cannot move another's progress.
+-- lease ran out cannot move another's progress. The first part says where it
+-- landed, for a platform that names it (Slack's "<channel>:<ts>"); a later
+-- part keeps what the first said.
 -- name: ReplyPartSent :execrows
-UPDATE replies SET parts_sent = sqlc.arg('parts_sent')
+UPDATE replies SET parts_sent = sqlc.arg('parts_sent'),
+                   posted_ref = coalesce(posted_ref, sqlc.narg('posted_ref'))
 WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
 
 -- A file reply's lease, pushed out to what sending the file may take before

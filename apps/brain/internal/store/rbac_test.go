@@ -652,6 +652,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/schedules/{scheduleID}/fires":       "team schedule:read",
 		"GET /teams/{id}/scheduled/news":                     "team schedule:read",
 		"POST /teams/{id}/scheduled/news/seen":               "team schedule:read",
+		"GET /teams/{id}/schedule-targets":                   "team schedule:write",
 		"GET /teams/{id}/schedule-settings":                  "member",
 		"PUT /teams/{id}/schedule-settings":                  "team team:settings",
 		"PUT /teams/{id}/mcp-servers/{serverID}/trust-hints": "team team:settings",

@@ -35,6 +35,8 @@ type relay struct {
 	err error
 	// parts splits the text into this many requests; 0 is one, -1 is none.
 	parts int
+	// posted is each request's Posted, when set.
+	posted func(body []byte) string
 
 	mu   sync.Mutex
 	outs []Outbound
@@ -62,7 +64,7 @@ func (r *relay) Reply(ch Channel, out Outbound, creds Credentials, _ time.Time) 
 		if n > 1 {
 			body = fmt.Sprintf("%s #%d", out.Text, i+1)
 		}
-		reqs[i] = OutboundRequest{URL: ch.ReplyURL, Header: h, Body: []byte(body)}
+		reqs[i] = OutboundRequest{URL: ch.ReplyURL, Header: h, Body: []byte(body), Posted: r.posted}
 	}
 	return reqs, nil
 }
@@ -2033,5 +2035,32 @@ func TestADrainHoldsEachRowsLeaseBeforeSendingIt(t *testing.T) {
 	h.holdErr = errors.New("connection reset")
 	if _, err := s.sender.Drain(t.Context()); err == nil || rcv.got() != 1 {
 		t.Errorf("Drain = %v, posted %d; want the failed hold to stop it after the first", err, rcv.got())
+	}
+}
+
+// Where the first part landed is kept on the reply, for a thread that hangs
+// from it; a later part keeps nothing of its own.
+func TestWhereTheFirstPartLandedIsKept(t *testing.T) {
+	t.Parallel()
+
+	s := newSending(t)
+	s.relay.parts = 2
+	asked := 0
+	s.relay.posted = func([]byte) string { asked++; return "C0123ABCD:1700000000.000100" }
+	rcv := newReceiver(t, http.StatusOK)
+	row := due(rcv.URL, 1)
+	s.store.due = []db.ClaimDueRepliesRow{row}
+
+	if n, err := s.sender.Drain(t.Context()); err != nil || n != 1 {
+		t.Fatalf("Drain = %d, %v; want 1 sent", n, err)
+	}
+	if len(s.store.parts) != 2 {
+		t.Fatalf("marked %d parts, want 2", len(s.store.parts))
+	}
+	if p := s.store.parts[0].PostedRef; p == nil || *p != "C0123ABCD:1700000000.000100" {
+		t.Errorf("the first part's mark kept %v, want where it landed", p)
+	}
+	if p := s.store.parts[1].PostedRef; p != nil || asked != 1 {
+		t.Errorf("the second part kept %v and Posted was asked %d times; want nothing and once", p, asked)
 	}
 }

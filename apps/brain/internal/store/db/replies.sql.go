@@ -531,20 +531,29 @@ func (q *Queries) ListRunReplies(ctx context.Context, runIds []uuid.UUID) ([]Lis
 }
 
 const replyPartSent = `-- name: ReplyPartSent :execrows
-UPDATE replies SET parts_sent = $1
-WHERE id = $2 AND status = 'pending' AND attempts = $3
+UPDATE replies SET parts_sent = $1,
+                   posted_ref = coalesce(posted_ref, $2)
+WHERE id = $3 AND status = 'pending' AND attempts = $4
 `
 
 type ReplyPartSentParams struct {
 	PartsSent int32
+	PostedRef *string
 	ID        int64
 	Attempts  int32
 }
 
 // A part went out. Matched on attempts like every mark, so a sender whose
-// lease ran out cannot move another's progress.
+// lease ran out cannot move another's progress. The first part says where it
+// landed, for a platform that names it (Slack's "<channel>:<ts>"); a later
+// part keeps what the first said.
 func (q *Queries) ReplyPartSent(ctx context.Context, arg ReplyPartSentParams) (int64, error) {
-	result, err := q.db.Exec(ctx, replyPartSent, arg.PartsSent, arg.ID, arg.Attempts)
+	result, err := q.db.Exec(ctx, replyPartSent,
+		arg.PartsSent,
+		arg.PostedRef,
+		arg.ID,
+		arg.Attempts,
+	)
 	if err != nil {
 		return 0, err
 	}

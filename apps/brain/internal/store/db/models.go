@@ -639,6 +639,8 @@ type Schedule struct {
 	ProposedIn          *uuid.UUID
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	Target              string
+	TargetLabel         string
 }
 
 type ScheduleFire struct {
@@ -821,6 +823,8 @@ type Watcher struct {
 	ProposedIn          *uuid.UUID
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	Target              string
+	TargetLabel         string
 }
 
 type WatcherCheck struct {

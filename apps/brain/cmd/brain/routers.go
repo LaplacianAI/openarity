@@ -85,7 +85,10 @@ func newRouters(
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		approvals.New(logger, dbStore, authorizer, decider{store: dbStore, resumer: starter}),
-		schedules.New(logger, dbStore, authorizer, triggers.NewService(dbStore, starter, logger)),
+		schedules.New(logger, dbStore, authorizer, triggers.NewService(dbStore, starter, logger).WithChats(
+			// A schedule's place is looked up on its platform with the
+			// channel's own credentials, through the same reach as replies.
+			gateway.NewChats(secretStore, registry, gateway.HTTPPoster(replyClient(reachable(cfg.MCPPrivateNetworks)))))),
 		improvements.New(logger, dbStore, authorizer, proposals.NewDecider(dbStore, attachments, runtime.Loops())),
 		teamgraph.New(logger, graphs),
 		teamsummary.New(logger, dbStore, authorizer),

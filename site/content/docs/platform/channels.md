@@ -32,10 +32,13 @@ The dashboard does the same under **Channels → Connect channel**.
 Create a Slack app, give its bot the scopes it needs to read and post in the
 places it is added, and install it. The bot scopes are `channels:history`,
 `groups:history`, `im:history`, `mpim:history`, `chat:write`, `files:read`
-(to read a file a person sends) and `files:write` (to send one back). An app
-made before `files:write` was needed takes it under **OAuth & Permissions**,
-then **Reinstall to Workspace**; until then a file the agent sends is given up,
-and the reply's error says `missing_scope`. Then connect the channel with the app's
+(to read a file a person sends), `files:write` (to send one back), `im:write`
+(for a schedule to message its maker directly), and `channels:read` and
+`groups:read` (to list the channels a schedule may post in). An app made
+before a scope was needed takes it under **OAuth & Permissions**, then
+**Reinstall to Workspace**; until then a file the agent sends is given up with
+`missing_scope`, and making a schedule that needs the scope is refused with
+the scope named. Then connect the channel with the app's
 **Signing Secret** (Basic Information) and its **Bot User OAuth Token**
 (`xoxb-…`). The token goes in on stdin and the secret from a file, as there
 is one stdin:

@@ -729,6 +729,12 @@
     },
     {
       "method": "GET",
+      "path": "/teams/{id}/schedule-targets",
+      "scope": "team",
+      "permission": "schedule:write"
+    },
+    {
+      "method": "GET",
       "path": "/teams/{id}/schedule-settings",
       "scope": "member"
     },

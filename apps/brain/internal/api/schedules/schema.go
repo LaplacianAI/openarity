@@ -19,9 +19,84 @@ type whenBody struct {
 	Cron         *string    `json:"cron,omitempty"`
 }
 
-// target is where a schedule answers. Today only its own conversation.
+// target is where a schedule answers, as it is shown: own, chat, channel or
+// direct, with how the place was shown when it was picked.
 type target struct {
-	Kind string `json:"kind"`
+	Kind      string     `json:"kind"`
+	Label     string     `json:"label,omitempty"`
+	ChannelID *uuid.UUID `json:"channel_id,omitempty"`
+}
+
+// pick is a place as the picker hands it back on create: what a listed place
+// carried, sent back as it was. own needs nothing.
+type pick struct {
+	Kind      string     `json:"kind"`
+	SessionID *uuid.UUID `json:"session_id,omitempty"`
+	ChannelID *uuid.UUID `json:"channel_id,omitempty"`
+	Ref       string     `json:"ref,omitempty"`
+}
+
+func (p pick) target() triggers.Target {
+	t := triggers.Target{Kind: p.Kind, Ref: p.Ref}
+	if p.SessionID != nil {
+		t.SessionID = *p.SessionID
+	}
+	if p.ChannelID != nil {
+		t.ChannelID = *p.ChannelID
+	}
+	return t
+}
+
+func pickOf(t triggers.Target) pick {
+	p := pick{Kind: t.Kind, Ref: t.Ref}
+	if t.SessionID != uuid.Nil {
+		p.SessionID = &t.SessionID
+	}
+	if t.ChannelID != uuid.Nil {
+		p.ChannelID = &t.ChannelID
+	}
+	return p
+}
+
+// place is one place the caller may pick, or see and not pick.
+type place struct {
+	Kind      string     `json:"kind"`
+	Label     string     `json:"label"`
+	Detail    string     `json:"detail"`
+	Channel   placeOn    `json:"channel"`
+	At        *time.Time `json:"at,omitempty"`
+	Available bool       `json:"available"`
+	Reason    *string    `json:"reason,omitempty"`
+	Target    pick       `json:"target"`
+}
+
+type placeOn struct {
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	Provider string    `json:"provider"`
+}
+
+type placeProblem struct {
+	ChannelID uuid.UUID `json:"channel_id"`
+	Provider  string    `json:"provider"`
+	Message   string    `json:"message"`
+}
+
+type placePage struct {
+	Items      []place        `json:"items"`
+	NextCursor string         `json:"next_cursor,omitempty"`
+	Problems   []placeProblem `json:"problems"`
+}
+
+func placeOf(it triggers.TargetItem) place {
+	p := place{
+		Kind: it.Kind, Label: it.Label, Detail: it.Detail, At: it.At, Available: it.Available,
+		Channel: placeOn{ID: it.ChannelID, Name: it.ChannelName, Provider: it.Provider}, Target: pickOf(it.Target),
+	}
+	if it.Reason != "" {
+		p.Reason = &it.Reason
+	}
+	return p
 }
 
 type schedule struct {
@@ -48,7 +123,7 @@ type schedule struct {
 func view(v triggers.ScheduleView) schedule {
 	out := schedule{
 		ID: v.ID, Name: v.Name, Objective: v.Objective, When: whenOf(v.Schedule), Timezone: v.Timezone,
-		AgentID: v.AgentID, Hub: v.Hub, Target: target{Kind: "own"}, SessionID: v.SessionID, Status: v.Status,
+		AgentID: v.AgentID, Hub: v.Hub, Target: targetOf(v), SessionID: v.SessionID, Status: v.Status,
 		PausedReason: v.PausedReason, NextFireAt: v.NextFireAt, Upcoming: v.Upcoming,
 		LastFiredAt: v.LastFiredAt, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 	}
@@ -84,7 +159,7 @@ type createRequest struct {
 	When      whenBody   `json:"when"`
 	Timezone  string     `json:"timezone"`
 	AgentID   *uuid.UUID `json:"agent_id"`
-	Target    *target    `json:"target"`
+	Target    *pick      `json:"target"`
 }
 
 // updateRequest changes what it names. hub sets the agent back to the hub;
@@ -157,4 +232,12 @@ type listCursor struct {
 
 type fireCursor struct {
 	Before time.Time `json:"b"`
+}
+
+func targetOf(v triggers.ScheduleView) target {
+	t := target{Kind: v.Target, Label: v.TargetLabel}
+	if v.Target != triggers.TargetOwn {
+		t.ChannelID = v.SessionChannelID
+	}
+	return t
 }
