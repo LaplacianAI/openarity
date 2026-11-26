@@ -29,13 +29,6 @@ const (
 	// steps between compactions.
 	defaultCompactionTokensMin = 50_000
 	defaultCompactionTokensMax = 60_000
-	// previewOver is the size past which a tool result reaches the model as
-	// its first 4 KiB and last 2 KiB and a read_output handle, not the SDK's
-	// 48 KiB. On staging (2026-11-20 to 27), review delegates' results over
-	// 8 KiB were 22% of them and 46% of their bytes, each written to the cache
-	// whole and resent on every later call; a model that needs the rest reads
-	// it by line or match.
-	previewOver = 8 << 10
 	// defaultCompactionMessages is team_settings.compaction_messages' default,
 	// for a team that never saved its settings.
 	defaultCompactionMessages = 100
@@ -94,6 +87,13 @@ func defaultTeamSettings() db.TeamSetting {
 		CompactionTokensMax: defaultCompactionTokensMax,
 	}
 }
+
+// previewOver is the size past which a tool result reaches the model as its
+// first 4 KiB and last 2 KiB and a read_output handle: a large result is
+// written to the cache whole and resent on every later call, and a model that
+// needs the rest reads it by line or match. Why 8 KiB, and when it is undone,
+// is in DECISIONS.md.
+const previewOver = 8 << 10
 
 // compactionFor is how a run compacts: past the team's message count, or past
 // a tenth of the run's budget, held between the team's least and most tokens.

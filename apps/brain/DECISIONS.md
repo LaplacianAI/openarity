@@ -161,18 +161,25 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   carrying tool output they were done with; a compaction left about 26,000.
   The cost is a compaction about twice as often, each a summary call and one
   request whose context is not cached yet.
-- **A tool result over 8 KiB is previewed, not the SDK's 48 KiB.** The model
-  is sent its first 4 KiB and last 2 KiB and a `read_output` handle; the
-  transcript keeps it whole, and a skill or a `read_output` result is never
-  cut. On staging (2026-11-20 to 27) review delegates read 155M input tokens:
-  their results over 8 KiB were 22% of them and 46% of their bytes, each
-  written to the cache whole (1.25x) and read again on every later call. It
-  applies from the first view, since a result shortened later keeps the
-  write and saves only the cheap reads, and breaks the cache where it
-  changes. A brain constant, not a team setting, until a team needs another
-  value. Measured after a week against those numbers: input and cost per
-  review, calls and `read_output` calls per delegate; undone if calls per
-  delegate rise by more than a fifth or cost per review does not fall.
+- **A tool result over 8 KiB is previewed, not the SDK's 48 KiB.** Every
+  run's tools, the hub's and delegates' alike: the model is sent a result's
+  first 4 KiB and last 2 KiB and a `read_output` handle; the transcript keeps
+  it whole, and a skill or a `read_output` result is never cut. On staging
+  (2026-11-19 to 26) review delegates read 155M input tokens: their results
+  over 8 KiB were 22% of them and 46% of their bytes, each written to the
+  cache whole (1.25x) and read again on every later call. It applies from the
+  first view, since a result shortened later keeps the write and saves only
+  the cheap reads, and breaks the cache where it changes; a run in flight at
+  the deploy has its 8 to 48 KiB results reshaped once, one cache miss.
+  - The browser's tools keep 48 KiB (`browserPreview`): the model clicks and
+    types by the `[N]` refs in a snapshot, and a preview would hide the refs
+    in the middle of the page. `describe_tools`, which the brain cannot set,
+    was never over 8 KiB on staging (121 results, 1.9 KB on average).
+  - A brain constant, not a team setting, until a team needs another value.
+  - Measured on delegates, whose transcripts #311 never touches, a week after
+    against the numbers above: input and cost per delegate run, calls and
+    `read_output` calls per run. Undone if calls per run rise by more than a
+    fifth or cost per run does not fall.
 - **A team sets its own token lines, both of them.** `compaction_tokens_min`
   and `compaction_tokens_max` are team settings, 50,000 and 60,000 until
   saved, each from 30,000 to 1,000,000 and the least never above the most:
