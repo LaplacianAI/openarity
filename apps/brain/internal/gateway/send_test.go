@@ -1997,6 +1997,19 @@ func (h *heldOrder) ExtendReplyLease(ctx context.Context, arg db.ExtendReplyLeas
 	return h.outbox.ExtendReplyLease(ctx, arg)
 }
 
+// orderedPoster records each post in its heldOrder, beside the holds.
+type orderedPoster struct {
+	h *heldOrder
+	p Poster
+}
+
+func (o orderedPoster) Post(ctx context.Context, ch uuid.UUID, req OutboundRequest) error {
+	o.h.mu.Lock()
+	o.h.order = append(o.h.order, "post "+strings.TrimPrefix(req.URL[strings.LastIndex(req.URL, "/"):], "/"))
+	o.h.mu.Unlock()
+	return o.p.Post(ctx, ch, req)
+}
+
 // Every reply after the first in a batch has its lease held again before it
 // is sent, as one ahead of it can outlast the claim's: one whose lease is
 // gone is left to the sender holding it; a hold that fails stops the drain.
@@ -2006,11 +2019,11 @@ func TestADrainHoldsEachRowsLeaseBeforeSendingIt(t *testing.T) {
 	setup := func(t *testing.T) (*sending, *heldOrder, *receiver) {
 		rcv := newReceiver(t, http.StatusOK)
 		s := newSending(t, &relay{})
-		a, b := due(rcv.URL+"/r", 1), due(rcv.URL+"/r", 1)
+		a, b := due(rcv.URL+"/1", 1), due(rcv.URL+"/2", 1)
 		a.ID, b.ID = 1, 2
 		s.store.due = []db.ClaimDueRepliesRow{a, b}
 		h := &heldOrder{outbox: s.store}
-		s.sender = NewSender(h, s.sender.secrets, s.sender.reg, HTTPPoster(&http.Client{}), Scope{}, discardLogger())
+		s.sender = NewSender(h, s.sender.secrets, s.sender.reg, orderedPoster{h, HTTPPoster(&http.Client{})}, Scope{}, discardLogger())
 		return s, h, rcv
 	}
 
@@ -2018,7 +2031,7 @@ func TestADrainHoldsEachRowsLeaseBeforeSendingIt(t *testing.T) {
 	if _, err := s.sender.Drain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(h.order, []string{"hold 2"}) || rcv.got() != 2 || len(s.store.sent) != 2 {
+	if !slices.Equal(h.order, []string{"post 1", "hold 2", "post 2"}) || rcv.got() != 2 || len(s.store.sent) != 2 {
 		t.Errorf("holds %v, posted %d, sent %d; want the second held, both sent", h.order, rcv.got(), len(s.store.sent))
 	}
 
