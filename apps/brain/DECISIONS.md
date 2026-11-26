@@ -179,7 +179,15 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   arrives after its last model call starts the next run when it finishes, of
   the same kind. A channel's session takes runs only from its chat, so every
   answer reaches it. A run writes its place, `transcript_from`, before its
-  first message, so a crash between the two writes it once. A channel's run
+  first message, so a crash between the two writes it once. Before its place,
+  a run writes a clearing mark (`agent.ClearingFor`) when an earlier run left
+  a tool result over 1 KiB: those results are sent as handles from its first
+  request, which `read_output` reads back by call id, a range or a match. A
+  new run never needs an earlier run's raw output, and without the mark a
+  conversation under the compaction line resent every one on every message
+  (a "hi" read 63k tokens on staging, 19k of them old results). The mark is
+  stored first, so the place still names the run's first message after a
+  crash, as replay reads it. A channel's run
   is told, as text, only what was said since the last run: a group's
   chatter, which reached no run. Further back it reads with `history`
   (`runtime/history.go`): the session's messages and its top-level runs'

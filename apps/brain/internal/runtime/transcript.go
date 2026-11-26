@@ -54,11 +54,37 @@ func (e *Executor) begin(ctx context.Context, row db.Run, msgs []agent.Message) 
 		return false, nil, err
 	}
 	// What an earlier run left open is closed: its requests are its own.
+	stored := len(msgs)
 	msgs = closeCalls(msgs)
+	// The earlier runs' tool results are theirs too: sent as handles, which
+	// read_output reads back whole, rather than whole on every request. The
+	// mark is written before the run's place, so a run that stops before its
+	// first save still finds its first message there.
+	if mark, ok := agent.ClearingFor(msgs); ok {
+		if err := e.saveMark(ctx, transcriptOf(row), stored, msgs, mark); err != nil {
+			return false, nil, fmt.Errorf("clearing the earlier runs' results from run %s's view: %w", row.ID, err)
+		}
+		msgs = append(msgs, mark)
+	}
 	if err := e.store.SetTranscriptFrom(ctx, db.SetTranscriptFromParams{ID: row.ID, Position: int32(len(msgs))}); err != nil { //nolint:gosec // a transcript is never 2^31 messages
 		return false, nil, fmt.Errorf("placing run %s in its transcript: %w", row.ID, err)
 	}
 	return false, append(msgs, first), nil
+}
+
+// saveMark writes msgs and mark after them. Of the stored messages, all but
+// the last are kept as they are: closeCalls adds only before a trailing
+// files message.
+func (e *Executor) saveMark(ctx context.Context, session string, stored int, msgs []agent.Message, mark agent.Message) error {
+	all := append(slices.Clone(msgs), mark)
+	if s, ok := e.sessions.(agent.SavingFrom); ok {
+		from := stored
+		if len(msgs) != stored {
+			from = max(stored-1, 0)
+		}
+		return s.SaveFrom(ctx, session, from, all)
+	}
+	return e.sessions.Save(ctx, session, all)
 }
 
 // firstMessage is what a run adds to its transcript: the date, its input,

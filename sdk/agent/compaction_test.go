@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -744,5 +745,90 @@ func TestAPinSurvivesTheTranscript(t *testing.T) {
 	var back Message
 	if err := json.Unmarshal(b, &back); err != nil || !back.Pinned {
 		t.Fatalf("read back %+v, %v; want it pinned", back, err)
+	}
+}
+
+// resumed is a client for a run that starts from msgs, marks and all, as the
+// runner resumes one.
+func resumed(cfg Compaction, msgs []Message) (*compactRig, []Message) {
+	r := &compactRig{model: &scripted{}, handle: &compactHandle{}}
+	plain := r.handle.resume(msgs)
+	r.client = newCompactingClient(r.model, cfg, r.handle, func(Usage) {}, func(Event) {})
+	return r, plain
+}
+
+// A run that starts after another sends that run's large results as
+// handles once ClearingFor's mark is in its transcript, and the latest
+// message whole; under the line, nothing else would have cleared them.
+func TestClearingForClearsEarlierResultsForTheNextRequest(t *testing.T) {
+	earlier := append(conversation(2, func(int) string { return strings.Repeat("d", 20<<10) }),
+		say(RoleAssistant, "the review found two bugs"))
+	mark, ok := ClearingFor(earlier)
+	if !ok {
+		t.Fatal("no mark for two 20 KiB results")
+	}
+	if mark.Clearing == nil || mark.Role != RoleUser {
+		t.Fatalf("mark = %+v, want a clearing", mark)
+	}
+
+	r, plain := resumed(Compaction{AfterInputTokens: 1_000_000}, append(append(slices.Clone(earlier), mark), say(RoleUser, "hi")))
+	sent := r.send(t, plain)
+
+	for _, i := range []int{2, 4} {
+		if !strings.Contains(text(sent[i]), "cleared to save room") {
+			t.Errorf("result %d went whole: %.60q", i, text(sent[i]))
+		}
+	}
+	if text(sent[len(sent)-1]) != "hi" || text(sent[len(sent)-2]) != "the review found two bugs" {
+		t.Errorf("the answer and the new message were not sent as they are: %q, %q", text(sent[len(sent)-2]), text(sent[len(sent)-1]))
+	}
+}
+
+// Nothing to clear, nothing written: small results, results already cleared
+// by a mark, and results folded into a summary.
+func TestClearingForWritesNoMarkForNothing(t *testing.T) {
+	small := conversation(3, func(int) string { return "ok" })
+	if _, ok := ClearingFor(small); ok {
+		t.Error("a mark for results under 1 KiB")
+	}
+
+	large := conversation(2, func(int) string { return strings.Repeat("d", 20<<10) })
+	mark, ok := ClearingFor(large)
+	if !ok {
+		t.Fatal("no mark for large results")
+	}
+	again := append(slices.Clone(large), mark)
+	if _, ok := ClearingFor(again); ok {
+		t.Error("a second mark right after the first")
+	}
+	more := append(slices.Clone(again), called("c9", "read_file"), result("c9", strings.Repeat("e", 20<<10)))
+	if _, ok := ClearingFor(more); !ok {
+		t.Error("no mark for a large result after the last mark")
+	}
+
+	summarised := append(slices.Clone(large),
+		Message{Role: RoleUser, Content: []Content{{Type: ContentText, Text: "summary"}}, Compaction: &CompactionSummary{Summary: "s", Prefix: digest(large)}})
+	if _, ok := ClearingFor(summarised); ok {
+		t.Error("a mark for results a summary already folds")
+	}
+}
+
+// A mark ClearingFor writes is one prepare keeps: its prefix is the
+// transcript's as compaction writes it, summaries and clearings left out.
+func TestClearingForsPrefixIsKept(t *testing.T) {
+	first := append(conversation(1, func(int) string { return strings.Repeat("d", 20<<10) }), say(RoleAssistant, "done"))
+	m1, _ := ClearingFor(first)
+	second := append(append(slices.Clone(first), m1, say(RoleUser, "next")), called("c2", "read_file"), result("c2", strings.Repeat("e", 20<<10)), say(RoleAssistant, "done"))
+	m2, ok := ClearingFor(second)
+	if !ok {
+		t.Fatal("no second mark")
+	}
+	r, plain := resumed(Compaction{AfterInputTokens: 1_000_000}, append(slices.Clone(second), m2, say(RoleUser, "hi")))
+	sent := r.send(t, plain)
+	if r.client.state.cleared != len(plain)-1 {
+		t.Errorf("cleared to %d, want %d: prepare dropped the mark", r.client.state.cleared, len(plain)-1)
+	}
+	if strings.Contains(text(sent[2]), strings.Repeat("d", 100)) || strings.Contains(text(sent[6]), strings.Repeat("e", 100)) {
+		t.Error("a result before the marks went whole")
 	}
 }
