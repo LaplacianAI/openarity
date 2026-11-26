@@ -4,16 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/roomfile"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -36,23 +40,28 @@ type serverRooms struct {
 	t      *testing.T
 	mu     sync.Mutex
 	files  map[string]map[string]string // server name, path, bytes
+	said   map[string]int64             // a path's Content-Length, when it is not the bytes'
 	down   map[string]error
 	asked  []string
 	served *httptest.Server
 }
 
 func newServerRooms(t *testing.T) *serverRooms {
-	r := &serverRooms{t: t, files: map[string]map[string]string{}, down: map[string]error{}}
+	r := &serverRooms{t: t, files: map[string]map[string]string{}, said: map[string]int64{}, down: map[string]error{}}
 	r.served = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		server := strings.TrimPrefix(req.URL.Path, "/")
 		server = strings.TrimSuffix(server, "/file")
 		r.mu.Lock()
 		data, ok := r.files[server][req.URL.Query().Get("path")]
+		said, lies := r.said[req.URL.Query().Get("path")]
 		r.mu.Unlock()
 		if !ok {
 			w.Header().Set("X-Room-Problem", "1")
 			http.Error(w, req.URL.Query().Get("path")+" does not exist", http.StatusNotFound)
 			return
+		}
+		if lies {
+			w.Header().Set("Content-Length", strconv.FormatInt(said, 10))
 		}
 		_, _ = w.Write([]byte(data))
 	}))
@@ -421,5 +430,83 @@ func TestAKeepWaitingItsTurnCanBeGivenUpOn(t *testing.T) {
 	}
 	if len(rooms.asked) != 0 {
 		t.Errorf("a room was asked: %v", rooms.asked)
+	}
+}
+
+// A file over the old 25 MiB is kept, streamed from the room. One the room
+// says is over 100 MiB is refused by its length, and one that ends short of
+// the length it said keeps nothing.
+func TestALargeFileIsKeptAndOneTooLargeOrCutShortIsNot(t *testing.T) {
+	k := newKeepFixture(t, false, "mail").withRoomFiles()
+	big := "%PDF-1.7\n" + strings.Repeat("x", 30<<20)
+	k.rooms.files["mail"] = map[string]string{"big.pdf": big, "huge.zip": "", "cut.zip": "PK\x03\x04"}
+	k.rooms.said["huge.zip"] = 101 << 20
+	k.rooms.said["cut.zip"] = 1 << 20
+	keep := tool(t, k.build(t), KeepFileToolName)
+
+	out, err := callAs(t, keep, "c1", `{"path":"big.pdf","server":"mail"}`)
+	if err != nil || !strings.HasPrefix(out.Output, "Kept big.pdf (application/pdf, 30.0 MB) as file ") {
+		t.Fatalf("keep_file = %q, %v", out.Output, err)
+	}
+	if len(k.rows.rows) != 1 || k.rows.rows[0].SizeBytes != int64(len(big)) {
+		t.Fatalf("kept %+v", k.rows.rows)
+	}
+
+	if _, err := callAs(t, keep, "c2", `{"path":"huge.zip","server":"mail"}`); err == nil || !strings.Contains(err.Error(), "is 105906176 bytes") {
+		t.Errorf("a file over 100 MiB = %v, want it refused by its length", err)
+	}
+	if _, err := callAs(t, keep, "c3", `{"path":"cut.zip","server":"mail"}`); err == nil || !strings.Contains(err.Error(), "nothing was kept") {
+		t.Errorf("a file cut short = %v, want nothing kept", err)
+	}
+	if len(k.rows.rows) != 1 {
+		t.Errorf("%d rows, want the large file's alone", len(k.rows.rows))
+	}
+}
+
+// stubKeeper fails a keep as it is told; with wait, it waits for its
+// deadline, as a file still arriving does.
+type stubKeeper struct {
+	err  error
+	wait bool
+}
+
+func (s stubKeeper) KeepStream(ctx context.Context, _, _ string, r io.Reader) (streamed, error) {
+	_, _ = io.Copy(io.Discard, r)
+	if s.wait {
+		<-ctx.Done()
+		return streamed{}, fmt.Errorf("reading the file from the room: %w", ctx.Err())
+	}
+	return streamed{}, s.err
+}
+
+// A room's refusal that comes while the file streams, such as one past the
+// most, reaches the model in the room's words; any other failure says
+// nothing was kept, without the store's.
+func TestAFailureWhileStreamingSaysWhy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		wait bool
+		says string
+	}{
+		"the room's refusal":   {err: &roomfile.Problem{Msg: "out.bin is over 104857600 bytes"}, says: "out.bin is over 104857600 bytes"},
+		"nothing in it":        {err: errEmpty, says: "out.bin is empty"},
+		"the store":            {err: errors.New("s3: access denied for bucket openarity"), says: "could not be read and kept whole"},
+		"still arriving":       {wait: true, says: "out.bin was still arriving after 50ms"},
+		"a deadline elsewhere": {err: fmt.Errorf("the store: %w", context.DeadlineExceeded), says: "could not be read and kept whole"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rooms := newServerRooms(t)
+			rooms.files["mail"] = map[string]string{"out.bin": "x"}
+			k := &keepFile{
+				keep:    stubKeeper{err: tc.err, wait: tc.wait},
+				servers: map[string]db.McpServer{"mail": {Name: "mail"}},
+				rooms:   rooms, client: http.DefaultClient, one: make(chan struct{}, 1),
+				timeout: 50 * time.Millisecond,
+			}
+			_, err := k.invoke(t.Context(), []byte(`{"path":"out.bin","server":"mail"}`))
+			if err == nil || !strings.Contains(err.Error(), tc.says) || strings.Contains(err.Error(), "s3:") {
+				t.Errorf("invoke = %v, want it to say %q", err, tc.says)
+			}
+		})
 	}
 }

@@ -864,9 +864,35 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   such a run is judged that way too. A run holding `keep_file` holds the
   attachment tools, as its tool list is fixed and its first file comes
   mid-run. Twenty tries a run, a failed one counted, counted from the run's
-  earlier ones; one file read at a time; 25 MiB, as every
-  attachment, read by a client with the dial policy and no 8 MiB cap of its
-  own (`discovery.RoomClient`). Files over 25 MiB are F4b.
+  earlier ones; one file read at a time, read by a client with the dial
+  policy and no 8 MiB cap of its own (`discovery.RoomClient`); up to 100 MiB
+  since F4b, below. A file an MCP tool returns stays at 25 MiB.
+- **Every object is written as v2, sealed in chunks (F4b).** v1 sealed a
+  file as one GCM message, which opens only whole, so every read and write
+  held the file. v2 is `"OAo2"`, a 32-byte salt, then 64 KiB chunks under a
+  key of the object's own (HKDF of the team key, the salt and the object key),
+  each with a nonce that is its index and a last-chunk flag: the STREAM
+  construction, as age uses it. A key per object makes a counter a safe nonce
+  with no birthday bound across a team's files; the index stops chunks being
+  reordered or dropped, the flag stops the file being cut at a chunk's end,
+  and the object key in the derivation keeps v1's refusal of bytes moved to
+  another key. Small objects are v2 too, so there is one writer; v1 stays
+  readable forever, told apart by the magic and tried as well when a v1 nonce
+  happens to begin with it (2⁻³²), so no column records the format.
+  `Encrypted.Open` opens the first chunk before it returns, so a wrong key
+  fails before a download has answered; a chunk damaged later cuts the body
+  short of its `Content-Length`. S3 writes past 8 MiB as a multipart upload,
+  aborted on failure; the filesystem writes a synced temporary file and
+  renames it. `keep_file` streams from the room into the store, up to
+  100 MiB; a channel still takes 25 MiB, refused at `send_file`, since every
+  channel's reply holds the file whole (F4c). Only `io.EOF` ends a file
+  (`objects.Strict`): `io.ReadFull` reads a short last chunk as
+  `io.ErrUnexpectedEOF`, so a source that says that itself, a connection
+  closed early, would otherwise be sealed as a whole file; and a reader's
+  first error is its last, as `io.ReadFull` drops one that comes with a full
+  buffer. The same on the way out tells a cut connection from a damaged
+  chunk, so it is not retried as v1. A download moves its write deadline past
+  the server's 30 seconds, by its size at 256 KiB a second at the least.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes
   sniff as, never the server's word, and so is the extension a name lacks.
   Any type is kept, unlike a person's: one sniffed as nothing better is

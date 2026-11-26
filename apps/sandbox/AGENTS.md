@@ -35,7 +35,7 @@ apps/sandbox/
     search.go       glob with **, grep with RE2; .git and node_modules left out
     handler.go      the routes, the bearer token, a mistake the model can fix as 422
   internal/roomfile/
-    roomfile.go     a path resolved (links followed, /proc refused), a regular file opened, GET /file: the file whole, up to 25 MiB
+    roomfile.go     a path resolved (links followed, /proc refused), a regular file opened, GET /file: the file whole, up to 100 MiB
   internal/shim/
     child.go        the server on stdio: one MCP session, ids of the shim's own, answers routed back
     sessions.go     the callers sharing it: session ids, idle expiry, requests in flight
@@ -135,7 +135,7 @@ file tools refuse.
 ## A room's files
 
 Both roles serve `GET /file?path=` behind the room's token: a regular file
-whole, up to 25 MiB, for the brain's `keep_file` to keep as an attachment. A
+whole, up to 100 MiB, for the brain's `keep_file` to keep as an attachment. A
 relative path is from the role's root, `/workspace` or the directory the
 shim's server runs in. `/proc` is refused by path and by the file opened, as
 the workspace's file tools refuse it. A refusal (missing, a directory, too

@@ -1,11 +1,15 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
@@ -170,5 +174,104 @@ func TestBinaryContentSurvivesARoundTrip(t *testing.T) {
 		if got[i] != body[i] {
 			t.Fatalf("byte %d is %#x, want %#x", i, got[i], body[i])
 		}
+	}
+}
+
+// A stream under one part is one object, and one over it a multipart
+// upload; both read back whole, streamed. Against a real store, since the
+// stub cannot answer a multipart upload.
+func TestAStreamedObjectRoundTripsAgainstARealStore(t *testing.T) {
+	t.Parallel()
+
+	s := liveS3(t)
+	w := asWriter(t, s)
+	for _, n := range []int{5, partSize, 2*partSize + 3} {
+		k := liveKey()
+		want := bytes.Repeat([]byte{byte(n)}, n)
+		want[n-1] = 0xff
+		if err := w.PutStream(t.Context(), k, bytes.NewReader(want)); err != nil {
+			t.Fatalf("%d: PutStream: %v", n, err)
+		}
+		t.Cleanup(func() { _ = w.Delete(context.WithoutCancel(t.Context()), k) })
+		r, err := s.Open(t.Context(), k)
+		if err != nil {
+			t.Fatalf("%d: Open: %v", n, err)
+		}
+		got, err := io.ReadAll(r)
+		_ = r.Close()
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("%d: read %d bytes, %v", n, len(got), err)
+		}
+	}
+	if _, err := s.Open(t.Context(), liveKey()); !errors.Is(err, objects.ErrNotFound) {
+		t.Errorf("Open of a missing key = %v, want ErrNotFound", err)
+	}
+}
+
+// A reader that fails after a part is sent aborts the upload: no object, and
+// no upload left in progress under its key.
+func TestAFailedStreamLeavesNothingInARealStore(t *testing.T) {
+	t.Parallel()
+
+	s := liveS3(t)
+	k := liveKey()
+	broke := errors.New("the room hung up")
+	r := io.MultiReader(bytes.NewReader(make([]byte, partSize+10)), failing{broke})
+	if err := asWriter(t, s).PutStream(t.Context(), k, r); !errors.Is(err, broke) {
+		t.Fatalf("PutStream = %v, want %v", err, broke)
+	}
+	if _, err := s.Get(t.Context(), k); !errors.Is(err, objects.ErrNotFound) {
+		t.Errorf("an object was left: %v", err)
+	}
+	st, ok := s.(*store)
+	if !ok {
+		t.Fatalf("%T is not the S3 store", s)
+	}
+	ups, err := st.client.ListMultipartUploads(t.Context(), &awss3.ListMultipartUploadsInput{
+		Bucket: aws.String(st.bucket), Prefix: aws.String(k),
+	})
+	if err != nil {
+		t.Fatalf("ListMultipartUploads: %v", err)
+	}
+	if len(ups.Uploads) != 0 {
+		t.Errorf("%d uploads left in progress", len(ups.Uploads))
+	}
+}
+
+type failing struct{ err error }
+
+func (f failing) Read([]byte) (int, error) { return 0, f.err }
+
+// A source cut off, under one part or past it, stores nothing: never a short
+// object written as whole.
+func TestACutOffStreamLeavesNothingInARealStore(t *testing.T) {
+	t.Parallel()
+
+	s := liveS3(t)
+	for _, n := range []int{5, partSize + 10} {
+		k := liveKey()
+		r := io.MultiReader(bytes.NewReader(make([]byte, n)), failing{io.ErrUnexpectedEOF})
+		if err := asWriter(t, s).PutStream(t.Context(), k, r); !errors.Is(err, objects.ErrTruncated) {
+			t.Errorf("%d: PutStream = %v, want ErrTruncated", n, err)
+		}
+		if _, err := s.Get(t.Context(), k); !errors.Is(err, objects.ErrNotFound) {
+			t.Errorf("%d: an object was left: %v", n, err)
+		}
+	}
+}
+
+// An object past what Get reads whole says so, rather than coming back cut.
+func TestGetOfAnObjectTooLargeSaysSoAgainstARealStore(t *testing.T) {
+	t.Parallel()
+
+	s := liveS3(t)
+	w := asWriter(t, s)
+	k := liveKey()
+	if err := w.PutStream(t.Context(), k, bytes.NewReader(make([]byte, maxObjectSize+1))); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Delete(context.WithoutCancel(t.Context()), k) })
+	if _, err := s.Get(t.Context(), k); !errors.Is(err, objects.ErrTooLarge) {
+		t.Errorf("Get = %v, want ErrTooLarge", err)
 	}
 }

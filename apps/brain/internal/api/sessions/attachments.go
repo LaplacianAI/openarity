@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,8 +18,24 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
+// Objects is where a conversation's files are read, streamed: a large one is
+// sent as it is opened, never held.
 type Objects interface {
-	Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error)
+	Open(ctx context.Context, teamID uuid.UUID, key string) (io.ReadCloser, error)
+}
+
+const (
+	// downloadBase is what a download is given before its size counts: the
+	// server's own write timeout.
+	downloadBase = 30 * time.Second
+	// downloadMinRate is the slowest a download is kept open for, in bytes a
+	// second: 100 MiB is given 30s and 400s more.
+	downloadMinRate = 256 << 10
+)
+
+// downloadBudget is how long a file of size bytes is given to be sent.
+func downloadBudget(size int64) time.Duration {
+	return downloadBase + time.Duration(max(size, 0)/downloadMinRate)*time.Second
 }
 
 var renderable = map[string]bool{
@@ -124,7 +142,7 @@ func (h *handler) getAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := h.objects.Get(r.Context(), teamID, row.ObjectKey)
+	body, err := h.objects.Open(r.Context(), teamID, row.ObjectKey)
 	switch {
 	case errors.Is(err, objects.ErrNotFound):
 		api.Fail(w, h.logger, u, "attachment object is missing", err)
@@ -133,20 +151,32 @@ func (h *handler) getAttachment(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to read attachment object", err)
 		return
 	}
+	defer func() { _ = body.Close() }()
 
-	writeAttachment(w, row, body)
+	// The server's write timeout bounds a whole response, and a large file
+	// over a slow link takes longer.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadBudget(row.SizeBytes))); err != nil &&
+		!errors.Is(err, http.ErrNotSupported) {
+		h.logger.WarnContext(r.Context(), "an attachment's write deadline was not extended",
+			"attachment", row.ID, "error", err)
+	}
+	writeAttachment(w, row)
+	// The status is sent: a chunk that fails now cuts the body short of its
+	// length, which a client takes as a failed download, never a whole one.
+	if n, err := io.Copy(w, body); err != nil && r.Context().Err() == nil {
+		h.logger.ErrorContext(r.Context(), "an attachment was cut short",
+			"attachment", row.ID, "sent", n, "size", row.SizeBytes, "error", err)
+	}
 }
 
-func writeAttachment(w http.ResponseWriter, row db.Attachment, body []byte) {
+func writeAttachment(w http.ResponseWriter, row db.Attachment) {
 	w.Header().Set("Content-Type", row.MediaType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", disposition(row.MediaType, row.Filename))
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.Header().Set("Content-Length", strconv.FormatInt(row.SizeBytes, 10))
 	w.Header().Set("Cache-Control", "private, no-store")
 
 	w.WriteHeader(http.StatusOK)
-
-	_, _ = w.Write(body) //nolint:gosec // G705: mitigated by the headers above
 }
 
 func disposition(mediaType, filename string) string {

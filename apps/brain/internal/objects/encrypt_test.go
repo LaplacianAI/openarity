@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,22 @@ func (f *fakeStore) Put(_ context.Context, key string, body []byte) error {
 	return nil
 }
 
+func (f *fakeStore) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	body, err := f.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(body)), nil
+}
+
+func (f *fakeStore) PutStream(ctx context.Context, key string, r io.Reader) error {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	return f.Put(ctx, key, body)
+}
+
 func (f *fakeStore) Delete(_ context.Context, key string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -68,6 +85,10 @@ func (f *fakeStore) raw(t *testing.T, key string) []byte {
 type readOnlyStore struct{}
 
 func (readOnlyStore) Get(context.Context, string) ([]byte, error) {
+	return nil, ErrNotFound
+}
+
+func (readOnlyStore) Open(context.Context, string) (io.ReadCloser, error) {
 	return nil, ErrNotFound
 }
 
@@ -159,11 +180,11 @@ func TestTheStoreNeverSeesPlaintext(t *testing.T) {
 		t.Error("plaintext reached the object store")
 	}
 
-	// And it is the right length: 12 bytes of nonce and 16 of tag around the
-	// file, which is also what stops this passing against a store that wrote
-	// nothing at all.
-	if want := 12 + len("secret file") + 16; len(stored) != want {
-		t.Errorf("stored %d bytes, want %d — nonce + ciphertext + tag", len(stored), want)
+	// And it is the right length: the v2 header, then one chunk with its
+	// 16-byte tag, which is also what stops this passing against a store that
+	// wrote nothing at all.
+	if want := headerSize + len("secret file") + 16; len(stored) != want {
+		t.Errorf("stored %d bytes, want %d — header + ciphertext + tag", len(stored), want)
 	}
 }
 
@@ -406,8 +427,8 @@ func TestAnEmptyFileRoundTrips(t *testing.T) {
 	if err := e.Put(t.Context(), team, key, nil); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if n := len(inner.raw(t, key)); n != 12+16 {
-		t.Errorf("stored %d bytes for an empty file, want %d", n, 12+16)
+	if n := len(inner.raw(t, key)); n != headerSize+16 {
+		t.Errorf("stored %d bytes for an empty file, want %d: a header and one empty chunk", n, headerSize+16)
 	}
 
 	got, err := e.Get(t.Context(), team, key)

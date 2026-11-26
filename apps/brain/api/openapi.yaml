@@ -1604,6 +1604,10 @@ paths:
         without executing anything. Everything else downloads, including PDFs:
         a same-origin PDF runs JavaScript in every major viewer.
 
+        The file is streamed as it is decrypted, never held, up to 100 MiB.
+        `Content-Length` is its recorded size; a body that ends short of it
+        failed on the way, and is a failed download, never a whole one.
+
         An attachment id belonging to another conversation answers 404, the
         same as one that does not exist.
       responses:

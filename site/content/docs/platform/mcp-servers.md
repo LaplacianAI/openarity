@@ -88,7 +88,7 @@ or absolute, then reads it with `read_attachment` or sends it with `send_file`.
 The room is one per server, shared by the team's runs, and its files go when it
 is replaced or deleted after `OPENARITY_SANDBOX_IDLE`. `keep_file` never starts
 a room to look: a room that is stopped is told to the agent, which can call one
-of the server's tools to start it again. A file is kept up to 25 MiB.
+of the server's tools to start it again. A file is kept up to 100 MiB.
 
 Because the room is shared, any file in it can be kept from any of the team's
 conversations. So a run that holds a command server is judged on `keep_file`

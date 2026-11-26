@@ -1,11 +1,14 @@
 package roomfile
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,6 +24,16 @@ func room(t *testing.T, h func(w http.ResponseWriter, r *http.Request)) sandbox.
 	return sandbox.Endpoint{URL: srv.URL + Route, Header: http.Header{"Authorization": {"Bearer tok"}}}
 }
 
+// get is Open, read to its end: what the room sent, or why not.
+func get(ctx context.Context, hc *http.Client, ep sandbox.Endpoint, path string) ([]byte, error) {
+	body, _, err := Open(ctx, hc, ep, path)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	return io.ReadAll(body)
+}
+
 // The file comes back whole, asked for by its path, with the room's token.
 func TestAFileIsReadWhole(t *testing.T) {
 	t.Parallel()
@@ -30,7 +43,7 @@ func TestAFileIsReadWhole(t *testing.T) {
 		path, auth = r.URL.Query().Get("path"), r.Header.Get("Authorization")
 		_, _ = w.Write([]byte("%PDF-1.7\n"))
 	})
-	got, err := Get(t.Context(), http.DefaultClient, ep, "mail/a b&c.pdf")
+	got, err := get(t.Context(), http.DefaultClient, ep, "mail/a b&c.pdf")
 	if err != nil || string(got) != "%PDF-1.7\n" {
 		t.Fatalf("Get = %q, %v", got, err)
 	}
@@ -48,14 +61,14 @@ func TestARefusalIsTheRoomsOrTheProviders(t *testing.T) {
 		w.Header().Set(problemHeader, "1")
 		http.Error(w, "mail/x.pdf does not exist", http.StatusNotFound)
 	})
-	_, err := Get(t.Context(), http.DefaultClient, refused, "mail/x.pdf")
+	_, err := get(t.Context(), http.DefaultClient, refused, "mail/x.pdf")
 	var p *Problem
 	if !errors.As(err, &p) || p.Msg != "mail/x.pdf does not exist" {
 		t.Errorf("a refusal = %v, want the room's words", err)
 	}
 
 	gone := room(t, func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
-	if _, err := Get(t.Context(), http.DefaultClient, gone, "x"); !errors.Is(err, ErrGone) {
+	if _, err := get(t.Context(), http.DefaultClient, gone, "x"); !errors.Is(err, ErrGone) {
 		t.Errorf("an unmarked 404 = %v, want ErrGone", err)
 	}
 }
@@ -70,7 +83,7 @@ func TestNobodyListeningIsAGoneRoom(t *testing.T) {
 	}
 	addr := l.Addr().String()
 	_ = l.Close()
-	_, err = Get(t.Context(), http.DefaultClient, sandbox.Endpoint{URL: "http://" + addr + Route}, "x")
+	_, err = get(t.Context(), http.DefaultClient, sandbox.Endpoint{URL: "http://" + addr + Route}, "x")
 	if !errors.Is(err, ErrGone) {
 		t.Errorf("Get = %v, want ErrGone", err)
 	}
@@ -83,11 +96,11 @@ func TestAFileTooLargeOrCutShortIsRefused(t *testing.T) {
 	t.Parallel()
 
 	said := room(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Length", "26214401")
+		w.Header().Set("Content-Length", strconv.Itoa(Max+1))
 		w.WriteHeader(http.StatusOK)
 	})
 	var p *Problem
-	if _, err := Get(t.Context(), http.DefaultClient, said, "big.zip"); !errors.As(err, &p) || !strings.Contains(p.Msg, "26214401") {
+	if _, err := get(t.Context(), http.DefaultClient, said, "big.zip"); !errors.As(err, &p) || !strings.Contains(p.Msg, strconv.Itoa(Max+1)) {
 		t.Errorf("a length over the most = %v", err)
 	}
 
@@ -95,7 +108,7 @@ func TestAFileTooLargeOrCutShortIsRefused(t *testing.T) {
 		w.Header().Set("Transfer-Encoding", "chunked")
 		_, _ = w.Write(make([]byte, Max+1))
 	})
-	if _, err := Get(t.Context(), http.DefaultClient, sent, "big.zip"); !errors.As(err, &p) {
+	if _, err := get(t.Context(), http.DefaultClient, sent, "big.zip"); !errors.As(err, &p) {
 		t.Errorf("a body over the most = %v", err)
 	}
 
@@ -104,7 +117,7 @@ func TestAFileTooLargeOrCutShortIsRefused(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("abc"))
 	})
-	if _, err := Get(t.Context(), http.DefaultClient, short, "x"); err == nil || errors.As(err, &p) {
+	if _, err := get(t.Context(), http.DefaultClient, short, "x"); err == nil || errors.As(err, &p) {
 		t.Errorf("a body cut short = %v, want a failure of the room's", err)
 	}
 }
@@ -115,7 +128,7 @@ func TestAnErrorNamesNoAddress(t *testing.T) {
 
 	ep := room(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
 	ep.URL = strings.Replace(ep.URL, "http://", "http://secret-key@", 1)
-	_, err := Get(t.Context(), http.DefaultClient, ep, "x")
+	_, err := get(t.Context(), http.DefaultClient, ep, "x")
 	if err == nil || strings.Contains(err.Error(), "secret-key") {
 		t.Errorf("Get = %v", err)
 	}
@@ -132,7 +145,7 @@ func TestThePathJoinsTheAddresssQuery(t *testing.T) {
 		_, _ = w.Write([]byte("x"))
 	})
 	ep.URL += "?sig=abc&path=old"
-	if _, err := Get(t.Context(), http.DefaultClient, ep, "a&b=c#d.txt"); err != nil {
+	if _, err := get(t.Context(), http.DefaultClient, ep, "a&b=c#d.txt"); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if query.Get("sig") != "abc" || len(query["path"]) != 1 || query.Get("path") != "a&b=c#d.txt" {
@@ -140,8 +153,63 @@ func TestThePathJoinsTheAddresssQuery(t *testing.T) {
 	}
 
 	// An address that is not one says so, without the address.
-	_, err := Get(t.Context(), http.DefaultClient, sandbox.Endpoint{URL: "http://secret-key@a b\x7f"}, "x")
+	_, err := get(t.Context(), http.DefaultClient, sandbox.Endpoint{URL: "http://secret-key@a b\x7f"}, "x")
 	if err == nil || strings.Contains(err.Error(), "secret-key") {
 		t.Errorf("a bad address = %v", err)
+	}
+}
+
+// A body read past Max keeps failing however often it is read again, and
+// never reports what it did not give.
+func TestABodyPastMaxKeepsFailing(t *testing.T) {
+	t.Parallel()
+
+	b := &bounded{body: io.NopCloser(strings.NewReader(strings.Repeat("x", 10))), left: 4, path: "f"}
+	buf := make([]byte, 64)
+	n, err := b.Read(buf)
+	var p *Problem
+	if n != 4 || !errors.As(err, &p) {
+		t.Fatalf("first read = %d, %v; want the 4 allowed, then the refusal", n, err)
+	}
+	for range 3 {
+		if n, err := b.Read(buf); n != 0 || !errors.As(err, &p) {
+			t.Fatalf("a read again = %d, %v; want nothing and the refusal", n, err)
+		}
+	}
+}
+
+// failingBody fails its first read with err.
+type failingBody struct{ err error }
+
+func (f failingBody) Read([]byte) (int, error) { return 0, f.err }
+func (failingBody) Close() error               { return nil }
+
+// A body's read that failed keeps a deadline or a cancel as one, so the
+// caller can say the file was still arriving, and never says the URL, which
+// can carry a provider's token.
+func TestAFailedReadKeepsItsKindAndNotItsURL(t *testing.T) {
+	t.Parallel()
+
+	const secret = "https://room.example/file?token=s3cr3t"
+	for _, c := range []struct {
+		cause    error
+		deadline bool
+		canceled bool
+	}{
+		{context.DeadlineExceeded, true, false},
+		{context.Canceled, false, true},
+		{errors.New("connection reset"), false, false},
+	} {
+		b := &bounded{body: failingBody{&url.Error{Op: "Get", URL: secret, Err: c.cause}}, left: Max, path: "a.bin"}
+		_, err := b.Read(make([]byte, 10))
+		if err == nil {
+			t.Fatalf("%v: no error", c.cause)
+		}
+		if errors.Is(err, context.DeadlineExceeded) != c.deadline || errors.Is(err, context.Canceled) != c.canceled {
+			t.Errorf("%v: %v has the wrong kind", c.cause, err)
+		}
+		if strings.Contains(err.Error(), "s3cr3t") {
+			t.Errorf("%v: the URL was said: %v", c.cause, err)
+		}
 	}
 }

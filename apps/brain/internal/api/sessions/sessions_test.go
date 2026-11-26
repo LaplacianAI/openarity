@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -144,12 +145,13 @@ func (f *fakeStore) GetAttachmentInSession(
 type fakeObjects struct {
 	bodies map[string][]byte
 	err    error
+	cutAt  int // when set, the body fails as corrupt after this many bytes
 
 	teams []uuid.UUID
 	keys  []string
 }
 
-func (f *fakeObjects) Get(_ context.Context, teamID uuid.UUID, key string) ([]byte, error) {
+func (f *fakeObjects) Open(_ context.Context, teamID uuid.UUID, key string) (io.ReadCloser, error) {
 	f.teams = append(f.teams, teamID)
 	f.keys = append(f.keys, key)
 	if f.err != nil {
@@ -159,8 +161,15 @@ func (f *fakeObjects) Get(_ context.Context, teamID uuid.UUID, key string) ([]by
 	if !ok {
 		return nil, objects.ErrNotFound
 	}
-	return body, nil
+	if f.cutAt > 0 {
+		return io.NopCloser(io.MultiReader(bytes.NewReader(body[:f.cutAt]), errReader{objects.ErrCorrupt})), nil
+	}
+	return io.NopCloser(bytes.NewReader(body)), nil
 }
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
 
 func (f *fakeStore) GetChannel(_ context.Context, id uuid.UUID) (db.Channel, error) {
 	if f.channelErr != nil {
@@ -314,6 +323,8 @@ type fixture struct {
 	caller    *auth.User
 	// dashboardID is the team's dashboard channel.
 	dashboardID uuid.UUID
+	// log is what the handler logged, for get's requests.
+	log bytes.Buffer
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -383,7 +394,7 @@ func (f *fixture) get(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	New(discardLogger(), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
+	New(slog.New(slog.NewTextHandler(&f.log, nil)), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
 		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
@@ -1378,3 +1389,5 @@ func TestBothListsCutALongMessage(t *testing.T) {
 		}
 	}
 }
+
+func (f *fixture) logs() string { return f.log.String() }

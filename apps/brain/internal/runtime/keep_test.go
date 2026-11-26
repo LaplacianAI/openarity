@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -56,6 +58,13 @@ func (p putOrder) Put(ctx context.Context, teamID uuid.UUID, key string, body []
 	p.rows.steps = append(p.rows.steps, "put")
 	p.rows.mu.Unlock()
 	return p.fakeObjects.Put(ctx, teamID, key, body)
+}
+
+func (p putOrder) PutStream(ctx context.Context, teamID uuid.UUID, key string, r io.Reader) error {
+	p.rows.mu.Lock()
+	p.rows.steps = append(p.rows.steps, "stream")
+	p.rows.mu.Unlock()
+	return p.fakeObjects.PutStream(ctx, teamID, key, r)
 }
 
 func keeperFixture() (*keeper, *fileRows, *fakeObjects) {
@@ -175,3 +184,67 @@ func TestNoToolFilesIsNoKeeper(t *testing.T) {
 		t.Error("with tool files, no keeper")
 	}
 }
+
+// A streamed file is reserved, stored as it is read and recorded at the size
+// read, its type read from its first bytes.
+func TestAStreamedFileIsReservedStoredAndRecorded(t *testing.T) {
+	t.Parallel()
+	k, rows, objs := keeperFixture()
+	ctx := agent.WithToolCallID(t.Context(), "call-9")
+	file := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte("x"), 3<<20)...)
+
+	got, err := k.KeepStream(ctx, KeepFileToolName, "chart.png", bytes.NewReader(file))
+	if err != nil {
+		t.Fatalf("KeepStream: %v", err)
+	}
+	if strings.Join(rows.steps, ",") != "reserve,stream,row" {
+		t.Errorf("steps = %v, want the key reserved, then the bytes streamed, then the row", rows.steps)
+	}
+	r := rows.rows[0]
+	if *r.Tool != KeepFileToolName || *r.CallID != "call-9" || r.Filename != "chart.png" ||
+		r.SizeBytes != int64(len(file)) || r.MediaType != "image/png" {
+		t.Errorf("row = %+v", r)
+	}
+	if got.Size != int64(len(file)) || got.MediaType != "image/png" || got.ID == "" || objs.data[r.ObjectKey] != string(file) {
+		t.Errorf("kept %+v; stored %d bytes", got, len(objs.data[r.ObjectKey]))
+	}
+}
+
+// A stream with nothing in it, or with no call, writes nothing; one that
+// fails mid-way writes no row and leaves its key to the reaper.
+func TestAStreamThatCannotBeKeptWritesNoRow(t *testing.T) {
+	t.Parallel()
+	broke := errors.New("the room hung up")
+	for name, tc := range map[string]struct {
+		call  string
+		r     io.Reader
+		steps string
+		is    error
+	}{
+		"empty":   {"c", bytes.NewReader(nil), "", errEmpty},
+		"no call": {"", bytes.NewReader([]byte("hi")), "", nil},
+		"cut off mid-way": {
+			"c", io.MultiReader(bytes.NewReader(make([]byte, 1<<20)), errReaderOf{broke}),
+			"reserve,stream", broke,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			k, rows, _ := keeperFixture()
+			_, err := k.KeepStream(agent.WithToolCallID(t.Context(), tc.call), KeepFileToolName, "f", tc.r)
+			if err == nil || (tc.is != nil && !errors.Is(err, tc.is)) {
+				t.Fatalf("KeepStream = %v, want %v", err, tc.is)
+			}
+			if got := strings.Join(rows.steps, ","); got != tc.steps {
+				t.Errorf("steps = %q, want %q", got, tc.steps)
+			}
+			if len(rows.rows) != 0 {
+				t.Errorf("a row was written: %+v", rows.rows)
+			}
+		})
+	}
+}
+
+type errReaderOf struct{ err error }
+
+func (r errReaderOf) Read([]byte) (int, error) { return 0, r.err }

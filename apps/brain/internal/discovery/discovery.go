@@ -76,7 +76,7 @@ func (d *Discoverer) RunsCommandsIn(r Rooms) *Discoverer {
 // RoomClient is a client for a sandbox room's own routes, a workspace's or a
 // room's files: it dials only what the policy allows and takes no redirect,
 // as PlainClient does, but reads as much as its caller does. Each caller
-// bounds its own answers (a workspace's at 4 MiB, a room's file at 25 MiB),
+// bounds its own answers (a workspace's at 4 MiB, a room's file at 100 MiB),
 // where PlainClient's 8 MiB would cut a file short.
 func RoomClient(p Policy) *http.Client {
 	return &http.Client{

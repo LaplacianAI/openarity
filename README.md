@@ -772,13 +772,18 @@ configuration. It is what `make objects` starts for local development.
 
 `s3` speaks the S3 API, which is a de-facto interface rather than a standard.
 MinIO, Garage, Ceph, SeaweedFS, Cloudflare R2, Backblaze B2 and Google Cloud
-Storage all serve it; only whole-object put, get and delete are used, which is
-the part every implementation actually serves.
+Storage all serve it; only put, get, delete and multipart upload are used,
+which is the part every implementation actually serves. A file over 8 MiB is
+written as a multipart upload, aborted if the write fails; set the bucket to
+abort incomplete multipart uploads after a day too, where the store has such a
+lifecycle rule, for a brain stopped in the middle of one: its parts are stored
+until something aborts them.
 
 A webhook carrying a file writes here: the gateway fetches it, decides its type
 from the bytes rather than from what the sender claimed, encrypts it under a
 per-team AES-256-GCM key held in the secret store, and writes a row naming the
-object. The store never holds a key and never holds a plaintext, so reading one
+object. A file is sealed in 64 KiB chunks under a key of its own derived from
+the team's, so one of any size is written and read without being held whole. The store never holds a key and never holds a plaintext, so reading one
 team's attachments needs the bucket *and* that team's key.
 
 Reading one back goes through the brain rather than through a URL to the

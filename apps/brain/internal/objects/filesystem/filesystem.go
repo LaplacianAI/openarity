@@ -1,9 +1,11 @@
 package filesystem
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +56,29 @@ func (s *store) Get(_ context.Context, key string) ([]byte, error) {
 	return body, nil
 }
 
-func (s *store) Put(_ context.Context, key string, body []byte) error {
+func (s *store) Open(_ context.Context, key string) (io.ReadCloser, error) {
+	name, err := s.path(key)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(name) //nolint:gosec // G304: path() refuses a key that leaves the root
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil, fmt.Errorf("%w: %s", objects.ErrNotFound, key)
+	case err != nil:
+		return nil, fmt.Errorf("reading %s: %w", key, err)
+	}
+	return f, nil
+}
+
+func (s *store) Put(ctx context.Context, key string, body []byte) error {
+	return s.PutStream(ctx, key, bytes.NewReader(body))
+}
+
+// PutStream writes a temporary file beside the object, synced, then renames
+// it into place: a reader that fails, or a brain killed mid-way, leaves the
+// old object or none, never part of one.
+func (s *store) PutStream(_ context.Context, key string, r io.Reader) error {
 	name, err := s.path(key)
 	if err != nil {
 		return err
@@ -75,7 +99,11 @@ func (s *store) Put(_ context.Context, key string, body []byte) error {
 		_ = tmp.Close()
 		return fmt.Errorf("writing %s: %w", key, err)
 	}
-	if _, err := tmp.Write(body); err != nil {
+	if _, err := io.Copy(tmp, r); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", key, err)
+	}
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("writing %s: %w", key, err)
 	}
@@ -84,6 +112,11 @@ func (s *store) Put(_ context.Context, key string, body []byte) error {
 	}
 	if err := os.Rename(tmp.Name(), name); err != nil {
 		return fmt.Errorf("writing %s: %w", key, err)
+	}
+	// The rename is durable once the directory is.
+	if d, err := os.Open(dir); err == nil { //nolint:gosec // G304: the object's own directory
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }

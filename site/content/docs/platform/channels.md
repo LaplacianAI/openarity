@@ -533,8 +533,11 @@ file's name, and `file` carries the file itself, its bytes in base64:
 ```
 
 `media_type` is what the bytes are, as the brain sniffed them when the file was
-kept; `caption` is left out when the agent wrote none. A file is 25 MiB at
-most, so a reply is about 34 MB at most: read it before you time it out. Its
+kept; `caption` is left out when the agent wrote none. A file sent to a
+channel is 25 MiB at most, so a reply is about 34 MB at most: read it before
+you time it out. A larger file, which `keep_file` keeps up to 100 MiB, is
+refused when `send_file` is called, and the agent is told it is in the
+conversation on the dashboard, which downloads any file it holds. Its
 `id` is `<run id>:file:<reply id>`, the same on every attempt, so drop a repeat
 by it, as every reply may arrive twice. A receiver written before this kind
 existed gets it too, so show a `kind` it does not know as nothing rather than

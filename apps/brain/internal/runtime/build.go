@@ -274,7 +274,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	// MCP tools' files are kept, or that holds keep_file, can be handed its
 	// first file mid-run, and the tool list is fixed for the run. The builder
 	// too: the tools read and write nothing.
-	readable := (b.files != nil && len(held.tools) > 0) || b.keepsRoomFiles(run, work, held.commands)
+	readable := (b.files != nil && len(held.tools) > 0) || b.keepsRoomFiles(work, held.commands)
 	if !readable {
 		files, err := b.store.ListAttachmentsBySession(ctx, db.ListAttachmentsBySessionParams{SessionID: run.SessionID, PageSize: 1})
 		if err != nil {

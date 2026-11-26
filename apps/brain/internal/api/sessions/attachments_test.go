@@ -3,6 +3,8 @@ package sessions
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -353,5 +357,91 @@ func TestAFailedObjectReadDoesNotLeak(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "credentials") {
 		t.Errorf("the response repeated the internal error: %s", rec.Body)
+	}
+}
+
+// A large file is sent as it is read, at its recorded length; one that fails
+// mid-way is cut short of that length, which a client takes as a failed
+// download, and the failure is logged.
+func TestALargeAttachmentIsStreamedAndOneCutShortSaysSo(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	body := make([]byte, 30<<20)
+	body[len(body)-1] = 0xff
+	row := seedAttachment(f, "render.mp4", "video/mp4", body)
+
+	rec := f.get(t, f.attachmentAt(row.ID))
+	if rec.Code != http.StatusOK || rec.Body.Len() != len(body) || rec.Body.Bytes()[len(body)-1] != 0xff {
+		t.Fatalf("status %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	if got := rec.Result().Header.Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length = %q", got)
+	}
+
+	f.objects.cutAt = 1 << 20
+	rec = f.get(t, f.attachmentAt(row.ID))
+	if rec.Body.Len() != 1<<20 || rec.Result().Header.Get("Content-Length") != strconv.Itoa(len(body)) {
+		t.Errorf("a cut file sent %d bytes under Content-Length %s; want it short of its length",
+			rec.Body.Len(), rec.Result().Header.Get("Content-Length"))
+	}
+	if !strings.Contains(f.logs(), "an attachment was cut short") {
+		t.Errorf("the cut was not logged: %s", f.logs())
+	}
+}
+
+func TestADownloadIsGivenTimeForItsSize(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		size int64
+		want time.Duration
+	}{
+		{-1, 30 * time.Second},
+		{0, 30 * time.Second},
+		{1 << 20, 34 * time.Second},
+		{100 << 20, 430 * time.Second},
+	} {
+		if got := downloadBudget(c.size); got != c.want {
+			t.Errorf("downloadBudget(%d) = %v, want %v", c.size, got, c.want)
+		}
+	}
+}
+
+// The server's WriteTimeout bounds a whole response: a large file read slowly
+// outlives it, and is sent whole only because the handler moved its deadline.
+func TestALargeDownloadOutlivesTheServersWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	body := make([]byte, 30<<20)
+	body[len(body)-1] = 0xff
+	row := seedAttachment(f, "render.mp4", "video/mp4", body)
+
+	mux := http.NewServeMux()
+	New(slog.New(slog.NewTextHandler(&f.log, nil)), f.store, f.authz, f.objects, f.inbox, gateway.NewIngest(f.uploads, f.uploads, nil, discardLogger())).
+		Register(mux, api.NewGuard(routes(t), f.authz, liveTeams{}, discardLogger()))
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), f.caller)))
+	}))
+	srv.Config.WriteTimeout = 100 * time.Millisecond
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+f.attachmentAt(row.ID), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// A slow reader: 30 MiB fills every buffer between, so the server is
+	// still writing well past its WriteTimeout.
+	time.Sleep(500 * time.Millisecond)
+	got, err := io.ReadAll(resp.Body)
+	if err != nil || len(got) != len(body) || got[len(got)-1] != 0xff {
+		t.Fatalf("read %d of %d bytes: %v", len(got), len(body), err)
 	}
 }

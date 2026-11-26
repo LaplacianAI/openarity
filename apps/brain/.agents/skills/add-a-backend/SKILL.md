@@ -63,10 +63,13 @@ If it *is* a backend, carry on.
 Adding a method to the port changes every adapter. Before doing it, check that
 the operation is one that every implementation can actually serve.
 
-`objects` has three methods because whole-object put, get and delete are the
-intersection every S3 clone implements. Multipart, ranged reads and lifecycle
-rules are where compatibility stops being reliable. A port method that only
-one backend can honour belongs on that backend's own type, not on the port.
+`objects` reads an object whole (`Get`) or as a stream (`Open`), writes one
+whole (`Put`) or from a reader (`PutStream`), and deletes it: what every
+backend can serve, however it does it. How a stream is written is the
+adapter's: S3 sends one part at a time as a multipart upload, the filesystem a
+temporary file renamed. Ranged reads and lifecycle rules are where
+compatibility stops being reliable. A port method that only one backend can
+honour belongs on that backend's own type, not on the port.
 
 If two backends are genuinely the same protocol, they do not need two
 adapters — see step 3 on giving one adapter two names.

@@ -130,15 +130,16 @@ func (c *Client) Grep(ctx context.Context, q GrepQuery) (Grep, error) {
 	return out, err
 }
 
-// File is a file in the workspace whole, up to roomfile.Max, for keeping as
-// an attachment: any file, text or not, by its path from the workspace.
-func (c *Client) File(ctx context.Context, path string) ([]byte, error) {
+// File is a file in the workspace, streamed, up to roomfile.Max, for keeping
+// as an attachment: any file, text or not, by its path from the workspace.
+// It is the caller's to close.
+func (c *Client) File(ctx context.Context, path string) (io.ReadCloser, error) {
 	ep := sandbox.Endpoint{URL: strings.TrimRight(c.ep.URL, "/") + roomfile.Route, Header: c.ep.Header}
-	data, err := roomfile.Get(ctx, c.http, ep, path)
+	body, _, err := roomfile.Open(ctx, c.http, ep, path)
 	if errors.Is(err, roomfile.ErrGone) {
 		return nil, fmt.Errorf("%w: %w", ErrGone, err)
 	}
-	return data, err
+	return body, err
 }
 
 func (c *Client) post(ctx context.Context, route string, body, out any) error {

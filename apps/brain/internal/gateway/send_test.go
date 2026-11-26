@@ -1077,6 +1077,14 @@ func TestAFileGoneSinceIsGivenUp(t *testing.T) {
 			}
 		},
 		"a caption that is not one": func(s *sending, _ *keptFiles) { s.store.due[0].Detail = []byte(`{"caption":5}`) },
+		// Queued before send_file refused such a file: never read whole.
+		"over what a channel is sent": func(s *sending, o *keptFiles) {
+			for id, f := range s.store.files {
+				f.SizeBytes = objects.MaxAttachment + 1
+				s.store.files[id] = f
+			}
+			o.err = errors.New("read a file over the channel's limit")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
