@@ -51,12 +51,13 @@ type When struct {
 }
 
 // ScheduleInput is a new schedule. An empty Timezone is the team's; a nil
-// AgentID is the hub.
+// AgentID is the hub; a zero Target is its own conversation.
 type ScheduleInput struct {
 	Name, Objective string
 	When            When
 	Timezone        string
 	AgentID         *uuid.UUID
+	Target          Target
 }
 
 // SchedulePatch changes what it sets, all at once or none of it. Hub sets the
@@ -86,9 +87,11 @@ type Ref struct {
 // A ScheduleView is a schedule as it is shown.
 type ScheduleView struct {
 	db.Schedule
-	SessionID   uuid.UUID
-	LastOutcome string
-	Upcoming    []time.Time
+	SessionID uuid.UUID
+	// SessionChannelID is the channel its conversation is on.
+	SessionChannelID *uuid.UUID
+	LastOutcome      string
+	Upcoming         []time.Time
 }
 
 // Preview is the next fires of a rule and the zone it reads them in, before
@@ -134,6 +137,12 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 	if !ok {
 		return ScheduleView{}, refuse(Invalid, "the schedule never fires")
 	}
+	// Where it answers is checked, and looked up on its platform, before the
+	// transaction: a direct conversation is opened by asking Slack.
+	at, err := s.place(ctx, who, in.Target)
+	if err != nil {
+		return ScheduleView{}, err
+	}
 
 	id := uuid.New()
 	err = s.store.InTx(ctx, func(q *db.Queries) error {
@@ -147,14 +156,25 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 		if err := underLimits(ctx, q, who.Team, who.User, l); err != nil {
 			return err
 		}
-		ch, err := q.DashboardChannel(ctx, who.Team)
-		if err != nil {
-			return fmt.Errorf("read the dashboard channel: %w", err)
+		session := db.CreateTriggerSessionParams{
+			TeamID: who.Team, ProviderRef: "trigger:" + id.String(), Kind: "direct", UserID: &who.User, ScheduleID: &id,
+		}
+		target, label := TargetOwn, ""
+		if at != nil {
+			session.ChannelID, session.ProviderRef, session.Kind, session.UserID = at.channel, at.ref, at.kind, at.user
+			target, label = at.target, at.label
+		} else {
+			ch, err := q.DashboardChannel(ctx, who.Team)
+			if err != nil {
+				return fmt.Errorf("read the dashboard channel: %w", err)
+			}
+			session.ChannelID = ch.ID
 		}
 		row := db.CreateScheduleParams{
 			ID: id, TeamID: who.Team, CreatedBy: who.User, AgentID: in.AgentID, Hub: in.AgentID == nil,
 			Name: name, Objective: objective, Kind: string(rule.Kind), Rule: rule.Stored(),
 			Anchor: rule.Anchor, Timezone: zone, Status: Active, NextFireAt: &first,
+			Target: target, TargetLabel: label,
 		}
 		if origin.viaTool() {
 			row.Status, row.NextFireAt = Proposed, nil
@@ -163,10 +183,7 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 		if _, err := q.CreateSchedule(ctx, row); err != nil {
 			return nameTaken(err, name)
 		}
-		if _, err := q.CreateTriggerSession(ctx, db.CreateTriggerSessionParams{
-			TeamID: who.Team, ChannelID: ch.ID, ProviderRef: "trigger:" + id.String(),
-			Kind: "direct", UserID: &who.User, ScheduleID: &id,
-		}); err != nil {
+		if _, err := q.CreateTriggerSession(ctx, session); err != nil {
 			return fmt.Errorf("start the schedule's conversation: %w", err)
 		}
 		return nil
@@ -207,7 +224,7 @@ func (s *Service) ListSchedules(ctx context.Context, who Who, everyone bool, sta
 	now := s.now()
 	out := make([]ScheduleView, len(rows))
 	for i, r := range rows {
-		out[i] = viewOf(r.Schedule, r.SessionID, r.LastOutcome, now)
+		out[i] = viewOf(r.Schedule, r.SessionID, r.SessionChannelID, r.LastOutcome, now)
 	}
 	return out, nil
 }
@@ -472,6 +489,12 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			(*row.PausedReason != MakerGone && *row.PausedReason != MakerCannotRun) {
 			return refuse(Conflict, "only a schedule paused because its maker left or may no longer run can be taken over")
 		}
+		// Its answers would still reach the person who left, in their own
+		// direct messages.
+		if row.Target == TargetDirect || (row.Target == TargetChat && isDirect(ctx, q, row.ID)) {
+			return refuse(Conflict, "this schedule answers in its maker's direct messages, so it cannot be "+
+				"handed on; delete it and make another")
+		}
 		// It runs as whoever takes it, so they must be able to run.
 		if err := mayRun(ctx, q, row.TeamID, who.User, Forbidden,
 			"you may not start runs in this team, so a schedule taken over by you could not run"); err != nil {
@@ -608,11 +631,11 @@ func (s *Service) view(ctx context.Context, who Who, id uuid.UUID) (ScheduleView
 	if !mine(who, row.Schedule) {
 		return ScheduleView{}, refuse(NotFound, "no such schedule")
 	}
-	return viewOf(row.Schedule, row.SessionID, row.LastOutcome, s.now()), nil
+	return viewOf(row.Schedule, row.SessionID, row.SessionChannelID, row.LastOutcome, s.now()), nil
 }
 
-func viewOf(row db.Schedule, session uuid.UUID, last string, now time.Time) ScheduleView {
-	v := ScheduleView{Schedule: row, SessionID: session, LastOutcome: last}
+func viewOf(row db.Schedule, session uuid.UUID, channel *uuid.UUID, last string, now time.Time) ScheduleView {
+	v := ScheduleView{Schedule: row, SessionID: session, SessionChannelID: channel, LastOutcome: last}
 	if row.Status != Active && row.Status != Proposed {
 		return v
 	}
@@ -736,4 +759,10 @@ func zoneOr(name string) *time.Location {
 		return loc
 	}
 	return time.UTC
+}
+
+// isDirect is a schedule whose conversation is a direct one on a chat.
+func isDirect(ctx context.Context, q *db.Queries, schedule uuid.UUID) bool {
+	ss, err := q.GetTriggerSessionOfSchedule(ctx, &schedule)
+	return err == nil && ss.Kind == "direct"
 }

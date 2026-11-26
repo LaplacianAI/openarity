@@ -60,6 +60,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     agent deleted sets `agent_id` null and leaves `hub` false, and the
     schedule pauses as `target_gone` rather than fall to the hub nobody
     chose.
+  - **A schedule may answer in a chat, a channel or its maker's direct
+    messages** (`schedules.target`). Its own session takes that chat's
+    channel and ref, outside `sessions_open_chat_key`, so a person writing
+    there is still in their own conversation; the old one-open-session index
+    is dropped for that. A place is checked again when the schedule is made,
+    and looked up on its platform before the transaction; how it was shown is
+    kept as `target_label`, as a channel's name is the platform's. Posting at
+    a channel's top level takes `channel:write`. A schedule answering in its
+    maker's direct messages is not handed on by take-over: the new owner's
+    runs would land in the old maker's DM.
+  - **The pause notice in a chat is not built yet.** The `notices` outbox is
+    for senders waiting to be let in, and a reply needs a run; a pause has
+    neither. The maker hears of a pause through news until one exists.
   - **The rules are written once,** in `internal/triggers`, below the routes,
     for the API, an agent's tools and the jobs.
 - **The worker deletes DBOS's record of finished background work after a

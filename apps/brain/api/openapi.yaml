@@ -3339,6 +3339,11 @@ paths:
         minimum interval, and the team's limits on schedules per person and
         per team apply. A caller who may not start runs in the team is
         refused with 403, as the schedule would only pause at its first fire.
+        `target` is where it answers, a place `listScheduleTargets` listed,
+        sent back as it is; absent is a conversation of its own. It is
+        checked again: a channel's top level takes `channel:write` (403), and
+        a place the caller may no longer pick, or that its platform refuses,
+        is a 400 saying why.
       requestBody:
         required: true
         content:
@@ -3669,6 +3674,54 @@ paths:
       responses:
         "204":
           description: Seen
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/schedule-targets:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listScheduleTargets
+      tags: [schedules]
+      summary: List where a schedule may answer
+      description: |
+        Requires `schedule:write` in this team. The places the caller may have
+        a schedule answer, besides its own conversation: chats they talked in
+        within 90 days, newest first; then channels and groups (a platform's
+        own list where it gives one, as Slack does, else the groups the bot
+        has heard from); then their direct messages, where the platform opens
+        them. A place the caller cannot use is listed with `available` false
+        and why. A channel whose platform refused to list is one entry in
+        `problems`. Slack's lists are kept for about five minutes.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Only the places whose label, detail or channel name holds this, ignoring case.
+          schema:
+            type: string
+            maxLength: 200
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [chat, channel, direct]
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of places
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulePlacePage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -8723,8 +8776,112 @@ components:
       properties:
         kind:
           type: string
-          enum: [own]
-          description: Where it answers. `own` is a conversation of its own on the dashboard, whose answers reach its maker as news.
+          enum: [own, chat, channel, direct]
+          description: |
+            Where it answers. `own` is a conversation of its own on the
+            dashboard, whose answers reach its maker as news; `chat` a chat its
+            maker talked in; `channel` a channel's or a group's top level, a
+            new post each time; `direct` its maker's direct messages with the
+            bot.
+        label:
+          type: string
+          maxLength: 200
+          description: How the place was shown when it was picked, with its channel's name; absent for `own`.
+          examples: ["Acme Slack · #releases"]
+        channel_id:
+          type: string
+          format: uuid
+          description: The channel it answers on; absent for `own`.
+
+    ScheduleTargetPick:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      description: |
+        A place as `listScheduleTargets` lists it, in its `target`, sent back
+        as it is. It is checked again when the schedule is made: the caller
+        must still be able to pick it, and a channel or a direct conversation
+        is looked up on its platform.
+      properties:
+        kind:
+          type: string
+          enum: [own, chat, channel, direct]
+        session_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        ref:
+          type: string
+          maxLength: 64
+          description: The platform's id for a listed channel, such as Slack's `C0123ABCD`.
+
+    SchedulePlace:
+      type: object
+      required: [kind, label, detail, channel, available, target]
+      properties:
+        kind:
+          type: string
+          enum: [chat, channel, direct]
+        label:
+          type: string
+          description: The place as its platform names it, such as `#releases`, or `A thread`.
+        detail:
+          type: string
+          description: More to know it by, such as `Private · 14 members`, or the caller's last words there.
+        channel:
+          type: object
+          required: [id, name, provider]
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            provider:
+              type: string
+        at:
+          type: string
+          format: date-time
+          description: When the caller last talked there, for a chat; when the bot last heard from a group.
+        available:
+          type: boolean
+          description: Whether the caller may pick it. One they may not is listed with why.
+        reason:
+          type: string
+          enum: [needs_channel_write, not_in_channel]
+          description: |
+            Why it cannot be picked: posting at a channel's top level takes
+            `channel:write`, or the app is not in the channel.
+        target:
+          $ref: "#/components/schemas/ScheduleTargetPick"
+
+    SchedulePlacePage:
+      type: object
+      required: [items, problems]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchedulePlace"
+        next_cursor:
+          type: string
+          description: Absent on the last page
+        problems:
+          type: array
+          description: Channels whose places could not be listed, with what their platform said, such as a Slack app missing a scope.
+          items:
+            type: object
+            required: [channel_id, provider, message]
+            properties:
+              channel_id:
+                type: string
+                format: uuid
+              provider:
+                type: string
+              message:
+                type: string
 
     Schedule:
       type: object
@@ -8834,7 +8991,7 @@ components:
           format: uuid
           description: Absent is the team's hub.
         target:
-          $ref: "#/components/schemas/ScheduleTarget"
+          $ref: "#/components/schemas/ScheduleTargetPick"
 
     UpdateScheduleRequest:
       type: object

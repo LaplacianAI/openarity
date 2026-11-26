@@ -34,6 +34,17 @@ const (
 // bound when the run is built, so a run reads only its own conversation.
 type HistoryStore interface {
 	ListSessionHistory(ctx context.Context, arg db.ListSessionHistoryParams) ([]db.ListSessionHistoryRow, error)
+	ListPostedTriggerAnswers(ctx context.Context, arg db.ListPostedTriggerAnswersParams) ([]db.ListPostedTriggerAnswersRow, error)
+}
+
+// historyScheduled is how many of what schedules posted a page carries.
+const historyScheduled = 10
+
+// scheduledLine is one answer a schedule or a watcher posted into the chat.
+type scheduledLine struct {
+	At   string `json:"at"`
+	From string `json:"from"`
+	Text string `json:"text"`
 }
 
 type historyLine struct {
@@ -47,7 +58,10 @@ type historyLine struct {
 type historyPageOut struct {
 	Note     string        `json:"note"`
 	Messages []historyLine `json:"messages"`
-	More     bool          `json:"more,omitempty"`
+	// Scheduled is what schedules posted here within the page's span, oldest
+	// first: the post a thread replies to, or earlier answers in the chat.
+	Scheduled []scheduledLine `json:"scheduled,omitempty"`
+	More      bool            `json:"more,omitempty"`
 	// Before is what to pass to read further back, when there is more.
 	Before int64 `json:"before,omitempty"`
 }
@@ -92,7 +106,11 @@ func historyTool(s HistoryStore, session uuid.UUID) agent.Tool {
 			if err != nil {
 				return "", fmt.Errorf("reading the conversation: %w", err)
 			}
-			b, err := json.Marshal(historyOf(rows, limit))
+			out := historyOf(rows, limit)
+			if out.Scheduled, err = scheduledIn(ctx, s, session, rows, out, a.Before == nil); err != nil {
+				return "", err
+			}
+			b, err := json.Marshal(out)
 			return string(b), err
 		},
 	}
@@ -127,6 +145,47 @@ func historyOf(rows []db.ListSessionHistoryRow, limit int) historyPageOut {
 		out.Messages[i], out.Messages[j] = out.Messages[j], out.Messages[i]
 	}
 	return out
+}
+
+// scheduledIn is what schedules posted into the chat within the page's span:
+// from its oldest message (or ever, on the last page) up to its newest (or
+// now, on the first).
+func scheduledIn(ctx context.Context, s HistoryStore, session uuid.UUID, rows []db.ListSessionHistoryRow,
+	page historyPageOut, first bool,
+) ([]scheduledLine, error) {
+	after, before := time.Time{}, time.Now().Add(time.Minute)
+	if len(page.Messages) > 0 {
+		if page.More {
+			after = rowAt(rows, page.Messages[0].N)
+		}
+		if !first {
+			before = rowAt(rows, page.Messages[len(page.Messages)-1].N)
+		}
+	}
+	posted, err := s.ListPostedTriggerAnswers(ctx, db.ListPostedTriggerAnswersParams{
+		SessionID: session, After: after, Before: before, PageSize: historyScheduled,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading what schedules posted here: %w", err)
+	}
+	out := make([]scheduledLine, len(posted))
+	for i, p := range posted {
+		// Newest first from the query; read oldest first, as the messages are.
+		out[len(posted)-1-i] = scheduledLine{
+			At: p.At.UTC().Format(time.RFC3339), From: p.Name + " (scheduled)", Text: cutAt(p.Text, historyText),
+		}
+	}
+	return out, nil
+}
+
+// rowAt is when the row numbered n was said.
+func rowAt(rows []db.ListSessionHistoryRow, n int64) time.Time {
+	for _, r := range rows {
+		if r.Seq == n {
+			return r.At
+		}
+	}
+	return time.Time{}
 }
 
 func speaker(r db.ListSessionHistoryRow) string {

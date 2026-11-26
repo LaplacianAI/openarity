@@ -114,7 +114,22 @@ func post(token string, body postMessage) (gateway.OutboundRequest, error) {
 	h := http.Header{}
 	h.Set("Content-Type", "application/json; charset=utf-8")
 	h.Set("Authorization", "Bearer "+token)
-	return gateway.OutboundRequest{URL: apiBase + "chat.postMessage", Header: h, Body: raw, Accepted: accepted}, nil
+	return gateway.OutboundRequest{URL: apiBase + "chat.postMessage", Header: h, Body: raw, Accepted: accepted, Posted: postedRef}, nil
+}
+
+// postedRef reads where chat.postMessage put the message, "<channel>:<ts>":
+// the ref of a session whose thread hangs from it. Anything else in the
+// answer is not kept.
+func postedRef(body []byte) string {
+	var a struct {
+		OK      bool   `json:"ok"`
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	}
+	if json.Unmarshal(body, &a) != nil || !a.OK || !channelPattern.MatchString(a.Channel) || !tsPattern.MatchString(a.TS) {
+		return ""
+	}
+	return a.Channel + ":" + a.TS
 }
 
 // target reads back the channel and thread sessionOf named.

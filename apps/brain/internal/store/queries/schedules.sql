@@ -3,12 +3,12 @@
 -- name: CreateSchedule :one
 INSERT INTO schedules (
     id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone,
-    status, next_fire_at, proposed_run, proposed_in
+    status, next_fire_at, proposed_run, proposed_in, target, target_label
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'), sqlc.arg('hub'),
     sqlc.arg('name'), sqlc.arg('objective'), sqlc.arg('kind'), sqlc.arg('rule'), sqlc.arg('anchor'),
     sqlc.arg('timezone'), sqlc.arg('status'), sqlc.narg('next_fire_at'),
-    sqlc.narg('proposed_run'), sqlc.narg('proposed_in')
+    sqlc.narg('proposed_run'), sqlc.narg('proposed_in'), sqlc.arg('target'), sqlc.arg('target_label')
 )
 RETURNING *;
 

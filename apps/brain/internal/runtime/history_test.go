@@ -245,3 +245,44 @@ func TestHistoryIsNotAnnouncedInAChat(t *testing.T) {
 		t.Fatal("history would be told as a step: it is the run's bookkeeping")
 	}
 }
+
+// A thread whose first message replies to a schedule's post has that post to
+// read: the tool is bound for it, and the page carries what schedules posted.
+func TestAReplyToAScheduledPostReadsThePost(t *testing.T) {
+	f := newFixture()
+	f.run.SessionID = uuid.New()
+	f.store.history = map[uuid.UUID][]db.ListSessionHistoryRow{f.run.SessionID: {spoke(1, "asha", "why the delay?")}}
+	posted := time.Now().Add(-time.Hour)
+	f.store.posted = map[uuid.UUID][]db.ListPostedTriggerAnswersRow{
+		f.run.SessionID: {{At: posted, Name: "Release notes", Text: "Three changes went out."}},
+	}
+
+	built := f.build(t)
+	if !hasTool(built, HistoryToolName) {
+		t.Fatal("a reply to a schedule's post was not given history")
+	}
+	page := readHistory(t, built, `{}`)
+	if len(page.Scheduled) != 1 || page.Scheduled[0].From != "Release notes (scheduled)" ||
+		page.Scheduled[0].Text != "Three changes went out." {
+		t.Errorf("scheduled = %+v, want the post it replies to", page.Scheduled)
+	}
+}
+
+// An earlier page carries what schedules posted within its own span, not
+// what came after it.
+func TestAnEarlierPageCarriesOnlyItsOwnSpanOfPosts(t *testing.T) {
+	f := newFixture()
+	f.run.SessionID = uuid.New()
+	f.store.history = map[uuid.UUID][]db.ListSessionHistoryRow{
+		f.run.SessionID: {spoke(3, "asha", "c"), spoke(2, "asha", "b"), spoke(1, "asha", "a")},
+	}
+	at := func(seq int64) time.Time { return time.Unix(1_700_000_000+seq, 0) }
+	f.store.posted = map[uuid.UUID][]db.ListPostedTriggerAnswersRow{
+		f.run.SessionID: {{At: at(3).Add(-time.Second / 2), Name: "late", Text: "after b"}, {At: at(1).Add(time.Second / 2), Name: "early", Text: "after a"}},
+	}
+
+	page := readHistory(t, f.build(t), `{"before":3}`)
+	if len(page.Scheduled) != 1 || page.Scheduled[0].From != "early (scheduled)" {
+		t.Errorf("the page before 3 carries %+v, want only what was posted within it", page.Scheduled)
+	}
+}

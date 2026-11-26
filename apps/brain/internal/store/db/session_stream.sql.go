@@ -182,6 +182,74 @@ func (q *Queries) GetMessageByExternalID(ctx context.Context, arg GetMessageByEx
 	return i, err
 }
 
+const listPostedTriggerAnswers = `-- name: ListPostedTriggerAnswers :many
+WITH here AS (
+    SELECT channel_id, provider_ref FROM sessions WHERE id = $1::uuid
+)
+SELECT r.finished_at::timestamptz AS at, coalesce(sc.name, w.name, '')::text AS name,
+       left(r.output, 2000)::text AS text
+FROM runs r
+JOIN sessions ts ON ts.id = r.session_id
+LEFT JOIN schedules sc ON sc.id = ts.schedule_id
+LEFT JOIN watchers w ON w.id = ts.watcher_id
+CROSS JOIN here
+WHERE (ts.schedule_id IS NOT NULL OR ts.watcher_id IS NOT NULL)
+  AND ts.id <> $1::uuid
+  AND r.parent_run_id IS NULL AND r.status = 'succeeded'
+  AND coalesce(r.output, '') <> '' AND btrim(r.output, E' \t\r\n') <> '[silent]'
+  AND r.finished_at > $2::timestamptz
+  AND r.finished_at < $3::timestamptz
+  AND ((ts.channel_id = here.channel_id AND ts.provider_ref = here.provider_ref)
+       OR EXISTS (SELECT 1 FROM replies rp
+                  WHERE rp.run_id = r.id AND rp.channel_id = here.channel_id
+                    AND rp.posted_ref = here.provider_ref))
+ORDER BY r.finished_at DESC
+LIMIT $4
+`
+
+type ListPostedTriggerAnswersParams struct {
+	SessionID uuid.UUID
+	After     time.Time
+	Before    time.Time
+	PageSize  int32
+}
+
+type ListPostedTriggerAnswersRow struct {
+	At   time.Time
+	Name string
+	Text string
+}
+
+// What schedules and watchers posted into this chat, newest first, between
+// after and before: a schedule answering in a chat its maker talked in shares
+// the chat's channel and ref, and one posting at a channel's top level is the
+// root of a thread whose ref is where it landed. Only answers, never what a
+// tool returned, and never a silent run's.
+func (q *Queries) ListPostedTriggerAnswers(ctx context.Context, arg ListPostedTriggerAnswersParams) ([]ListPostedTriggerAnswersRow, error) {
+	rows, err := q.db.Query(ctx, listPostedTriggerAnswers,
+		arg.SessionID,
+		arg.After,
+		arg.Before,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPostedTriggerAnswersRow
+	for rows.Next() {
+		var i ListPostedTriggerAnswersRow
+		if err := rows.Scan(&i.At, &i.Name, &i.Text); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionEvents = `-- name: ListSessionEvents :many
 SELECT x.seq, x.at, x.kind, x.run_id, x.payload, x.agent, x.parent_run_id, x.output
 FROM (

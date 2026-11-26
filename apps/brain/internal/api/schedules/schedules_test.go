@@ -118,6 +118,7 @@ var routes = []struct{ method, path string }{
 	{"GET", "/teams/{id}/schedules/{scheduleID}/fires"},
 	{"GET", "/teams/{id}/scheduled/news"},
 	{"POST", "/teams/{id}/scheduled/news/seen"},
+	{"GET", "/teams/{id}/schedule-targets"},
 	{"GET", "/teams/{id}/schedule-settings"},
 	{"PUT", "/teams/{id}/schedule-settings"},
 }
@@ -222,7 +223,15 @@ func TestARuleIsOneOfItsKinds(t *testing.T) {
 	want(t, w.serve(t, w.maker, "POST", "/schedules", map[string]any{
 		"name": "x", "objective": "y", "when": map[string]any{"kind": "cron", "cron": "0 9 * * *"},
 		"target": map[string]any{"kind": "channel"},
-	}), http.StatusBadRequest, "target.kind must be own")
+	}), http.StatusForbidden, "takes channel:write")
+	want(t, w.serve(t, w.maker, "POST", "/schedules", map[string]any{
+		"name": "x", "objective": "y", "when": map[string]any{"kind": "cron", "cron": "0 9 * * *"},
+		"target": map[string]any{"kind": "elsewhere"},
+	}), http.StatusBadRequest, "own, chat, channel or direct")
+	want(t, w.serve(t, w.maker, "POST", "/schedules", map[string]any{
+		"name": "x", "objective": "y", "when": map[string]any{"kind": "cron", "cron": "0 9 * * *"},
+		"target": map[string]any{"kind": "chat", "session_id": uuid.New()},
+	}), http.StatusBadRequest, "not a chat you have talked in")
 	want(t, w.serve(t, w.maker, "POST", "/schedules", `{"name":"x","objective":"y","when":{"kind":"cron","cron":"0 9 * * *"},"extra":1}`),
 		http.StatusBadRequest, "invalid request body")
 }
@@ -406,5 +415,57 @@ func TestSettingsReadTheDefaultsAndSaveWithinTheirRanges(t *testing.T) {
 	}
 	if mode != "off" {
 		t.Errorf("approval mode %q after saving schedule settings", mode)
+	}
+}
+
+// The picker's places: a chat the caller talked in, carrying the target to
+// send back, which makes a schedule answering there.
+func TestThePlacesToAnswerAndPickingOne(t *testing.T) {
+	w := newWorld(t)
+	var channel, session uuid.UUID
+	ctx := t.Context()
+	if err := w.raw.QueryRow(ctx, `INSERT INTO channels (team_id, provider, name) VALUES ($1, 'slack', 'Acme Slack') RETURNING id`,
+		w.team).Scan(&channel); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.raw.QueryRow(ctx, `INSERT INTO sessions (team_id, channel_id, provider_ref, kind, user_id)
+		VALUES ($1, $2, 'D0MAKERDM', 'direct', $3) RETURNING id`, w.team, channel, w.maker).Scan(&session); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.raw.Exec(ctx, `INSERT INTO messages (channel_id, user_id, external_id, text, session_id)
+		VALUES ($1, $2, 'm1', 'how did the release go?', $3)`, channel, w.maker, session); err != nil {
+		t.Fatal(err)
+	}
+
+	page := decode[placePage](t, w.serve(t, w.maker, "GET", "/schedule-targets?q=release", nil))
+	if len(page.Items) != 1 || page.Problems == nil {
+		t.Fatalf("places = %+v, want the one chat and an empty problems list", page)
+	}
+	it := page.Items[0]
+	if it.Kind != "chat" || it.Channel.Provider != "slack" || !it.Available || it.Target.SessionID == nil ||
+		*it.Target.SessionID != session || it.At == nil {
+		t.Errorf("place = %+v", it)
+	}
+	if page := decode[placePage](t, w.serve(t, w.maker, "GET", "/schedule-targets?q=nothing+here", nil)); len(page.Items) != 0 {
+		t.Errorf("a search for other words found %d", len(page.Items))
+	}
+	want(t, w.serve(t, w.maker, "GET", "/schedule-targets?kind=elsewhere", nil), http.StatusBadRequest, "chat, channel or direct")
+	if page := decode[placePage](t, w.serve(t, w.other, "GET", "/schedule-targets", nil)); len(page.Items) != 0 {
+		t.Errorf("another member sees %d of the maker's chats", len(page.Items))
+	}
+
+	body := hourly("in my DM")
+	body["target"] = it.Target
+	rec := w.serve(t, w.maker, "POST", "/schedules", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body)
+	}
+	s := decode[schedule](t, rec)
+	if s.Target.Kind != "chat" || s.Target.Label != "Acme Slack · Your direct messages" ||
+		s.Target.ChannelID == nil || *s.Target.ChannelID != channel {
+		t.Errorf("target = %+v", s.Target)
+	}
+	if own := w.make(t, "own"); own.Target.Kind != "own" || own.Target.ChannelID != nil {
+		t.Errorf("its own conversation's target = %+v", own.Target)
 	}
 }

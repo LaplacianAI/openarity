@@ -551,3 +551,28 @@ telling an old vote from something said would be a guess by its text. A bare
 yes or no told the code is an answer too, and so hidden: while a request waits
 its run is parked on that request, so the yes is about it, and the model
 reading it would take it for an approval nothing made.
+
+## A schedule's place is looked up on its platform once, when it is made
+
+A schedule may answer in a channel's top level or in its maker's direct
+messages. Both are asked of the platform when the schedule is made, through
+three optional capabilities like `Notifier`: `DirectOpener` (Slack's
+`conversations.open`), `ChannelFinder` (`conversations.info`) and
+`ChannelLister` (`conversations.list`). Each is pure, building the request and
+reading the answer; `Chats` sends them with the channel's own credentials
+through the replies' poster, so they reach only what replies may.
+
+- **A refusal is said for a person, naming the fix.** `missing_scope` on
+  `conversations.open` is "the Slack app needs the im:write scope …, then
+  Reinstall to Workspace", unlike a reply's raw `missing_scope`: here a
+  person is waiting for the answer, and nothing retries.
+- **Slack's channel list is kept about five minutes per workspace,** a refusal
+  too. Slack has no search by name and lets the list be asked for only so
+  often, so a person typing a search reads the kept list.
+- **Telegram and WhatsApp have none of the three.** A bot may not start a chat
+  with someone who never wrote to it, and neither lists its groups, so their
+  places are the conversations the brain has already seen.
+- **Where a post landed is read from the same answer** (`OutboundRequest.Posted`)
+  and kept on the reply as `posted_ref`, for the first part only, so `history`
+  can show the post a thread replies to. A reply in that thread still needs a
+  mention, as in every thread (*user*, 2026-11-26).

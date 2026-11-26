@@ -228,6 +228,9 @@ describe("the create form", () => {
       "chat:write",
       "files:read",
       "files:write",
+      "im:write",
+      "channels:read",
+      "groups:read",
     ]);
     expect(m.settings.event_subscriptions).toEqual({
       request_url: SLACK_PLACEHOLDER_URL,

@@ -13,7 +13,7 @@ import (
 )
 
 const claimDueSchedule = `-- name: ClaimDueSchedule :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label FROM schedules
 WHERE status = 'active' AND next_fire_at <= $1::timestamptz
   AND (retry_at IS NULL OR retry_at <= $1::timestamptz)
 ORDER BY next_fire_at
@@ -50,6 +50,8 @@ func (q *Queries) ClaimDueSchedule(ctx context.Context, now time.Time) (Schedule
 		&i.ProposedIn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Target,
+		&i.TargetLabel,
 	)
 	return i, err
 }
@@ -198,14 +200,14 @@ const createSchedule = `-- name: CreateSchedule :one
 
 INSERT INTO schedules (
     id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone,
-    status, next_fire_at, proposed_run, proposed_in
+    status, next_fire_at, proposed_run, proposed_in, target, target_label
 ) VALUES (
     $1, $2, $3::uuid, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13,
-    $14, $15
+    $14, $15, $16, $17
 )
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label
 `
 
 type CreateScheduleParams struct {
@@ -224,6 +226,8 @@ type CreateScheduleParams struct {
 	NextFireAt  *time.Time
 	ProposedRun *uuid.UUID
 	ProposedIn  *uuid.UUID
+	Target      string
+	TargetLabel string
 }
 
 // Schedules, and what each fire did. See internal/triggers.
@@ -244,6 +248,8 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.NextFireAt,
 		arg.ProposedRun,
 		arg.ProposedIn,
+		arg.Target,
+		arg.TargetLabel,
 	)
 	var i Schedule
 	err := row.Scan(
@@ -270,6 +276,8 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.ProposedIn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Target,
+		&i.TargetLabel,
 	)
 	return i, err
 }
@@ -479,7 +487,7 @@ func (q *Queries) ExpireProposedSchedules(ctx context.Context, before time.Time)
 }
 
 const getScheduleView = `-- name: GetScheduleView :one
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, s.target, s.target_label, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -527,6 +535,8 @@ func (q *Queries) GetScheduleView(ctx context.Context, arg GetScheduleViewParams
 		&i.Schedule.ProposedIn,
 		&i.Schedule.CreatedAt,
 		&i.Schedule.UpdatedAt,
+		&i.Schedule.Target,
+		&i.Schedule.TargetLabel,
 		&i.SessionID,
 		&i.SessionChannelID,
 		&i.LastOutcome,
@@ -720,7 +730,7 @@ func (q *Queries) ListScheduleNews(ctx context.Context, arg ListScheduleNewsPara
 }
 
 const listScheduleViews = `-- name: ListScheduleViews :many
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, s.target, s.target_label, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -796,6 +806,8 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 			&i.Schedule.ProposedIn,
 			&i.Schedule.CreatedAt,
 			&i.Schedule.UpdatedAt,
+			&i.Schedule.Target,
+			&i.Schedule.TargetLabel,
 			&i.SessionID,
 			&i.SessionChannelID,
 			&i.LastOutcome,
@@ -811,7 +823,7 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 }
 
 const lockSchedule = `-- name: LockSchedule :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label FROM schedules
 WHERE id = $1 AND team_id = $2 AND status <> 'deleted'
 FOR UPDATE
 `
@@ -848,6 +860,8 @@ func (q *Queries) LockSchedule(ctx context.Context, arg LockScheduleParams) (Sch
 		&i.ProposedIn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Target,
+		&i.TargetLabel,
 	)
 	return i, err
 }
@@ -953,7 +967,7 @@ UPDATE schedules SET
     consecutive_failures = $16,
     updated_at    = now()
 WHERE id = $17
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label
 `
 
 type SaveScheduleParams struct {
@@ -1023,6 +1037,8 @@ func (q *Queries) SaveSchedule(ctx context.Context, arg SaveScheduleParams) (Sch
 		&i.ProposedIn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Target,
+		&i.TargetLabel,
 	)
 	return i, err
 }
