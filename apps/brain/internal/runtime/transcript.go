@@ -29,8 +29,9 @@ func transcriptOf(row db.Run) string {
 // A run that has a place, transcript_from, resumes: its first message is
 // written again when it was lost before the first save. A new one takes the
 // transcript's length as its place, written before its message is, then adds
-// its message. A run from before shared transcripts resumes when its own has
-// anything in it, as it always did.
+// its message; when the earlier runs' results are cleared, the mark is saved
+// first and the place is after it. A run from before shared transcripts
+// resumes when its own has anything in it, as it always did.
 func (e *Executor) begin(ctx context.Context, row db.Run, msgs []agent.Message) (bool, []agent.Message, error) {
 	if row.Transcript == nil { // a delegate, or a run from before shared transcripts
 		if len(msgs) > 0 {
@@ -54,11 +55,37 @@ func (e *Executor) begin(ctx context.Context, row db.Run, msgs []agent.Message) 
 		return false, nil, err
 	}
 	// What an earlier run left open is closed: its requests are its own.
+	stored := len(msgs)
 	msgs = closeCalls(msgs)
+	// The earlier runs' tool results are theirs too: sent as handles, which
+	// read_output reads back whole, rather than whole on every request. The
+	// mark is written before the run's place, so a run that stops before its
+	// first save still finds its first message there.
+	if mark, ok := agent.ClearingFor(msgs); ok {
+		// closeCalls adds a result at the end, or before a trailing files
+		// message: what is stored before stored-1 is never changed.
+		from := stored
+		if len(msgs) != stored {
+			from = max(stored-1, 0)
+		}
+		msgs = append(msgs, mark)
+		if err := e.saveFrom(ctx, transcriptOf(row), from, msgs); err != nil {
+			return false, nil, fmt.Errorf("clearing the earlier runs' results from run %s's view: %w", row.ID, err)
+		}
+	}
 	if err := e.store.SetTranscriptFrom(ctx, db.SetTranscriptFromParams{ID: row.ID, Position: int32(len(msgs))}); err != nil { //nolint:gosec // a transcript is never 2^31 messages
 		return false, nil, fmt.Errorf("placing run %s in its transcript: %w", row.ID, err)
 	}
 	return false, append(msgs, first), nil
+}
+
+// saveFrom writes msgs, keeping the stored messages before from as they are
+// when the store can.
+func (e *Executor) saveFrom(ctx context.Context, session string, from int, msgs []agent.Message) error {
+	if s, ok := e.sessions.(agent.SavingFrom); ok {
+		return s.SaveFrom(ctx, session, from, msgs)
+	}
+	return e.sessions.Save(ctx, session, msgs)
 }
 
 // firstMessage is what a run adds to its transcript: the date, its input,

@@ -214,6 +214,21 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   to the top-level run alone. A message keeps its sender's cleaned display
   name (`messages.sender_name`), so a group read back has speakers.
 
+- **A new run clears the earlier runs' tool results from its view.** Before
+  its place, a run writes a clearing mark (`agent.ClearingFor`) when an
+  earlier run left a tool result over 1 KiB, a skill's excepted: those
+  results are sent as handles from its first request, and `read_output`
+  reads one back by call id, whole, a range or a match. A new run never
+  needs an earlier run's raw output, and without the mark a conversation
+  under the compaction line resent every one on every message: on staging
+  (2026-11-26, the openarity team's runs and run events), a "hi" in a
+  33-run conversation read 62,903 input tokens, about 19K of them nine old
+  results. The mark is stored first, so the place still names the run's
+  first message after a crash, as replay reads it, and a run begun again
+  finds nothing left to clear. A model that reuses call ids across runs
+  makes a handle ambiguous: `read_output` reads the latest and says how many
+  share the id, rather than pass the latest off as the one asked for.
+
 - **A session is one stream, numbered in commit order.** A session's messages
   and the events of every run in it share one count, `session_seq`, taken
   from `sessions.event_seq` by a trigger on each insert, so `GET

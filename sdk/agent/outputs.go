@@ -65,12 +65,15 @@ func readOutputTool(h *compactHandle) Tool {
 			}
 
 			msgs := h.messages()
-			text, ok := resultOf(msgs, a.Call)
-			if !ok {
+			text, n := resultOf(msgs, a.Call)
+			if n == 0 {
 				return "", fmt.Errorf("no tool result in this run has the call id %q", a.Call)
 			}
 			lines := splitLines(text)
 			head := header(a.Call, toolNames(msgs)[a.Call], text, lines)
+			if n > 1 {
+				head += fmt.Sprintf("\n%d results in this transcript have this call id; this is the latest, and the earlier ones cannot be read.", n)
+			}
 			if a.Match != "" {
 				return matching(head, lines, a.Match, a.FromLine)
 			}
@@ -79,15 +82,17 @@ func readOutputTool(h *compactHandle) Tool {
 	}
 }
 
-// resultOf is the latest result with the call id: some models and gateways
-// reuse ids across turns, and the latest is the one a preview just named.
-func resultOf(msgs []Message, call string) (string, bool) {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if m := msgs[i]; m.Role == RoleTool && m.ToolCallID == call {
-			return m.Text(), true
+// resultOf is the latest result with the call id, and how many have it.
+// Some models and gateways reuse ids, and runs sharing a transcript may each
+// count from call_0, so a handle can name an earlier result than the latest:
+// the count lets the read say so rather than pass the latest off as it.
+func resultOf(msgs []Message, call string) (text string, n int) {
+	for _, m := range msgs {
+		if m.Role == RoleTool && m.ToolCallID == call {
+			text, n = m.Text(), n+1
 		}
 	}
-	return "", false
+	return text, n
 }
 
 // splitLines splits on newlines, and splits any line longer than lineBytes
