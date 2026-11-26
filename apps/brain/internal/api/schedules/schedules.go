@@ -24,8 +24,10 @@ import (
 
 const (
 	manageEveryones = authz.Action("schedule:manage")
-	maxBody         = 64 << 10
-	newsPage        = 50
+	// writeChannels is what posting at a channel's top level takes.
+	writeChannels = authz.Action("channel:write")
+	maxBody       = 64 << 10
+	newsPage      = 50
 )
 
 var statuses = []string{"proposed", "active", "paused", "done", "deleted"}
@@ -60,6 +62,7 @@ func New(logger *slog.Logger, s Store, a api.Authorizer, service *triggers.Servi
 	r.Get("/{id}/schedules/{scheduleID}/fires", h.fires)
 	r.Get("/{id}/scheduled/news", h.news)
 	r.Post("/{id}/scheduled/news/seen", h.seen)
+	r.Get("/{id}/schedule-targets", h.targets)
 	r.Get("/{id}/schedule-settings", h.settings)
 	r.Put("/{id}/schedule-settings", h.setSettings)
 	return r
@@ -71,7 +74,10 @@ func (h *handler) who(r *http.Request) (triggers.Who, bool) {
 	if !ok {
 		return triggers.Who{}, false
 	}
-	return triggers.Who{Team: team, User: u.ID, Manage: h.can(r, u, team, manageEveryones)}, true
+	return triggers.Who{
+		Team: team, User: u.ID,
+		Manage: h.can(r, u, team, manageEveryones), ChannelWrite: h.can(r, u, team, writeChannels),
+	}, true
 }
 
 func (h *handler) can(r *http.Request, u *auth.User, team uuid.UUID, action authz.Action) bool {
@@ -173,17 +179,17 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSONWithin(w, r, &req, maxBody) {
 		return
 	}
-	if req.Target != nil && req.Target.Kind != "own" {
-		http.Error(w, "target.kind must be own: a schedule answers in a conversation of its own", http.StatusBadRequest)
-		return
-	}
 	rule, ok := whenFrom(w, req.When)
 	if !ok {
 		return
 	}
-	v, err := h.service.CreateSchedule(r.Context(), who, triggers.Origin{}, triggers.ScheduleInput{
+	in := triggers.ScheduleInput{
 		Name: req.Name, Objective: req.Objective, When: rule, Timezone: req.Timezone, AgentID: req.AgentID,
-	})
+	}
+	if req.Target != nil {
+		in.Target = req.Target.target()
+	}
+	v, err := h.service.CreateSchedule(r.Context(), who, triggers.Origin{}, in)
 	if err != nil {
 		h.answer(w, r, "failed to make the schedule", err)
 		return
@@ -514,4 +520,48 @@ func whenFrom(w http.ResponseWriter, b whenBody) (triggers.When, bool) {
 	default:
 		return bad("when.kind must be at, every or cron")
 	}
+}
+
+// targets lists where the caller may have a schedule answer: the picker's
+// places, searched by q, of one kind if asked, a page at a time.
+func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
+	who, ok := h.begin(w, r)
+	if !ok {
+		return
+	}
+	limit, ok := api.Limit(w, r)
+	if !ok {
+		return
+	}
+	q, ok := api.Query(w, r)
+	if !ok {
+		return
+	}
+	var offset int
+	if raw := r.URL.Query().Get("cursor"); raw != "" && !api.DecodeCursor(w, raw, &offset) {
+		return
+	}
+	page, err := h.service.Targets(r.Context(), who, triggers.TargetQuery{
+		Q: q, Kind: r.URL.Query().Get("kind"), Offset: max(offset, 0), Limit: int(limit),
+	})
+	if err != nil {
+		h.answer(w, r, "failed to list where a schedule may answer", err)
+		return
+	}
+	out := placePage{Items: make([]place, len(page.Items)), Problems: make([]placeProblem, len(page.Problems))}
+	for i, it := range page.Items {
+		out.Items[i] = placeOf(it)
+	}
+	for i, p := range page.Problems {
+		out.Problems[i] = placeProblem{ChannelID: p.ChannelID, Provider: p.Provider, Message: p.Text}
+	}
+	if page.More {
+		next, err := api.EncodeCursor(max(offset, 0) + len(page.Items))
+		if err != nil {
+			api.Fail(w, h.logger, api.Caller(r), "failed to page the places", err)
+			return
+		}
+		out.NextCursor = next
+	}
+	api.WriteJSON(w, h.logger, http.StatusOK, out)
 }

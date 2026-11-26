@@ -217,9 +217,11 @@ type outgoing struct {
 	// step builds a file reply's requests one at a time, from the answers
 	// before it, for a provider that is a FileUploader. When set, build is
 	// not called.
-	step     func(creds Credentials, file *OutFile, answers [][]byte) (OutboundRequest, bool, error)
-	sent     func(ctx context.Context) (int64, error)
-	partSent func(ctx context.Context, parts int32) (int64, error)
+	step func(creds Credentials, file *OutFile, answers [][]byte) (OutboundRequest, bool, error)
+	sent func(ctx context.Context) (int64, error)
+	// partSent marks the first parts sent; posted is where the first landed,
+	// when its platform says.
+	partSent func(ctx context.Context, parts int32, posted string) (int64, error)
 	retry    func(ctx context.Context, msg string, after time.Duration) (int64, error)
 	giveUp   func(ctx context.Context, msg string) (int64, error)
 }
@@ -278,8 +280,12 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 			return rp.Reply(ch, out, creds, time.Now())
 		},
 		sent: func(ctx context.Context) (int64, error) { return s.store.ReplySent(ctx, at) },
-		partSent: func(ctx context.Context, parts int32) (int64, error) {
-			return s.store.ReplyPartSent(ctx, db.ReplyPartSentParams{ID: row.ID, Attempts: row.Attempts, PartsSent: parts})
+		partSent: func(ctx context.Context, parts int32, posted string) (int64, error) {
+			arg := db.ReplyPartSentParams{ID: row.ID, Attempts: row.Attempts, PartsSent: parts}
+			if posted != "" {
+				arg.PostedRef = &posted
+			}
+			return s.store.ReplyPartSent(ctx, arg)
 		},
 		retry: func(ctx context.Context, msg string, after time.Duration) (int64, error) {
 			return s.store.RetryReply(ctx, db.RetryReplyParams{
@@ -403,7 +409,7 @@ func (s *Sender) notice(row db.ClaimDueNoticesRow) outgoing {
 			return []OutboundRequest{req}, nil
 		},
 		sent:     func(ctx context.Context) (int64, error) { return s.store.NoticeSent(ctx, at) },
-		partSent: func(context.Context, int32) (int64, error) { return 1, nil },
+		partSent: func(context.Context, int32, string) (int64, error) { return 1, nil },
 		retry: func(ctx context.Context, msg string, after time.Duration) (int64, error) {
 			return s.store.RetryNotice(ctx, db.RetryNoticeParams{
 				ID: row.ID, Attempts: row.Attempts, Error: msg, RetrySeconds: after.Seconds(),
@@ -480,10 +486,23 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 	// Each part is recorded as it goes, so a retry starts at the first one
 	// not sent rather than sending the earlier ones twice.
 	for i := int(o.partsSent); i < len(parts); i++ {
-		if err := s.poster.Post(ctx, o.channelID, parts[i]); err != nil {
+		req, posted := parts[i], ""
+		if i == 0 && req.Posted != nil {
+			// The provider's own reading still decides; this keeps where
+			// the first part landed.
+			accept := req.Accepted
+			req.Accepted = func(status int, body []byte) error {
+				posted = req.Posted(body)
+				if accept != nil {
+					return accept(status, body)
+				}
+				return nil
+			}
+		}
+		if err := s.poster.Post(ctx, o.channelID, req); err != nil {
 			return err
 		}
-		if err := o.recordPart(ctx, int32(i+1)); err != nil { //nolint:gosec // G115: parts are few
+		if err := o.recordPart(ctx, int32(i+1), posted); err != nil { //nolint:gosec // G115: parts are few
 			return err
 		}
 	}
@@ -492,8 +511,8 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 
 // recordPart marks the first parts of o sent; none matched is a lease
 // another sender now holds.
-func (o outgoing) recordPart(ctx context.Context, parts int32) error {
-	n, err := o.partSent(ctx, parts)
+func (o outgoing) recordPart(ctx context.Context, parts int32, posted string) error {
+	n, err := o.partSent(ctx, parts, posted)
 	switch {
 	case err != nil:
 		return fmt.Errorf("recording part %d of %s %d: %w", parts, o.what, o.id, err)
@@ -534,7 +553,7 @@ func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file
 			return err
 		}
 		if final {
-			return o.recordPart(parent, 1)
+			return o.recordPart(parent, 1, "")
 		}
 		answers = append(answers, answer)
 	}

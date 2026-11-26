@@ -920,7 +920,8 @@ const INTERACTIVITY = "/interactivity";
  * Slack's own page for making an app from a manifest, filled in: a bot that
  * reads the messages it is sent and the channels it is in, answers, and
  * reads the files people share, with Interactivity on for the buttons under
- * an approval. Slack will not take events without a Request URL, and the
+ * an approval. It may also message a person directly and list the channels,
+ * for a schedule that answers its maker or posts in a channel. Slack will not take events without a Request URL, and the
  * real ones exist only once the channel does, so the manifest holds
  * placeholders the person replaces as the last step.
  */
@@ -951,6 +952,9 @@ export function slackManifestURL(channelName: string): string {
           "chat:write",
           "files:read",
           "files:write",
+          "im:write",
+          "channels:read",
+          "groups:read",
         ],
       },
     },

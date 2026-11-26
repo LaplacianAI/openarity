@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -243,5 +244,112 @@ func TestAMessageLargerThanThePageIsStillRead(t *testing.T) {
 func TestHistoryIsNotAnnouncedInAChat(t *testing.T) {
 	if !unspoken[HistoryToolName] {
 		t.Fatal("history would be told as a step: it is the run's bookkeeping")
+	}
+}
+
+// A thread whose first message replies to a schedule's post has that post to
+// read: the tool is bound for it, and the page carries what schedules posted.
+func TestAReplyToAScheduledPostReadsThePost(t *testing.T) {
+	f := newFixture()
+	f.run.SessionID = uuid.New()
+	f.store.history = map[uuid.UUID][]db.ListSessionHistoryRow{f.run.SessionID: {spoke(1, "asha", "why the delay?")}}
+	posted := time.Now().Add(-time.Hour)
+	f.store.posted = map[uuid.UUID][]db.ListPostedTriggerAnswersRow{
+		f.run.SessionID: {{At: posted, Name: "Release notes", Text: "Three changes went out."}},
+	}
+
+	built := f.build(t)
+	if !hasTool(built, HistoryToolName) {
+		t.Fatal("a reply to a schedule's post was not given history")
+	}
+	page := readHistory(t, built, `{}`)
+	if len(page.Scheduled) != 1 || page.Scheduled[0].From != "Release notes (scheduled)" ||
+		page.Scheduled[0].Text != "Three changes went out." {
+		t.Errorf("scheduled = %+v, want the post it replies to", page.Scheduled)
+	}
+}
+
+// An earlier page carries what schedules posted within its own span: from
+// its oldest message up to where the later page began, not what came after.
+func TestAnEarlierPageCarriesOnlyItsOwnSpanOfPosts(t *testing.T) {
+	f := newFixture()
+	f.run.SessionID = uuid.New()
+	f.store.history = map[uuid.UUID][]db.ListSessionHistoryRow{
+		f.run.SessionID: {spoke(4, "asha", "d"), spoke(3, "asha", "c"), spoke(2, "asha", "b"), spoke(1, "asha", "a")},
+	}
+	at := func(seq int64) time.Time { return time.Unix(1_700_000_000+seq, 0) }
+	half := time.Second / 2
+	f.store.posted = map[uuid.UUID][]db.ListPostedTriggerAnswersRow{
+		f.run.SessionID: {
+			{At: at(3).Add(half), Name: "after c", Text: "-"},
+			{At: at(2).Add(half), Name: "after b", Text: "-"},
+			{At: at(1).Add(half), Name: "after a", Text: "-"},
+		},
+	}
+
+	page := readHistory(t, f.build(t), `{"before":3}`)
+	if len(page.Scheduled) != 2 || page.Scheduled[0].From != "after a (scheduled)" || page.Scheduled[1].From != "after b (scheduled)" {
+		t.Errorf("the page before 3 carries %+v, want what was posted up to message 3", page.Scheduled)
+	}
+}
+
+// Paging back a message at a time, each post is on exactly one page: the
+// pages' spans meet, with no gap between a page and the one before it.
+func TestEveryPostIsOnOnePageAsThePagesGoBack(t *testing.T) {
+	f := newFixture()
+	f.run.SessionID = uuid.New()
+	f.store.history = map[uuid.UUID][]db.ListSessionHistoryRow{
+		f.run.SessionID: {spoke(4, "asha", "d"), spoke(3, "asha", "c"), spoke(2, "asha", "b"), spoke(1, "asha", "a")},
+	}
+	at := func(seq int64) time.Time { return time.Unix(1_700_000_000+seq, 0) }
+	var posts []db.ListPostedTriggerAnswersRow
+	for seq := int64(4); seq >= 0; seq-- {
+		posts = append(posts, db.ListPostedTriggerAnswersRow{At: at(seq).Add(time.Second / 2), Name: fmt.Sprint(seq), Text: "-"})
+	}
+	posts = append(posts, db.ListPostedTriggerAnswersRow{At: at(2), Name: "at b", Text: "-"})
+	f.store.posted = map[uuid.UUID][]db.ListPostedTriggerAnswersRow{f.run.SessionID: posts}
+
+	built := f.build(t)
+	seen := map[string]int{}
+	args := `{"limit":1}`
+	for range 5 {
+		page := readHistory(t, built, args)
+		for _, p := range page.Scheduled {
+			seen[p.From]++
+		}
+		if !page.More {
+			break
+		}
+		args = fmt.Sprintf(`{"limit":1,"before":%d}`, page.Before)
+	}
+	if len(seen) != len(posts) {
+		t.Errorf("seen %v, want each of the %d posts", seen, len(posts))
+	}
+	for from, n := range seen {
+		if n != 1 {
+			t.Errorf("%s was on %d pages, want one", from, n)
+		}
+	}
+}
+
+// A span holds at most ten posts, the newest; more says so rather than
+// leaving the older ones out silently.
+func TestMorePostsThanAPageHoldsAreSaid(t *testing.T) {
+	for _, n := range []int{historyScheduled, historyScheduled + 1} {
+		f := newFixture()
+		f.run.SessionID = uuid.New()
+		f.store.history = map[uuid.UUID][]db.ListSessionHistoryRow{f.run.SessionID: {spoke(2, "asha", "b"), spoke(1, "asha", "a")}}
+		var posts []db.ListPostedTriggerAnswersRow
+		for i := range n { // newest first, as the query gives them
+			posts = append(posts, db.ListPostedTriggerAnswersRow{At: time.Now().Add(-time.Duration(i+1) * time.Minute), Name: fmt.Sprint(i), Text: "-"})
+		}
+		f.store.posted = map[uuid.UUID][]db.ListPostedTriggerAnswersRow{f.run.SessionID: posts}
+		page := readHistory(t, f.build(t), `{}`)
+		if len(page.Scheduled) != historyScheduled || page.ScheduledMore != (n > historyScheduled) {
+			t.Errorf("%d posts: %d shown, more %v", n, len(page.Scheduled), page.ScheduledMore)
+		}
+		if page.Scheduled[historyScheduled-1].From != "0 (scheduled)" {
+			t.Errorf("%d posts: the newest shown is %s, want the newest kept", n, page.Scheduled[historyScheduled-1].From)
+		}
 	}
 }

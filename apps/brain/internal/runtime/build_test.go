@@ -32,6 +32,7 @@ import (
 // --- fakes ---
 
 type fakeStore struct {
+	posted     map[uuid.UUID][]db.ListPostedTriggerAnswersRow
 	mu         sync.Mutex
 	peopleOnly bool // whether a list asked for people's files alone
 	agents     map[uuid.UUID]db.Agent
@@ -127,6 +128,19 @@ func (f *fakeStore) ListAttachmentsBySession(_ context.Context, arg db.ListAttac
 		}
 	}
 	return out, f.attachedErr
+}
+
+// ListPostedTriggerAnswers is what schedules posted into a session.
+func (f *fakeStore) ListPostedTriggerAnswers(_ context.Context, arg db.ListPostedTriggerAnswersParams) ([]db.ListPostedTriggerAnswersRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []db.ListPostedTriggerAnswersRow
+	for _, r := range f.posted[arg.SessionID] {
+		if !r.At.Before(arg.After) && r.At.Before(arg.Before) && len(out) < int(arg.PageSize) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListSessionHistory(_ context.Context, arg db.ListSessionHistoryParams) ([]db.ListSessionHistoryRow, error) {

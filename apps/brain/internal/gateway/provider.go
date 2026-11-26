@@ -166,6 +166,45 @@ type Notifier interface {
 	Notice(ch Channel, n Notice, creds Credentials) (OutboundRequest, error)
 }
 
+// DirectOpener opens a direct conversation between the bot and one person
+// on the platform, for a schedule that answers its maker there: Slack's
+// conversations.open. Pure like Reply: DirectRequest builds the request and
+// DirectRef reads the answer into the session ref replies go to. A refusal
+// is said for a person, naming what the app lacks.
+type DirectOpener interface {
+	DirectRequest(creds Credentials, user string) (OutboundRequest, error)
+	DirectRef(body []byte) (string, error)
+}
+
+// ChannelFinder looks up a channel on the platform as the bot sees it, for a
+// schedule that posts at a channel's top level: Slack's conversations.info.
+// ChannelName reads the answer: the channel's name, or a refusal said for a
+// person (the bot is not in it, or there is no such channel).
+type ChannelFinder interface {
+	ChannelRequest(creds Credentials, ref string) (OutboundRequest, error)
+	ChannelName(body []byte) (string, error)
+}
+
+// A PlatformChannel is a channel as its platform lists it.
+type PlatformChannel struct {
+	Ref     string
+	Name    string
+	Private bool
+	// Member is whether the bot is in it, so it may post there.
+	Member  bool
+	Members int
+}
+
+// ChannelLister lists a workspace's channels a page at a time, for a person
+// picking where a schedule posts: Slack's conversations.list. Pure like
+// Reply. ListPage reads one answer into its channels and the cursor of the
+// next page, empty on the last; a refusal is said for a person.
+type ChannelLister interface {
+	ChannelFinder
+	ListRequest(creds Credentials, cursor string) (OutboundRequest, error)
+	ListPage(body []byte) (channels []PlatformChannel, next string, err error)
+}
+
 type NoticeKind string
 
 const (
@@ -210,6 +249,11 @@ type OutboundRequest struct {
 	// at most the first 64 KiB of the body, and an error is the request
 	// failing. Nil takes every 2xx as done.
 	Accepted func(status int, body []byte) error
+	// Posted reads, from the same answer, where the message landed, for a
+	// platform whose post can be answered in its own thread: Slack's
+	// "<channel>:<ts>". The sender keeps it on the reply as posted_ref, for
+	// the first part only. Nil, or an empty result, keeps nothing.
+	Posted func(body []byte) string
 }
 
 // Outbound is one reply, as a provider needs it.
@@ -275,6 +319,9 @@ type Registry struct {
 	notifiers map[string]Notifier
 	sockets   map[string]bool
 	issuers   map[string]bool
+	directs   map[string]DirectOpener
+	finders   map[string]ChannelFinder
+	listers   map[string]ChannelLister
 }
 
 func NewRegistry(providers ...Provider) (Registry, error) {
@@ -282,6 +329,7 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
 		toURL: map[string]bool{}, events: map[string]bool{}, files: map[string]bool{}, uploaders: map[string]FileUploader{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
 		sockets: map[string]bool{}, issuers: map[string]bool{},
+		directs: map[string]DirectOpener{}, finders: map[string]ChannelFinder{}, listers: map[string]ChannelLister{},
 	}
 	for _, p := range providers {
 		name := p.Name()
@@ -330,6 +378,15 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if _, ok := p.(SecretIssuer); ok {
 			reg.issuers[name] = true
 		}
+		if d, ok := p.(DirectOpener); ok {
+			reg.directs[name] = d
+		}
+		if f, ok := p.(ChannelFinder); ok {
+			reg.finders[name] = f
+		}
+		if l, ok := p.(ChannelLister); ok {
+			reg.listers[name] = l
+		}
 		if s, ok := p.(Setup); ok {
 			for _, k := range s.Supplied() {
 				if !slices.Contains(p.Keys(), k) {
@@ -369,6 +426,25 @@ func (r Registry) Connector(name string) (Connector, bool) {
 func (r Registry) Notifier(name string) (Notifier, bool) {
 	n, ok := r.notifiers[name]
 	return n, ok
+}
+
+// DirectOpener is how the named provider opens a direct conversation with a
+// person, if it can.
+func (r Registry) DirectOpener(name string) (DirectOpener, bool) {
+	d, ok := r.directs[name]
+	return d, ok
+}
+
+// ChannelFinder is how the named provider looks up a channel, if it can.
+func (r Registry) ChannelFinder(name string) (ChannelFinder, bool) {
+	f, ok := r.finders[name]
+	return f, ok
+}
+
+// ChannelLister is how the named provider lists its channels, if it can.
+func (r Registry) ChannelLister(name string) (ChannelLister, bool) {
+	l, ok := r.listers[name]
+	return l, ok
 }
 
 // TakesReplyURL is whether the named provider's channels say where replies go.
