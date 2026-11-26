@@ -1029,6 +1029,7 @@ func TestAPostReadsTheAnswerOfAProviderThatSaysNoInA200(t *testing.T) {
 type fileRelay struct {
 	relay
 	most int64 // MaxFile; 0 is 1 MiB
+	size int64 // the Stream's Size, when not the file's
 }
 
 func (*fileRelay) Name() string      { return "filer" }
@@ -1042,7 +1043,7 @@ func (f *fileRelay) Reply(ch Channel, out Outbound, creds Credentials, at time.T
 	}
 	for i := range reqs {
 		reqs[i].Body = []byte("head:")
-		reqs[i].Stream = &Stream{Size: out.File.Size, Tail: []byte(":tail")}
+		reqs[i].Stream = &Stream{Size: cmp.Or(f.size, out.File.Size), Tail: []byte(":tail")}
 	}
 	return reqs, nil
 }
@@ -1096,7 +1097,7 @@ func fileSending(t *testing.T) (*sending, *fileRelay, *keptFiles, db.ClaimDueRep
 	row := due(rcv.URL+"/replies", 1)
 	row.Provider, row.Kind, row.Text, row.InReplyTo = "filer", "file", "report.pdf", nil
 	row.Detail = []byte(`{"caption":"The Q3 numbers"}`)
-	team := uuid.New()
+	team := row.TeamID
 	s.store.due = []db.ClaimDueRepliesRow{row}
 	s.store.files = map[int64]db.GetReplyFileRow{row.ID: {
 		TeamID: team, ObjectKey: "objects/f1", Filename: "report.pdf", MediaType: "application/pdf", SizeBytes: 9,
@@ -1140,6 +1141,26 @@ func TestAFileReplyCarriesItsFileAndItsCaption(t *testing.T) {
 	}
 }
 
+// The body is held to the file's size as recorded, not to the provider's
+// copy of it: a provider that gets it wrong still sends the whole file.
+func TestAFileIsSentByItsOwnSize(t *testing.T) {
+	t.Parallel()
+
+	for _, size := range []int64{1, 1 << 10} {
+		s, fr, _, _, rcv := fileSending(t)
+		fr.size = size
+		if _, err := s.sender.Drain(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if b, n := rcv.body(0), rcv.head(0).Get("Content-Length"); b != "head:%PDF-1.7\n:tail" || n != "19" {
+			t.Errorf("size %d: posted %q, Content-Length %q", size, b, n)
+		}
+		if len(s.store.sent) != 1 {
+			t.Errorf("size %d: sent %v, gave up %v, retried %v", size, s.store.sent, s.store.gaveUp, s.store.retried)
+		}
+	}
+}
+
 // A file gone since it was sent, its row or its object, has nothing to send
 // however often it is tried: given up, and nothing posted.
 func TestAFileGoneSinceIsGivenUp(t *testing.T) {
@@ -1158,6 +1179,15 @@ func TestAFileGoneSinceIsGivenUp(t *testing.T) {
 			}
 		},
 		"a caption that is not one": func(s *sending, _ *keptFiles) { s.store.due[0].Detail = []byte(`{"caption":5}`) },
+		// Another team's file, readable under its own team: never sent here.
+		"another team's file": func(s *sending, o *keptFiles) {
+			other := uuid.New()
+			for id, f := range s.store.files {
+				f.TeamID = other
+				s.store.files[id] = f
+				o.files[other.String()+"/"+f.ObjectKey] = []byte("%PDF-1.7\n")
+			}
+		},
 		// Queued before send_file refused such a file: never read whole.
 		"over what the channel takes": func(s *sending, o *keptFiles) {
 			for id, f := range s.store.files {
@@ -1681,12 +1711,20 @@ func TestAFileCutShortIsNeverSentAsWhole(t *testing.T) {
 	}{
 		"damaged": {func(_ *sending, o *keptFiles) { o.midErr, o.cut = fmt.Errorf("%w: chunk 1", objects.ErrCorrupt), 4 }, true},
 		"broken":  {func(_ *sending, o *keptFiles) { o.midErr, o.cut = errors.New("connection reset"), 4 }, false},
+		// The store hands back fewer bytes than recorded: the same every
+		// time, so final, and caught before the platform has a whole body.
 		"short": {func(s *sending, _ *keptFiles) {
 			for id, f := range s.store.files {
 				f.SizeBytes = 20
 				s.store.files[id] = f
 			}
-		}, false},
+		}, true},
+		"long": {func(s *sending, _ *keptFiles) {
+			for id, f := range s.store.files {
+				f.SizeBytes = 5
+				s.store.files[id] = f
+			}
+		}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -1787,10 +1825,9 @@ func (z *zeroFile) Read(p []byte) (int, error) {
 // length it was told. Not parallel, so nothing else allocates meanwhile.
 func TestAPostedFileIsNeverHeldWhole(t *testing.T) {
 	const size = 100 << 20
-	var got atomic.Int64
-	var length int64
+	var got, length atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		length = r.ContentLength
+		length.Store(r.ContentLength)
 		n, _ := io.Copy(io.Discard, r.Body)
 		got.Store(n)
 	}))
@@ -1807,8 +1844,8 @@ func TestAPostedFileIsNeverHeldWhole(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.ReadMemStats(&after)
-	if want := int64(size + 10); got.Load() != want || length != want {
-		t.Errorf("the platform got %d bytes under Content-Length %d, want %d", got.Load(), length, want)
+	if want := int64(size + 10); got.Load() != want || length.Load() != want {
+		t.Errorf("the platform got %d bytes under Content-Length %d, want %d", got.Load(), length.Load(), want)
 	}
 	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 16<<20 {
 		t.Errorf("allocated %d MiB posting a %d MiB file", alloc>>20, size>>20)
@@ -1846,7 +1883,7 @@ func TestAFileDamagedPartWayOverHTTP2IsFinal(t *testing.T) {
 	req := OutboundRequest{URL: srv.URL, Body: []byte("head:"), Stream: &Stream{
 		Size: 1 << 20,
 		Open: func(context.Context) (io.ReadCloser, error) {
-			return &fileBody{r: io.NopCloser(io.MultiReader(bytes.NewReader(make([]byte, 300<<10)), failingReader{damaged})), name: "a.bin"}, nil
+			return &fileBody{r: io.NopCloser(io.MultiReader(bytes.NewReader(make([]byte, 300<<10)), failingReader{damaged})), name: "a.bin", size: 1 << 20, left: 1 << 20}, nil
 		},
 	}}
 	err := HTTPPoster(srv.Client()).Post(t.Context(), uuid.New(), req)
@@ -1864,5 +1901,137 @@ func TestARequestWithNoFileToStreamIsRefused(t *testing.T) {
 	err := HTTPPoster(&http.Client{}).Post(t.Context(), uuid.New(), OutboundRequest{URL: rcv.URL, Stream: &Stream{Size: 3}})
 	if !errors.Is(err, ErrUnsendable) || rcv.got() != 0 {
 		t.Errorf("Post = %v, posted %d", err, rcv.got())
+	}
+}
+
+// A file the store hands back short over HTTP/2 fails before the platform has
+// a whole request: the read itself refuses it, whatever the protocol does
+// with a body short of its length.
+func TestAFileCutShortOverHTTP2IsFinal(t *testing.T) {
+	t.Parallel()
+
+	var whole atomic.Bool
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err == nil {
+			whole.Store(true)
+		}
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	req := OutboundRequest{URL: srv.URL, Body: []byte("head:"), Stream: &Stream{
+		Size: 1 << 20,
+		Open: func(context.Context) (io.ReadCloser, error) {
+			return &fileBody{r: io.NopCloser(bytes.NewReader(make([]byte, 300<<10))), name: "a.bin", size: 1 << 20, left: 1 << 20}, nil
+		},
+	}}
+	err := HTTPPoster(srv.Client()).Post(t.Context(), uuid.New(), req)
+	if !errors.Is(err, ErrUnsendable) || whole.Load() {
+		t.Errorf("Post = %v, platform read a whole request: %v", err, whole.Load())
+	}
+}
+
+// recordingTransport keeps each request it is handed and answers 200.
+type recordingTransport struct {
+	mu   sync.Mutex
+	reqs []*http.Request
+}
+
+func (rt *recordingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rt.mu.Lock()
+	rt.reqs = append(rt.reqs, r)
+	rt.mu.Unlock()
+	if r.Body != nil {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_ = r.Body.Close()
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+}
+
+// A plain post can be sent again by net/http on an idle connection the far
+// end had closed: it carries GetBody. A file cannot, and does not.
+func TestAPlainPostCanBeSentAgain(t *testing.T) {
+	t.Parallel()
+
+	rt := &recordingTransport{}
+	poster := HTTPPoster(&http.Client{Transport: rt})
+	if err := poster.Post(t.Context(), uuid.New(), OutboundRequest{URL: "http://example.test/", Body: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	file := OutboundRequest{URL: "http://example.test/", Stream: &Stream{
+		Size: 3, Open: func(context.Context) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("abc")), nil },
+	}}
+	if err := poster.Post(t.Context(), uuid.New(), file); err != nil {
+		t.Fatal(err)
+	}
+	if rt.reqs[0].GetBody == nil {
+		t.Error("a plain post has no GetBody, so a stale connection costs it an attempt")
+	}
+	if rt.reqs[1].GetBody != nil {
+		t.Error("a streamed file claims it can be read again")
+	}
+}
+
+// heldOrder records each lease hold and each post, in order, across a batch.
+type heldOrder struct {
+	*outbox
+	mu      sync.Mutex
+	order   []string
+	lostFor int64 // the reply whose hold finds its lease gone
+	holdErr error
+}
+
+func (h *heldOrder) ExtendReplyLease(ctx context.Context, arg db.ExtendReplyLeaseParams) (int64, error) {
+	h.mu.Lock()
+	h.order = append(h.order, fmt.Sprintf("hold %d", arg.ID))
+	h.mu.Unlock()
+	if h.holdErr != nil {
+		return 0, h.holdErr
+	}
+	if arg.ID == h.lostFor {
+		return 0, nil
+	}
+	return h.outbox.ExtendReplyLease(ctx, arg)
+}
+
+// Every reply after the first in a batch has its lease held again before it
+// is sent, as one ahead of it can outlast the claim's: one whose lease is
+// gone is left to the sender holding it; a hold that fails stops the drain.
+func TestADrainHoldsEachRowsLeaseBeforeSendingIt(t *testing.T) {
+	t.Parallel()
+
+	setup := func(t *testing.T) (*sending, *heldOrder, *receiver) {
+		rcv := newReceiver(t, http.StatusOK)
+		s := newSending(t, &relay{})
+		a, b := due(rcv.URL+"/r", 1), due(rcv.URL+"/r", 1)
+		a.ID, b.ID = 1, 2
+		s.store.due = []db.ClaimDueRepliesRow{a, b}
+		h := &heldOrder{outbox: s.store}
+		s.sender = NewSender(h, s.sender.secrets, s.sender.reg, HTTPPoster(&http.Client{}), Scope{}, discardLogger())
+		return s, h, rcv
+	}
+
+	s, h, rcv := setup(t)
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(h.order, []string{"hold 2"}) || rcv.got() != 2 || len(s.store.sent) != 2 {
+		t.Errorf("holds %v, posted %d, sent %d; want the second held, both sent", h.order, rcv.got(), len(s.store.sent))
+	}
+
+	s, h, rcv = setup(t)
+	h.lostFor = 2
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if rcv.got() != 1 || len(s.store.sent) != 1 || len(s.store.retried)+len(s.store.gaveUp) != 0 {
+		t.Errorf("posted %d, sent %v, retried %v, gave up %v; want the second left alone", rcv.got(), s.store.sent, s.store.retried, s.store.gaveUp)
+	}
+
+	s, h, rcv = setup(t)
+	h.holdErr = errors.New("connection reset")
+	if _, err := s.sender.Drain(t.Context()); err == nil || rcv.got() != 1 {
+		t.Errorf("Drain = %v, posted %d; want the failed hold to stop it after the first", err, rcv.got())
 	}
 }

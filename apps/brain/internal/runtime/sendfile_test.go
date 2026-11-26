@@ -682,7 +682,7 @@ func TestALargeFileGoesToTheDashboardButNotAChannel(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), "files go to Telegram up to 50 MB") ||
+			if err == nil || !strings.Contains(err.Error(), "render.mp4 is 83.9 MB; files go to Telegram up to 50 MB") ||
 				!strings.Contains(err.Error(), "on the dashboard") {
 				t.Fatalf("send_file = %v, want the channel's limit and where the file is", err)
 			}
@@ -700,9 +700,18 @@ func TestALargeFileGoesToTheDashboardButNotAChannel(t *testing.T) {
 func TestAChannelsLimitIsSaidAsItsPlatformSaysIt(t *testing.T) {
 	t.Parallel()
 
-	for n, want := range map[int64]string{50_000_000: "50 MB", 25 << 20: "25.0 MB", 100 << 20: "100.0 MB"} {
-		if got := limitOf(n); got != want {
-			t.Errorf("limitOf(%d) = %q, want %q", n, got, want)
+	for _, c := range []struct {
+		n, limit int64
+		want     string
+	}{
+		{50_000_000, 50_000_000, "50 MB"},
+		{50 << 20, 50_000_000, "52.4 MB"}, // a 50 MiB file is over Telegram's 50 MB, and says so
+		{100 << 20, 100 << 20, "100 MiB"},
+		{80 << 20, 100 << 20, "80 MiB"},
+		{25<<20 + 1<<19, 25 << 20, "25.5 MiB"},
+	} {
+		if got := sizeIn(c.n, c.limit); got != c.want {
+			t.Errorf("sizeIn(%d, %d) = %q, want %q", c.n, c.limit, got, c.want)
 		}
 	}
 }

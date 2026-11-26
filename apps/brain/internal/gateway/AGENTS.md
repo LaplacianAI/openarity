@@ -239,7 +239,9 @@ follows no redirect. So an adapter still holds no HTTP client, and:
   holds back its own conversation and nothing else.
 - **A claim is a lease, not a held lock.** It pushes `next_attempt_at` out two
   minutes and counts the attempt; a mark matches on that count, so a sender
-  whose lease ran out cannot overwrite a newer attempt.
+  whose lease ran out cannot overwrite a newer attempt. Each reply after the
+  first in a batch is held again before it is sent, and a file reply is held
+  for its size, so a large file never lets a later reply's lease lapse.
 - **Delivery is at least once.** A POST that succeeded before the worker died
   is sent again; every reply carries an id for the receiver to drop a repeat
   (`replyID`). The run's answer, or its apology, carries the run's id, an

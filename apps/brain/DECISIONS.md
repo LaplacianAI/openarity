@@ -819,15 +819,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   bytes that cannot be decrypted are given up at once. A file given up is
   not sent, and nobody is told: the model was told it was sent when it was
   queued, and the reply shows as given up only in the database until the
-  dashboard shows a reply's delivery. Each post has a deadline by its size,
-  ten seconds and a second per 512 KiB, a minute at most, under the
-  two-minute lease, on WhatsApp's upload and send as on an HTTP post. An
-  upload in steps, Slack's, is several posts under one claim, so the whole
-  of it has a deadline of its own, 100 seconds, inside the lease. A claimed
-  batch is sent one row at a time, so rows late in a slow batch can outlive the lease and be sent by a
-  second sender too, as text replies always could. A sender holds one file's
-  bytes at a time, about three copies of it on `custom` (the bytes, base64,
-  the body): some 100 MB at 25 MiB, four replies to a worker at once.
+  dashboard shows a reply's delivery. A post held whole has a deadline by
+  its size, ten seconds and a second per 512 KiB, a minute at most; one that
+  streams a file, and a file reply's lease, grow with the file instead (F4c,
+  below). An upload in steps, Slack's, is several posts under one claim,
+  with a deadline of its own inside the lease. A claimed batch is sent one
+  row at a time, and each row after the first has its lease held again
+  before it is sent, so one behind a large file is never sent by a second
+  sender too; a row whose lease another sender took is left to it. A worker
+  that dies sending a large file holds that conversation's later replies
+  back until its lease runs out: two minutes and the file at 256 KiB a
+  second, under nine minutes at 100 MiB. A custom channel's sender holds
+  its file whole, about three copies (the bytes, base64, the body): some
+  100 MB at 25 MiB.
   Ten files a run, the count read when it is built from its file calls,
   each once whether its reply or its event was written, so a resume keeps
   to it. A reply not written and not queued is
@@ -901,7 +905,7 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   the sender opens the file only as it posts, with an exact `Content-Length`,
   so a store that hands back less fails the request. Custom keeps its file
   whole (`WholeFiles`): its signature covers the body, so streaming it reads
-  the file twice and hands a receiver a 134 MB JSON document. Telegram's
+  the file twice and hands a receiver a JSON document of about 140 MB. Telegram's
   boundary is a hash of the bot token and the reply id, no longer of the
   bytes: the same on every attempt, and unknowable to whoever wrote the file.
   A file reply's lease is pushed out once, before it is sent, to the claim's

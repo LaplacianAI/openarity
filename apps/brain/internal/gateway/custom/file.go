@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
-	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 )
 
 // RepliesWithFiles: a file a run sends is a reply of kind "file" carrying the
@@ -15,7 +14,7 @@ func (provider) RepliesWithFiles() {}
 
 // MaxFile is 25 MiB: the reply is signed over its whole body, so the file is
 // held, and a receiver is handed it in one JSON document.
-func (provider) MaxFile() int64 { return objects.MaxAttachment }
+func (provider) MaxFile() int64 { return 25 << 20 }
 
 // WholeFiles: the file is inline in the signed body.
 func (provider) WholeFiles() {}

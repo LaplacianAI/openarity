@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -27,7 +28,7 @@ func (provider) MaxFile() int64 { return 50_000_000 }
 // upload, its bytes streamed between the fields before it and the closing
 // boundary after. Always a document, never a photo: sendPhoto recompresses,
 // and a person who asked for the file wants its bytes. The boundary is a hash
-// of the bot's token and the reply's id: the same reply builds the same body
+// of the reply's id keyed by the bot's token: the same reply builds the same body
 // on every attempt, and nobody without the token, as whoever wrote the file,
 // can know it, so no file can hold it to end its part and add a field.
 func document(token string, chatID, thread int64, out gateway.Outbound) ([]gateway.OutboundRequest, error) {
@@ -37,9 +38,7 @@ func document(token string, chatID, thread int64, out gateway.Outbound) ([]gatew
 	}
 	var head bytes.Buffer
 	w := multipart.NewWriter(&head)
-	h := sha256.New()
-	h.Write([]byte(token))
-	h.Write([]byte{0})
+	h := hmac.New(sha256.New, []byte(token))
 	h.Write([]byte(out.ID))
 	if err := w.SetBoundary(hex.EncodeToString(h.Sum(nil)[:16])); err != nil {
 		return nil, fmt.Errorf("telegram: the document's boundary: %w", err)

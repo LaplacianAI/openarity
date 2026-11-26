@@ -40,10 +40,11 @@ type FileSendStore interface {
 	GetSessionFileReach(ctx context.Context, sessionID uuid.UUID) (db.GetSessionFileReachRow, error)
 }
 
-// FileSends is where a run's files can go. Store and SendsFiles are
-// required: SendsFiles says whether a channel provider posts a file, and the
-// gateway's registry answers it. Logger hears of a file sent whose event was
-// not recorded; with none, nothing is offered.
+// FileSends is where a run's files can go. Store, MaxFile and Logger are
+// required: MaxFile is the most a channel provider takes, in bytes, 0 for
+// one that sends no files, and the gateway's registry answers it. Logger
+// hears of a file sent whose event was not recorded; with any missing,
+// nothing is offered.
 type FileSends struct {
 	Store FileSendStore
 	// MaxFile is the most a provider's channel takes, in bytes: 0 for one
@@ -117,7 +118,7 @@ func (s *sendFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if s.toChannel && row.SizeBytes > s.maxFile {
 		return "", fmt.Errorf("%s is %s; files go to %s up to %s, so it was not sent. "+
 			"It is in this conversation on the dashboard; say so, and what is in it",
-			row.Filename, sizeOf(row.SizeBytes), channelName(s.provider), limitOf(s.maxFile))
+			row.Filename, sizeIn(row.SizeBytes, s.maxFile), channelName(s.provider), sizeIn(s.maxFile, s.maxFile))
 	}
 	// Counted once the file is found, so a wrong id costs no slot; a send that
 	// then fails still does, so a channel that is down is not tried an
@@ -236,13 +237,19 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 	return s.tool(), true, nil
 }
 
-// limitOf is a channel's limit as its platform says it: 50 MB as 50 MB, and
-// a limit in MiB as sizeOf says every size.
-func limitOf(n int64) string {
-	if n%1_000_000 == 0 {
-		return fmt.Sprintf("%d MB", n/1_000_000)
+// sizeIn is n bytes in the unit a channel's limit is said in, as its
+// platform says it: Telegram's 50 MB in MB, a limit in MiB in MiB, so a file
+// and its limit compare at a glance (a 50 MiB file is 52.4 MB, over 50 MB).
+func sizeIn(n, limit int64) string {
+	unit, per := "MiB", float64(1<<20)
+	if limit%1_000_000 == 0 {
+		unit, per = "MB", 1_000_000
 	}
-	return sizeOf(n)
+	v := float64(n) / per
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("%d %s", int64(v), unit)
+	}
+	return fmt.Sprintf("%.1f %s", v, unit)
 }
 
 // channelName is a channel's provider as a person names it.

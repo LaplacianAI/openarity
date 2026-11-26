@@ -560,8 +560,9 @@ Each channel takes files up to its own limit, and a larger one is refused when
 | Telegram | 50 MB, the most the Bot API takes from a bot |
 | custom | 25 MiB |
 
-A file is read from the store as it is sent, so a large one is never held in
-the brain's memory. WhatsApp encrypts a file before it uploads it, into a
+A file is read from the store as it is sent, so a large one is not held in
+the brain's memory, but on a custom channel: it builds its message from the
+file's bytes, so it holds the whole file, up to 25 MiB, while it is sent. WhatsApp encrypts a file before it uploads it, into a
 temporary file the size of the file, so the WhatsApp role needs that much
 room in its temporary directory. A file whose upload fails part way is never
 shown in the chat: Telegram refuses a document cut short, Slack shares a file

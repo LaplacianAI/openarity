@@ -204,5 +204,7 @@ grants it.
   `/workspace` somewhere longer-lived comes later.
 - **A granted skill's scripts** are not yet copied into the room.
 - **A file over 100 MiB** cannot be kept.
-- **A file over 25 MB goes to a channel** only as a mention: it can be
-  downloaded from the conversation on the dashboard, and `send_file` says so.
+- **A file over a channel's limit goes to it** only as a mention (Slack and
+  WhatsApp 100 MiB, Telegram 50 MB, custom 25 MiB; see
+  [channels](channels.md)): it can be downloaded from the conversation on the
+  dashboard, and `send_file` says so.
