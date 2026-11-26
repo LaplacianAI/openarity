@@ -503,3 +503,55 @@ func TestAnObjectTooLargeForV1IsNotReadWhole(t *testing.T) {
 		t.Errorf("read %d bytes, past the %d any v1 object is", inner.read, maxV1)
 	}
 }
+
+// lastWith hands over body in one read, with err beside its last byte.
+type lastWith struct {
+	body []byte
+	err  error
+}
+
+func (l *lastWith) Read(p []byte) (int, error) {
+	if len(l.body) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, l.body)
+	l.body = l.body[n:]
+	if len(l.body) == 0 {
+		return n, l.err
+	}
+	return n, nil
+}
+
+// headerCut is a store whose every object is its header alone, cut off with
+// io.ErrUnexpectedEOF in the same read as the header's last byte.
+type headerCut struct {
+	*fakeStore
+	opens int
+}
+
+func (h *headerCut) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	body, err := h.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	h.opens++
+	return io.NopCloser(&lastWith{body: body[:headerSize], err: io.ErrUnexpectedEOF}), nil
+}
+
+// A cut that comes with the header's last byte is the cut, not a v2 object
+// one byte short taken then for a v1 one.
+func TestACutWithTheHeaderIsACut(t *testing.T) {
+	t.Parallel()
+
+	inner := &headerCut{fakeStore: newFakeStore()}
+	e := newEncrypted(t, inner, newOneKey(0x11))
+	team := uuid.New()
+	key := objectKey(team, "f")
+	if err := e.Put(t.Context(), team, key, fileOf(chunkSize)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.Open(t.Context(), team, key)
+	if !errors.Is(err, ErrTruncated) || inner.opens != 1 {
+		t.Errorf("Open = %v after %d opens, want ErrTruncated after one", err, inner.opens)
+	}
+}

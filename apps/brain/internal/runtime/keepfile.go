@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,7 +82,7 @@ type keepFile struct {
 	rooms   ServerRooms
 	client  *http.Client
 	team    uuid.UUID
-	timeout time.Duration // keepTimeout, but in a test
+	timeout time.Duration // keepTimeout when zero; shorter in a test
 	kept    atomic.Int64
 	// one keeps a run's files one at a time: each holds a room's connection
 	// and a part of the store's upload, and a model can ask for twenty at
@@ -144,7 +145,8 @@ func (k *keepFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	}
 	// The file goes from the room into the store as it is read, so one
 	// deadline covers both.
-	reading, cancel := context.WithTimeout(ctx, k.timeout)
+	timeout := cmp.Or(k.timeout, keepTimeout)
+	reading, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	body, err := read(reading, p)
 	if err != nil {
@@ -161,7 +163,7 @@ func (k *keepFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	case errors.As(err, &prob):
 		return "", errors.New(prob.Msg)
 	case ctx.Err() == nil && errors.Is(reading.Err(), context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded):
-		return "", fmt.Errorf("%s was still arriving after %s, the most a file is read for; nothing was kept", p, k.timeout)
+		return "", fmt.Errorf("%s was still arriving after %s, the most a file is read for; nothing was kept", p, timeout)
 	default:
 		// The cause is logged by the keeper: it can name the store.
 		return "", fmt.Errorf("%s could not be read and kept whole; nothing was kept", p)
@@ -281,7 +283,7 @@ func (b *Builder) keepFileFor(
 	k := &keepFile{
 		keep: b.files.keeperFor(run), ws: ws, team: run.TeamID,
 		rooms: b.roomFiles.Servers, client: b.roomFiles.Client, servers: b.serverRooms(commands),
-		timeout: keepTimeout, one: make(chan struct{}, 1),
+		one: make(chan struct{}, 1),
 	}
 	n, err := b.roomFiles.Store.CountRunKeptFiles(ctx, db.CountRunKeptFilesParams{RunID: run.ID, Tool: KeepFileToolName})
 	if err != nil {

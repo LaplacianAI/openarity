@@ -139,7 +139,8 @@ func (s *store) PutStream(ctx context.Context, key string, r io.Reader) error {
 			Bucket: aws.String(s.bucket), Key: aws.String(key), UploadId: up.UploadId,
 		}); abortErr != nil {
 			// The parts stay until the bucket's lifecycle rule aborts them.
-			return errors.Join(err, s.wrap("aborting the upload of", key, abortErr))
+			// Not wrap: an upload already gone is not the object missing.
+			return errors.Join(err, fmt.Errorf("aborting the upload of %s: %w", key, abortErr))
 		}
 		return err
 	}

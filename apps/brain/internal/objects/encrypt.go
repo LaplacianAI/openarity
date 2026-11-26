@@ -87,14 +87,20 @@ func (e *Encrypted) Open(ctx context.Context, teamID uuid.UUID, key string) (io.
 		return nil, err
 	}
 
+	// One strict reader for the header and the chunks, so an error that came
+	// with the header's last byte is still there for the first chunk.
 	header := make([]byte, headerSize)
-	n, err := io.ReadFull(Strict(src), header)
+	rs := struct {
+		io.Reader
+		io.Closer
+	}{Strict(src), src}
+	n, err := io.ReadFull(rs, header)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		_ = src.Close()
 		return nil, fmt.Errorf("reading %s: %w", key, err)
 	}
 	if n == headerSize && isV2(header) {
-		o, err := openV2(src, teamKey, key, header)
+		o, err := openV2(rs, teamKey, key, header)
 		if err == nil {
 			return o, nil
 		}
