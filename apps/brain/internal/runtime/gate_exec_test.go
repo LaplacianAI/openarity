@@ -382,7 +382,7 @@ func TestAnApprovedSendFileIsMadeOnTheResume(t *testing.T) {
 	f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil },
 		agent.Endpoint{BaseURL: "http://model.test"})
 	f.exec.builder.WithApprovals(f.store)
-	f.exec.builder.WithFileSends(FileSends{Store: f.store, SendsFiles: func(string) bool { return false }, Logger: quietLogger()})
+	f.exec.builder.WithFileSends(FileSends{Store: f.store, MaxFile: func(string) int64 { return 0 }, Logger: quietLogger()})
 
 	sentEvents := func() int {
 		var n int

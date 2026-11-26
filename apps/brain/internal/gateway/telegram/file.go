@@ -19,22 +19,28 @@ import (
 // RepliesWithFiles: a file a run sends is a document in the chat.
 func (provider) RepliesWithFiles() {}
 
+// MaxFile is the most the Bot API takes from a bot: "up to 50 MB", taken as
+// decimal, which is safe either way.
+func (provider) MaxFile() int64 { return 50_000_000 }
+
 // document is a file as sendDocument, multipart as the Bot API takes an
-// upload. Always a document, never a photo: sendPhoto recompresses, and a
-// person who asked for the file wants its bytes. The boundary is a hash of
-// the reply's id and the file's bytes: the same reply builds the same body on
-// every attempt, and no file can hold its own boundary to add a field.
+// upload, its bytes streamed between the fields before it and the closing
+// boundary after. Always a document, never a photo: sendPhoto recompresses,
+// and a person who asked for the file wants its bytes. The boundary is a hash
+// of the bot's token and the reply's id: the same reply builds the same body
+// on every attempt, and nobody without the token, as whoever wrote the file,
+// can know it, so no file can hold it to end its part and add a field.
 func document(token string, chatID, thread int64, out gateway.Outbound) ([]gateway.OutboundRequest, error) {
 	f := out.File
-	if f == nil || len(f.Data) == 0 {
+	if f == nil || f.Size <= 0 {
 		return nil, errors.New("telegram: a file reply with no file")
 	}
-	var body bytes.Buffer
-	w := multipart.NewWriter(&body)
+	var head bytes.Buffer
+	w := multipart.NewWriter(&head)
 	h := sha256.New()
-	h.Write([]byte(out.ID))
+	h.Write([]byte(token))
 	h.Write([]byte{0})
-	h.Write(f.Data)
+	h.Write([]byte(out.ID))
 	if err := w.SetBoundary(hex.EncodeToString(h.Sum(nil)[:16])); err != nil {
 		return nil, fmt.Errorf("telegram: the document's boundary: %w", err)
 	}
@@ -53,19 +59,21 @@ func document(token string, chatID, thread int64, out gateway.Outbound) ([]gatew
 	ph := textproto.MIMEHeader{}
 	ph.Set("Content-Disposition", `form-data; name="document"; filename="`+quoteSafe(f.Name)+`"`)
 	ph.Set("Content-Type", f.MediaType)
-	part, err := w.CreatePart(ph)
-	if err != nil {
+	if _, err := w.CreatePart(ph); err != nil {
 		return nil, fmt.Errorf("telegram: the document's part: %w", err)
 	}
-	if _, err := part.Write(f.Data); err != nil {
-		return nil, fmt.Errorf("telegram: the document's bytes: %w", err)
-	}
+	// What Close writes after the part: the closing boundary alone.
+	at := head.Len()
 	if err := w.Close(); err != nil {
 		return nil, fmt.Errorf("telegram: closing the document: %w", err)
 	}
+	tail := bytes.Clone(head.Bytes()[at:])
 	header := http.Header{}
 	header.Set("Content-Type", w.FormDataContentType())
-	return []gateway.OutboundRequest{{URL: apiBase + token + "/sendDocument", Header: header, Body: body.Bytes()}}, nil
+	return []gateway.OutboundRequest{{
+		URL: apiBase + token + "/sendDocument", Header: header, Body: head.Bytes()[:at],
+		Stream: &gateway.Stream{Size: f.Size, Tail: tail},
+	}}, nil
 }
 
 // quoteSafe is a name a quoted Content-Disposition filename can carry,

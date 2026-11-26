@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -10,9 +11,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,6 +74,9 @@ type outbox struct {
 	markErr  error
 	// partLost is a lease another sender took: a part's mark matches nothing.
 	partLost bool
+	// leaseLost is the same, found when a file reply's lease is extended.
+	leaseLost bool
+	extended  []db.ExtendReplyLeaseParams
 
 	claims  []db.ClaimDueRepliesParams
 	parts   []db.ReplyPartSentParams
@@ -134,6 +141,14 @@ func (o *outbox) ReplyPartSent(_ context.Context, arg db.ReplyPartSentParams) (i
 	return 1, o.markErr
 }
 
+func (o *outbox) ExtendReplyLease(_ context.Context, arg db.ExtendReplyLeaseParams) (int64, error) {
+	o.extended = append(o.extended, arg)
+	if o.leaseLost {
+		return 0, nil
+	}
+	return 1, nil
+}
+
 func (o *outbox) ReplySent(_ context.Context, arg db.ReplySentParams) (int64, error) {
 	o.sent = append(o.sent, arg)
 	return 1, o.markErr
@@ -169,24 +184,47 @@ type receiver struct {
 	heads  []http.Header
 	// answers overrides the status for the nth request, in order.
 	answers []int
+	// cut is each request whose body ended before its length.
+	cut []bool
 }
 
 func newReceiver(t *testing.T, status int) *receiver {
 	t.Helper()
 	r := &receiver{}
 	r.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		body, _ := io.ReadAll(req.Body)
+		body, readErr := io.ReadAll(req.Body)
 		r.mu.Lock()
+		r.cut = append(r.cut, readErr != nil)
 		code := status
 		if i := len(r.bodies); i < len(r.answers) {
 			code = r.answers[i]
 		}
-		r.bodies, r.heads = append(r.bodies, string(body)), append(r.heads, req.Header.Clone())
+		h := req.Header.Clone()
+		h.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))
+		r.bodies, r.heads = append(r.bodies, string(body)), append(r.heads, h)
 		r.mu.Unlock()
 		w.WriteHeader(code)
 	}))
 	t.Cleanup(r.Close)
 	return r
+}
+
+func (r *receiver) body(i int) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i >= len(r.bodies) {
+		return ""
+	}
+	return r.bodies[i]
+}
+
+func (r *receiver) head(i int) http.Header {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i >= len(r.heads) {
+		return nil
+	}
+	return r.heads[i]
 }
 
 func (r *receiver) got() int {
@@ -986,11 +1024,34 @@ func TestAPostReadsTheAnswerOfAProviderThatSaysNoInA200(t *testing.T) {
 
 // --- a file a run sent ---
 
-// fileRelay is a relay that also sends files.
-type fileRelay struct{ relay }
+// fileRelay is a relay that also sends files: a file reply's request is
+// "head:", the file, then ":tail".
+type fileRelay struct {
+	relay
+	most int64 // MaxFile; 0 is 1 MiB
+}
 
 func (*fileRelay) Name() string      { return "filer" }
 func (*fileRelay) RepliesWithFiles() {}
+func (f *fileRelay) MaxFile() int64  { return cmp.Or(f.most, 1<<20) }
+
+func (f *fileRelay) Reply(ch Channel, out Outbound, creds Credentials, at time.Time) ([]OutboundRequest, error) {
+	reqs, err := f.relay.Reply(ch, out, creds, at)
+	if err != nil || out.File == nil {
+		return reqs, err
+	}
+	for i := range reqs {
+		reqs[i].Body = []byte("head:")
+		reqs[i].Stream = &Stream{Size: out.File.Size, Tail: []byte(":tail")}
+	}
+	return reqs, nil
+}
+
+// wholeRelay is a fileRelay that takes the file's bytes, as custom does.
+type wholeRelay struct{ fileRelay }
+
+func (*wholeRelay) Name() string { return "whole" }
+func (*wholeRelay) WholeFiles()  {}
 
 // keptFiles is the attachment store: its objects by team and key, and err for
 // every read.
@@ -998,10 +1059,13 @@ type keptFiles struct {
 	mu    sync.Mutex
 	files map[string][]byte
 	err   error
-	reads int
+	// midErr, when set, fails a read after the first cut bytes.
+	midErr error
+	cut    int
+	reads  int
 }
 
-func (s *keptFiles) Get(_ context.Context, teamID uuid.UUID, key string) ([]byte, error) {
+func (s *keptFiles) Open(_ context.Context, teamID uuid.UUID, key string) (io.ReadCloser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reads++
@@ -1012,8 +1076,15 @@ func (s *keptFiles) Get(_ context.Context, teamID uuid.UUID, key string) ([]byte
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", objects.ErrNotFound, key)
 	}
-	return b, nil
+	if s.midErr != nil {
+		return io.NopCloser(io.MultiReader(bytes.NewReader(b[:s.cut]), failingReader{s.midErr})), nil
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
 }
+
+type failingReader struct{ err error }
+
+func (f failingReader) Read([]byte) (int, error) { return 0, f.err }
 
 // fileSending is a sender of file replies through a fileRelay, with one file
 // reply due whose file is kept.
@@ -1048,9 +1119,18 @@ func TestAFileReplyCarriesItsFileAndItsCaption(t *testing.T) {
 		t.Fatalf("the provider was asked %d times", len(fr.outs))
 	}
 	out := fr.outs[0]
-	want := &OutFile{Name: "report.pdf", MediaType: "application/pdf", Caption: "The Q3 numbers", Data: []byte("%PDF-1.7\n")}
-	if out.Kind != "file" || out.Text != "report.pdf" || !reflect.DeepEqual(out.File, want) {
+	got := *out.File
+	got.open = nil
+	want := OutFile{Name: "report.pdf", MediaType: "application/pdf", Caption: "The Q3 numbers", Size: 9}
+	if out.Kind != "file" || out.Text != "report.pdf" || !reflect.DeepEqual(got, want) {
 		t.Errorf("out = %+v, file %+v", out, out.File)
+	}
+	// Streamed between what the provider built, never handed to it.
+	if b := rcv.body(0); b != "head:%PDF-1.7\n:tail" {
+		t.Errorf("posted %q", b)
+	}
+	if n := rcv.head(0).Get("Content-Length"); n != "19" {
+		t.Errorf("Content-Length = %q, want 19", n)
 	}
 	if wantID := row.RunID.String() + ":file:7"; out.ID != wantID {
 		t.Errorf("id = %q, want %q", out.ID, wantID)
@@ -1071,16 +1151,17 @@ func TestAFileGoneSinceIsGivenUp(t *testing.T) {
 		// Bytes that cannot be read fail the same way on every attempt.
 		"its bytes corrupt":    func(_ *sending, o *keptFiles) { o.err = fmt.Errorf("%w: k", objects.ErrCorrupt) },
 		"another team's bytes": func(_ *sending, o *keptFiles) { o.err = fmt.Errorf("%w: k", objects.ErrWrongTeam) },
-		"its bytes empty": func(_ *sending, o *keptFiles) {
-			for k := range o.files {
-				o.files[k] = nil
+		"recorded as empty": func(s *sending, _ *keptFiles) {
+			for id, f := range s.store.files {
+				f.SizeBytes = 0
+				s.store.files[id] = f
 			}
 		},
 		"a caption that is not one": func(s *sending, _ *keptFiles) { s.store.due[0].Detail = []byte(`{"caption":5}`) },
 		// Queued before send_file refused such a file: never read whole.
-		"over what a channel is sent": func(s *sending, o *keptFiles) {
+		"over what the channel takes": func(s *sending, o *keptFiles) {
 			for id, f := range s.store.files {
-				f.SizeBytes = objects.MaxAttachment + 1
+				f.SizeBytes = 1<<20 + 1
 				s.store.files[id] = f
 			}
 			o.err = errors.New("read a file over the channel's limit")
@@ -1093,7 +1174,7 @@ func TestAFileGoneSinceIsGivenUp(t *testing.T) {
 			if _, err := s.sender.Drain(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if len(s.store.gaveUp) != 1 || len(s.store.retried) != 0 || rcv.got() != 0 || len(fr.outs) != 0 {
+			if len(s.store.gaveUp) != 1 || len(s.store.retried) != 0 || rcv.got() != 0 {
 				t.Errorf("gave up %v, retried %v, posted %d, built %d", s.store.gaveUp, s.store.retried, rcv.got(), len(fr.outs))
 			}
 		})
@@ -1541,5 +1622,247 @@ func TestAnUploadersAnswerIsBuiltByReply(t *testing.T) {
 	}
 	if len(u.steps()) != 0 || len(u.outs) != 1 || len(p.posted()) != 1 {
 		t.Errorf("steps %d, replies built %d, posted %d", len(u.steps()), len(u.outs), len(p.posted()))
+	}
+}
+
+// A file reply holds its lease for what its file may take before it is
+// sent; a lease another sender took since sends nothing and marks nothing.
+func TestAFileReplyHoldsItsLeaseForItsSize(t *testing.T) {
+	t.Parallel()
+
+	s, _, _, row, _ := fileSending(t)
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := db.ExtendReplyLeaseParams{ID: row.ID, Attempts: row.Attempts, LeaseSeconds: fileBudget(9).Seconds()}
+	if len(s.store.extended) != 1 || s.store.extended[0] != want {
+		t.Errorf("extended %+v, want %+v", s.store.extended, want)
+	}
+
+	s, _, objs, _, rcv := fileSending(t)
+	s.store.leaseLost = true
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if rcv.got() != 0 || objs.reads != 0 || len(s.store.sent)+len(s.store.retried)+len(s.store.gaveUp) != 0 {
+		t.Errorf("posted %d, read %d, marks %v %v %v", rcv.got(), objs.reads, s.store.sent, s.store.retried, s.store.gaveUp)
+	}
+}
+
+func TestAFilesTimeIsItsSize(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		n             int64
+		stream, lease time.Duration
+	}{
+		{0, 10 * time.Second, 2 * time.Minute},
+		{256 << 10, 11 * time.Second, 2*time.Minute + time.Second},
+		{100 << 20, 410 * time.Second, 2*time.Minute + 400*time.Second},
+	} {
+		if got := StreamTimeout(c.n); got != c.stream {
+			t.Errorf("StreamTimeout(%d) = %v, want %v", c.n, got, c.stream)
+		}
+		if got := fileBudget(c.n); got != c.lease {
+			t.Errorf("fileBudget(%d) = %v, want %v", c.n, got, c.lease)
+		}
+	}
+}
+
+// A file that fails part way is not delivered whole: one damaged is given
+// up, as it fails again; one whose read broke is tried again; one the store
+// hands back short of its size is cut short of its length and tried again.
+func TestAFileCutShortIsNeverSentAsWhole(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		cut    func(*sending, *keptFiles)
+		gaveUp bool
+	}{
+		"damaged": {func(_ *sending, o *keptFiles) { o.midErr, o.cut = fmt.Errorf("%w: chunk 1", objects.ErrCorrupt), 4 }, true},
+		"broken":  {func(_ *sending, o *keptFiles) { o.midErr, o.cut = errors.New("connection reset"), 4 }, false},
+		"short": {func(s *sending, _ *keptFiles) {
+			for id, f := range s.store.files {
+				f.SizeBytes = 20
+				s.store.files[id] = f
+			}
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, _, objs, _, rcv := fileSending(t)
+			tc.cut(s, objs)
+			if _, err := s.sender.Drain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(s.store.sent) != 0 || (len(s.store.gaveUp) == 1) != tc.gaveUp || (len(s.store.retried) == 1) == tc.gaveUp {
+				t.Errorf("sent %v, gave up %v, retried %v", s.store.sent, s.store.gaveUp, s.store.retried)
+			}
+			rcv.mu.Lock()
+			whole := len(rcv.cut) > 0 && !rcv.cut[0]
+			rcv.mu.Unlock()
+			if whole {
+				t.Errorf("the platform was handed a whole request: %q", rcv.body(0))
+			}
+		})
+	}
+}
+
+// A WholeFiles provider is handed the bytes, exactly its recorded size; a
+// file that is not that size is given up before it is built.
+func TestAWholeFileProviderIsHandedTheBytes(t *testing.T) {
+	t.Parallel()
+
+	for name, size := range map[string]int64{"its size": 9, "not its size": 8} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, _, objs, row, rcv := fileSending(t)
+			w := &wholeRelay{}
+			reg, err := NewRegistry(w)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row.Provider = "whole"
+			s.store.due = []db.ClaimDueRepliesRow{row}
+			for id, f := range s.store.files {
+				f.SizeBytes = size
+				s.store.files[id] = f
+			}
+			sender := senderWith(t, s, reg, HTTPPoster(&http.Client{}), Scope{}).WithFiles(objs)
+			if _, err := sender.Drain(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if size == 9 {
+				if len(w.outs) != 1 || string(w.outs[0].File.Data) != "%PDF-1.7\n" || len(s.store.sent) != 1 {
+					t.Errorf("built %+v, sent %v", w.outs, s.store.sent)
+				}
+				return
+			}
+			if len(w.outs) != 0 || rcv.got() != 0 || len(s.store.gaveUp) != 1 {
+				t.Errorf("built %d, posted %d, gave up %v", len(w.outs), rcv.got(), s.store.gaveUp)
+			}
+		})
+	}
+}
+
+// An upload of a large file is given its size's time, past the claim's.
+func TestALargeUploadIsGivenItsSizesTime(t *testing.T) {
+	t.Parallel()
+
+	s, _, p, _ := uploadSending(t)
+	for id, f := range s.store.files {
+		f.SizeBytes = 100 << 20
+		s.store.files[id] = f
+	}
+	u := &uploadRelay{fileRelay: fileRelay{most: 100 << 20}, last: 2, bare: -1}
+	reg, err := NewRegistry(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sender = senderWith(t, s, reg, p, Scope{}).WithFiles(&keptFiles{})
+	if _, err := s.sender.Drain(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := fileBudget(100<<20) - (replyLease - uploadDeadline)
+	if len(p.deadlines) == 0 || time.Until(p.deadlines[0]) <= uploadDeadline || time.Until(p.deadlines[0]) > want {
+		t.Errorf("deadlines %v, want about %v away", p.deadlines, want)
+	}
+}
+
+// zeroFile is n bytes of a file that is never held.
+type zeroFile struct{ n int64 }
+
+func (z *zeroFile) Read(p []byte) (int, error) {
+	if z.n == 0 {
+		return 0, io.EOF
+	}
+	k := int(min(int64(len(p)), z.n))
+	clear(p[:k])
+	z.n -= int64(k)
+	return k, nil
+}
+
+// 100 MiB goes through the poster without being held: what is allocated
+// stays far below the file, and the platform is handed every byte under the
+// length it was told. Not parallel, so nothing else allocates meanwhile.
+func TestAPostedFileIsNeverHeldWhole(t *testing.T) {
+	const size = 100 << 20
+	var got atomic.Int64
+	var length int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		length = r.ContentLength
+		n, _ := io.Copy(io.Discard, r.Body)
+		got.Store(n)
+	}))
+	t.Cleanup(srv.Close)
+
+	req := OutboundRequest{URL: srv.URL, Body: []byte("head:"), Stream: &Stream{
+		Size: size, Tail: []byte(":tail"),
+		Open: func(context.Context) (io.ReadCloser, error) { return io.NopCloser(&zeroFile{n: size}), nil },
+	}}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	if err := HTTPPoster(srv.Client()).Post(t.Context(), uuid.New(), req); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	if want := int64(size + 10); got.Load() != want || length != want {
+		t.Errorf("the platform got %d bytes under Content-Length %d, want %d", got.Load(), length, want)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 16<<20 {
+		t.Errorf("allocated %d MiB posting a %d MiB file", alloc>>20, size>>20)
+	}
+}
+
+// A body held whole has a post's minute at most; one that streams a file is
+// given the file's time.
+func TestARequestsTimeIsItsBodys(t *testing.T) {
+	t.Parallel()
+
+	whole := OutboundRequest{Body: make([]byte, 30<<20)}
+	if got := whole.Timeout(); got != PostTimeout(30<<20) || got > maxPost {
+		t.Errorf("a whole body's timeout = %v", got)
+	}
+	streamed := OutboundRequest{Body: []byte("head"), Stream: &Stream{Size: 100 << 20, Tail: []byte("tail")}}
+	if got := streamed.Timeout(); got != StreamTimeout(100<<20+8) {
+		t.Errorf("a streamed body's timeout = %v, want %v", got, StreamTimeout(100<<20+8))
+	}
+}
+
+// A file that fails part way through an HTTP/2 post, as Telegram's and
+// Slack's are, says why: a damaged file is final.
+func TestAFileDamagedPartWayOverHTTP2IsFinal(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	damaged := fmt.Errorf("%w: chunk 3", objects.ErrCorrupt)
+	req := OutboundRequest{URL: srv.URL, Body: []byte("head:"), Stream: &Stream{
+		Size: 1 << 20,
+		Open: func(context.Context) (io.ReadCloser, error) {
+			return &fileBody{r: io.NopCloser(io.MultiReader(bytes.NewReader(make([]byte, 300<<10)), failingReader{damaged})), name: "a.bin"}, nil
+		},
+	}}
+	err := HTTPPoster(srv.Client()).Post(t.Context(), uuid.New(), req)
+	if !errors.Is(err, ErrUnsendable) || !errors.Is(err, objects.ErrCorrupt) {
+		t.Errorf("Post = %v, want the damaged file, final", err)
+	}
+}
+
+// A request that streams a file it was never given is refused, never posted
+// with nothing where the file goes.
+func TestARequestWithNoFileToStreamIsRefused(t *testing.T) {
+	t.Parallel()
+
+	rcv := newReceiver(t, http.StatusOK)
+	err := HTTPPoster(&http.Client{}).Post(t.Context(), uuid.New(), OutboundRequest{URL: rcv.URL, Stream: &Stream{Size: 3}})
+	if !errors.Is(err, ErrUnsendable) || rcv.got() != 0 {
+		t.Errorf("Post = %v, posted %d", err, rcv.got())
 	}
 }

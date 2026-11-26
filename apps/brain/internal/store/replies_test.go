@@ -384,3 +384,35 @@ func TestASocketsRepliesAreClaimedOnlyByItsHolder(t *testing.T) {
 		t.Error("a holder of nothing claimed a reply")
 	}
 }
+
+// A file reply's lease is pushed out for its file by the sender holding the
+// claim, and only by it: a stale sender extends nothing.
+func TestAReplysLeaseIsExtendedOnlyUnderItsClaim(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	c := newConversation(t, s, "lease")
+	id := c.answered(t, s, "m-1", "hello")
+	if got := claimReplies(t, s.Queries, 60); len(got) != 1 {
+		t.Fatalf("claimed %d", len(got))
+	}
+	if n, err := s.ExtendReplyLease(t.Context(), db.ExtendReplyLeaseParams{ID: id, Attempts: 1, LeaseSeconds: 600}); err != nil || n != 1 {
+		t.Fatalf("the current sender's extension matched %d rows (%v), want 1", n, err)
+	}
+	var left float64
+	if err := s.pool.QueryRow(t.Context(), `SELECT extract(epoch FROM next_attempt_at - now()) FROM replies WHERE id = $1`, id).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left < 590 || left > 600 {
+		t.Errorf("the lease runs %vs more, want about 600", left)
+	}
+	if n, err := s.ExtendReplyLease(t.Context(), db.ExtendReplyLeaseParams{ID: id, Attempts: 2, LeaseSeconds: 600}); err != nil || n != 0 {
+		t.Errorf("a claim that is not this one extended %d rows (%v), want 0", n, err)
+	}
+	if n, err := s.ReplySent(t.Context(), db.ReplySentParams{ID: id, Attempts: 1}); err != nil || n != 1 {
+		t.Fatalf("ReplySent matched %d (%v)", n, err)
+	}
+	if n, err := s.ExtendReplyLease(t.Context(), db.ExtendReplyLeaseParams{ID: id, Attempts: 1, LeaseSeconds: 600}); err != nil || n != 0 {
+		t.Errorf("a sent reply extended %d rows (%v), want 0", n, err)
+	}
+}

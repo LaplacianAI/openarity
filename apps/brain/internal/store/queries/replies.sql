@@ -77,6 +77,14 @@ ORDER BY c.id;
 UPDATE replies SET parts_sent = sqlc.arg('parts_sent')
 WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
 
+-- A file reply's lease, pushed out to what sending the file may take before
+-- it is sent: a large one outlasts the claim's. Matched on attempts, so a
+-- lease another sender took since is not extended; no row says so.
+-- name: ExtendReplyLease :execrows
+UPDATE replies
+SET next_attempt_at = now() + make_interval(secs => sqlc.arg('lease_seconds')::float8)
+WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');
+
 -- name: ReplySent :execrows
 UPDATE replies SET status = 'sent', sent_at = now(), last_error = NULL
 WHERE id = sqlc.arg('id') AND status = 'pending' AND attempts = sqlc.arg('attempts');

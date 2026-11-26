@@ -270,10 +270,14 @@ rather than given one the brain made.
 
 A provider may be a `FileReplier`: it sends a file a run hands its person,
 a reply of kind `file` with `Outbound.File` set, and only on its channels is a
-run given `send_file`. The sender loads the file's bytes and decrypts them
-before it builds the requests, one file at a time, so `Reply` stays pure; each
-provider's `file.go` builds its own file message (Telegram's `sendDocument`,
-WhatsApp's document, `custom`'s inline base64). A file gone since is given up;
+run given `send_file`. It declares `MaxFile`, the most its platform takes,
+and `NewRegistry` refuses one that replies with files and names none. Its
+`file.go` builds the file message around the file, as `Body ‖ file ‖
+Stream.Tail` with the file's size, so `Reply` stays pure; the sender opens the
+file only as the request is posted, decrypting a chunk at a time, one file at
+a time (Telegram's `sendDocument`, Slack's upload, WhatsApp's document). A
+`WholeFiles` provider is handed the bytes instead: `custom`, whose inline
+base64 is signed with the body. A file gone since is given up;
 a store that fails is retried. A `FileUploader` is a `FileReplier` whose
 platform takes a file in steps, each built from the answers before it:
 `FileRequest` is pure like `Reply`, and the sender runs the steps as one part,

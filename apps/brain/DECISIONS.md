@@ -884,8 +884,7 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   short of its `Content-Length`. S3 writes past 8 MiB as a multipart upload,
   aborted on failure; the filesystem writes a synced temporary file and
   renames it. `keep_file` streams from the room into the store, up to
-  100 MiB; a channel still takes 25 MiB, refused at `send_file`, since every
-  channel's reply holds the file whole (F4c). Only `io.EOF` ends a file
+  100 MiB; a channel takes what its provider's `MaxFile` says, below. Only `io.EOF` ends a file
   (`objects.Strict`): `io.ReadFull` reads a short last chunk as
   `io.ErrUnexpectedEOF`, so a source that says that itself, a connection
   closed early, would otherwise be sealed as a whole file; and a reader's
@@ -893,6 +892,23 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   buffer. The same on the way out tells a cut connection from a damaged
   chunk, so it is not retried as v1. A download moves its write deadline past
   the server's 30 seconds, by its size at 256 KiB a second at the least.
+- **A channel's file is streamed, up to what its platform takes (F4c).**
+  Each `FileReplier` declares `MaxFile`: Slack and WhatsApp 100 MiB, what a
+  conversation keeps; Telegram 50,000,000 bytes, the Bot API's "50 MB" for a
+  bot, decimal so safe either way; custom 25 MiB. `send_file` refuses past it,
+  naming it, and the sender refuses a file queued before. A provider builds
+  around the file, `Body ‖ file ‖ Stream.Tail`, so `Reply` stays pure, and
+  the sender opens the file only as it posts, with an exact `Content-Length`,
+  so a store that hands back less fails the request. Custom keeps its file
+  whole (`WholeFiles`): its signature covers the body, so streaming it reads
+  the file twice and hands a receiver a 134 MB JSON document. Telegram's
+  boundary is a hash of the bot token and the reply id, no longer of the
+  bytes: the same on every attempt, and unknowable to whoever wrote the file.
+  A file reply's lease is pushed out once, before it is sent, to the claim's
+  two minutes and the file at 256 KiB a second (`ExtendReplyLease`); its post,
+  or its upload, is given the file's time the same way. WhatsApp's upload
+  goes through whatsmeow's `UploadReader`, which encrypts into a temporary
+  file, as the whole must be hashed before it is uploaded.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes
   sniff as, never the server's word, and so is the extension a name lacks.
   Any type is kept, unlike a person's: one sniffed as nothing better is

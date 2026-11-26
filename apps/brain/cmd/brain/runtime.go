@@ -81,7 +81,7 @@ func newRunJob(
 		WithToolFiles(runtime.ToolFiles{Store: dbStore, Objects: d.attachments, Logger: logger}).
 		// A top-level run hands its person a file where its conversation can
 		// take one: the dashboard's, or a channel whose provider sends files.
-		WithFileSends(runtime.FileSends{Store: dbStore, SendsFiles: registry.SendsFiles, Logger: logger}).
+		WithFileSends(runtime.FileSends{Store: dbStore, MaxFile: registry.MaxFile, Logger: logger}).
 		WithBrowsers(newBrowsers(secretStore, d.searchHTTP, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)

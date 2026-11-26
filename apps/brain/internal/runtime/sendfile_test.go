@@ -93,9 +93,9 @@ func newSendFixture(reach db.GetSessionFileReachRow) *sendFixture {
 	f.store.attached = []db.Attachment{f.file}
 	f.sends = &fileSends{fakeStore: f.store, reach: reach, inserted: 1}
 	f.builder.WithFileSends(FileSends{
-		Store:      f.sends,
-		SendsFiles: func(p string) bool { return p == "telegram" || p == "custom" || p == "slack" },
-		Logger:     slog.New(slog.NewTextHandler(f.log, nil)),
+		Store:   f.sends,
+		MaxFile: func(p string) int64 { return channelLimits[p] },
+		Logger:  slog.New(slog.NewTextHandler(f.log, nil)),
 	})
 	f.builder.note = func(_ context.Context, _ uuid.UUID, _, kind string, p any) error {
 		f.mu.Lock()
@@ -437,9 +437,9 @@ func TestAWrongIDCostsNoSlot(t *testing.T) {
 // panics on the path that uses it.
 func TestFileSendsMissingAPartOffersNothing(t *testing.T) {
 	for name, drop := range map[string]func(*FileSends){
-		"store":       func(s *FileSends) { s.Store = nil },
-		"sends files": func(s *FileSends) { s.SendsFiles = nil },
-		"logger":      func(s *FileSends) { s.Logger = nil },
+		"store":    func(s *FileSends) { s.Store = nil },
+		"max file": func(s *FileSends) { s.MaxFile = nil },
+		"logger":   func(s *FileSends) { s.Logger = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newSendFixture(telegram)
@@ -654,11 +654,16 @@ func TestASendFileThatWouldAskIsLeftOutOfAPlannedRun(t *testing.T) {
 
 // A file over what a channel is sent is refused at the call, queues nothing
 // and costs no slot; on the dashboard, which downloads it, it is sent.
+// channelLimits are the providers' own MaxFile, as the registry reports them.
+var channelLimits = map[string]int64{"telegram": 50_000_000, "custom": 25 << 20, "slack": 100 << 20}
+
+// Each channel takes files up to its own limit: 80 MiB goes to Slack and the
+// dashboard, and Telegram refuses it, naming its 50 MB.
 func TestALargeFileGoesToTheDashboardButNotAChannel(t *testing.T) {
 	for _, tc := range []struct {
 		reach db.GetSessionFileReachRow
 		sent  bool
-	}{{telegram, false}, {dashboard, true}} {
+	}{{telegram, false}, {dashboard, true}, {db.GetSessionFileReachRow{Provider: "slack", Postable: true}, true}} {
 		t.Run(tc.reach.Provider, func(t *testing.T) {
 			f := newSendFixture(tc.reach)
 			f.sends.before = filesPerRun - 1
@@ -677,7 +682,7 @@ func TestALargeFileGoesToTheDashboardButNotAChannel(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), "files go to Telegram up to 25.0 MB") ||
+			if err == nil || !strings.Contains(err.Error(), "files go to Telegram up to 50 MB") ||
 				!strings.Contains(err.Error(), "on the dashboard") {
 				t.Fatalf("send_file = %v, want the channel's limit and where the file is", err)
 			}
@@ -689,5 +694,15 @@ func TestALargeFileGoesToTheDashboardButNotAChannel(t *testing.T) {
 				t.Errorf("the tenth send after a refused one = %v; the refusal cost a slot", err)
 			}
 		})
+	}
+}
+
+func TestAChannelsLimitIsSaidAsItsPlatformSaysIt(t *testing.T) {
+	t.Parallel()
+
+	for n, want := range map[int64]string{50_000_000: "50 MB", 25 << 20: "25.0 MB", 100 << 20: "100.0 MB"} {
+		if got := limitOf(n); got != want {
+			t.Errorf("limitOf(%d) = %q, want %q", n, got, want)
+		}
 	}
 }

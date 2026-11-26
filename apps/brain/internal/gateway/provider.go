@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -127,10 +128,21 @@ type EventReplier interface {
 // FileReplier is a Replier that also sends a file a run handed its person,
 // a reply of kind "file" with Outbound.File set. Only on these channels is
 // a run given send_file. Its own package builds the file message, as it
-// parses its webhooks; the sender loads the bytes first, so Reply stays pure.
+// parses its webhooks: around the file, as a Stream the sender fills, so
+// Reply stays pure and the file is never held. MaxFile is the most its
+// platform takes, in bytes; a larger file is refused before it is queued.
 type FileReplier interface {
 	Replier
 	RepliesWithFiles()
+	MaxFile() int64
+}
+
+// WholeFiles is a FileReplier that builds its file message from the file's
+// bytes, in OutFile.Data, rather than around a Stream: custom, whose
+// signature covers the whole body. Its MaxFile bounds what is held.
+type WholeFiles interface {
+	FileReplier
+	WholeFiles()
 }
 
 // FileUploader is a FileReplier whose platform takes a file in steps, each
@@ -210,6 +222,26 @@ type OutboundRequest struct {
 	// at most the first 64 KiB of the body, and an error is the request
 	// failing. Nil takes every 2xx as done.
 	Accepted func(status int, body []byte) error
+	// Stream, when set, is a file sent after Body, then Tail: the body is
+	// Body ‖ the file ‖ Tail, read as it is sent.
+	Stream *Stream
+}
+
+// Stream is a file in a request's body. The provider sets Size and Tail, as
+// Reply is pure; the sender sets Open, which reads the file from the store.
+type Stream struct {
+	Size int64
+	Tail []byte
+	Open func(ctx context.Context) (io.ReadCloser, error)
+}
+
+// Length is the whole body's: Body, the file and Tail.
+func (r OutboundRequest) Length() int64 {
+	n := int64(len(r.Body))
+	if r.Stream != nil {
+		n += r.Stream.Size + int64(len(r.Stream.Tail))
+	}
+	return n
 }
 
 // Outbound is one reply, as a provider needs it.
@@ -239,10 +271,14 @@ type Outbound struct {
 }
 
 // OutFile is a file a run sent, as a platform sends it: its name, the type
-// its bytes were sniffed as when it was kept, and the line sent with it.
+// its bytes were sniffed as when it was kept, the line sent with it, and its
+// size. Data is its bytes, for a WholeFiles provider only.
 type OutFile struct {
 	Name, MediaType, Caption string
+	Size                     int64
 	Data                     []byte
+	// open reads the file from the store, for a request's Stream.
+	open func(ctx context.Context) (io.ReadCloser, error)
 }
 
 // ReplyNotice is what a platform needs to send a notice the way the answer
@@ -269,7 +305,8 @@ type Registry struct {
 	setups    map[string]Setup
 	toURL     map[string]bool
 	events    map[string]bool
-	files     map[string]bool
+	files     map[string]int64
+	whole     map[string]bool
 	uploaders map[string]FileUploader
 	connects  map[string]Connector
 	notifiers map[string]Notifier
@@ -280,7 +317,7 @@ type Registry struct {
 func NewRegistry(providers ...Provider) (Registry, error) {
 	reg := Registry{
 		providers: map[string]Provider{}, repliers: map[string]Replier{}, setups: map[string]Setup{},
-		toURL: map[string]bool{}, events: map[string]bool{}, files: map[string]bool{}, uploaders: map[string]FileUploader{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
+		toURL: map[string]bool{}, events: map[string]bool{}, files: map[string]int64{}, whole: map[string]bool{}, uploaders: map[string]FileUploader{}, connects: map[string]Connector{}, notifiers: map[string]Notifier{},
 		sockets: map[string]bool{}, issuers: map[string]bool{},
 	}
 	for _, p := range providers {
@@ -315,8 +352,20 @@ func NewRegistry(providers ...Provider) (Registry, error) {
 		if _, ok := p.(EventReplier); ok {
 			reg.events[name] = true
 		}
-		if _, ok := p.(FileReplier); ok {
-			reg.files[name] = true
+		if _, marked := p.(interface{ RepliesWithFiles() }); marked {
+			if _, ok := p.(FileReplier); !ok {
+				// Else it would quietly send no files at all.
+				return Registry{}, fmt.Errorf("gateway: provider %q replies with files and says no MaxFile", name)
+			}
+		}
+		if f, ok := p.(FileReplier); ok {
+			if f.MaxFile() <= 0 {
+				return Registry{}, fmt.Errorf("gateway: provider %q sends files and takes none: MaxFile is %d", name, f.MaxFile())
+			}
+			reg.files[name] = f.MaxFile()
+		}
+		if _, ok := p.(WholeFiles); ok {
+			reg.whole[name] = true
 		}
 		if u, ok := p.(FileUploader); ok {
 			reg.uploaders[name] = u
@@ -378,7 +427,14 @@ func (r Registry) TakesReplyURL(name string) bool { return r.toURL[name] }
 func (r Registry) RepliesWithEvents(name string) bool { return r.events[name] }
 
 // SendsFiles is whether the provider sends a file a run hands its person.
-func (r Registry) SendsFiles(name string) bool { return r.files[name] }
+func (r Registry) SendsFiles(name string) bool { return r.files[name] > 0 }
+
+// MaxFile is the most a provider's platform takes in a file, in bytes; 0
+// for one that sends none.
+func (r Registry) MaxFile(name string) int64 { return r.files[name] }
+
+// WholeFiles is whether a provider builds its file message from the bytes.
+func (r Registry) WholeFiles(name string) bool { return r.whole[name] }
 
 // Setup is how the named provider completes its credentials, if it needs to.
 func (r Registry) Setup(name string) (Setup, bool) {

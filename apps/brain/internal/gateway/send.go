@@ -47,7 +47,34 @@ const (
 	// maxUploadSteps stops a provider that never says its upload is done;
 	// how many steps an upload has is the provider's (Slack's is three).
 	maxUploadSteps = 8
+
+	// streamRate is the slowest a file is sent at, in bytes a second: a
+	// file's post, its upload and its lease are given its size at this rate.
+	// 100 MiB is given 400 s.
+	streamRate = 256 << 10
 )
+
+// StreamTimeout is how long a post of n bytes that streams a file may take:
+// past PostTimeout's minute, as a file is up to 100 MiB.
+func StreamTimeout(n int64) time.Duration {
+	return postBase + time.Duration(n/streamRate)*time.Second
+}
+
+// Timeout is how long posting r may take: PostTimeout for a body held
+// whole, StreamTimeout for one that streams a file. A poster that is not
+// HTTP, as WhatsApp's, keeps to it too.
+func (r OutboundRequest) Timeout() time.Duration {
+	if r.Stream != nil {
+		return StreamTimeout(r.Length())
+	}
+	return PostTimeout(len(r.Body))
+}
+
+// fileBudget is how long a file reply of size bytes holds its lease: the
+// claim's, and the file at streamRate.
+func fileBudget(size int64) time.Duration {
+	return replyLease + time.Duration(size/streamRate)*time.Second
+}
 
 // PostTimeout is how long a post of n bytes may take: a poster that is not
 // HTTP, as WhatsApp's, keeps to it too.
@@ -71,11 +98,13 @@ type ReplyStore interface {
 	GiveUpNotice(ctx context.Context, arg db.GiveUpNoticeParams) (int64, error)
 
 	GetReplyFile(ctx context.Context, id int64) (db.GetReplyFileRow, error)
+	ExtendReplyLease(ctx context.Context, arg db.ExtendReplyLeaseParams) (int64, error)
 }
 
-// FileReader reads a file's bytes: the attachment store, which decrypts them.
+// FileReader reads a file as it is sent: the attachment store, which
+// decrypts it a chunk at a time.
 type FileReader interface {
-	Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error)
+	Open(ctx context.Context, teamID uuid.UUID, key string) (io.ReadCloser, error)
 }
 
 // Sender posts the outbox's replies, one conversation's in order, and the
@@ -220,6 +249,7 @@ type outgoing struct {
 	step     func(creds Credentials, file *OutFile, answers [][]byte) (OutboundRequest, bool, error)
 	sent     func(ctx context.Context) (int64, error)
 	partSent func(ctx context.Context, parts int32) (int64, error)
+	extend   func(ctx context.Context, lease time.Duration) (int64, error)
 	retry    func(ctx context.Context, msg string, after time.Duration) (int64, error)
 	giveUp   func(ctx context.Context, msg string) (int64, error)
 }
@@ -281,6 +311,9 @@ func (s *Sender) reply(row db.ClaimDueRepliesRow) outgoing {
 		partSent: func(ctx context.Context, parts int32) (int64, error) {
 			return s.store.ReplyPartSent(ctx, db.ReplyPartSentParams{ID: row.ID, Attempts: row.Attempts, PartsSent: parts})
 		},
+		extend: func(ctx context.Context, lease time.Duration) (int64, error) {
+			return s.store.ExtendReplyLease(ctx, db.ExtendReplyLeaseParams{ID: row.ID, Attempts: row.Attempts, LeaseSeconds: lease.Seconds()})
+		},
 		retry: func(ctx context.Context, msg string, after time.Duration) (int64, error) {
 			return s.store.RetryReply(ctx, db.RetryReplyParams{
 				ID: row.ID, Attempts: row.Attempts, Error: msg, RetrySeconds: after.Seconds(),
@@ -325,9 +358,10 @@ func withDetail(out *Outbound, detail []byte) error {
 	return nil
 }
 
-// fileOf loads a file reply's file, just before it is sent: one at a time,
-// so a sender holds one file's bytes. A file gone since, or a provider that
-// sends none, is given up; a store that fails is tried again.
+// fileOf is a file reply's file, just before it is sent: its size and how
+// to read it, never its bytes, but for a WholeFiles provider's. A file gone
+// since, one over what the channel takes, or a provider that sends none, is
+// given up; a store that fails is tried again.
 func (s *Sender) fileOf(row db.ClaimDueRepliesRow) func(ctx context.Context) (*OutFile, error) {
 	if row.Kind != "file" {
 		return nil
@@ -346,22 +380,13 @@ func (s *Sender) fileOf(row db.ClaimDueRepliesRow) func(ctx context.Context) (*O
 		if err != nil {
 			return nil, fmt.Errorf("reading the reply's file: %w", err)
 		}
-		// A reply holds its file whole: one over what a channel is sent is
-		// never read, as send_file refuses it before it is queued.
-		if f.SizeBytes > objects.MaxAttachment {
-			return nil, fmt.Errorf("%w: the file %s is %d bytes, over the %d a channel is sent",
-				ErrUnsendable, f.Filename, f.SizeBytes, objects.MaxAttachment)
+		// send_file refuses a file over what the channel takes before it is
+		// queued; this is for one queued before the limit was the channel's.
+		if most := s.reg.MaxFile(row.Provider); f.SizeBytes > most {
+			return nil, fmt.Errorf("%w: the file %s is %d bytes, over the %d this channel takes",
+				ErrUnsendable, f.Filename, f.SizeBytes, most)
 		}
-		data, err := s.objects.Get(ctx, f.TeamID, f.ObjectKey)
-		switch {
-		case errors.Is(err, objects.ErrNotFound):
-			return nil, fmt.Errorf("%w: the file %s is no longer stored", ErrUnsendable, f.Filename)
-		case errors.Is(err, objects.ErrCorrupt), errors.Is(err, objects.ErrWrongTeam):
-			// The same bytes fail the same way every time.
-			return nil, fmt.Errorf("%w: the file %s cannot be read: %w", ErrUnsendable, f.Filename, err)
-		case err != nil:
-			return nil, fmt.Errorf("reading the file %s: %w", f.Filename, err)
-		case len(data) == 0:
+		if f.SizeBytes <= 0 {
 			return nil, fmt.Errorf("%w: the file %s is empty", ErrUnsendable, f.Filename)
 		}
 		var detail struct {
@@ -372,9 +397,74 @@ func (s *Sender) fileOf(row db.ClaimDueRepliesRow) func(ctx context.Context) (*O
 				return nil, fmt.Errorf("%w: reading the file's caption: %w", ErrUnsendable, err)
 			}
 		}
-		return &OutFile{Name: f.Filename, MediaType: f.MediaType, Caption: detail.Caption, Data: data}, nil
+		out := &OutFile{Name: f.Filename, MediaType: f.MediaType, Caption: detail.Caption, Size: f.SizeBytes}
+		out.open = func(ctx context.Context) (io.ReadCloser, error) {
+			r, err := s.objects.Open(ctx, f.TeamID, f.ObjectKey)
+			if err != nil {
+				return nil, readFailed(f.Filename, err)
+			}
+			return &fileBody{r: r, name: f.Filename}, nil
+		}
+		if s.reg.WholeFiles(row.Provider) {
+			if out.Data, err = whole(ctx, out); err != nil {
+				return nil, err
+			}
+		}
+		return out, nil
 	}
 }
+
+// whole is a file's bytes, for a provider that builds its message from them:
+// exactly its recorded size, which MaxFile bounds.
+func whole(ctx context.Context, f *OutFile) ([]byte, error) {
+	r, err := f.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = r.Close() }()
+	data, err := io.ReadAll(io.LimitReader(r, f.Size+1))
+	switch {
+	case err != nil:
+		return nil, err
+	case int64(len(data)) != f.Size:
+		return nil, fmt.Errorf("%w: the file %s is %d bytes, not the %d recorded", ErrUnsendable, f.Name, len(data), f.Size)
+	}
+	return data, nil
+}
+
+// readFailed is a file that could not be read: given up when the same read
+// would fail again, a file gone or damaged, and tried again otherwise.
+func readFailed(name string, err error) error {
+	switch {
+	case errors.Is(err, objects.ErrNotFound):
+		return fmt.Errorf("%w: the file %s is no longer stored", ErrUnsendable, name)
+	case errors.Is(err, objects.ErrCorrupt), errors.Is(err, objects.ErrWrongTeam):
+		return fmt.Errorf("%w: the file %s cannot be read: %w", ErrUnsendable, name, err)
+	}
+	return fmt.Errorf("reading the file %s: %w", name, err)
+}
+
+// fileBody is a file as it is sent, its failures said as readFailed says
+// them: the client's error holds the body's, over HTTP/1 and HTTP/2 alike,
+// so a damaged file is final however it is posted.
+type fileBody struct {
+	r    io.ReadCloser
+	name string
+	err  error
+}
+
+func (b *fileBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		if b.err == nil {
+			b.err = readFailed(b.name, err)
+		}
+		return n, b.err
+	}
+	return n, err
+}
+
+func (b *fileBody) Close() error { return b.r.Close() }
 
 // notice is one request: a notice is a sentence, never split, so it has no
 // parts to record and a retry sends it whole.
@@ -467,6 +557,13 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 			return err
 		}
 	}
+	if file != nil {
+		// A large file outlasts the claim's lease: held now for what it may
+		// take, so no other sender takes the reply while it is sent.
+		if err := o.hold(ctx, fileBudget(file.Size)); err != nil {
+			return err
+		}
+	}
 	if o.step != nil {
 		return s.upload(ctx, o, creds, file)
 	}
@@ -480,12 +577,36 @@ func (s *Sender) attempt(ctx context.Context, o outgoing) error {
 	// Each part is recorded as it goes, so a retry starts at the first one
 	// not sent rather than sending the earlier ones twice.
 	for i := int(o.partsSent); i < len(parts); i++ {
-		if err := s.poster.Post(ctx, o.channelID, parts[i]); err != nil {
+		if err := s.poster.Post(ctx, o.channelID, withFile(parts[i], file)); err != nil {
 			return err
 		}
 		if err := o.recordPart(ctx, int32(i+1)); err != nil { //nolint:gosec // G115: parts are few
 			return err
 		}
+	}
+	return nil
+}
+
+// withFile gives a request's Stream the file it streams.
+func withFile(req OutboundRequest, file *OutFile) OutboundRequest {
+	if req.Stream == nil || file == nil {
+		return req
+	}
+	st := *req.Stream
+	st.Open = file.open
+	req.Stream = &st
+	return req
+}
+
+// hold pushes o's lease out to lease; none matched is a lease another sender
+// now holds.
+func (o outgoing) hold(ctx context.Context, lease time.Duration) error {
+	n, err := o.extend(ctx, lease)
+	switch {
+	case err != nil:
+		return fmt.Errorf("holding %s %d for its file: %w", o.what, o.id, err)
+	case n == 0:
+		return errLeaseLost
 	}
 	return nil
 }
@@ -511,7 +632,11 @@ func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file
 	// The posts keep to the deadline; the mark after them does not, so one
 	// landing at its edge is still recorded rather than shared again.
 	parent := ctx
-	ctx, cancel := context.WithTimeout(ctx, uploadDeadline)
+	deadline := uploadDeadline
+	if file != nil {
+		deadline = max(deadline, fileBudget(file.Size)-(replyLease-uploadDeadline))
+	}
+	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	var answers [][]byte
 	for range maxUploadSteps {
@@ -530,7 +655,7 @@ func (s *Sender) upload(ctx context.Context, o outgoing, creds Credentials, file
 			}
 			return nil
 		}
-		if err := s.poster.Post(ctx, o.channelID, req); err != nil {
+		if err := s.poster.Post(ctx, o.channelID, withFile(req, file)); err != nil {
 			return err
 		}
 		if final {
@@ -569,13 +694,21 @@ type httpPoster struct{ client *http.Client }
 
 func (p httpPoster) Post(ctx context.Context, _ uuid.UUID, out OutboundRequest) error {
 	// Held until the answer is read: the deadline covers the whole exchange.
-	ctx, cancel := context.WithTimeout(ctx, PostTimeout(len(out.Body)))
+	ctx, cancel := context.WithTimeout(ctx, out.Timeout())
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, out.URL, bytes.NewReader(out.Body))
+	body, err := bodyOf(ctx, out)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = body.Close() }()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, out.URL, body)
 	if err != nil {
 		return fmt.Errorf("%w: the reply URL: %w", ErrUnsendable, err)
 	}
 	req.Header = out.Header.Clone()
+	// Exact, so a file the store hands back short fails the request rather
+	// than reaching the platform as a whole one.
+	req.ContentLength = out.Length()
 
 	resp, err := p.client.Do(req) //nolint:gosec // G704: the client's dialer refuses what the team may not reach
 	if err != nil {
@@ -587,15 +720,46 @@ func (p httpPoster) Post(ctx context.Context, _ uuid.UUID, out OutboundRequest) 
 		return fmt.Errorf("posting the reply: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, replyReadLimit))
+	answer, _ := io.ReadAll(io.LimitReader(resp.Body, replyReadLimit))
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("the reply URL answered %d", resp.StatusCode)
 	}
 	if out.Accepted != nil {
-		return out.Accepted(resp.StatusCode, body)
+		return out.Accepted(resp.StatusCode, answer)
 	}
 	return nil
+}
+
+// requestBody is a request's body: Body, then the file and Tail when it
+// streams one.
+type requestBody struct {
+	io.Reader
+	file io.ReadCloser
+}
+
+func bodyOf(ctx context.Context, out OutboundRequest) (*requestBody, error) {
+	if out.Stream == nil {
+		return &requestBody{Reader: bytes.NewReader(out.Body)}, nil
+	}
+	if out.Stream.Open == nil {
+		return nil, fmt.Errorf("%w: a request streams a file it was not given", ErrUnsendable)
+	}
+	file, err := out.Stream.Open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &requestBody{
+		Reader: io.MultiReader(bytes.NewReader(out.Body), file, bytes.NewReader(out.Stream.Tail)),
+		file:   file,
+	}, nil
+}
+
+func (b *requestBody) Close() error {
+	if b.file == nil {
+		return nil
+	}
+	return b.file.Close()
 }
 
 func deref(s *string) string {
