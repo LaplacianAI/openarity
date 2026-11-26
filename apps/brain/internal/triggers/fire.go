@@ -241,7 +241,7 @@ type started struct {
 
 // start runs the checks a fire passes, in order, and records the first that
 // fails as the fire's outcome with no run: the maker may still start runs
-// (D9), its agent is still there, the team is under its hourly cap (D7), the
+// (D9), and post where a group reads it, its agent is still there, the team is under its hourly cap (D7), the
 // schedule's last run has finished (D5). Then it writes the fire before the run, so a time already
 // fired starts nothing, and creates the run. now is to the second, so a run
 // asked for now is its own time. A refusal asked for now records nothing.
@@ -269,6 +269,19 @@ func start(ctx context.Context, q *db.Queries, row db.Schedule, l Limits, slot w
 	if !may {
 		return started{outcome: skippedMaker, pause: MakerCannotRun}, record(skippedMaker)
 	}
+	session, err := q.GetTriggerSessionOfSchedule(ctx, &row.ID)
+	if err != nil {
+		return started{}, fmt.Errorf("read the schedule's conversation: %w", err)
+	}
+	if postsToGroup(row.Target, session.Kind) {
+		may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: channelWrite})
+		if err != nil {
+			return started{}, fmt.Errorf("check the maker may post in the channel: %w", err)
+		}
+		if !may {
+			return started{outcome: skippedMaker, pause: MakerCannotRun}, record(skippedMaker)
+		}
+	}
 
 	// An agent deleted leaves neither it nor the hub; one still there is held
 	// until the run names it.
@@ -294,10 +307,6 @@ func start(ctx context.Context, q *db.Queries, row db.Schedule, l Limits, slot w
 		return started{outcome: skippedCap}, record(skippedCap)
 	}
 
-	session, err := q.GetTriggerSessionOfSchedule(ctx, &row.ID)
-	if err != nil {
-		return started{}, fmt.Errorf("read the schedule's conversation: %w", err)
-	}
 	if _, err := q.ActiveSessionRun(ctx, session.ID); err == nil {
 		return started{outcome: skippedBusy}, record(skippedBusy)
 	} else if !errors.Is(err, pgx.ErrNoRows) {

@@ -317,7 +317,20 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			built.Close()
 			return Built{}, fmt.Errorf("reading whether the conversation has history: %w", err)
 		}
-		if len(said) > 1 {
+		posted := 0
+		if len(said) <= 1 {
+			// A thread whose first message replies to a schedule's post has
+			// that post to read, if nothing else.
+			rows, err := b.store.ListPostedTriggerAnswers(ctx, db.ListPostedTriggerAnswersParams{
+				SessionID: run.SessionID, After: time.Time{}, Before: time.Now().Add(time.Minute), PageSize: 1,
+			})
+			if err != nil {
+				built.Close()
+				return Built{}, fmt.Errorf("reading whether schedules posted in the conversation: %w", err)
+			}
+			posted = len(rows)
+		}
+		if len(said) > 1 || posted > 0 {
 			h := historyTool(b.store, run.SessionID)
 			built.reads[h.Name] = true
 			built.Spec.Tools = append(built.Spec.Tools, h)

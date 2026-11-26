@@ -22,7 +22,10 @@ import (
 )
 
 // runWrite is what a fire needs its maker to still hold.
-const runWrite = "run:write"
+const (
+	runWrite     = "run:write"
+	channelWrite = "channel:write"
+)
 
 const (
 	// proposalLife is how long an agent's proposal waits to be confirmed.
@@ -80,11 +83,13 @@ func KindOf(err error) Kind {
 	return 0
 }
 
-// Who is the caller: a member of a team, and whether they hold
-// schedule:manage, which reaches everyone's.
+// Who is the caller: a member of a team, whether they hold schedule:manage,
+// which reaches everyone's, and whether they hold channel:write, which a
+// schedule posting at a channel's top level takes.
 type Who struct {
-	Team, User uuid.UUID
-	Manage     bool
+	Team, User   uuid.UUID
+	Manage       bool
+	ChannelWrite bool
 }
 
 // Origin is the run whose tool call this is. Zero is a person on the
@@ -112,19 +117,32 @@ type Store interface {
 	ListScheduleNews(ctx context.Context, arg db.ListScheduleNewsParams) ([]db.ListScheduleNewsRow, error)
 	MarkScheduleSeen(ctx context.Context, arg db.MarkScheduleSeenParams) (int64, error)
 	ScheduleIDByName(ctx context.Context, arg db.ScheduleIDByNameParams) (uuid.UUID, error)
+	ListTargetChats(ctx context.Context, arg db.ListTargetChatsParams) ([]db.ListTargetChatsRow, error)
+	ListTargetGroups(ctx context.Context, arg db.ListTargetGroupsParams) ([]db.ListTargetGroupsRow, error)
+	ListSenderChannels(ctx context.Context, arg db.ListSenderChannelsParams) ([]db.ListSenderChannelsRow, error)
+	ListChannelsOn(ctx context.Context, arg db.ListChannelsOnParams) ([]db.ListChannelsOnRow, error)
 }
 
 // Service applies the rules. now is the clock; tests set it.
 type Service struct {
 	store  Store
 	runs   Enqueuer
+	chats  Chats
 	logger *slog.Logger
 	now    func() time.Time
 }
 
 // NewService is the rules over a store, handing the runs it starts to runs.
 func NewService(s Store, runs Enqueuer, logger *slog.Logger) *Service {
-	return &Service{store: s, runs: runs, logger: logger, now: time.Now}
+	return &Service{store: s, runs: runs, chats: noChats{}, logger: logger, now: time.Now}
+}
+
+// WithChats lets schedules answer in chats, channels and direct
+// conversations, looked up on their platforms through chats. Without it a
+// schedule answers only in its own conversation.
+func (s *Service) WithChats(chats Chats) *Service {
+	s.chats = chats
+	return s
 }
 
 // mayRun refuses a maker who may not start runs in the team: a schedule runs
