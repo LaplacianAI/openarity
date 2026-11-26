@@ -15,7 +15,7 @@ import (
 const createDirectSession = `-- name: CreateDirectSession :one
 INSERT INTO sessions (team_id, kind, user_id)
 VALUES ($1, 'direct', $2::uuid)
-RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder
+RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder, schedule_id, watcher_id
 `
 
 type CreateDirectSessionParams struct {
@@ -42,6 +42,8 @@ func (q *Queries) CreateDirectSession(ctx context.Context, arg CreateDirectSessi
 		&i.UserID,
 		&i.EventSeq,
 		&i.Builder,
+		&i.ScheduleID,
+		&i.WatcherID,
 	)
 	return i, err
 }
@@ -56,9 +58,9 @@ VALUES (
     $5::uuid,
     $6::bool
 )
-ON CONFLICT (channel_id, provider_ref) WHERE status = 'open'
+ON CONFLICT (channel_id, provider_ref) WHERE status = 'open' AND schedule_id IS NULL AND watcher_id IS NULL
 DO UPDATE SET last_message_at = now()
-RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder
+RETURNING id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder, schedule_id, watcher_id
 `
 
 type EnsureSessionParams struct {
@@ -87,6 +89,10 @@ type EnsureSessionParams struct {
 // let a second approved sender take over somebody else's private thread.
 //
 // Nor is builder: who answers a conversation is decided when it starts.
+//
+// A schedule's or a watcher's conversation shares its chat's channel and ref,
+// so its answers post there, and is never the one a message arrives in: the
+// predicate leaves them out, as sessions_open_chat_key does.
 func (q *Queries) EnsureSession(ctx context.Context, arg EnsureSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, ensureSession,
 		arg.TeamID,
@@ -109,12 +115,14 @@ func (q *Queries) EnsureSession(ctx context.Context, arg EnsureSessionParams) (S
 		&i.UserID,
 		&i.EventSeq,
 		&i.Builder,
+		&i.ScheduleID,
+		&i.WatcherID,
 	)
 	return i, err
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder FROM sessions WHERE id = $1
+SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder, schedule_id, watcher_id FROM sessions WHERE id = $1
 `
 
 func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (Session, error) {
@@ -132,6 +140,8 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (Session, error)
 		&i.UserID,
 		&i.EventSeq,
 		&i.Builder,
+		&i.ScheduleID,
+		&i.WatcherID,
 	)
 	return i, err
 }
@@ -155,7 +165,7 @@ func (q *Queries) GetSessionFirstAsked(ctx context.Context, sessionID uuid.UUID)
 }
 
 const getSessionVisible = `-- name: GetSessionVisible :one
-SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder FROM sessions
+SELECT id, team_id, channel_id, provider_ref, kind, status, started_at, last_message_at, user_id, event_seq, builder, schedule_id, watcher_id FROM sessions
 WHERE id = $1 AND team_id = $2
   AND (kind <> 'direct'
    OR $3::bool
@@ -192,12 +202,14 @@ func (q *Queries) GetSessionVisible(ctx context.Context, arg GetSessionVisiblePa
 		&i.UserID,
 		&i.EventSeq,
 		&i.Builder,
+		&i.ScheduleID,
+		&i.WatcherID,
 	)
 	return i, err
 }
 
 const listSessionsByChannel = `-- name: ListSessionsByChannel :many
-SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id, s.event_seq, s.builder,
+SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id, s.event_seq, s.builder, s.schedule_id, s.watcher_id,
        c.name     AS channel_name,
        pu.email   AS participant_email,
        pu.subject AS participant_subject,
@@ -294,6 +306,8 @@ func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByC
 			&i.Session.UserID,
 			&i.Session.EventSeq,
 			&i.Session.Builder,
+			&i.Session.ScheduleID,
+			&i.Session.WatcherID,
 			&i.ChannelName,
 			&i.ParticipantEmail,
 			&i.ParticipantSubject,
@@ -312,7 +326,7 @@ func (q *Queries) ListSessionsByChannel(ctx context.Context, arg ListSessionsByC
 }
 
 const listSessionsByTeam = `-- name: ListSessionsByTeam :many
-SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id, s.event_seq, s.builder,
+SELECT s.id, s.team_id, s.channel_id, s.provider_ref, s.kind, s.status, s.started_at, s.last_message_at, s.user_id, s.event_seq, s.builder, s.schedule_id, s.watcher_id,
        c.name     AS channel_name,
        pu.email   AS participant_email,
        pu.subject AS participant_subject,
@@ -419,6 +433,8 @@ func (q *Queries) ListSessionsByTeam(ctx context.Context, arg ListSessionsByTeam
 			&i.Session.UserID,
 			&i.Session.EventSeq,
 			&i.Session.Builder,
+			&i.Session.ScheduleID,
+			&i.Session.WatcherID,
 			&i.ChannelName,
 			&i.ParticipantEmail,
 			&i.ParticipantSubject,

@@ -170,6 +170,10 @@ func TestSendingIsRefused(t *testing.T) {
 			sayRequest{Text: "hi", Key: "k"},
 			http.StatusConflict,
 		},
+		{"a schedule's own conversation", func(f *fixture) {
+			f.dashboardSession()
+			f.store.sessions[0].ScheduleID = new(uuid.New())
+		}, (*fixture).sessionMessages, sayRequest{Text: "hi", Key: "k"}, http.StatusConflict},
 		{"someone else's conversation, read by a moderator", func(f *fixture) {
 			f.dashboardSession()
 			other := uuid.New()

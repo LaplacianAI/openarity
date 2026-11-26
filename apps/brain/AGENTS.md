@@ -128,6 +128,9 @@ apps/brain/
     rooms.go           the room effect: idle rooms expired, rooms deleted with the key that made them
   internal/improve/    with improvement on: each finished run judged in the background, the ones worth learning from digested into signatures; and the improver: patterns over the bar, a pass per agent that proposes changes, each screened before it is stored; a pass is one workflow, begun once, one running an agent, held to the team's tokens a pass and minutes a try, and failed when its worker goes silent; and the watch: each applied change's next ten judged runs against the ones before, flagged when worse than the agent's own noise or costlier
   internal/purge/      erasing deleted teams once TEAM_PURGE_AFTER has passed
+  internal/triggers/   runs nobody asked for just then: a person's schedules, their rules (limits, the minimum interval, confirming an agent's proposal), fired on a minute tick in a conversation of their own
+    when/              a schedule's time rules, with no database: the next fire, what is due after a gap, the grace, the hour the clocks repeat
+  internal/retention/  deletes DBOS's record of finished scheduled work, and of the batches a job names, after a week
   internal/whatsapp/   WhatsApp numbers linked as devices: leases, connections, pairing, paced sending
   internal/runtime/    a run: the agent built from its row, executed, recorded
     build.go           the Spec, its granted MCP tools as discovery recorded them, and skills, the one settings read; Patterns and Loops

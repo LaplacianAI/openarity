@@ -4,6 +4,72 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
 
 ## Decisions worth not relitigating
 
+- **A person's schedules are our rows, fired by one DBOS tick a minute.**
+  DBOS's own schedules keep every one in each worker's memory, re-listed every
+  30 seconds, and backfill every missed time without a cap; a sleeping
+  workflow per schedule holds a goroutine and cannot be woken early. So the
+  tick reads `schedules` through an index on what is due, and claims each with
+  `SKIP LOCKED`. What follows (design: schedules and watchers, approved
+  2026-11-26):
+  - **A time fires once.** `schedule_fires` is keyed on the schedule and the
+    time it was due, and its row is written before the run: a second worker, a
+    retry or a restart finds it and starts nothing. The fire also waits on the
+    team's advisory lock and skips while the schedule's last run works, so the
+    key is the last of three guards, not the only one.
+  - **Missed times collapse.** Within half the period (2 minutes to 2 hours) a
+    fire runs late; beyond, or with several due, one catch-up stands for them
+    and the rest are recorded missed. A one-shot runs late for up to a day.
+  - **A schedule answers in a conversation of its own,** as its maker, with
+    their permissions when it fires. Nobody writes in it, through a message or
+    a run; a second writer would make its next fire skip.
+  - **A fired run asks and waits like any run.** It is not `unattended`: its
+    approvals reach Tool approvals, and a wait that expires ends it as a
+    failure (*user*, 2026-11-26).
+  - **Deleting one is soft.** Its conversation is closed and kept with its
+    runs; nothing in the brain deletes a conversation or a run (*user*,
+    2026-11-26).
+  - **`[silent]` as a whole answer sends nothing** and tells nobody; five
+    failures in a row pause a schedule. A run's end is counted once, however
+    often it is reported; a cancelled run is neither a failure nor news.
+  - **A fire that errors is put off, not retried at once.** Its transaction
+    rolls back, so it would still be the oldest due and be claimed first on
+    every tick, ahead of every other schedule. `retry_at` holds it back a
+    minute, in a transaction of its own, and keeps `next_fire_at`, so the
+    retry is for the time it was due and its lateness is judged by the same
+    grace. An error of its own counts as a failure, so the fifth in a row
+    pauses it as any failing schedule; the database's passing trouble
+    (SQLSTATE classes 08, 40, 53 and 57, `55P03`, a lost connection) does
+    not, until the schedule has been stuck on it for an hour. That needs no
+    column of its own: `next_fire_at` stays on the time it was due while it
+    retries, so its age is how long it has been stuck. A pause clears the
+    retry with it.
+  - **A time the clocks skip does not fire that day.** On the morning they go
+    forward, a rule's 02:30 does not exist on the wall, so nothing fires and
+    nothing is missed; firing at the next valid minute instead is a product
+    choice not made yet.
+  - **A wall time fires once at fall-back only for a rule that pins hours,**
+    and the test is that the local time moved forward, not that it differs
+    from the last: `0,30 1 * * *` reads 01:00, 01:30, 01:00, 01:30 and fires
+    two of them.
+  - **What a schedule does is its maker's alone.** It runs as them, with their
+    permissions, so only they change its name, objective, rule or agent, or
+    run it now. `schedule:manage` sees, pauses, resumes, deletes and takes
+    over everyone's; whoever makes or takes over one must be able to start
+    runs.
+  - **The hub is a choice, not the absence of an agent.** `hub` is stored; an
+    agent deleted sets `agent_id` null and leaves `hub` false, and the
+    schedule pauses as `target_gone` rather than fall to the hub nobody
+    chose.
+  - **The rules are written once,** in `internal/triggers`, below the routes,
+    for the API, an agent's tools and the jobs.
+- **The worker deletes DBOS's record of finished background work after a
+  week.** DBOS v1.2.0 never deletes a workflow row, and every tick of every
+  sweep leaves one. `internal/retention`, a job of its own, lists the
+  schedules DBOS runs, then deletes their finished workflows older than seven
+  days, and those of the batches other jobs name to it (the fire batches).
+  What DBOS runs on a schedule is periodic by construction, so nothing is
+  missed when a job is added. Run workflows are kept: the `runs` table is
+  their record.
 - **A workspace is a room running the workspace role, so it works on every
   sandbox provider.** The brain never asks a provider for a shell or a
   filesystem API: it starts `sandbox workspace` in a room through the same

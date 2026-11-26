@@ -46,8 +46,9 @@ func TestSeededPermissions(t *testing.T) {
 	for role, want := range map[string][]string{
 		"admin": {
 			"agent:write", "approval:decide", "approval:read", "approval:self", "channel:read",
-			"channel:write", "improvement:approve", "membership:write", "run:write", "sender:approve",
-			"session:read_all", "skill:write", "team:settings", "tool:write", "user:read",
+			"channel:write", "improvement:approve", "membership:write", "run:write", "schedule:manage",
+			"schedule:read", "schedule:write", "sender:approve", "session:read_all", "skill:write",
+			"team:settings", "tool:write", "user:read",
 		},
 		// A member who also lets strangers in. Not channel:write: approving a
 		// sender is not the same trust as rewiring the channel it came in on.
@@ -57,12 +58,17 @@ func TestSeededPermissions(t *testing.T) {
 		// the improvements its agents propose to themselves.
 		"approver": {
 			"agent:write", "approval:decide", "approval:read", "approval:self", "channel:read",
-			"improvement:approve", "run:write", "sender:approve", "skill:write", "tool:write",
+			"improvement:approve", "run:write", "schedule:read", "schedule:write", "sender:approve",
+			"skill:write", "tool:write",
 		},
 		// Not team:settings: the model every message runs on is a cost
 		// decision, and the search key is a credential.
-		// A member answers for the calls made for them, not for anyone else's.
-		"member": {"agent:write", "approval:read", "approval:self", "run:write", "skill:write", "tool:write"},
+		// A member answers for the calls made for them, not for anyone else's,
+		// and makes schedules of their own; only an admin reaches everyone's.
+		"member": {
+			"agent:write", "approval:read", "approval:self", "run:write", "schedule:read", "schedule:write",
+			"skill:write", "tool:write",
+		},
 		// A sender let in from a channel talks to the agents and writes
 		// nothing in the team: no tool, skill or agent, and never a schedule.
 		"guest": {"run:write"},

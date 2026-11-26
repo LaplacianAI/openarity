@@ -310,7 +310,10 @@ func TestARoleInTheFileGetsExactlyTheGrantsItLists(t *testing.T) {
 		t.Fatalf("LoadRBAC: %v", err)
 	}
 
-	want := []string{"agent:write", "approval:read", "approval:self", "run:write", "skill:write", "tool:write"}
+	want := []string{
+		"agent:write", "approval:read", "approval:self", "run:write", "schedule:read", "schedule:write",
+		"skill:write", "tool:write",
+	}
 	if got := grantsOf(t, s, "member"); !slices.Equal(got, want) {
 		t.Errorf("member grants = %v, want %v", got, want)
 	}
@@ -635,7 +638,23 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"GET /teams/{id}/approval-rules":                            "member",
 		"POST /teams/{id}/approval-rules":                           "team team:settings",
 		"DELETE /teams/{id}/approval-rules/{ruleID}":                "team team:settings",
-		"PUT /teams/{id}/mcp-servers/{serverID}/trust-hints":        "team team:settings",
+		// A person's own schedules: reading and changing them is the
+		// member's; everyone's is schedule:manage, checked by the handler.
+		"GET /teams/{id}/schedules":                          "team schedule:read",
+		"POST /teams/{id}/schedules":                         "team schedule:write",
+		"POST /teams/{id}/schedules/preview":                 "team schedule:read",
+		"GET /teams/{id}/schedules/{scheduleID}":             "team schedule:read",
+		"PATCH /teams/{id}/schedules/{scheduleID}":           "team schedule:write",
+		"DELETE /teams/{id}/schedules/{scheduleID}":          "team schedule:write",
+		"POST /teams/{id}/schedules/{scheduleID}/confirm":    "team schedule:write",
+		"POST /teams/{id}/schedules/{scheduleID}/run":        "team schedule:write",
+		"POST /teams/{id}/schedules/{scheduleID}/take-over":  "team schedule:manage",
+		"GET /teams/{id}/schedules/{scheduleID}/fires":       "team schedule:read",
+		"GET /teams/{id}/scheduled/news":                     "team schedule:read",
+		"POST /teams/{id}/scheduled/news/seen":               "team schedule:read",
+		"GET /teams/{id}/schedule-settings":                  "member",
+		"PUT /teams/{id}/schedule-settings":                  "team team:settings",
+		"PUT /teams/{id}/mcp-servers/{serverID}/trust-hints": "team team:settings",
 
 		// An MCP server is a tool source, so writing one is tool:write. Reading
 		// is member-wide for the reason skills are: granting a server to an

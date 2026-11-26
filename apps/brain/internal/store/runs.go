@@ -27,7 +27,9 @@ const Apology = "Sorry, the team couldn't answer that just now. Please try again
 //     of the same kind is started to answer them, in the same transcript,
 //     returned for the caller to hand to the workers;
 //   - a channel's run also puts its reply in the outbox: its answer, or the
-//     apology if it failed.
+//     apology if it failed;
+//   - a run a schedule started is counted on its fire and its schedule, and
+//     one whose whole answer is Silent writes no reply.
 //
 // A cancelled run does neither; someone stopped it on purpose.
 func (s *Store) FinishRunWithEvent(
@@ -62,11 +64,15 @@ func (s *Store) FinishRunWithEvent(
 				return err
 			}
 		}
+		silent, err := finishFired(ctx, q, run, finish)
+		if err != nil {
+			return err
+		}
 		switch {
 		case !top || finish.Status == "cancelled":
 			return nil
 		case run.ReplyToChannel:
-			followUp, err = answerChannel(ctx, q, run, finish)
+			followUp, err = answerChannel(ctx, q, run, finish, silent)
 		default:
 			followUp, err = carryOn(ctx, q, run)
 		}
@@ -109,7 +115,7 @@ func carryOn(ctx context.Context, q *db.Queries, run db.Run) (uuid.UUID, error) 
 	return next.ID, nil
 }
 
-func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.FinishRunParams) (uuid.UUID, error) {
+func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.FinishRunParams, silent bool) (uuid.UUID, error) {
 	left, err := q.TakeLeftoverSteers(ctx, run.ID)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("take the steers run %s never read: %w", run.ID, err)
@@ -134,6 +140,10 @@ func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.Fin
 		}
 	}
 
+	if silent {
+		// A schedule's run with nothing to say says nothing.
+		return followUp, nil
+	}
 	kind, text := "apology", Apology
 	if finish.Status == "succeeded" && finish.Output != nil && strings.TrimSpace(*finish.Output) != "" {
 		kind, text = "answer", *finish.Output

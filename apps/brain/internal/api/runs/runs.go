@@ -119,7 +119,7 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.SessionID != nil {
-		_, err := h.store.GetSessionVisible(r.Context(), db.GetSessionVisibleParams{
+		session, err := h.store.GetSessionVisible(r.Context(), db.GetSessionVisibleParams{
 			ID: *req.SessionID, TeamID: teamID, Moderator: h.moderates(r, u, teamID), Viewer: u.ID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -128,6 +128,12 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			api.Fail(w, h.logger, u, "failed to read the session", err)
+			return
+		}
+		// A schedule's conversation has one writer, its schedule: a run
+		// started beside a fire would make the next one skip.
+		if session.ScheduleID != nil || session.WatcherID != nil {
+			http.Error(w, "this session is a schedule's: run the schedule now instead", http.StatusConflict)
 			return
 		}
 	}
