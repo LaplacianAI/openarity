@@ -10,7 +10,9 @@
 DROP INDEX CONCURRENTLY IF EXISTS sessions_open_conversation_key;
 
 -- The schedules and watchers answering in a chat, found by the chat's place
--- when a reply there reads what they posted.
+-- when a reply there reads what they posted. A build that fails leaves an
+-- INVALID index, which IF NOT EXISTS would then skip: check
+-- pg_index.indisvalid, drop it by hand, and run again.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS sessions_trigger_place_idx ON sessions (channel_id, provider_ref)
     WHERE schedule_id IS NOT NULL OR watcher_id IS NOT NULL;
 

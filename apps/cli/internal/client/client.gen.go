@@ -4487,8 +4487,9 @@ type SchedulePlace struct {
 	// Label The place as its platform names it, such as `#releases`, or `A thread`.
 	Label string `json:"label" yaml:"label"`
 
-	// Reason Why it cannot be picked: posting at a channel's top level takes
-	// `channel:write`, or the app is not in the channel.
+	// Reason Why it cannot be picked: posting at a channel's top level, or in a
+	// group's chat, takes `channel:write`; or the app is not in the
+	// channel.
 	Reason *SchedulePlaceReason `json:"reason,omitempty" yaml:"reason,omitempty"`
 
 	// Target A place as `listScheduleTargets` lists it, in its `target`, sent back
@@ -4501,8 +4502,9 @@ type SchedulePlace struct {
 // SchedulePlaceKind defines model for SchedulePlace.Kind.
 type SchedulePlaceKind string
 
-// SchedulePlaceReason Why it cannot be picked: posting at a channel's top level takes
-// `channel:write`, or the app is not in the channel.
+// SchedulePlaceReason Why it cannot be picked: posting at a channel's top level, or in a
+// group's chat, takes `channel:write`; or the app is not in the
+// channel.
 type SchedulePlaceReason string
 
 // SchedulePlacePage defines model for SchedulePlacePage.
@@ -5623,7 +5625,8 @@ type StreamRunEventsParams struct {
 
 // ListScheduleTargetsParams defines parameters for ListScheduleTargets.
 type ListScheduleTargetsParams struct {
-	// Q Only the places whose label, detail or channel name holds this, ignoring case.
+	// Q Only the places whose label, detail or channel name holds this,
+	// ignoring case. At most 200 bytes.
 	Q    *string                        `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 	Kind *ListScheduleTargetsParamsKind `form:"kind,omitempty" json:"kind,omitempty" yaml:"kind,omitempty"`
 
@@ -7450,7 +7453,8 @@ type ClientInterface interface {
 	// refused with 403, as the schedule would only pause at its first fire.
 	// `target` is where it answers, a place `listScheduleTargets` listed,
 	// sent back as it is; absent is a conversation of its own. It is
-	// checked again: a channel's top level takes `channel:write` (403), and
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
 	// a place the caller may no longer pick, or that its platform refuses,
 	// is a 400 saying why.
 	//
@@ -7469,7 +7473,8 @@ type ClientInterface interface {
 	// refused with 403, as the schedule would only pause at its first fire.
 	// `target` is where it answers, a place `listScheduleTargets` listed,
 	// sent back as it is; absent is a conversation of its own. It is
-	// checked again: a channel's top level takes `channel:write` (403), and
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
 	// a place the caller may no longer pick, or that its platform refuses,
 	// is a 400 saying why.
 	//
@@ -7575,8 +7580,9 @@ type ClientInterface interface {
 
 	// TakeOverSchedule Take over a schedule whose maker left
 	//
-	// Requires `schedule:manage` in this team. Only a schedule paused
-	// because its maker left, or may no longer start runs, is taken over.
+	// Requires `schedule:manage` in this team. Only a paused schedule whose
+	// maker left, or may no longer start runs or post where it answers, is
+	// taken over, whoever paused it.
 	// It stays paused until the caller resumes it, and runs as them from
 	// then, so a caller who may not start runs in the team is refused with
 	// 403, as is one without `channel:write` for a schedule posting where a
@@ -10588,7 +10594,8 @@ func (c *Client) ListSchedules(ctx context.Context, id TeamID, params *ListSched
 // refused with 403, as the schedule would only pause at its first fire.
 // `target` is where it answers, a place `listScheduleTargets` listed,
 // sent back as it is; absent is a conversation of its own. It is
-// checked again: a channel's top level takes `channel:write` (403), and
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
 // a place the caller may no longer pick, or that its platform refuses,
 // is a 400 saying why.
 //
@@ -10617,7 +10624,8 @@ func (c *Client) CreateScheduleWithBody(ctx context.Context, id TeamID, contentT
 // refused with 403, as the schedule would only pause at its first fire.
 // `target` is where it answers, a place `listScheduleTargets` listed,
 // sent back as it is; absent is a conversation of its own. It is
-// checked again: a channel's top level takes `channel:write` (403), and
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
 // a place the caller may no longer pick, or that its platform refuses,
 // is a 400 saying why.
 //
@@ -10823,8 +10831,9 @@ func (c *Client) RunSchedule(ctx context.Context, id TeamID, scheduleID Schedule
 
 // TakeOverSchedule Take over a schedule whose maker left
 //
-// Requires `schedule:manage` in this team. Only a schedule paused
-// because its maker left, or may no longer start runs, is taken over.
+// Requires `schedule:manage` in this team. Only a paused schedule whose
+// maker left, or may no longer start runs or post where it answers, is
+// taken over, whoever paused it.
 // It stays paused until the caller resumes it, and runs as them from
 // then, so a caller who may not start runs in the team is refused with
 // 403, as is one without `channel:write` for a schedule posting where a
@@ -19143,7 +19152,8 @@ type ClientWithResponsesInterface interface {
 	// refused with 403, as the schedule would only pause at its first fire.
 	// `target` is where it answers, a place `listScheduleTargets` listed,
 	// sent back as it is; absent is a conversation of its own. It is
-	// checked again: a channel's top level takes `channel:write` (403), and
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
 	// a place the caller may no longer pick, or that its platform refuses,
 	// is a 400 saying why.
 	//
@@ -19162,7 +19172,8 @@ type ClientWithResponsesInterface interface {
 	// refused with 403, as the schedule would only pause at its first fire.
 	// `target` is where it answers, a place `listScheduleTargets` listed,
 	// sent back as it is; absent is a conversation of its own. It is
-	// checked again: a channel's top level takes `channel:write` (403), and
+	// checked again: a channel's top level, or a group's chat, takes
+	// `channel:write` (403), and
 	// a place the caller may no longer pick, or that its platform refuses,
 	// is a 400 saying why.
 	//
@@ -19278,8 +19289,9 @@ type ClientWithResponsesInterface interface {
 
 	// TakeOverScheduleWithResponse Take over a schedule whose maker left
 	//
-	// Requires `schedule:manage` in this team. Only a schedule paused
-	// because its maker left, or may no longer start runs, is taken over.
+	// Requires `schedule:manage` in this team. Only a paused schedule whose
+	// maker left, or may no longer start runs or post where it answers, is
+	// taken over, whoever paused it.
 	// It stays paused until the caller resumes it, and runs as them from
 	// then, so a caller who may not start runs in the team is refused with
 	// 403, as is one without `channel:write` for a schedule posting where a
@@ -27149,7 +27161,8 @@ func (c *ClientWithResponses) ListSchedulesWithResponse(ctx context.Context, id 
 // refused with 403, as the schedule would only pause at its first fire.
 // `target` is where it answers, a place `listScheduleTargets` listed,
 // sent back as it is; absent is a conversation of its own. It is
-// checked again: a channel's top level takes `channel:write` (403), and
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
 // a place the caller may no longer pick, or that its platform refuses,
 // is a 400 saying why.
 //
@@ -27174,7 +27187,8 @@ func (c *ClientWithResponses) CreateScheduleWithBodyWithResponse(ctx context.Con
 // refused with 403, as the schedule would only pause at its first fire.
 // `target` is where it answers, a place `listScheduleTargets` listed,
 // sent back as it is; absent is a conversation of its own. It is
-// checked again: a channel's top level takes `channel:write` (403), and
+// checked again: a channel's top level, or a group's chat, takes
+// `channel:write` (403), and
 // a place the caller may no longer pick, or that its platform refuses,
 // is a 400 saying why.
 //
@@ -27350,8 +27364,9 @@ func (c *ClientWithResponses) RunScheduleWithResponse(ctx context.Context, id Te
 
 // TakeOverScheduleWithResponse Take over a schedule whose maker left
 //
-// Requires `schedule:manage` in this team. Only a schedule paused
-// because its maker left, or may no longer start runs, is taken over.
+// Requires `schedule:manage` in this team. Only a paused schedule whose
+// maker left, or may no longer start runs or post where it answers, is
+// taken over, whoever paused it.
 // It stays paused until the caller resumes it, and runs as them from
 // then, so a caller who may not start runs in the team is refused with
 // 403, as is one without `channel:write` for a schedule posting where a

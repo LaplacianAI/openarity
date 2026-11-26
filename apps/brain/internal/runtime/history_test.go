@@ -331,3 +331,25 @@ func TestEveryPostIsOnOnePageAsThePagesGoBack(t *testing.T) {
 		}
 	}
 }
+
+// A span holds at most ten posts, the newest; more says so rather than
+// leaving the older ones out silently.
+func TestMorePostsThanAPageHoldsAreSaid(t *testing.T) {
+	for _, n := range []int{historyScheduled, historyScheduled + 1} {
+		f := newFixture()
+		f.run.SessionID = uuid.New()
+		f.store.history = map[uuid.UUID][]db.ListSessionHistoryRow{f.run.SessionID: {spoke(2, "asha", "b"), spoke(1, "asha", "a")}}
+		var posts []db.ListPostedTriggerAnswersRow
+		for i := range n { // newest first, as the query gives them
+			posts = append(posts, db.ListPostedTriggerAnswersRow{At: time.Now().Add(-time.Duration(i+1) * time.Minute), Name: fmt.Sprint(i), Text: "-"})
+		}
+		f.store.posted = map[uuid.UUID][]db.ListPostedTriggerAnswersRow{f.run.SessionID: posts}
+		page := readHistory(t, f.build(t), `{}`)
+		if len(page.Scheduled) != historyScheduled || page.ScheduledMore != (n > historyScheduled) {
+			t.Errorf("%d posts: %d shown, more %v", n, len(page.Scheduled), page.ScheduledMore)
+		}
+		if page.Scheduled[historyScheduled-1].From != "0 (scheduled)" {
+			t.Errorf("%d posts: the newest shown is %s, want the newest kept", n, page.Scheduled[historyScheduled-1].From)
+		}
+	}
+}

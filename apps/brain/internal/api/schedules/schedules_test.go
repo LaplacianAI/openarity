@@ -365,7 +365,7 @@ func TestTakeOverTakesManage(t *testing.T) {
 	s := w.make(t, "summary")
 	want(t, w.serve(t, w.other, "POST", "/schedules/"+s.ID.String()+"/take-over", nil), http.StatusForbidden, "schedule:manage")
 	w.holds[manageEveryones] = true
-	want(t, w.serve(t, w.other, "POST", "/schedules/"+s.ID.String()+"/take-over", nil), http.StatusConflict, "only a schedule paused")
+	want(t, w.serve(t, w.other, "POST", "/schedules/"+s.ID.String()+"/take-over", nil), http.StatusConflict, "only a paused schedule whose maker")
 }
 
 func TestConfirmingOneNotProposedIsAConflict(t *testing.T) {

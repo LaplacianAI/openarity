@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,6 +65,26 @@ func (e *echo) Post(_ context.Context, _ uuid.UUID, req OutboundRequest) error {
 		return req.Accepted(200, req.Body)
 	}
 	return nil
+}
+
+// gated is echo held until its gate opens, telling when a post is waiting,
+// and failing as a real poster does once its request's context is done.
+type gated struct {
+	echo
+	mu      sync.Mutex
+	waiting chan struct{}
+	gate    chan struct{}
+}
+
+func (g *gated) Post(ctx context.Context, ch uuid.UUID, req OutboundRequest) error {
+	g.waiting <- struct{}{}
+	<-g.gate
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.echo.Post(ctx, ch, req)
 }
 
 func newChats(t *testing.T, l *lister) (*Chats, *echo) {
@@ -147,6 +168,68 @@ func TestAListTooLongIsKeptAndSaidIncomplete(t *testing.T) {
 	}
 	if _, err := c.ListChannels(t.Context(), team, ch, "lister"); err != nil || e.asked != maxListPages {
 		t.Errorf("asked %d times, want the incomplete list kept", e.asked)
+	}
+}
+
+// The person who started a listing going away does not fail the others
+// waiting for it: the listing runs apart from them, once.
+func TestACancelledLeaderDoesNotFailItsWaiters(t *testing.T) {
+	t.Parallel()
+	l := &lister{pages: [][]PlatformChannel{{{Ref: "C1", Name: "a"}}}}
+	reg, err := NewRegistry(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &gated{waiting: make(chan struct{}, 4), gate: make(chan struct{})}
+	c := NewChats(&fakeSecrets{values: map[string]string{KeySigning: "s"}}, reg, g)
+	team, ch := uuid.New(), uuid.New()
+
+	leader, cancel := context.WithCancel(t.Context())
+	led := make(chan error, 1)
+	go func() {
+		_, err := c.ListChannels(leader, team, ch, "lister")
+		led <- err
+	}()
+	<-g.waiting // the listing is asking the platform
+	waited := make(chan error, 1)
+	var got ChannelList
+	go func() {
+		var err error
+		got, err = c.ListChannels(t.Context(), team, ch, "lister")
+		waited <- err
+	}()
+	cancel()
+	if err := <-led; !errors.Is(err, context.Canceled) {
+		t.Errorf("the leader = %v, want its own cancel", err)
+	}
+	time.Sleep(20 * time.Millisecond) // let the waiter join, if it has not
+	close(g.gate)
+	if err := <-waited; err != nil || len(got.Channels) != 1 {
+		t.Errorf("the waiter = %+v, %v; want the list", got, err)
+	}
+	if g.asked != 1 {
+		t.Errorf("asked %d times, want one listing", g.asked)
+	}
+}
+
+// Keeping a listing lets go of those past their time.
+func TestAnExpiredListingIsLetGo(t *testing.T) {
+	t.Parallel()
+	c, _ := newChats(t, &lister{pages: [][]PlatformChannel{{{Ref: "C1", Name: "a"}}}})
+	clock := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return clock }
+	team, old, fresh := uuid.New(), uuid.New(), uuid.New()
+	if _, err := c.ListChannels(t.Context(), team, old, "lister"); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(listFor)
+	if _, err := c.ListChannels(t.Context(), team, fresh, "lister"); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.listed[old]; ok || len(c.listed) != 1 {
+		t.Errorf("kept %d listings, the expired one among them: %v", len(c.listed), ok)
 	}
 }
 

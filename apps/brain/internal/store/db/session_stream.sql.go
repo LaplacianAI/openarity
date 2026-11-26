@@ -184,14 +184,13 @@ func (q *Queries) GetMessageByExternalID(ctx context.Context, arg GetMessageByEx
 
 const listPostedTriggerAnswers = `-- name: ListPostedTriggerAnswers :many
 WITH here AS (
-    SELECT channel_id, provider_ref FROM sessions WHERE id = $4::uuid
+    SELECT channel_id, provider_ref FROM sessions WHERE id = $1::uuid
 ), posted AS (
     SELECT r.id
     FROM here
     JOIN sessions ts ON ts.channel_id = here.channel_id AND ts.provider_ref = here.provider_ref
     JOIN runs r ON r.session_id = ts.id
     WHERE (ts.schedule_id IS NOT NULL OR ts.watcher_id IS NOT NULL)
-      AND ts.id <> $4::uuid
     UNION
     SELECT rp.run_id
     FROM here
@@ -205,20 +204,21 @@ JOIN sessions ts ON ts.id = r.session_id
 LEFT JOIN schedules sc ON sc.id = ts.schedule_id
 LEFT JOIN watchers w ON w.id = ts.watcher_id
 WHERE (ts.schedule_id IS NOT NULL OR ts.watcher_id IS NOT NULL)
+  AND ts.id <> $1::uuid
   AND r.parent_run_id IS NULL AND r.status = 'succeeded'
   AND coalesce(r.output, '') <> '' AND btrim(r.output, E' \t\r\n') <> '[silent]'
-  AND r.finished_at >= $1::timestamptz
-  AND r.finished_at < $2::timestamptz
+  AND r.finished_at >= $2::timestamptz
+  AND r.finished_at < $3::timestamptz
   AND EXISTS (SELECT 1 FROM replies d WHERE d.run_id = r.id AND d.kind = 'answer' AND d.status = 'sent')
 ORDER BY r.finished_at DESC
-LIMIT $3
+LIMIT $4
 `
 
 type ListPostedTriggerAnswersParams struct {
+	SessionID uuid.UUID
 	After     time.Time
 	Before    time.Time
 	PageSize  int32
-	SessionID uuid.UUID
 }
 
 type ListPostedTriggerAnswersRow struct {
@@ -234,10 +234,10 @@ type ListPostedTriggerAnswersRow struct {
 // reached the chat, never what a tool returned, and never a silent run's.
 func (q *Queries) ListPostedTriggerAnswers(ctx context.Context, arg ListPostedTriggerAnswersParams) ([]ListPostedTriggerAnswersRow, error) {
 	rows, err := q.db.Query(ctx, listPostedTriggerAnswers,
+		arg.SessionID,
 		arg.After,
 		arg.Before,
 		arg.PageSize,
-		arg.SessionID,
 	)
 	if err != nil {
 		return nil, err

@@ -78,7 +78,9 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     chat.** One answering in its maker's direct messages or their own thread
     is refused, as the new owner's runs would land in the old maker's
     conversation; one posting where a group reads it goes to an admin who
-    holds `channel:write` (*user*, 2026-11-26).
+    holds `channel:write` (*user*, 2026-11-26). A maker who lost `channel:write` cannot
+    resume such a schedule either, and one they paused themselves before
+    losing it may be taken over too, or nobody could ever resume it.
   - **Dropping the old open-conversation index is a deploy gate.** A brain
     older than #306 names it in `EnsureSession`, so a rollback past #306 must
     migrate down past `20261211090200` first.

@@ -37,18 +37,18 @@ type Chats struct {
 
 	mu      sync.Mutex
 	listed  map[uuid.UUID]listing
-	listing singleflight.Group
+	flights singleflight.Group
 }
 
-// A ChannelList is a workspace's channels. Complete is false when there were
-// more than one listing reads, and only the first were read.
+// A ChannelList is a workspace's channels. Complete is false when it has more
+// than one listing reads (maxListPages), and only those were read.
 type ChannelList struct {
 	Channels []PlatformChannel
 	Complete bool
 }
 
 // A listing is a workspace's channels, or the platform's no, as they were
-// when last asked, kept until until.
+// when last asked, kept until its time is up.
 type listing struct {
 	until time.Time
 	list  ChannelList
@@ -60,6 +60,9 @@ const (
 	// search by name and lets a list be asked for only so often, so a person
 	// typing a search reads the kept list, not Slack.
 	listFor = 5 * time.Minute
+	// listTimeout bounds one listing, every page of it, apart from the
+	// request that started it.
+	listTimeout = time.Minute
 	// refusedFor is how long the platform's no is kept: long enough that a
 	// person typing a search does not ask on every keystroke, short enough
 	// that a scope just added, or a rate limit, clears soon.
@@ -87,26 +90,51 @@ func (c *Chats) ListsChannels(provider string) bool {
 
 // ListChannels is the channel's workspace's channels, kept for listFor. A
 // *Refusal is the platform's no, kept for refusedFor. A failure to ask is not
-// kept. Callers asking at once for one workspace share one listing.
+// kept. Callers asking at once for one workspace share one listing, which
+// runs apart from any one of them: one who goes away leaves it to the rest.
 func (c *Chats) ListChannels(ctx context.Context, team, channel uuid.UUID, provider string) (ChannelList, error) {
 	l, ok := c.reg.ChannelLister(provider)
 	if !ok {
 		return ChannelList{}, ErrCannot
 	}
-	c.mu.Lock()
-	kept, ok := c.listed[channel]
-	c.mu.Unlock()
-	if ok && c.now().Before(kept.until) {
+	if kept, ok := c.fresh(channel); ok {
 		return kept.list, kept.err
 	}
-	v, err, _ := c.listing.Do(channel.String(), func() (any, error) {
-		return c.list(ctx, team, channel, provider, l)
+	flight := c.flights.DoChan(channel.String(), func() (v any, err error) {
+		defer func() {
+			// DoChan panics on a goroutine of its own, which nothing recovers.
+			if r := recover(); r != nil {
+				err = fmt.Errorf("listing the channels: %v", r)
+			}
+		}()
+		if kept, ok := c.fresh(channel); ok { // a listing just ended kept it
+			return kept.list, kept.err
+		}
+		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), listTimeout)
+		defer cancel()
+		return c.list(lctx, team, channel, provider, l)
 	})
-	if err != nil {
-		return ChannelList{}, err
+	select {
+	case <-ctx.Done():
+		return ChannelList{}, ctx.Err()
+	case r := <-flight:
+		if r.Err != nil {
+			return ChannelList{}, r.Err
+		}
+		list, ok := r.Val.(ChannelList)
+		if !ok {
+			return ChannelList{}, fmt.Errorf("listing the channels gave %T", r.Val)
+		}
+		return list, nil
 	}
-	list, _ := v.(ChannelList)
-	return list, nil
+}
+
+// fresh is a workspace's listing while it is kept.
+func (c *Chats) fresh(channel uuid.UUID) (listing, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	kept, ok := c.listed[channel]
+	return kept, ok && c.now().Before(kept.until)
 }
 
 func (c *Chats) list(ctx context.Context, team, channel uuid.UUID, provider string, l ChannelLister) (ChannelList, error) {

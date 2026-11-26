@@ -26,9 +26,10 @@ WHERE ss.team_id = sqlc.arg('team_id') AND ss.status = 'open'
 ORDER BY last_said DESC, ss.id
 LIMIT sqlc.arg('page_size');
 
--- Group chats the bot is in, as their conversations show: a schedule may post
--- at their top level. A platform whose groups have no threads (Telegram,
--- WhatsApp) names a group's top level by the group's own conversation.
+-- Group chats the bot is in, as their conversations show, on the platforms
+-- that list no channels of their own: a schedule may post at their top level.
+-- A platform whose groups have no threads (Telegram, WhatsApp) names a
+-- group's top level by the group's own conversation.
 -- name: ListTargetGroups :many
 SELECT ss.id, ss.channel_id::uuid AS channel_id, ch.name AS channel_name, ch.provider,
        ss.provider_ref::text AS provider_ref, ss.last_message_at
@@ -36,6 +37,7 @@ FROM sessions ss
 JOIN channels ch ON ch.id = ss.channel_id
 WHERE ss.team_id = sqlc.arg('team_id') AND ss.status = 'open' AND ss.kind = 'group'
   AND ss.schedule_id IS NULL AND ss.watcher_id IS NULL AND ch.provider <> 'dashboard'
+  AND ch.provider <> ALL(coalesce(sqlc.arg('listers')::text[], '{}'))
   AND (sqlc.narg('session_id')::uuid IS NULL OR ss.id = sqlc.narg('session_id')::uuid)
 ORDER BY ss.last_message_at DESC, ss.id
 LIMIT sqlc.arg('page_size');

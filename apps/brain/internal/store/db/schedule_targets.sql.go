@@ -195,13 +195,15 @@ FROM sessions ss
 JOIN channels ch ON ch.id = ss.channel_id
 WHERE ss.team_id = $1 AND ss.status = 'open' AND ss.kind = 'group'
   AND ss.schedule_id IS NULL AND ss.watcher_id IS NULL AND ch.provider <> 'dashboard'
-  AND ($2::uuid IS NULL OR ss.id = $2::uuid)
+  AND ch.provider <> ALL(coalesce($2::text[], '{}'))
+  AND ($3::uuid IS NULL OR ss.id = $3::uuid)
 ORDER BY ss.last_message_at DESC, ss.id
-LIMIT $3
+LIMIT $4
 `
 
 type ListTargetGroupsParams struct {
 	TeamID    uuid.UUID
+	Listers   []string
 	SessionID *uuid.UUID
 	PageSize  int32
 }
@@ -215,11 +217,17 @@ type ListTargetGroupsRow struct {
 	LastMessageAt time.Time
 }
 
-// Group chats the bot is in, as their conversations show: a schedule may post
-// at their top level. A platform whose groups have no threads (Telegram,
-// WhatsApp) names a group's top level by the group's own conversation.
+// Group chats the bot is in, as their conversations show, on the platforms
+// that list no channels of their own: a schedule may post at their top level.
+// A platform whose groups have no threads (Telegram, WhatsApp) names a
+// group's top level by the group's own conversation.
 func (q *Queries) ListTargetGroups(ctx context.Context, arg ListTargetGroupsParams) ([]ListTargetGroupsRow, error) {
-	rows, err := q.db.Query(ctx, listTargetGroups, arg.TeamID, arg.SessionID, arg.PageSize)
+	rows, err := q.db.Query(ctx, listTargetGroups,
+		arg.TeamID,
+		arg.Listers,
+		arg.SessionID,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -188,7 +188,6 @@ WITH here AS (
     JOIN sessions ts ON ts.channel_id = here.channel_id AND ts.provider_ref = here.provider_ref
     JOIN runs r ON r.session_id = ts.id
     WHERE (ts.schedule_id IS NOT NULL OR ts.watcher_id IS NOT NULL)
-      AND ts.id <> sqlc.arg('session_id')::uuid
     UNION
     SELECT rp.run_id
     FROM here
@@ -202,6 +201,7 @@ JOIN sessions ts ON ts.id = r.session_id
 LEFT JOIN schedules sc ON sc.id = ts.schedule_id
 LEFT JOIN watchers w ON w.id = ts.watcher_id
 WHERE (ts.schedule_id IS NOT NULL OR ts.watcher_id IS NOT NULL)
+  AND ts.id <> sqlc.arg('session_id')::uuid
   AND r.parent_run_id IS NULL AND r.status = 'succeeded'
   AND coalesce(r.output, '') <> '' AND btrim(r.output, E' \t\r\n') <> '[silent]'
   AND r.finished_at >= sqlc.arg('after')::timestamptz

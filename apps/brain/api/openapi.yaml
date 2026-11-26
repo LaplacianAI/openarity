@@ -3341,7 +3341,8 @@ paths:
         refused with 403, as the schedule would only pause at its first fire.
         `target` is where it answers, a place `listScheduleTargets` listed,
         sent back as it is; absent is a conversation of its own. It is
-        checked again: a channel's top level takes `channel:write` (403), and
+        checked again: a channel's top level, or a group's chat, takes
+        `channel:write` (403), and
         a place the caller may no longer pick, or that its platform refuses,
         is a 400 saying why.
       requestBody:
@@ -3570,8 +3571,9 @@ paths:
       tags: [schedules]
       summary: Take over a schedule whose maker left
       description: |
-        Requires `schedule:manage` in this team. Only a schedule paused
-        because its maker left, or may no longer start runs, is taken over.
+        Requires `schedule:manage` in this team. Only a paused schedule whose
+        maker left, or may no longer start runs or post where it answers, is
+        taken over, whoever paused it.
         It stays paused until the caller resumes it, and runs as them from
         then, so a caller who may not start runs in the team is refused with
         403, as is one without `channel:write` for a schedule posting where a
@@ -3593,12 +3595,14 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: It is not paused for its maker
+          description: |
+            It is not paused for its maker, or it answers in its maker's
+            direct messages or their own thread, which are not handed on.
           content:
             text/plain:
               schema:
                 type: string
-                examples: ["only a schedule paused because its maker left or may no longer run can be taken over"]
+                examples: ["this schedule answers in its maker's direct messages or their own thread, so it cannot be handed on; delete it and make another"]
 
   /teams/{id}/schedules/{scheduleID}/fires:
     parameters:
@@ -3710,7 +3714,9 @@ paths:
         - name: q
           in: query
           required: false
-          description: Only the places whose label, detail or channel name holds this, ignoring case.
+          description: |
+            Only the places whose label, detail or channel name holds this,
+            ignoring case. At most 200 bytes.
           schema:
             type: string
             maxLength: 200
@@ -8859,8 +8865,9 @@ components:
           type: string
           enum: [needs_channel_write, not_in_channel]
           description: |
-            Why it cannot be picked: posting at a channel's top level takes
-            `channel:write`, or the app is not in the channel.
+            Why it cannot be picked: posting at a channel's top level, or in a
+            group's chat, takes `channel:write`; or the app is not in the
+            channel.
         target:
           $ref: "#/components/schemas/ScheduleTargetPick"
 

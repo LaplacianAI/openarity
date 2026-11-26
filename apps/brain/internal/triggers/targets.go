@@ -196,13 +196,6 @@ func postsToGroup(target, sessionKind string) bool {
 	return target == TargetChannel || (target == TargetChat && sessionKind == string(gateway.SessionGroup))
 }
 
-// groupsFromSessions is a provider whose groups are known only by the
-// conversations the bot has seen in them, as it lists none (Telegram,
-// WhatsApp).
-func (s *Service) groupsFromSessions(provider string) bool {
-	return !s.chats.ListsChannels(provider)
-}
-
 // channelItems is the channels a schedule may post at the top level of: a
 // platform's own list where it gives one (Slack), and the groups the bot has
 // heard from elsewhere (Telegram, WhatsApp). Without channel:write each is
@@ -239,7 +232,7 @@ func (s *Service) channelItems(ctx context.Context, who Who) ([]TargetItem, []Ta
 			if !listed.Complete {
 				problems = append(problems, TargetProblem{
 					ChannelID: ch.ID, Provider: ch.Provider,
-					Text: "it has more channels than are listed here; one missing can be found once the list is shorter",
+					Text: "it has more channels than are listed here (the first 3,000); one further down cannot be picked yet",
 				})
 			}
 			for _, pc := range listed.Channels {
@@ -284,15 +277,12 @@ func placeDetail(pc gateway.PlatformChannel) string {
 }
 
 func (s *Service) groupItems(ctx context.Context, who Who, reason string) ([]TargetItem, error) {
-	rows, err := s.store.ListTargetGroups(ctx, db.ListTargetGroupsParams{TeamID: who.Team, PageSize: maxTargetRows})
+	rows, err := s.store.ListTargetGroups(ctx, db.ListTargetGroupsParams{TeamID: who.Team, Listers: s.chats.Listers(), PageSize: maxTargetRows})
 	if err != nil {
 		return nil, fmt.Errorf("list the groups the bot is in: %w", err)
 	}
 	out := make([]TargetItem, 0, len(rows))
 	for _, r := range rows {
-		if !s.groupsFromSessions(r.Provider) {
-			continue // its channels are the platform's own list
-		}
 		at := r.LastMessageAt
 		out = append(out, TargetItem{
 			Kind: TargetChannel, Label: "A group", Detail: "Last heard from " + at.UTC().Format("2 Jan 2006"),

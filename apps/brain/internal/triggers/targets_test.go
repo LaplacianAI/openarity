@@ -356,6 +356,12 @@ func TestAScheduleInAChatSharesItAndAMessageStillFindsThePersons(t *testing.T) {
 	if posted := read(); len(posted) != 1 || posted[0].Name != "in my DM" || posted[0].Text != "The release went out at nine." {
 		t.Errorf("posted = %+v", posted)
 	}
+	// Its own conversation has the answer already; it is not posted into itself.
+	if own, err := c.store.ListPostedTriggerAnswers(t.Context(), db.ListPostedTriggerAnswersParams{
+		SessionID: v.SessionID, After: time.Time{}, Before: time.Now().Add(time.Minute), PageSize: 10,
+	}); err != nil || len(own) != 0 {
+		t.Errorf("its own conversation reads %+v, %v; want nothing posted into it", own, err)
+	}
 
 	// Its maker's DM is theirs alone: it is not handed on.
 	c.exec(t, `UPDATE schedules SET status = 'paused', paused_reason = 'maker_gone', next_fire_at = NULL WHERE id = $1`, v.ID)
@@ -449,6 +455,68 @@ func TestAMakerWhoMayNoLongerPostPausesAChannelSchedule(t *testing.T) {
 	}
 	if f := c.fires(t, v.ID); f["skipped_maker"] != 1 || c.count(t, `SELECT count(*) FROM runs`) != 0 {
 		t.Errorf("fires = %v and %d runs, want one skipped, no run", f, c.count(t, `SELECT count(*) FROM runs`))
+	}
+
+	// It is not resumed into the same pause; once the maker may post again it is.
+	_, err = c.service.Resume(t.Context(), c.who(), Ref{ID: v.ID})
+	kindIs(t, err, Conflict, "post where a group reads it")
+	c.writer(t)
+	if r, err := c.service.Resume(t.Context(), c.who(), Ref{ID: v.ID}); err != nil || r.Status != Active {
+		t.Errorf("Resume once the maker may post = %v, %v", r.Status, err)
+	}
+}
+
+// A schedule its maker paused, then lost what it needs, can be taken over:
+// otherwise nobody could ever resume it. One whose maker still could cannot.
+func TestAPausedScheduleWhoseMakerCannotPostIsTakenOver(t *testing.T) {
+	c := newChats(t)
+	in := hourly("release notes")
+	in.Target = Target{Kind: TargetChannel, ChannelID: c.slack, Ref: "C0RELEASE"}
+	v, err := c.service.CreateSchedule(t.Context(), c.writer(t), Origin{}, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.service.Pause(t.Context(), c.who(), Ref{ID: v.ID}); err != nil {
+		t.Fatal(err)
+	}
+	admin := Who{Team: c.team, User: c.other, Manage: true, ChannelWrite: true}
+	_, err = c.service.TakeOver(t.Context(), admin, Ref{ID: v.ID})
+	kindIs(t, err, Conflict, "only a paused schedule whose maker")
+
+	c.exec(t, `UPDATE team_members SET role = 'member' WHERE team_id = $1 AND user_id = $2`, c.team, c.maker)
+	got, err := c.service.TakeOver(t.Context(), admin, Ref{ID: v.ID})
+	if err != nil || got.CreatedBy == nil || *got.CreatedBy != c.other {
+		t.Errorf("take-over once the maker may not post = %+v, %v", got.CreatedBy, err)
+	}
+}
+
+// Only a group's chat is held to channel:write at fire: a thread or a direct
+// conversation of the maker's own is not.
+func TestOnlyAGroupsChatNeedsChannelWriteAtFire(t *testing.T) {
+	c := newChats(t)
+	now := time.Now()
+	c.clock = now
+	group := c.session(t, c.telegram, "-100777", "group", &c.maker, now.Add(-time.Hour))
+	thread := c.session(t, c.slack, "C0RELEASE:1700000000.000300", "thread", &c.maker, now.Add(-time.Hour))
+	inGroup, inThread := hourly("in the group"), hourly("in the thread")
+	inGroup.Target = Target{Kind: TargetChat, SessionID: group}
+	inThread.Target = Target{Kind: TargetChat, SessionID: thread}
+	g, err := c.service.CreateSchedule(t.Context(), c.writer(t), Origin{}, inGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := c.make(t, inThread)
+	c.exec(t, `UPDATE team_members SET role = 'member' WHERE team_id = $1 AND user_id = $2`, c.team, c.maker)
+
+	c.clock = *g.NextFireAt
+	if _, err := c.firer.FireDue(t.Context(), 100, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if f := c.fires(t, g.ID); f["skipped_maker"] != 1 {
+		t.Errorf("the group's fires = %v, want it skipped", f)
+	}
+	if f := c.fires(t, th.ID); f["skipped_maker"] != 0 || c.count(t, `SELECT count(*) FROM runs WHERE session_id = $1`, th.SessionID) != 1 {
+		t.Errorf("the thread's fires = %v, want it run", f)
 	}
 }
 

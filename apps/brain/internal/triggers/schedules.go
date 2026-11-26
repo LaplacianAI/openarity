@@ -138,19 +138,12 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 	if !ok {
 		return ScheduleView{}, refuse(Invalid, "the schedule never fires")
 	}
-	// What needs only the database is checked before the platform is asked;
-	// the limits are checked again under the team's lock.
-	if err := s.store.InTx(ctx, func(q *db.Queries) error {
-		if err := agentInTeam(ctx, q, who.Team, in.AgentID); err != nil {
-			return err
+	// What needs only the database is checked before a platform is asked;
+	// it is all checked again in the transaction that saves it.
+	if in.Target.Kind != "" && in.Target.Kind != TargetOwn {
+		if err := s.store.InTx(ctx, func(q *db.Queries) error { return mayMake(ctx, q, who, in.AgentID, l) }); err != nil {
+			return ScheduleView{}, err
 		}
-		if err := mayRun(ctx, q, who.Team, who.User, Forbidden,
-			"you may not start runs in this team, so a schedule of yours could not run"); err != nil {
-			return err
-		}
-		return underLimits(ctx, q, who.Team, who.User, l)
-	}); err != nil {
-		return ScheduleView{}, err
 	}
 	// Where it answers is checked, and looked up on its platform, before the
 	// transaction: a direct conversation is opened by asking Slack.
@@ -161,14 +154,7 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 
 	id := uuid.New()
 	err = s.store.InTx(ctx, func(q *db.Queries) error {
-		if err := agentInTeam(ctx, q, who.Team, in.AgentID); err != nil {
-			return err
-		}
-		if err := mayRun(ctx, q, who.Team, who.User, Forbidden,
-			"you may not start runs in this team, so a schedule of yours could not run"); err != nil {
-			return err
-		}
-		if err := underLimits(ctx, q, who.Team, who.User, l); err != nil {
+		if err := mayMake(ctx, q, who, in.AgentID, l); err != nil {
 			return err
 		}
 		session := db.CreateTriggerSessionParams{
@@ -387,6 +373,53 @@ func pauseRow(row *db.Schedule) error {
 	return nil
 }
 
+// mayMake is whether the caller may make a schedule running agent: it is in
+// the team, they may start runs, and they are under the limits.
+func mayMake(ctx context.Context, q *db.Queries, who Who, agent *uuid.UUID, l Limits) error {
+	if err := agentInTeam(ctx, q, who.Team, agent); err != nil {
+		return err
+	}
+	if err := mayRun(ctx, q, who.Team, who.User, Forbidden,
+		"you may not start runs in this team, so a schedule of yours could not run"); err != nil {
+		return err
+	}
+	return underLimits(ctx, q, who.Team, who.User, l)
+}
+
+// postsInGroup is whether a schedule's answers reach a group (postsToGroup),
+// reading its conversation when that depends on it. A schedule whose
+// conversation is gone is refused: it can answer nowhere.
+func postsInGroup(ctx context.Context, q *db.Queries, row *db.Schedule) (bool, error) {
+	switch row.Target {
+	case TargetChannel:
+		return true, nil
+	case TargetChat:
+		ss, err := q.GetTriggerSessionOfSchedule(ctx, &row.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, refuse(Conflict, "this schedule's conversation is gone; delete it and make another")
+		}
+		if err != nil {
+			return false, fmt.Errorf("read the schedule's conversation: %w", err)
+		}
+		return postsToGroup(row.Target, ss.Kind), nil
+	}
+	return false, nil
+}
+
+// makerMayPost is whether a schedule's maker may still post where it
+// answers: anywhere, unless a group reads it, which takes channel:write.
+func makerMayPost(ctx context.Context, q *db.Queries, row *db.Schedule) (bool, error) {
+	group, err := postsInGroup(ctx, q, row)
+	if err != nil || !group {
+		return !group, err
+	}
+	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: channelWrite})
+	if err != nil {
+		return false, fmt.Errorf("check the maker may post in the channel: %w", err)
+	}
+	return may, nil
+}
+
 func resumeRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Time) error {
 	if row.Status != Paused {
 		return refuse(Conflict, "only a paused schedule can be resumed; this one is %s", row.Status)
@@ -395,8 +428,14 @@ func resumeRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Ti
 		return refuse(Conflict, "the person who made this schedule has left; an admin can take it over first")
 	}
 	if err := mayRun(ctx, q, row.TeamID, *row.CreatedBy, Conflict,
-		"the person who made this schedule may no longer start runs in this team"); err != nil {
+		"the person who made this schedule may no longer start runs in this team; an admin can take it over first"); err != nil {
 		return err
+	}
+	if may, err := makerMayPost(ctx, q, row); err != nil {
+		return err
+	} else if !may {
+		return refuse(Conflict, "the person who made this schedule may no longer post where a group reads it "+
+			"(channel:write); an admin can take it over first")
 	}
 	if !row.Hub && row.AgentID == nil {
 		return refuse(Conflict, "the agent this schedule ran was deleted; choose another, or the hub, first")
@@ -500,17 +539,21 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 		return ScheduleView{}, refuse(Forbidden, "taking over a schedule takes schedule:manage")
 	}
 	id, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
-		if row.Status != Paused || row.PausedReason == nil ||
-			(*row.PausedReason != MakerGone && *row.PausedReason != MakerCannotRun) {
-			return refuse(Conflict, "only a schedule paused because its maker left or may no longer run can be taken over")
-		}
-		ss, err := q.GetTriggerSessionOfSchedule(ctx, &row.ID)
+		stuck, err := makerStuck(ctx, q, row)
 		if err != nil {
-			return fmt.Errorf("read the schedule's conversation: %w", err)
+			return err
+		}
+		if !stuck {
+			return refuse(Conflict, "only a paused schedule whose maker left, or may no longer run or post where it "+
+				"answers, can be taken over")
+		}
+		group, err := postsInGroup(ctx, q, row)
+		if err != nil {
+			return err
 		}
 		// Its answers would still reach the person who left, in their own
 		// direct messages or their own thread.
-		if row.Target == TargetDirect || (row.Target == TargetChat && !postsToGroup(row.Target, ss.Kind)) {
+		if row.Target == TargetDirect || (row.Target == TargetChat && !group) {
 			return refuse(Conflict, "this schedule answers in its maker's direct messages or their own thread, "+
 				"so it cannot be handed on; delete it and make another")
 		}
@@ -520,7 +563,7 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			"you may not start runs in this team, so a schedule taken over by you could not run"); err != nil {
 			return err
 		}
-		if postsToGroup(row.Target, ss.Kind) && !who.ChannelWrite {
+		if group && !who.ChannelWrite {
 			return refuse(Forbidden, "this schedule posts where a group reads it, which takes channel:write")
 		}
 		row.CreatedBy = &who.User
@@ -533,6 +576,34 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 		return ScheduleView{}, err
 	}
 	return s.view(ctx, who, id)
+}
+
+// makerStuck is a paused schedule its maker cannot resume: they left, or may
+// no longer run or post where it answers. One a person paused counts too
+// once its maker lost what it needs, or nobody could ever resume it.
+func makerStuck(ctx context.Context, q *db.Queries, row *db.Schedule) (bool, error) {
+	if row.Status != Paused || row.PausedReason == nil {
+		return false, nil
+	}
+	switch *row.PausedReason {
+	case MakerGone, MakerCannotRun:
+		return true, nil
+	case ByPerson:
+	default:
+		return false, nil
+	}
+	if row.CreatedBy == nil {
+		return true, nil
+	}
+	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: runWrite})
+	if err != nil {
+		return false, fmt.Errorf("check the maker may start runs: %w", err)
+	}
+	if !may {
+		return true, nil
+	}
+	posts, err := makerMayPost(ctx, q, row)
+	return !posts, err
 }
 
 // RunNow fires a schedule once, now, as an extra time: under the same checks

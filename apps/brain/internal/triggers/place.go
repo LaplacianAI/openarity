@@ -73,11 +73,13 @@ func (s *Service) placeChat(ctx context.Context, who Who, t Target) (*placed, er
 // placeGroup is a group the bot has heard from, on a platform that lists no
 // channels: its top level is the group's own conversation.
 func (s *Service) placeGroup(ctx context.Context, who Who, t Target) (*placed, error) {
-	rows, err := s.store.ListTargetGroups(ctx, db.ListTargetGroupsParams{TeamID: who.Team, SessionID: &t.SessionID, PageSize: 1})
+	rows, err := s.store.ListTargetGroups(ctx, db.ListTargetGroupsParams{
+		TeamID: who.Team, Listers: s.chats.Listers(), SessionID: &t.SessionID, PageSize: 1,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("read the group: %w", err)
 	}
-	if len(rows) == 0 || !s.groupsFromSessions(rows[0].Provider) {
+	if len(rows) == 0 {
 		return nil, refuse(Invalid, "that is not a group the bot is in")
 	}
 	r := rows[0]
