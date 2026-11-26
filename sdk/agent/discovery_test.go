@@ -656,3 +656,35 @@ func TestCallToolIsSafeForConcurrentUse(t *testing.T) {
 		t.Fatalf("%d of 16 calls ran", len(c.calls()))
 	}
 }
+
+// FoundBySearch says what withDiscovery does: found by search past the
+// threshold, sent at or under it, sent to ReWOO, and nothing with no
+// Discovery.
+func TestFoundBySearchSaysWhatARunIsSent(t *testing.T) {
+	t.Parallel()
+
+	c := &recorder{}
+	small := &Discovery{Search: "graph", Tools: []Tool{c.tool("t", "a tool", `{}`)}}
+	for name, tc := range map[string]struct {
+		spec Spec
+		want bool
+	}{
+		"large":        {Spec{Discovery: large(c)}, true},
+		"small":        {Spec{Discovery: small}, false},
+		"large, ReWOO": {Spec{Discovery: large(c), Pattern: PatternReWOO}, false},
+		"no discovery": {Spec{}, false},
+	} {
+		if got := tc.spec.FoundBySearch(); got != tc.want {
+			t.Errorf("%s: FoundBySearch = %v, want %v", name, got, tc.want)
+		}
+		spec := tc.spec
+		spec.Tools = []Tool{search()}
+		sent, found, err := withDiscovery(t.Context(), spec, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (found != "") != tc.want || slices.Contains(names(sent.Tools), DescribeToolsName) != tc.want {
+			t.Errorf("%s: withDiscovery searched by %q, sent %v; FoundBySearch says %v", name, found, names(sent.Tools), tc.want)
+		}
+	}
+}

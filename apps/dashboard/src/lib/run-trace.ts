@@ -59,6 +59,8 @@ export type Started = {
   pattern: string;
   tools: string[];
   skills: string[];
+  /** Those of tools and skills the model finds by search rather than is sent. */
+  found: string[];
 };
 
 export type PlanStatus = "pending" | "in_progress" | "done";
@@ -178,6 +180,7 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
           pattern: text(d.pattern),
           tools: strings(d.tools),
           skills: strings(d.skills),
+          found: strings(d.found),
         };
         break;
       case "resumed":

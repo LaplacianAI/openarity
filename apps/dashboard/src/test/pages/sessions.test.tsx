@@ -1066,8 +1066,9 @@ describe("a run's trace", () => {
         agent: "helper",
         model: "gpt-x",
         pattern: "react",
-        tools: ["search", "graph"],
+        tools: ["lookup_order", "search", "graph"],
         skills: ["refunds"],
+        found: ["lookup_order"],
       }) +
       frame(2, "tool_unavailable", { name: "slack", reason: "the server is unreachable" }) +
       ": keep-alive\n\n" +
@@ -1143,6 +1144,13 @@ describe("a run's trace", () => {
     expect(caps).toHaveTextContent("react");
     expect(caps).toHaveTextContent("search");
     expect(caps).toHaveTextContent("skill · refunds");
+    // A tool the model finds by search is shown once, after the tag that
+    // says so, not among those it is sent.
+    const tag = within(caps).getByTestId("found-by-search");
+    expect(tag).toHaveTextContent("found by search");
+    const chips = Array.from(caps.children).map((c) => c.textContent);
+    expect(chips.filter((c) => c === "lookup_order")).toHaveLength(1);
+    expect(chips.indexOf("lookup_order")).toBeGreaterThan(chips.indexOf("found by search"));
 
     expect(within(detail).getByText("input of r1")).toBeInTheDocument();
     expect(within(detail).getAllByRole("alert")[0]).toHaveTextContent("the budget ran out");

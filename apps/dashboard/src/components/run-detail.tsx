@@ -334,16 +334,42 @@ export function RunView({
         {trace.started && (trace.started.tools.length > 0 || trace.started.skills.length > 0) ? (
           <div className="flex flex-wrap items-center gap-1.5" data-testid="capabilities">
             {trace.started.pattern ? <Chip muted>{trace.started.pattern}</Chip> : null}
-            {trace.started.tools.map((t) => (
-              <Chip key={`t-${t}`} icon={<Wrench aria-hidden className="size-3" />}>
-                {t}
-              </Chip>
-            ))}
-            {trace.started.skills.map((s) => (
-              <Chip key={`s-${s}`} muted>
-                skill · {s}
-              </Chip>
-            ))}
+            {trace.started.tools
+              .filter((t) => !trace.started?.found.includes(t))
+              .map((t) => (
+                <Chip key={`t-${t}`} icon={<Wrench aria-hidden className="size-3" />}>
+                  {t}
+                </Chip>
+              ))}
+            {trace.started.skills
+              .filter((s) => !trace.started?.found.includes(s))
+              .map((s) => (
+                <Chip key={`s-${s}`} muted>
+                  skill · {s}
+                </Chip>
+              ))}
+            {trace.started.found.length > 0 ? (
+              <>
+                <span
+                  data-testid="found-by-search"
+                  className="ml-1 text-xs text-muted-foreground"
+                  title="Not sent to the model: it searches the graph for one when it needs it, and loads it then."
+                >
+                  found by search
+                </span>
+                {trace.started.found.map((n) =>
+                  trace.started?.skills.includes(n) ? (
+                    <Chip key={`fs-${n}`} muted>
+                      skill · {n}
+                    </Chip>
+                  ) : (
+                    <Chip key={`ft-${n}`} muted icon={<Wrench aria-hidden className="size-3" />}>
+                      {n}
+                    </Chip>
+                  ),
+                )}
+              </>
+            ) : null}
           </div>
         ) : null}
       </header>

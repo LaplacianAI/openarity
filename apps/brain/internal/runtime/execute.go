@@ -155,6 +155,9 @@ type startedPayload struct {
 	Pattern string   `json:"pattern"`
 	Tools   []string `json:"tools"`
 	Skills  []string `json:"skills"`
+	// Found is those of Tools and Skills the model is not sent but finds by
+	// search when it needs one, as the SDK decides; empty when it is sent all.
+	Found []string `json:"found,omitempty"`
 }
 
 type resumedPayload struct {
@@ -588,6 +591,12 @@ func startedOf(agentName string, spec agent.Spec) startedPayload {
 	}
 	for _, s := range spec.Skills {
 		p.Skills = append(p.Skills, s.Name)
+	}
+	if spec.FoundBySearch() {
+		for _, t := range spec.Discovery.Tools {
+			p.Found = append(p.Found, t.Name)
+		}
+		p.Found = append(p.Found, p.Skills...)
 	}
 	return p
 }
