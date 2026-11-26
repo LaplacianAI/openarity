@@ -1,10 +1,14 @@
 package runtime
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
+	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 // A run compacts at a tenth of its budget, held between the team's least and
@@ -290,5 +294,153 @@ func TestARunNearItsLastStepIsAskedToWrapUpOnce(t *testing.T) {
 	four.hold(&fakeRun{})
 	if four.stepped(1) != nil || four.stepped(2) == nil {
 		t.Fatal("a run of 4 steps should be asked at step 2, not before")
+	}
+}
+
+// textTool is a tool whose result is text.
+func textTool(name, text string) agent.Tool {
+	return agent.Tool{
+		Name: name, Schema: json.RawMessage(`{"type":"object"}`),
+		Invoke: func(context.Context, json.RawMessage) (string, error) { return text, nil },
+	}
+}
+
+// numbered is n lines of about 40 bytes, each numbered, so a read of the
+// middle names which line it got.
+func numbered(n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, "line %05d of a file a review read whole\n", i+1)
+	}
+	return b.String()
+}
+
+// runCompacting runs turns through a ReAct run with tools, compacting as the
+// brain builds one, and is the model and what the run kept.
+func runCompacting(t *testing.T, tools []agent.Tool, turns ...turn) (*scripted, agent.Result) {
+	t.Helper()
+	model := newScripted(turns...)
+	runner, err := agent.New(func(agent.Endpoint) (agent.ModelClient, error) { return model, nil }, patterns.ReAct())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := agent.Spec{
+		Model: agent.ModelRef{Name: "m", MaxTokens: 100}, Pattern: agent.PatternReAct, MaxSteps: len(turns) + 1,
+		Tools:      tools,
+		Compaction: compactionFor(defaultTeamSettings(), maxTokens),
+	}
+	task := []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "review it"}}}}
+	result, err := runner.Run(t.Context(), spec, task, agent.Endpoint{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return model, result
+}
+
+// resultsSent are the tool results in the model's last request.
+func resultsSent(model *scripted) []agent.Message {
+	reqs := model.requests()
+	var out []agent.Message
+	for _, m := range reqs[len(reqs)-1].Messages {
+		if m.Role == agent.RoleTool {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// shownOnce is what the model was sent of one call of tool.
+func shownOnce(t *testing.T, tool agent.Tool) string {
+	t.Helper()
+	model, _ := runCompacting(t, []agent.Tool{tool}, callTool("c1", tool.Name, `{}`), answer("done", 10, 5))
+	got := resultsSent(model)
+	if len(got) != 1 {
+		t.Fatalf("the model was sent %d tool results, want 1", len(got))
+	}
+	return got[0].Text()
+}
+
+// A result over 8 KiB reaches the model as its two ends and a handle, from
+// the first request after it; one under is sent whole.
+func TestAResultOver8KiBIsShownAsItsEnds(t *testing.T) {
+	t.Parallel()
+
+	text := shownOnce(t, textTool("Bash", numbered(500))) // about 20 KiB
+	if strings.Contains(text, "line 00250") || !strings.Contains(text, "line 00001") ||
+		!strings.Contains(text, "line 00500") || !strings.Contains(text, agent.ReadOutputToolName) {
+		t.Fatalf("a 20 KiB result was sent as %d bytes; want its ends and a read_output handle", len(text))
+	}
+	if len(text) > previewOver-1<<10 {
+		t.Errorf("the preview is %d bytes, want about 6 KiB", len(text))
+	}
+
+	small := numbered(170) // about 7 KiB, under previewOver
+	if got := shownOnce(t, textTool("Bash", small)); got != small {
+		t.Errorf("a 7 KiB result was not sent whole")
+	}
+}
+
+// A result of exactly 8 KiB is sent whole; one byte more is previewed. The
+// size is written out, not previewOver, so the test pins it.
+func TestAResultIsPreviewedOnlyPast8KiB(t *testing.T) {
+	t.Parallel()
+
+	at := strings.Repeat("x", 8<<10)
+	if got := shownOnce(t, textTool("Bash", at)); got != at {
+		t.Errorf("a result of exactly 8 KiB was cut")
+	}
+	if got := shownOnce(t, textTool("Bash", at+"x")); !strings.Contains(got, "only part of the output") || len(got) > 8<<10 {
+		t.Errorf("a result one byte past 8 KiB was sent as %d bytes, want a preview", len(got))
+	}
+}
+
+// What a preview leaves out, read_output reads back: the middle by its line.
+func TestTheMiddleOfAPreviewedResultIsReadBack(t *testing.T) {
+	t.Parallel()
+
+	model, _ := runCompacting(t, []agent.Tool{textTool("Bash", numbered(500))},
+		callTool("c1", "Bash", `{}`),
+		callTool("r1", agent.ReadOutputToolName, `{"call":"c1","from_line":250,"lines":2}`),
+		answer("done", 10, 5))
+	got := resultsSent(model)
+	if len(got) != 2 {
+		t.Fatalf("the model was sent %d tool results, want the preview and the read", len(got))
+	}
+	if !strings.Contains(got[1].Text(), "line 00250") {
+		t.Fatalf("read_output of line 250 gave %.200q", got[1].Text())
+	}
+}
+
+// A skill is the model's instructions, never cut.
+func TestASkillOver8KiBIsSentWhole(t *testing.T) {
+	t.Parallel()
+
+	skill := numbered(300) // about 12 KiB
+	if got := shownOnce(t, textTool(agent.SkillToolName, skill)); got != skill {
+		t.Errorf("a 12 KiB skill was cut")
+	}
+}
+
+// A browser page is whole up to 48 KiB, its refs and all; past that it is
+// previewed like any result.
+func TestABrowserPageKeepsItsRefsUpTo48KiB(t *testing.T) {
+	t.Parallel()
+
+	page := func(n int) string {
+		var b strings.Builder
+		for i := range n {
+			fmt.Fprintf(&b, "[%d] a link on the page, one of many\n", i+1)
+		}
+		return b.String()
+	}
+	tool := textTool(BrowserSnapshotToolName, page(1200)) // about 41 KiB
+	tool.Preview = browserPreview
+	if got, want := shownOnce(t, tool), page(1200); got != want {
+		t.Errorf("a 41 KiB page was cut; the model clicks by the refs in its middle")
+	}
+	tool = textTool(BrowserSnapshotToolName, page(1800)) // about 61 KiB
+	tool.Preview = browserPreview
+	if got := shownOnce(t, tool); !strings.Contains(got, "only part of the output") {
+		t.Errorf("a 61 KiB page was sent whole")
 	}
 }

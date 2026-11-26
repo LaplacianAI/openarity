@@ -88,13 +88,22 @@ func defaultTeamSettings() db.TeamSetting {
 	}
 }
 
+// previewOver is the size past which a tool result reaches the model as its
+// first 4 KiB and last 2 KiB and a read_output handle: a large result is
+// written to the cache whole and resent on every later call, and a model that
+// needs the rest reads it by line or match. Why 8 KiB, and when it is undone,
+// is in DECISIONS.md.
+const previewOver = 8 << 10
+
 // compactionFor is how a run compacts: past the team's message count, or past
 // a tenth of the run's budget, held between the team's least and most tokens.
-// The settings handler and the table keep least at or under most.
+// The settings handler and the table keep least at or under most. A result
+// over previewOver is previewed.
 func compactionFor(s db.TeamSetting, budget int64) *agent.Compaction {
 	return &agent.Compaction{
 		AfterMessages:    int(s.CompactionMessages),
 		AfterInputTokens: int(min(int64(s.CompactionTokensMax), max(budget/10, int64(s.CompactionTokensMin)))),
+		Preview:          agent.Preview{Over: previewOver},
 	}
 }
 

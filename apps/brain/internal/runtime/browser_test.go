@@ -117,6 +117,18 @@ func allBrowserTools() []string {
 
 // --- who has it ---
 
+// Every browser tool a run is built with keeps a page whole up to 48 KiB,
+// past the run's previewOver, so the refs the model clicks by are sent.
+func TestABuiltBrowsersToolsKeepTheirPages(t *testing.T) {
+	b := newBrowserFixture("kernel", "", "kn-key")
+	got := b.build(t)
+	for _, name := range BrowserToolNames {
+		if p := pageTool(t, got.Spec.Tools, name).Preview; p != browserPreview {
+			t.Errorf("%s previews at %+v, want %+v", name, p, browserPreview)
+		}
+	}
+}
+
 func TestTheHubDrivesTheTeamsBrowser(t *testing.T) {
 	b := newBrowserFixture("kernel", "", "kn-key")
 
