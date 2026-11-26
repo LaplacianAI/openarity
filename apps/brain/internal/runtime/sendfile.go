@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/stream"
@@ -41,14 +40,17 @@ type FileSendStore interface {
 	GetSessionFileReach(ctx context.Context, sessionID uuid.UUID) (db.GetSessionFileReachRow, error)
 }
 
-// FileSends is where a run's files can go. Store and SendsFiles are
-// required: SendsFiles says whether a channel provider posts a file, and the
-// gateway's registry answers it. Logger hears of a file sent whose event was
-// not recorded; with none, nothing is offered.
+// FileSends is where a run's files can go. Store, MaxFile and Logger are
+// required: MaxFile is the most a channel provider takes, in bytes, 0 for
+// one that sends no files, and the gateway's registry answers it. Logger
+// hears of a file sent whose event was not recorded; with any missing,
+// nothing is offered.
 type FileSends struct {
-	Store      FileSendStore
-	SendsFiles func(provider string) bool
-	Logger     *slog.Logger
+	Store FileSendStore
+	// MaxFile is the most a provider's channel takes, in bytes: 0 for one
+	// that sends no files.
+	MaxFile func(provider string) int64
+	Logger  *slog.Logger
 }
 
 // sendFile is the tool. toChannel is a run answering a channel, whose file
@@ -61,6 +63,7 @@ type sendFile struct {
 	run       db.Run
 	toChannel bool
 	provider  string // the channel's, when toChannel
+	maxFile   int64  // the most the channel takes, when toChannel
 	note      func(ctx context.Context, kind string, payload any) error
 	kick      func(callID string)
 	// sent counts this attempt's tries at a file that was found, on top of
@@ -110,13 +113,12 @@ func (s *sendFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if err != nil {
 		return "", fmt.Errorf("reading file %s: %w", id, err)
 	}
-	// A channel's reply holds the file whole, so a file over what a person
-	// sends is refused before it is queued, and costs no slot: it would fail
-	// the same way every time.
-	if s.toChannel && row.SizeBytes > objects.MaxAttachment {
-		return "", fmt.Errorf("%s is %s; files go to %s up to %s here, so it was not sent. "+
+	// A file over what the channel takes is refused before it is queued,
+	// and costs no slot: it would fail the same way every time.
+	if s.toChannel && row.SizeBytes > s.maxFile {
+		return "", fmt.Errorf("%s is %s; files go to %s up to %s, so it was not sent. "+
 			"It is in this conversation on the dashboard; say so, and what is in it",
-			row.Filename, sizeOf(row.SizeBytes), channelName(s.provider), sizeOf(objects.MaxAttachment))
+			row.Filename, sizeIn(row.SizeBytes, s.maxFile), channelName(s.provider), sizeIn(s.maxFile, s.maxFile))
 	}
 	// Counted once the file is found, so a wrong id costs no slot; a send that
 	// then fails still does, so a channel that is down is not tried an
@@ -206,7 +208,7 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 	if b.replay {
 		return (&sendFile{run: run}).tool(), true, nil
 	}
-	if b.sends == nil || b.sends.Store == nil || b.sends.SendsFiles == nil || b.sends.Logger == nil || b.note == nil {
+	if b.sends == nil || b.sends.Store == nil || b.sends.MaxFile == nil || b.sends.Logger == nil || b.note == nil {
 		return agent.Tool{}, false, nil
 	}
 	reach, err := b.sends.Store.GetSessionFileReach(ctx, run.SessionID)
@@ -214,7 +216,8 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 		return agent.Tool{}, false, fmt.Errorf("reading where the conversation's files can go: %w", err)
 	}
 	toChannel := !reach.Streamed
-	posts := run.ReplyToChannel && reach.Postable && b.sends.SendsFiles(reach.Provider)
+	maxFile := b.sends.MaxFile(reach.Provider)
+	posts := run.ReplyToChannel && reach.Postable && maxFile > 0
 	if toChannel && !posts {
 		return agent.Tool{}, false, nil
 	}
@@ -224,7 +227,7 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 		return agent.Tool{}, false, fmt.Errorf("reading how many files the run has sent: %w", err)
 	}
 	s := &sendFile{
-		store: b.sends.Store, logger: b.sends.Logger, run: run, toChannel: toChannel, provider: reach.Provider,
+		store: b.sends.Store, logger: b.sends.Logger, run: run, toChannel: toChannel, provider: reach.Provider, maxFile: maxFile,
 		note: func(ctx context.Context, kind string, p any) error { return b.note(ctx, run.ID, l.Worker, kind, p) },
 	}
 	s.sent.Store(sent)
@@ -232,6 +235,21 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 		s.kick = func(call string) { b.kickFile(run.ID, call) }
 	}
 	return s.tool(), true, nil
+}
+
+// sizeIn is n bytes in the unit a channel's limit is said in, as its
+// platform says it: Telegram's 50 MB in MB, a limit in MiB in MiB, so a file
+// and its limit compare at a glance (a 50 MiB file is 52.4 MB, over 50 MB).
+func sizeIn(n, limit int64) string {
+	unit, per := "MiB", float64(1<<20)
+	if limit%1_000_000 == 0 {
+		unit, per = "MB", 1_000_000
+	}
+	v := float64(n) / per
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("%d %s", int64(v), unit)
+	}
+	return fmt.Sprintf("%.1f %s", v, unit)
 }
 
 // channelName is a channel's provider as a person names it.

@@ -61,9 +61,9 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 	}
 	// The upload and the send have a deadline by size, as an HTTP post has:
 	// one stuck would hold up every channel this process sends for.
-	sendCtx, cancel := context.WithTimeout(ctx, gateway.PostTimeout(len(req.Body)))
+	sendCtx, cancel := context.WithTimeout(ctx, req.Timeout())
 	defer cancel()
-	msg, err := a.message(sendCtx, c, cli, p)
+	msg, err := a.message(sendCtx, c, cli, p, req.Stream)
 	if err != nil {
 		return err
 	}
@@ -87,14 +87,14 @@ func (a *Accounts) Post(ctx context.Context, channel uuid.UUID, req gateway.Outb
 // text with the people it mentions and the message it quotes when this
 // connection still remembers it. A quote it cannot draw is left out rather
 // than shown empty.
-func (a *Accounts) message(ctx context.Context, c *conn, cli Client, p gwa.Part) (*waE2E.Message, error) {
+func (a *Accounts) message(ctx context.Context, c *conn, cli Client, p gwa.Part, file *gateway.Stream) (*waE2E.Message, error) {
 	switch {
 	case p.Poll != nil:
 		// Single choice. whatsmeow keeps the poll's secret when it sends it,
 		// which is what lets a vote on it be decrypted (SendMessage, send.go).
 		return cli.BuildPollCreation(p.Poll.Question, p.Poll.Options, 1), nil
 	case p.File != nil:
-		return document(ctx, cli, p.File)
+		return document(ctx, cli, p.File, file)
 	}
 	ext := &waE2E.ExtendedTextMessage{Text: &p.Text}
 	ctxInfo := &waE2E.ContextInfo{}
@@ -116,11 +116,25 @@ func (a *Accounts) message(ctx context.Context, c *conn, cli Client, p gwa.Part)
 
 // document uploads a file and is the message naming it. WhatsApp keeps
 // what was uploaded only as long as a message names it, so an upload whose
-// send fails is uploaded again on the retry.
-func document(ctx context.Context, cli Client, f *gwa.File) (*waE2E.Message, error) {
-	up, err := cli.Upload(ctx, f.Data, whatsmeow.MediaDocument)
+// send fails is uploaded again on the retry. The file is read from the
+// store as it is uploaded; whatsmeow encrypts it into a temporary file, as
+// it must hash the whole before it uploads, and removes it after.
+func document(ctx context.Context, cli Client, f *gwa.File, file *gateway.Stream) (*waE2E.Message, error) {
+	if file == nil || file.Open == nil {
+		return nil, fmt.Errorf("%w: the file %s was not given to send", gateway.ErrUnsendable, f.Name)
+	}
+	r, err := file.Open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = r.Close() }()
+	up, err := cli.UploadReader(ctx, r, nil, whatsmeow.MediaDocument)
 	if err != nil {
 		return nil, fmt.Errorf("uploading %s: %w", f.Name, err)
+	}
+	// A store that handed back less than the file is not the file.
+	if up.FileLength != uint64(f.Size) { //nolint:gosec // G115: a size is never negative here
+		return nil, fmt.Errorf("uploading %s: read %d of its %d bytes", f.Name, up.FileLength, f.Size)
 	}
 	doc := &waE2E.DocumentMessage{
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,

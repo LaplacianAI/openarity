@@ -846,15 +846,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   bytes that cannot be decrypted are given up at once. A file given up is
   not sent, and nobody is told: the model was told it was sent when it was
   queued, and the reply shows as given up only in the database until the
-  dashboard shows a reply's delivery. Each post has a deadline by its size,
-  ten seconds and a second per 512 KiB, a minute at most, under the
-  two-minute lease, on WhatsApp's upload and send as on an HTTP post. An
-  upload in steps, Slack's, is several posts under one claim, so the whole
-  of it has a deadline of its own, 100 seconds, inside the lease. A claimed
-  batch is sent one row at a time, so rows late in a slow batch can outlive the lease and be sent by a
-  second sender too, as text replies always could. A sender holds one file's
-  bytes at a time, about three copies of it on `custom` (the bytes, base64,
-  the body): some 100 MB at 25 MiB, four replies to a worker at once.
+  dashboard shows a reply's delivery. A post held whole has a deadline by
+  its size, ten seconds and a second per 512 KiB, a minute at most; one that
+  streams a file, and a file reply's lease, grow with the file instead (F4c,
+  below). An upload in steps, Slack's, is several posts under one claim,
+  with a deadline of its own inside the lease. A claimed batch is sent one
+  row at a time, and each row after the first has its lease held again
+  before it is sent, so one behind a large file is never sent by a second
+  sender too; a row whose lease another sender took is left to it. A worker
+  that dies sending a large file holds that conversation's later replies
+  back until its lease runs out: two minutes and the file at 256 KiB a
+  second, under nine minutes at 100 MiB. A custom channel's sender holds
+  its file whole, about three copies (the bytes, base64, the body): some
+  100 MB at 25 MiB.
   Ten files a run, the count read when it is built from its file calls,
   each once whether its reply or its event was written, so a resume keeps
   to it. A reply not written and not queued is
@@ -911,8 +915,7 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   short of its `Content-Length`. S3 writes past 8 MiB as a multipart upload,
   aborted on failure; the filesystem writes a synced temporary file and
   renames it. `keep_file` streams from the room into the store, up to
-  100 MiB; a channel still takes 25 MiB, refused at `send_file`, since every
-  channel's reply holds the file whole (F4c). Only `io.EOF` ends a file
+  100 MiB; a channel takes what its provider's `MaxFile` says, below. Only `io.EOF` ends a file
   (`objects.Strict`): `io.ReadFull` reads a short last chunk as
   `io.ErrUnexpectedEOF`, so a source that says that itself, a connection
   closed early, would otherwise be sealed as a whole file; and a reader's
@@ -920,6 +923,23 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   buffer. The same on the way out tells a cut connection from a damaged
   chunk, so it is not retried as v1. A download moves its write deadline past
   the server's 30 seconds, by its size at 256 KiB a second at the least.
+- **A channel's file is streamed, up to what its platform takes (F4c).**
+  Each `FileReplier` declares `MaxFile`: Slack and WhatsApp 100 MiB, what a
+  conversation keeps; Telegram 50,000,000 bytes, the Bot API's "50 MB" for a
+  bot, decimal so safe either way; custom 25 MiB. `send_file` refuses past it,
+  naming it, and the sender refuses a file queued before. A provider builds
+  around the file, `Body ‖ file ‖ Stream.Tail`, so `Reply` stays pure, and
+  the sender opens the file only as it posts, with an exact `Content-Length`,
+  so a store that hands back less fails the request. Custom keeps its file
+  whole (`WholeFiles`): its signature covers the body, so streaming it reads
+  the file twice and hands a receiver a JSON document of about 140 MB. Telegram's
+  boundary is a hash of the bot token and the reply id, no longer of the
+  bytes: the same on every attempt, and unknowable to whoever wrote the file.
+  A file reply's lease is pushed out once, before it is sent, to the claim's
+  two minutes and the file at 256 KiB a second (`ExtendReplyLease`); its post,
+  or its upload, is given the file's time the same way. WhatsApp's upload
+  goes through whatsmeow's `UploadReader`, which encrypts into a temporary
+  file, as the whole must be hashed before it is uploaded.
 - **A tool's file is typed by its bytes.** The type stored is what the bytes
   sniff as, never the server's word, and so is the extension a name lacks.
   Any type is kept, unlike a person's: one sniffed as nothing better is

@@ -74,12 +74,11 @@ func withDiscovery(ctx context.Context, spec Spec, msgs []Message) (Spec, string
 		return Spec{}, "", err
 	}
 
-	small := catalogueSize(d.Tools, spec.Skills) <= DiscoverAbove
 	// ReWOO plans every call before making one, so it cannot search midway:
 	// it plans with the tools picked for its task, or with every one.
-	if spec.Pattern == PatternReWOO || small {
+	if !spec.FoundBySearch() {
 		tools := d.Tools
-		if !small && spec.Pattern == PatternReWOO {
+		if spec.Pattern == PatternReWOO && catalogueSize(d.Tools, spec.Skills) > DiscoverAbove {
 			if picked := selected(ctx, d, msgs); len(picked) > 0 {
 				tools = picked
 			}
@@ -101,6 +100,14 @@ func withDiscovery(ctx context.Context, spec Spec, msgs []Message) (Spec, string
 	}
 	spec.System = append(slices.Clone(spec.System), discoveryListing(*d, len(spec.Skills) > 0))
 	return spec, d.Search, nil
+}
+
+// FoundBySearch is whether a run of s finds its Discovery tools and its
+// skills by search, rather than being sent them: when they are larger than
+// DiscoverAbove, and the pattern can search midway, which ReWOO cannot.
+func (s Spec) FoundBySearch() bool {
+	return s.Discovery != nil && s.Pattern != PatternReWOO &&
+		catalogueSize(s.Discovery.Tools, s.Skills) > DiscoverAbove
 }
 
 // selected is the Discovery tools Select picks for the conversation's latest

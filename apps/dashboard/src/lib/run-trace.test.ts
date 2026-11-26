@@ -47,8 +47,23 @@ describe("groupTrace", () => {
       pattern: "react",
       tools: ["x", "3"],
       skills: [],
+      found: [],
     });
     expect(t.items).toEqual([]);
+  });
+
+  it("reads which tools and skills the run finds by search", () => {
+    const t = groupTrace([
+      e("started", {
+        agent: "a",
+        model: "m",
+        pattern: "react",
+        tools: ["graph", "gh__get_me"],
+        skills: ["review"],
+        found: ["gh__get_me", "review"],
+      }),
+    ]);
+    expect(t.started?.found).toEqual(["gh__get_me", "review"]);
   });
 
   it("puts each call and its result in the step that was current", () => {

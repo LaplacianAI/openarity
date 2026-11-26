@@ -397,3 +397,36 @@ func TestASocketProviderWithARouteIsRefused(t *testing.T) {
 		t.Fatalf("NewRegistry = %v; want a socket with a route refused, by name", err)
 	}
 }
+
+// noLimit says it replies with files and names no limit: refused, as it
+// would otherwise quietly send none.
+type noLimit struct{ relay }
+
+func (*noLimit) Name() string      { return "nolimit" }
+func (*noLimit) RepliesWithFiles() {}
+
+// zeroLimit names a limit that takes nothing.
+type zeroLimit struct{ fileRelay }
+
+func (*zeroLimit) Name() string   { return "zero" }
+func (*zeroLimit) MaxFile() int64 { return 0 }
+
+func TestAFileReplierNamesWhatItTakes(t *testing.T) {
+	t.Parallel()
+
+	for name, p := range map[string]Provider{"no MaxFile": &noLimit{}, "a MaxFile of 0": &zeroLimit{}} {
+		if _, err := NewRegistry(p); err == nil {
+			t.Errorf("a provider with %s was registered", name)
+		}
+	}
+	reg, err := NewRegistry(&relay{}, &fileRelay{most: 7}, &wholeRelay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.MaxFile("filer") != 7 || reg.MaxFile("relay") != 0 || reg.MaxFile("nope") != 0 {
+		t.Errorf("MaxFile = %d, %d, %d", reg.MaxFile("filer"), reg.MaxFile("relay"), reg.MaxFile("nope"))
+	}
+	if reg.WholeFiles("filer") || !reg.WholeFiles("whole") || reg.WholeFiles("relay") {
+		t.Error("WholeFiles does not follow the marker")
+	}
+}
