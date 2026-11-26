@@ -538,8 +538,17 @@ func TestReadOutputReadsTheLatestResultWithAReusedID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "the latest") {
-		t.Fatalf("read %q, want the latest result with the id", got)
+	if strings.Contains(got, "the first turn's") || !strings.Contains(got, "2 results in this transcript have this call id") {
+		t.Fatalf("read %q, want the latest result with the id, and that an earlier one shares it", got)
+	}
+
+	h.setFull([]Message{result("call_1", "one"), result("call_2", "two")})
+	got, err = readOutputTool(h).Invoke(t.Context(), json.RawMessage(`{"call":"call_1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "one") || strings.Contains(got, "have this call id") {
+		t.Fatalf("read %q, want call_1's result and no warning", got)
 	}
 }
 
@@ -790,6 +799,12 @@ func TestClearingForWritesNoMarkForNothing(t *testing.T) {
 	small := conversation(3, func(int) string { return "ok" })
 	if _, ok := ClearingFor(small); ok {
 		t.Error("a mark for results under 1 KiB")
+	}
+	if _, ok := ClearingFor(conversation(1, func(int) string { return strings.Repeat("k", 1<<10) })); ok {
+		t.Error("a mark for a result of exactly 1 KiB, which is sent whole")
+	}
+	if _, ok := ClearingFor(conversation(1, func(int) string { return strings.Repeat("k", 1<<10+1) })); !ok {
+		t.Error("no mark for a result one byte over 1 KiB")
 	}
 
 	large := conversation(2, func(int) string { return strings.Repeat("d", 20<<10) })

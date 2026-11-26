@@ -708,15 +708,13 @@ func markerMessage(s CompactionSummary) Message {
 	return m
 }
 
-// clearingMessage is a clearing as the transcript keeps it. A run takes it
-// out before the pattern sees the turns, so no model reads it; its text is
-// for a reader that predates ClearingMark.
 // ClearingFor is the mark that clears, from the model's view, every tool
-// result in msgs a later request would send whole: one over 1 KiB after the
-// latest summary or clearing. A caller that appends it to a transcript, as
-// a run starting in a conversation does, has the earlier runs' results sent
-// as handles, which read_output reads back whole. ok is false when there is
-// nothing to clear, so no mark is written for nothing.
+// result in msgs a later request would send whole: one over 1 KiB, not a
+// skill's, after the latest summary or clearing. A caller that appends it to
+// a transcript, as a run starting in a conversation does, has the earlier
+// runs' results sent as handles, which read_output reads back whole; only a
+// run with Spec.Compaction acts on it. ok is false when there is nothing to
+// clear, so no mark is written for nothing.
 func ClearingFor(msgs []Message) (mark Message, ok bool) {
 	var h compactHandle
 	plain := h.resume(msgs)
@@ -727,6 +725,9 @@ func ClearingFor(msgs []Message) (mark Message, ok bool) {
 	return clearingMessage(digest(plain)), true
 }
 
+// clearingMessage is a clearing as the transcript keeps it. A run takes it
+// out before the pattern sees the turns, so no model reads it; its text is
+// for a reader that predates ClearingMark.
 func clearingMessage(prefix string) Message {
 	return Message{
 		Role: RoleUser,

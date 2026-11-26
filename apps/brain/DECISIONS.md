@@ -206,21 +206,28 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   arrives after its last model call starts the next run when it finishes, of
   the same kind. A channel's session takes runs only from its chat, so every
   answer reaches it. A run writes its place, `transcript_from`, before its
-  first message, so a crash between the two writes it once. Before its place,
-  a run writes a clearing mark (`agent.ClearingFor`) when an earlier run left
-  a tool result over 1 KiB: those results are sent as handles from its first
-  request, which `read_output` reads back by call id, a range or a match. A
-  new run never needs an earlier run's raw output, and without the mark a
-  conversation under the compaction line resent every one on every message
-  (a "hi" read 63k tokens on staging, 19k of them old results). The mark is
-  stored first, so the place still names the run's first message after a
-  crash, as replay reads it. A channel's run
+  first message, so a crash between the two writes it once. A channel's run
   is told, as text, only what was said since the last run: a group's
   chatter, which reached no run. Further back it reads with `history`
   (`runtime/history.go`): the session's messages and its top-level runs'
   answers, by `session_seq`, bound to the session when the run is built and
   to the top-level run alone. A message keeps its sender's cleaned display
   name (`messages.sender_name`), so a group read back has speakers.
+
+- **A new run clears the earlier runs' tool results from its view.** Before
+  its place, a run writes a clearing mark (`agent.ClearingFor`) when an
+  earlier run left a tool result over 1 KiB, a skill's excepted: those
+  results are sent as handles from its first request, and `read_output`
+  reads one back by call id, whole, a range or a match. A new run never
+  needs an earlier run's raw output, and without the mark a conversation
+  under the compaction line resent every one on every message: on staging
+  (2026-11-26, the openarity team's runs and run events), a "hi" in a
+  33-run conversation read 62,903 input tokens, about 19K of them nine old
+  results. The mark is stored first, so the place still names the run's
+  first message after a crash, as replay reads it, and a run begun again
+  finds nothing left to clear. A model that reuses call ids across runs
+  makes a handle ambiguous: `read_output` reads the latest and says how many
+  share the id, rather than pass the latest off as the one asked for.
 
 - **A session is one stream, numbered in commit order.** A session's messages
   and the events of every run in it share one count, `session_seq`, taken

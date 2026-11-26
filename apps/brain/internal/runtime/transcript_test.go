@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -232,9 +233,13 @@ func TestANewRunSendsEarlierResultsAsHandles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	markAt := len(earlier)
+	if len(stored) < markAt+2 {
+		t.Fatalf("stored %d messages, want the earlier %d, the mark and the run's", len(stored), markAt)
+	}
 	from := f.row(t).TranscriptFrom
-	if from == nil || *from != 5 || stored[4].Clearing == nil || stored[5].Text() != dated(runInput) {
-		t.Fatalf("place %v; stored[4] %+v; want the mark at 4 and the run's first message at 5", from, stored[4])
+	if from == nil || int(*from) != markAt+1 || stored[markAt].Clearing == nil || stored[markAt+1].Text() != dated(runInput) {
+		t.Fatalf("place %v; stored[%d] %+v; want the mark there and the run's first message after it", from, markAt, stored[markAt])
 	}
 	if stored[2].Text() != big {
 		t.Error("the transcript lost the earlier result; it keeps every result whole")
@@ -268,38 +273,107 @@ func TestAClearedEarlierResultIsReadBackByItsCallID(t *testing.T) {
 	}
 }
 
-// fromStore records where a save kept the stored messages to.
+// fromStore records where a save kept the stored messages to, and fails
+// with err.
 type fromStore struct {
 	agent.Store
-	from int
-	msgs []agent.Message
+	from  int
+	msgs  []agent.Message
+	err   error
+	saved bool
 }
 
 func (s *fromStore) SaveFrom(_ context.Context, _ string, from int, msgs []agent.Message) error {
-	s.from, s.msgs = from, msgs
+	s.from, s.msgs, s.saved = from, msgs, true
+	return s.err
+}
+
+// saveOnly is a store that cannot save from a position.
+type saveOnly struct {
+	agent.Store
+	msgs []agent.Message
+}
+
+func (s *saveOnly) Save(_ context.Context, _ string, msgs []agent.Message) error {
+	s.msgs = msgs
 	return nil
 }
 
-// The mark keeps every stored message but those closeCalls may have moved:
-// it adds a result only before a trailing files message.
-func TestTheMarkKeepsWhatIsStoredAsItIs(t *testing.T) {
-	t.Parallel()
+// bigResult is an earlier run's: a call and its 4 KiB result, then its answer.
+func bigResult(call string) []agent.Message {
+	return []agent.Message{
+		userSaid("look"), asked(call),
+		{Role: agent.RoleTool, ToolCallID: call, Content: []agent.Content{{Type: agent.ContentText, Text: strings.Repeat("x", 4<<10)}}},
+		{Role: agent.RoleAssistant, Content: []agent.Content{{Type: agent.ContentText, Text: "looked"}}},
+	}
+}
 
-	mark := agent.Message{Role: agent.RoleUser, Clearing: &agent.ClearingMark{Prefix: "p"}}
-	for name, tc := range map[string]struct{ stored, now, from int }{
-		"nothing closed": {stored: 4, now: 4, from: 4},
-		"a call closed":  {stored: 4, now: 5, from: 3},
-	} {
-		s := &fromStore{}
-		e := &Executor{sessions: s}
-		msgs := make([]agent.Message, tc.now)
-		if err := e.saveMark(t.Context(), "session:x", tc.stored, msgs, mark); err != nil {
+// The mark keeps every stored message but those closeCalls may have moved,
+// saves whole where the store cannot keep any, and a save that fails places
+// the run nowhere.
+func TestTheMarkKeepsWhatIsStoredAsItIs(t *testing.T) {
+	closed := bigResult("c1")
+	open := slices.Concat(bigResult("c1")[:3], []agent.Message{asked("c2")}) // c2 left open: closeCalls answers it
+
+	t.Run("nothing closed", func(t *testing.T) {
+		f := newExecFixture(t, newScripted(answer("unused", 1, 1)))
+		s := &fromStore{Store: f.sessions}
+		f.exec.sessions = s
+		if _, _, err := f.exec.begin(t.Context(), f.row(t), slices.Clone(closed)); err != nil {
 			t.Fatal(err)
 		}
-		if s.from != tc.from || len(s.msgs) != tc.now+1 || s.msgs[tc.now].Clearing == nil {
-			t.Errorf("%s: kept %d, wrote %d with the mark last %v; want kept %d", name, s.from, len(s.msgs), s.msgs[len(s.msgs)-1].Clearing != nil, tc.from)
+		if s.from != len(closed) || len(s.msgs) != len(closed)+1 || s.msgs[len(closed)].Clearing == nil {
+			t.Errorf("kept %d, wrote %d; want kept %d and the mark last", s.from, len(s.msgs), len(closed))
 		}
+	})
+	t.Run("a call closed", func(t *testing.T) {
+		f := newExecFixture(t, newScripted(answer("unused", 1, 1)))
+		s := &fromStore{Store: f.sessions}
+		f.exec.sessions = s
+		if _, _, err := f.exec.begin(t.Context(), f.row(t), slices.Clone(open)); err != nil {
+			t.Fatal(err)
+		}
+		if s.from != len(open)-1 || len(s.msgs) != len(open)+2 || s.msgs[len(open)].ToolCallID != "c2" || s.msgs[len(open)+1].Clearing == nil {
+			t.Errorf("kept %d, wrote %d; want kept %d, c2 closed, then the mark", s.from, len(s.msgs), len(open)-1)
+		}
+	})
+	t.Run("a store that saves whole", func(t *testing.T) {
+		f := newExecFixture(t, newScripted(answer("unused", 1, 1)))
+		s := &saveOnly{Store: f.sessions}
+		f.exec.sessions = s
+		if _, _, err := f.exec.begin(t.Context(), f.row(t), slices.Clone(closed)); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.msgs) != len(closed)+1 || s.msgs[len(closed)].Clearing == nil {
+			t.Errorf("saved %d; want the transcript and the mark", len(s.msgs))
+		}
+	})
+	t.Run("a save that fails", func(t *testing.T) {
+		f := newExecFixture(t, newScripted(answer("unused", 1, 1)))
+		f.exec.sessions = &fromStore{Store: f.sessions, err: errors.New("connection reset")}
+		if _, _, err := f.exec.begin(t.Context(), f.row(t), slices.Clone(closed)); err == nil || !strings.Contains(err.Error(), "clearing the earlier runs' results") {
+			t.Errorf("begin = %v, want the mark's failure", err)
+		}
+		if from := f.row(t).TranscriptFrom; from != nil {
+			t.Errorf("placed at %d after the mark failed to save", *from)
+		}
+	})
+}
+
+// placeAtSave fails the test if the run's place is written before the mark.
+type placeAtSave struct {
+	agent.Store
+	placed func() bool
+	early  bool
+}
+
+func (s *placeAtSave) SaveFrom(ctx context.Context, session string, from int, msgs []agent.Message) error {
+	s.early = s.early || s.placed()
+	saving, ok := s.Store.(agent.SavingFrom)
+	if !ok {
+		return errors.New("the store under the test cannot save from a position")
 	}
+	return saving.SaveFrom(ctx, session, from, msgs)
 }
 
 // The mark is stored before the run's place is written: a run whose worker
@@ -331,5 +405,59 @@ func TestTheMarkIsStoredBeforeTheRunsPlace(t *testing.T) {
 	}
 	if from := f.row(t).TranscriptFrom; from == nil || *from != 5 {
 		t.Errorf("place %v, want 5, after the mark", from)
+	}
+}
+
+// The mark is saved while the run has no place yet, never after it.
+func TestTheMarkIsSavedBeforeThePlaceIsWritten(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("unused", 1, 1)))
+	row := f.row(t)
+	if err := f.sessions.Save(t.Context(), transcriptOf(row), bigResult("c1")); err != nil {
+		t.Fatal(err)
+	}
+	s := &placeAtSave{Store: f.sessions, placed: func() bool { return f.row(t).TranscriptFrom != nil }}
+	f.exec.sessions = s
+	if _, _, err := f.exec.begin(t.Context(), row, bigResult("c1")); err != nil {
+		t.Fatal(err)
+	}
+	if s.early {
+		t.Error("the run's place was written before the mark was saved")
+	}
+	if f.row(t).TranscriptFrom == nil {
+		t.Error("the run was never placed")
+	}
+}
+
+// A worker that stopped after the mark and before the place begins the run
+// again: it finds nothing more to clear, writes no second mark, and places
+// the run after the first.
+func TestARunBegunAgainAfterItsMarkAddsNoSecond(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("unused", 1, 1)))
+	row := f.row(t)
+	session := transcriptOf(row)
+	if err := f.sessions.Save(t.Context(), session, bigResult("c1")); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		msgs, err := f.sessions.Messages(t.Context(), session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := f.exec.begin(t.Context(), row, msgs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored, err := f.sessions.Messages(t.Context(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marks := 0
+	for _, m := range stored {
+		if m.Clearing != nil {
+			marks++
+		}
+	}
+	if from := f.row(t).TranscriptFrom; marks != 1 || from == nil || int(*from) != len(bigResult("c1"))+1 {
+		t.Errorf("%d marks, place %v; want one mark and the place after it", marks, from)
 	}
 }
