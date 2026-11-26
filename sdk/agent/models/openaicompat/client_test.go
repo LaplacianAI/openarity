@@ -1343,3 +1343,92 @@ func TestAnUnreachableEndpointIsNotAModelError(t *testing.T) {
 		t.Errorf("err = %#v, want the transport's error", err)
 	}
 }
+
+// A tool that takes no arguments is called with no argument text by some
+// models behind this API, streamed or not. That is an empty object, and the
+// call reaches its tool; it is never refused as invalid JSON.
+func TestACallWithNoArgumentTextHasEmptyArguments(t *testing.T) {
+	t.Parallel()
+
+	t.Run("complete", func(t *testing.T) {
+		t.Parallel()
+		c, _ := serve(t, answer(t, completion("", []map[string]any{{
+			"id": "toolu_1", "type": "function",
+			"function": map[string]any{"name": "attachments", "arguments": ""},
+		}}, "tool_calls")))
+		got, err := c.Complete(t.Context(), agent.Request{
+			Model: agent.ModelRef{Name: "probe"}, Messages: []agent.Message{userSays("go")},
+		})
+		if err != nil || len(got.Message.ToolCalls) != 1 {
+			t.Fatalf("Complete = %+v, %v", got.Message.ToolCalls, err)
+		}
+		if a := got.Message.ToolCalls[0].Arguments; string(a) != `{}` {
+			t.Errorf("arguments = %q, want {}", a)
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		t.Parallel()
+		c, _ := serve(t, sse(t,
+			chunk(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{
+				"index": 0, "id": "toolu_1", "type": "function",
+				"function": map[string]any{"name": "attachments", "arguments": ""},
+			}}}, ""),
+			chunk(map[string]any{}, "tool_calls"),
+		))
+		s, err := c.Stream(t.Context(), agent.Request{
+			Model: agent.ModelRef{Name: "probe"}, Messages: []agent.Message{userSays("go")},
+		})
+		if err != nil {
+			t.Fatalf("Stream: %v", err)
+		}
+		defer s.Close()
+		_, final := drain(t, s)
+		if final == nil || len(final.Message.ToolCalls) != 1 {
+			t.Fatalf("final = %+v", final)
+		}
+		if a := final.Message.ToolCalls[0].Arguments; string(a) != `{}` {
+			t.Errorf("arguments = %q, want {}", a)
+		}
+	})
+}
+
+// Blank argument text is an empty object; any other text is passed on as it
+// came, broken or not, for the pattern to judge.
+func TestArgumentsOf(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"":          `{}`,
+		" \n\t":     `{}`,
+		`{}`:        `{}`,
+		`null`:      `null`,
+		`{"a":1}`:   `{"a":1}`,
+		`{"a`:       `{"a`,
+		` {"a":1} `: ` {"a":1} `,
+	} {
+		if got := string(argumentsOf(in)); got != want {
+			t.Errorf("argumentsOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A turn replayed with a call that has no arguments, as a transcript stored
+// before this fix holds, goes out as {}: a provider refuses "".
+func TestAReplayedCallWithNoArgumentsGoesOutAsAnEmptyObject(t *testing.T) {
+	t.Parallel()
+
+	c, sent := serve(t, answer(t, completion("done", nil, "stop")))
+	history := []agent.Message{
+		userSays("list the files"),
+		{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{ID: "toolu_1", Name: "attachments"}}},
+		{Role: agent.RoleTool, ToolCallID: "toolu_1", Content: []agent.Content{{Type: agent.ContentText, Text: "[]"}}},
+	}
+	if _, err := c.Complete(t.Context(), agent.Request{Model: agent.ModelRef{Name: "probe"}, Messages: history}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	raw, _ := json.Marshal(sent())
+	if !strings.Contains(string(raw), `"arguments":"{}"`) {
+		t.Errorf("the replayed call's arguments are not {}:\n%s", raw)
+	}
+}
