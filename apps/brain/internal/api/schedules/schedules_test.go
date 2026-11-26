@@ -149,7 +149,7 @@ func (w *world) serve(t *testing.T, user uuid.UUID, method, path string, body an
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
 	az := &fakeAuthz{holds: w.holds}
-	New(logger, w.store, az, triggers.NewService(w.store, w.runs)).Register(mux, api.NewGuard(rs, az, liveTeams{}, logger))
+	New(logger, w.store, az, triggers.NewService(w.store, w.runs, logger)).Register(mux, api.NewGuard(rs, az, liveTeams{}, logger))
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
 		ID: user, Issuer: "dev", Subject: "someone",
 		Teams: []auth.Membership{{TeamID: w.team, Name: "ops", Role: "member"}},
@@ -249,6 +249,7 @@ func TestAnotherMembersIsNotFoundAndEveryonesTakesManage(t *testing.T) {
 	s := w.make(t, "summary")
 	want(t, w.serve(t, w.other, "GET", "/schedules/"+s.ID.String(), nil), http.StatusNotFound, "no such schedule")
 	want(t, w.serve(t, w.other, "DELETE", "/schedules/"+s.ID.String(), nil), http.StatusNotFound, "no such schedule")
+	want(t, w.serve(t, w.other, "GET", "/schedules/"+s.ID.String()+"/fires", nil), http.StatusNotFound, "no such schedule")
 	want(t, w.serve(t, w.other, "GET", "/schedules?all=true", nil), http.StatusForbidden, "schedule:manage")
 	if page := decode[api.Page[schedule]](t, w.serve(t, w.other, "GET", "/schedules", nil)); len(page.Items) != 0 {
 		t.Errorf("another member lists %d", len(page.Items))
@@ -258,6 +259,12 @@ func TestAnotherMembersIsNotFoundAndEveryonesTakesManage(t *testing.T) {
 		t.Errorf("a manager lists %d of everyone's", len(page.Items))
 	}
 	want(t, w.serve(t, w.other, "GET", "/schedules?all=maybe", nil), http.StatusBadRequest, "all must be")
+
+	// A manager sees and pauses it, but its words and its runs are its maker's.
+	path := "/schedules/" + s.ID.String()
+	want(t, w.serve(t, w.other, "PATCH", path, map[string]any{"objective": "Something else."}), http.StatusForbidden, "only the person who made")
+	want(t, w.serve(t, w.other, "POST", path+"/run", nil), http.StatusForbidden, "only the person who made")
+	want(t, w.serve(t, w.other, "PATCH", path, map[string]any{"status": "paused"}), http.StatusOK, "")
 }
 
 func TestPauseResumeAndChangeThroughPatch(t *testing.T) {

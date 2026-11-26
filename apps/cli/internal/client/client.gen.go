@@ -1445,22 +1445,26 @@ func (e ScheduleStatus) Valid() bool {
 
 // Defines values for ScheduleFireOutcome.
 const (
-	ScheduleFireOutcomeAnswered     ScheduleFireOutcome = "answered"
-	ScheduleFireOutcomeCatchUp      ScheduleFireOutcome = "catch_up"
-	ScheduleFireOutcomeFailed       ScheduleFireOutcome = "failed"
-	ScheduleFireOutcomeLate         ScheduleFireOutcome = "late"
-	ScheduleFireOutcomeMissed       ScheduleFireOutcome = "missed"
-	ScheduleFireOutcomeSilent       ScheduleFireOutcome = "silent"
-	ScheduleFireOutcomeSkippedBusy  ScheduleFireOutcome = "skipped_busy"
-	ScheduleFireOutcomeSkippedCap   ScheduleFireOutcome = "skipped_cap"
-	ScheduleFireOutcomeSkippedMaker ScheduleFireOutcome = "skipped_maker"
-	ScheduleFireOutcomeStarted      ScheduleFireOutcome = "started"
+	ScheduleFireOutcomeAnswered      ScheduleFireOutcome = "answered"
+	ScheduleFireOutcomeCancelled     ScheduleFireOutcome = "cancelled"
+	ScheduleFireOutcomeCatchUp       ScheduleFireOutcome = "catch_up"
+	ScheduleFireOutcomeFailed        ScheduleFireOutcome = "failed"
+	ScheduleFireOutcomeLate          ScheduleFireOutcome = "late"
+	ScheduleFireOutcomeMissed        ScheduleFireOutcome = "missed"
+	ScheduleFireOutcomeSilent        ScheduleFireOutcome = "silent"
+	ScheduleFireOutcomeSkippedBusy   ScheduleFireOutcome = "skipped_busy"
+	ScheduleFireOutcomeSkippedCap    ScheduleFireOutcome = "skipped_cap"
+	ScheduleFireOutcomeSkippedMaker  ScheduleFireOutcome = "skipped_maker"
+	ScheduleFireOutcomeSkippedTarget ScheduleFireOutcome = "skipped_target"
+	ScheduleFireOutcomeStarted       ScheduleFireOutcome = "started"
 )
 
 // Valid indicates whether the value is a known member of the ScheduleFireOutcome enum.
 func (e ScheduleFireOutcome) Valid() bool {
 	switch e {
 	case ScheduleFireOutcomeAnswered:
+		return true
+	case ScheduleFireOutcomeCancelled:
 		return true
 	case ScheduleFireOutcomeCatchUp:
 		return true
@@ -1477,6 +1481,8 @@ func (e ScheduleFireOutcome) Valid() bool {
 	case ScheduleFireOutcomeSkippedCap:
 		return true
 	case ScheduleFireOutcomeSkippedMaker:
+		return true
+	case ScheduleFireOutcomeSkippedTarget:
 		return true
 	case ScheduleFireOutcomeStarted:
 		return true
@@ -4265,14 +4271,17 @@ type SayUpload struct {
 
 // Schedule defines model for Schedule.
 type Schedule struct {
-	// AgentID The agent that answers. Absent is the team's hub.
+	// AgentID The agent that answers. Absent with `hub` false is an agent since deleted, and the schedule is paused as `target_gone`.
 	AgentID   *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
 	CreatedAt time.Time           `json:"created_at" yaml:"created_at"`
 
 	// CreatedBy Whom it runs as. Absent once they have left.
-	CreatedBy   *openapi_types.UUID `json:"created_by,omitempty" yaml:"created_by,omitempty"`
-	ID          openapi_types.UUID  `json:"id" yaml:"id"`
-	LastFiredAt *time.Time          `json:"last_fired_at,omitempty" yaml:"last_fired_at,omitempty"`
+	CreatedBy *openapi_types.UUID `json:"created_by,omitempty" yaml:"created_by,omitempty"`
+
+	// Hub Whether the team's hub answers, rather than an agent.
+	Hub         bool               `json:"hub" yaml:"hub"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
+	LastFiredAt *time.Time         `json:"last_fired_at,omitempty" yaml:"last_fired_at,omitempty"`
 
 	// LastOutcome What its newest fire did; see ScheduleFire.
 	LastOutcome *string    `json:"last_outcome,omitempty" yaml:"last_outcome,omitempty"`
@@ -4282,7 +4291,9 @@ type Schedule struct {
 	// Objective What to do each time it runs.
 	Objective string `json:"objective" yaml:"objective"`
 
-	// PausedReason Why it is paused. `failing` is five failed runs in a row.
+	// PausedReason Why it is paused. `failing` is five failed runs, or fires that
+	// could not be tried, in a row; `target_gone` is its agent deleted,
+	// until another or the hub is chosen.
 	PausedReason *SchedulePausedReason `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
 
 	// SessionID The conversation its runs answer in.
@@ -4306,7 +4317,9 @@ type Schedule struct {
 	When ScheduleWhen `json:"when" yaml:"when"`
 }
 
-// SchedulePausedReason Why it is paused. `failing` is five failed runs in a row.
+// SchedulePausedReason Why it is paused. `failing` is five failed runs, or fires that
+// could not be tried, in a row; `target_gone` is its agent deleted,
+// until another or the hub is chosen.
 type SchedulePausedReason string
 
 // ScheduleStatus `proposed` waits for its maker to confirm what an agent proposed;
@@ -4318,22 +4331,24 @@ type ScheduleFire struct {
 	FiredAt time.Time `json:"fired_at" yaml:"fired_at"`
 
 	// Outcome `started`, `late` and `catch_up` are runs still going; `answered`,
-	// `silent` (nothing to say) and `failed` how one ended. `missed`
-	// came and went while the team was not running; `skipped_busy`
-	// found its last run still working; `skipped_cap` was over the
-	// team's hourly limit; `skipped_maker` found its maker could no
-	// longer start runs.
+	// `silent` (nothing to say), `failed` and `cancelled` how one ended.
+	// `missed` came and went while the team was not running;
+	// `skipped_busy` found its last run still working; `skipped_cap`
+	// was over the team's hourly limit; `skipped_maker` found its maker
+	// could no longer start runs; `skipped_target` found its agent
+	// deleted.
 	Outcome      ScheduleFireOutcome `json:"outcome" yaml:"outcome"`
 	RunID        *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
 	ScheduledFor time.Time           `json:"scheduled_for" yaml:"scheduled_for"`
 }
 
 // ScheduleFireOutcome `started`, `late` and `catch_up` are runs still going; `answered`,
-// `silent` (nothing to say) and `failed` how one ended. `missed`
-// came and went while the team was not running; `skipped_busy`
-// found its last run still working; `skipped_cap` was over the
-// team's hourly limit; `skipped_maker` found its maker could no
-// longer start runs.
+// `silent` (nothing to say), `failed` and `cancelled` how one ended.
+// `missed` came and went while the team was not running;
+// `skipped_busy` found its last run still working; `skipped_cap`
+// was over the team's hourly limit; `skipped_maker` found its maker
+// could no longer start runs; `skipped_target` found its agent
+// deleted.
 type ScheduleFireOutcome string
 
 // ScheduleFirePage defines model for ScheduleFirePage.

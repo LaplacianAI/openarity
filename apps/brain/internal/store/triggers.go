@@ -15,15 +15,16 @@ import (
 // say: no reply is sent, and nobody is told.
 const Silent = "[silent]"
 
-// pauseAfter is how many of a schedule's fires in a row may fail before it
-// pauses itself.
-const pauseAfter = 5
+// PauseAfter is how many of a schedule's fires in a row may fail before it
+// pauses itself: a run that failed, or a fire that could not be tried.
+const PauseAfter = 5
 
 // finishFired records how a run a schedule started ended, on its fire, and
 // counts it on the schedule: a success clears its failures, a failure adds
 // one and the fifth pauses it, a cancelled run is neither. It says whether the
 // run was silent, so no reply is written for it. A run no schedule started
-// changes nothing.
+// changes nothing, and nor does an end already recorded: a finish that comes
+// twice counts once.
 func finishFired(ctx context.Context, q *db.Queries, run db.Run, finish db.FinishRunParams) (bool, error) {
 	if run.ParentRunID != nil {
 		return false, nil
@@ -35,6 +36,8 @@ func finishFired(ctx context.Context, q *db.Queries, run db.Run, finish db.Finis
 		outcome = "silent"
 	case finish.Status == "succeeded":
 		outcome = "answered"
+	case finish.Status == "cancelled":
+		outcome = "cancelled"
 	}
 	schedule, err := q.SetFireOutcome(ctx, db.SetFireOutcomeParams{Outcome: outcome, RunID: &run.ID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -44,7 +47,7 @@ func finishFired(ctx context.Context, q *db.Queries, run db.Run, finish db.Finis
 		return false, fmt.Errorf("record how run %s's fire went: %w", run.ID, err)
 	}
 	if _, err := q.CountScheduleRun(ctx, db.CountScheduleRunParams{
-		ID: schedule, Failed: finish.Status == "failed", Succeeded: finish.Status == "succeeded", PauseAfter: pauseAfter,
+		ID: schedule, Failed: finish.Status == "failed", Succeeded: finish.Status == "succeeded", PauseAfter: PauseAfter,
 	}); err != nil {
 		return false, fmt.Errorf("count run %s on its schedule: %w", run.ID, err)
 	}

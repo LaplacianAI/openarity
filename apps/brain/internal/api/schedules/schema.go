@@ -31,6 +31,7 @@ type schedule struct {
 	When         whenBody    `json:"when"`
 	Timezone     string      `json:"timezone"`
 	AgentID      *uuid.UUID  `json:"agent_id,omitempty"`
+	Hub          bool        `json:"hub"`
 	Target       target      `json:"target"`
 	SessionID    uuid.UUID   `json:"session_id"`
 	Status       string      `json:"status"`
@@ -47,7 +48,7 @@ type schedule struct {
 func view(v triggers.ScheduleView) schedule {
 	out := schedule{
 		ID: v.ID, Name: v.Name, Objective: v.Objective, When: whenOf(v.Schedule), Timezone: v.Timezone,
-		AgentID: v.AgentID, Target: target{Kind: "own"}, SessionID: v.SessionID, Status: v.Status,
+		AgentID: v.AgentID, Hub: v.Hub, Target: target{Kind: "own"}, SessionID: v.SessionID, Status: v.Status,
 		PausedReason: v.PausedReason, NextFireAt: v.NextFireAt, Upcoming: v.Upcoming,
 		LastFiredAt: v.LastFiredAt, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 	}

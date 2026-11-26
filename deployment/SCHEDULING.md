@@ -138,9 +138,14 @@ One DBOS tick a minute, `openarity.triggers.tick`, reads that table instead:
 An hourly sweep, `openarity.triggers.sweep`, lapses proposals nobody confirmed
 and keeps each schedule's newest 200 fires.
 
+A fire that fails with an error, rather than a refusal, is put off a minute
+and counted as a failed run, so one broken schedule never holds up the rest
+of a batch; five in a row pause it, and the worker logs `A schedule could not
+fire` each time.
+
 ## Retention
 
-Once a day, at 03:40, `openarity.triggers.retention` deletes DBOS's record of
+Once a day, at 03:40, `openarity.retention` deletes DBOS's record of
 background work that finished more than seven days ago: every scheduled
 sweep's ticks, whatever job registered them, and the fire batches. A run's
 own workflow is kept; the `runs` table is its record, and pruning those is a

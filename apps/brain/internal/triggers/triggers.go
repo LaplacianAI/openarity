@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,8 +25,6 @@ import (
 const runWrite = "run:write"
 
 const (
-	// PauseAfter is how many fires in a row may fail before a schedule pauses.
-	PauseAfter = 5
 	// proposalLife is how long an agent's proposal waits to be confirmed.
 	proposalLife = time.Hour
 	// keepFires is how many fires each schedule keeps.
@@ -117,13 +116,28 @@ type Store interface {
 
 // Service applies the rules. now is the clock; tests set it.
 type Service struct {
-	store Store
-	runs  Enqueuer
-	now   func() time.Time
+	store  Store
+	runs   Enqueuer
+	logger *slog.Logger
+	now    func() time.Time
 }
 
-func NewService(s Store, runs Enqueuer) *Service {
-	return &Service{store: s, runs: runs, now: time.Now}
+// NewService is the rules over a store, handing the runs it starts to runs.
+func NewService(s Store, runs Enqueuer, logger *slog.Logger) *Service {
+	return &Service{store: s, runs: runs, logger: logger, now: time.Now}
+}
+
+// mayRun refuses a maker who may not start runs in the team: a schedule runs
+// as them, so it would only pause itself at its first fire.
+func mayRun(ctx context.Context, q *db.Queries, team, user uuid.UUID, k Kind, msg string) error {
+	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: team, UserID: user, Action: runWrite})
+	if err != nil {
+		return fmt.Errorf("check the maker may start runs: %w", err)
+	}
+	if !may {
+		return refuse(k, "%s", msg)
+	}
+	return nil
 }
 
 // Limits are a team's settings for schedules and watchers.

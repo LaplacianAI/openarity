@@ -8714,7 +8714,7 @@ components:
 
     Schedule:
       type: object
-      required: [id, name, objective, when, timezone, target, session_id, status, upcoming, created_at, updated_at]
+      required: [id, name, objective, when, timezone, hub, target, session_id, status, upcoming, created_at, updated_at]
       properties:
         id:
           type: string
@@ -8735,7 +8735,10 @@ components:
         agent_id:
           type: string
           format: uuid
-          description: The agent that answers. Absent is the team's hub.
+          description: The agent that answers. Absent with `hub` false is an agent since deleted, and the schedule is paused as `target_gone`.
+        hub:
+          type: boolean
+          description: Whether the team's hub answers, rather than an agent.
         target:
           $ref: "#/components/schemas/ScheduleTarget"
         session_id:
@@ -8751,7 +8754,10 @@ components:
         paused_reason:
           type: string
           enum: [by_person, failing, maker_cannot_run, maker_gone, target_gone]
-          description: Why it is paused. `failing` is five failed runs in a row.
+          description: |
+            Why it is paused. `failing` is five failed runs, or fires that
+            could not be tried, in a row; `target_gone` is its agent deleted,
+            until another or the hub is chosen.
         next_fire_at:
           type: string
           format: date-time
@@ -8885,14 +8891,15 @@ components:
           format: date-time
         outcome:
           type: string
-          enum: [started, late, catch_up, missed, skipped_busy, skipped_cap, skipped_maker, silent, answered, failed]
+          enum: [started, late, catch_up, missed, skipped_busy, skipped_cap, skipped_maker, skipped_target, silent, answered, failed, cancelled]
           description: |
             `started`, `late` and `catch_up` are runs still going; `answered`,
-            `silent` (nothing to say) and `failed` how one ended. `missed`
-            came and went while the team was not running; `skipped_busy`
-            found its last run still working; `skipped_cap` was over the
-            team's hourly limit; `skipped_maker` found its maker could no
-            longer start runs.
+            `silent` (nothing to say), `failed` and `cancelled` how one ended.
+            `missed` came and went while the team was not running;
+            `skipped_busy` found its last run still working; `skipped_cap`
+            was over the team's hourly limit; `skipped_maker` found its maker
+            could no longer start runs; `skipped_target` found its agent
+            deleted.
         run_id:
           type: string
           format: uuid

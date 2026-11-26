@@ -19,16 +19,22 @@ import (
 
 // The outcomes a fire is recorded with, beside when's.
 const (
-	skippedBusy  = "skipped_busy"
-	skippedCap   = "skipped_cap"
-	skippedMaker = "skipped_maker"
+	skippedBusy   = "skipped_busy"
+	skippedCap    = "skipped_cap"
+	skippedMaker  = "skipped_maker"
+	skippedTarget = "skipped_target"
 )
+
+// retryAfter is how long a fire that could not be tried waits to be tried
+// again.
+const retryAfter = time.Minute
 
 // FireStore is what firing reads and writes, in one transaction a schedule.
 type FireStore interface {
 	InTx(ctx context.Context, fn func(*db.Queries) error) error
 	GetTeamSettings(ctx context.Context, teamID uuid.UUID) (db.TeamSetting, error)
 	CountDueSchedules(ctx context.Context, now time.Time) (int32, error)
+	DeferFailedFire(ctx context.Context, arg db.DeferFailedFireParams) (string, error)
 }
 
 // A Firer fires the schedules that are due, one transaction each.
@@ -39,6 +45,7 @@ type Firer struct {
 	now    func() time.Time
 }
 
+// NewFirer fires a store's due schedules and hands their runs to runs.
 func NewFirer(s FireStore, runs Enqueuer, logger *slog.Logger) *Firer {
 	return &Firer{store: s, runs: runs, logger: logger, now: time.Now}
 }
@@ -54,12 +61,23 @@ func (f *Firer) Due(ctx context.Context) (int, error) {
 
 // FireDue fires due schedules until none is due, max have been taken, or
 // budget has passed, and hands each run it started to the workers as soon as
-// its transaction commits. Another worker doing the same takes other rows.
+// its transaction commits. Another worker doing the same takes other rows. A
+// schedule whose fire fails is put off and counted as failing, so it neither
+// holds up the rest nor is taken again at once; only a failure to put it off
+// ends the batch.
 func (f *Firer) FireDue(ctx context.Context, maxFires int, budget time.Duration) (int, error) {
 	deadline := f.now().Add(budget)
 	fired := 0
 	for fired < maxFires && f.now().Before(deadline) {
 		claimed, run, err := f.fireOne(ctx)
+		var bad *fireFailed
+		if errors.As(err, &bad) && ctx.Err() == nil {
+			if err := f.putOff(ctx, bad); err != nil {
+				return fired, err
+			}
+			fired++
+			continue
+		}
 		if err != nil {
 			return fired, err
 		}
@@ -77,10 +95,33 @@ func (f *Firer) FireDue(ctx context.Context, maxFires int, budget time.Duration)
 	return fired, nil
 }
 
+// fireFailed is a claimed schedule whose fire failed: its transaction rolled
+// back, so it is still the oldest due.
+type fireFailed struct {
+	id  uuid.UUID
+	err error
+}
+
+func (e *fireFailed) Error() string { return fmt.Sprintf("fire schedule %s: %v", e.id, e.err) }
+func (e *fireFailed) Unwrap() error { return e.err }
+
+// putOff moves a schedule whose fire failed past now, counting the failure,
+// in a transaction of its own; the fifth in a row pauses it.
+func (f *Firer) putOff(ctx context.Context, bad *fireFailed) error {
+	f.logger.ErrorContext(ctx, "A schedule could not fire; trying it again later", "schedule_id", bad.id, "error", bad.err)
+	_, err := f.store.DeferFailedFire(ctx, db.DeferFailedFireParams{
+		ID: bad.id, PauseAfter: store.PauseAfter, RetryAt: f.now().Add(retryAfter),
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("put off schedule %s: %w", bad.id, err)
+	}
+	return nil
+}
+
 // fireOne takes one due schedule, works out what is due (D4, D6), records it
 // and starts its run (D3, D5, D9), and moves it on, all in one transaction.
 func (f *Firer) fireOne(ctx context.Context) (bool, uuid.UUID, error) {
-	var claimed bool
+	var claimed uuid.UUID
 	var run uuid.UUID
 	now := f.now()
 	err := f.store.InTx(ctx, func(q *db.Queries) error {
@@ -91,7 +132,7 @@ func (f *Firer) fireOne(ctx context.Context) (bool, uuid.UUID, error) {
 		if err != nil {
 			return fmt.Errorf("claim a due schedule: %w", err)
 		}
-		claimed = true
+		claimed = row.ID
 
 		rule, err := when.Parse(row.Kind, row.Rule, row.Timezone, row.Anchor)
 		if err != nil {
@@ -140,10 +181,13 @@ func (f *Firer) fireOne(ctx context.Context) (bool, uuid.UUID, error) {
 		}
 		return save(ctx, q, row)
 	})
+	if err != nil && claimed != uuid.Nil {
+		return false, uuid.Nil, &fireFailed{id: claimed, err: err}
+	}
 	if err != nil {
 		return false, uuid.Nil, err
 	}
-	return claimed, run, nil
+	return claimed != uuid.Nil, run, nil
 }
 
 func save(ctx context.Context, q *db.Queries, row db.Schedule) error {
@@ -154,17 +198,18 @@ func save(ctx context.Context, q *db.Queries, row db.Schedule) error {
 }
 
 // started is what came of starting a fire: its outcome as recorded, the run
-// it started if any, and a reason to pause. An empty outcome is a time
-// already fired.
+// it started if any, and a reason to pause. already is a time that had fired,
+// which starts and records nothing.
 type started struct {
 	outcome, pause string
 	run            uuid.UUID
+	already        bool
 }
 
 // start runs the checks a fire passes, in order, and records the first that
 // fails as the fire's outcome with no run: the maker may still start runs
-// (D9), the team is under its hourly cap (D7), the schedule's last run has
-// finished (D5). Then it writes the fire before the run, so a time already
+// (D9), its agent is still there, the team is under its hourly cap (D7), the
+// schedule's last run has finished (D5). Then it writes the fire before the run, so a time already
 // fired starts nothing, and creates the run. now is to the second, so a run
 // asked for now is its own time. A refusal asked for now records nothing.
 func start(ctx context.Context, q *db.Queries, row db.Schedule, l Limits, slot when.Slot, now time.Time, asked bool) (started, error) {
@@ -190,6 +235,19 @@ func start(ctx context.Context, q *db.Queries, row db.Schedule, l Limits, slot w
 	}
 	if !may {
 		return started{outcome: skippedMaker, pause: MakerCannotRun}, record(skippedMaker)
+	}
+
+	// An agent deleted leaves neither it nor the hub; one still there is held
+	// until the run names it.
+	if !row.Hub && row.AgentID == nil {
+		return started{outcome: skippedTarget, pause: TargetGone}, record(skippedTarget)
+	}
+	if !row.Hub {
+		if _, err := q.HoldAgent(ctx, db.HoldAgentParams{ID: *row.AgentID, TeamID: row.TeamID}); errors.Is(err, pgx.ErrNoRows) {
+			return started{outcome: skippedTarget, pause: TargetGone}, record(skippedTarget)
+		} else if err != nil {
+			return started{}, fmt.Errorf("hold the schedule's agent: %w", err)
+		}
 	}
 
 	if err := q.LockTeamTriggers(ctx, row.TeamID); err != nil {
@@ -221,12 +279,12 @@ func start(ctx context.Context, q *db.Queries, row db.Schedule, l Limits, slot w
 		return started{}, fmt.Errorf("record the fire: %w", err)
 	}
 	if fresh == 0 {
-		return started{}, nil
+		return started{already: true}, nil
 	}
 	id := uuid.New()
 	if _, err := q.CreateTriggeredRun(ctx, db.CreateTriggeredRunParams{
 		ID: id, TeamID: row.TeamID, SessionID: session.ID, UserID: *row.CreatedBy,
-		AgentID: row.AgentID, Input: Input(row, slot),
+		AgentID: row.AgentID, Hub: row.Hub, Input: Input(row, slot),
 	}); err != nil {
 		return started{}, fmt.Errorf("start the schedule's run: %w", err)
 	}

@@ -161,7 +161,7 @@ func TestTheWorkerDoesNotDrainWhenNoModelIsSet(t *testing.T) {
 	}
 	closeJobs()
 
-	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "gateway.replies", "runtime", "improve", "improver", "replay", "watch", "triggers", "sandbox.e2b-templates"}) {
+	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "gateway.replies", "runtime", "improve", "improver", "replay", "watch", "triggers", "retention", "sandbox.e2b-templates"}) {
 		t.Errorf("jobs = %v, want the reaper's, the purge, the replies, the runtime's, improve, the improver, the watch, the schedules and the E2B templates", got)
 	}
 	if !strings.Contains(logs.String(), "EMBEDDING_MODEL is not set") || !strings.Contains(logs.String(), "level=WARN") {
@@ -181,7 +181,7 @@ func TestTheWorkerDrainsWhenAModelIsSet(t *testing.T) {
 	}
 	t.Cleanup(closeJobs)
 
-	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "gateway.replies", "runtime", "graph.drain", "improve", "improver", "replay", "watch", "triggers", "sandbox.e2b-templates"}) {
+	if got := jobNames(jobs); !slices.Equal(got, []string{"reaper.sweep", "teams.purge", "gateway.replies", "runtime", "graph.drain", "improve", "improver", "replay", "watch", "triggers", "retention", "sandbox.e2b-templates"}) {
 		t.Errorf("jobs = %v, want the reaper's, the purge, the replies, the runtime's, the drain, improve, the improver, the watch, the schedules and the E2B templates", got)
 	}
 	if strings.Contains(logs.String(), "not being projected") {

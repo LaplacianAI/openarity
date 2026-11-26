@@ -45,10 +45,13 @@ const (
 	maxGrace = 2 * time.Hour
 	// gapSample is how many fires MinGap looks across.
 	gapSample = 50
-	// maxSlots bounds how many due times are counted; maxMissed how many of
-	// them are kept as missed rows. A history is not a ledger of every miss.
-	maxSlots  = 1000
+	// maxSteps bounds how many due times are walked: a year of a rule that
+	// fires each minute. maxMissed is how many of the newest are kept as
+	// missed rows; a history is not a ledger of every miss.
+	maxSteps  = 600_000
 	maxMissed = 20
+	// everyHour is a cron hour field that names all 24.
+	everyHour = 1<<24 - 1
 )
 
 var parser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
@@ -269,28 +272,37 @@ type Plan struct {
 	Done bool
 }
 
+// pinsHour is a cron rule that names its hours, such as 1:30 each day: the
+// hour the clocks go back repeats 1:30 on the wall, and it means one fire. A
+// rule over every hour means each real hour, the repeated one too.
+func (r Rule) pinsHour() bool {
+	spec, ok := r.spec.(*cron.SpecSchedule)
+	return ok && spec.Hour&everyHour != everyHour
+}
+
 // Due is what a schedule whose next fire was from does at now. Several due
 // times collapse into one: within the grace the newest runs (on time or
 // late); beyond it, or with more than one due, the newest runs as a catch-up
-// and the rest are missed. Never one run per missed time. A time whose local
-// wall time repeats the one before is the hour the clocks go back, and is
-// dropped; lastLocal is the last fire's.
+// and the rest are missed. Never one run per missed time. For a rule that
+// pins its hours, a time whose local wall time repeats the one before is the
+// hour the clocks go back, and is dropped; lastLocal is the last fire's.
 func Due(r Rule, from, now time.Time, lastLocal string) Plan {
+	pinned := r.Kind == Cron && r.pinsHour()
+	// The newest due times, the one to run and the misses kept before it.
 	var slots []time.Time
+	due, prev := 0, lastLocal
 	t, ok := from, true
-	for ok && !t.After(now) && len(slots) < maxSlots {
-		local := t.In(r.Zone).Format(LocalLayout)
-		prev := lastLocal
-		if n := len(slots); n > 0 {
-			prev = slots[n-1].In(r.Zone).Format(LocalLayout)
-		}
-		if r.Kind != Cron || local != prev {
-			slots = append(slots, t)
+	for steps := 0; ok && !t.After(now) && steps < maxSteps; steps++ {
+		if local := t.In(r.Zone).Format(LocalLayout); !pinned || local != prev {
+			due, prev = due+1, local
+			if slots = append(slots, t); len(slots) > maxMissed+1 {
+				slots = slots[1:]
+			}
 		}
 		t, ok = r.Next(t)
 	}
 	if ok && !t.After(now) {
-		// More due than are counted: start again from now.
+		// More due than a year of minutes: start again from now.
 		t, ok = r.Next(now)
 	}
 
@@ -315,19 +327,15 @@ func Due(r Rule, from, now time.Time, lastLocal string) Plan {
 	case r.Kind == At && late > grace:
 		plan.Missed = []time.Time{newest}
 		return plan
-	case len(slots) == 1 && late < lateAfter:
+	case due == 1 && late < lateAfter:
 		slot.Outcome = Started
-	case len(slots) == 1 && late <= grace:
+	case due == 1 && late <= grace:
 		slot.Outcome = Late
 	default:
 		slot.Outcome = CatchUp
 	}
 	plan.Fire = &slot
-	missed := slots[:len(slots)-1]
-	if len(missed) > maxMissed {
-		missed = missed[len(missed)-maxMissed:]
-	}
-	plan.Missed = missed
+	plan.Missed = slots[:len(slots)-1]
 	return plan
 }
 

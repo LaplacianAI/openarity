@@ -29,14 +29,32 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     runs; nothing in the brain deletes a conversation or a run (*user*,
     2026-11-26).
   - **`[silent]` as a whole answer sends nothing** and tells nobody; five
-    failures in a row pause a schedule.
+    failures in a row pause a schedule. A run's end is counted once, however
+    often it is reported; a cancelled run is neither a failure nor news.
+  - **A fire that errors is put off, not retried at once.** Its transaction
+    rolls back, so it would still be the oldest due and be claimed first on
+    every tick, ahead of every other schedule. It is moved a minute on and
+    counted as a failure, in a transaction of its own, so the fifth in a row
+    pauses it as any failing schedule.
+  - **What a schedule does is its maker's alone.** It runs as them, with their
+    permissions, so only they change its name, objective, rule or agent, or
+    run it now. `schedule:manage` sees, pauses, resumes, deletes and takes
+    over everyone's; whoever makes or takes over one must be able to start
+    runs.
+  - **The hub is a choice, not the absence of an agent.** `hub` is stored; an
+    agent deleted sets `agent_id` null and leaves `hub` false, and the
+    schedule pauses as `target_gone` rather than fall to the hub nobody
+    chose.
   - **The rules are written once,** in `internal/triggers`, below the routes,
     for the API, an agent's tools and the jobs.
 - **The worker deletes DBOS's record of finished background work after a
   week.** DBOS v1.2.0 never deletes a workflow row, and every tick of every
-  sweep leaves one. A daily job lists the schedules DBOS runs, then deletes
-  their finished workflows (and the fire batches) older than seven days. Run
-  workflows are kept: the `runs` table is their record.
+  sweep leaves one. `internal/retention`, a job of its own, lists the
+  schedules DBOS runs, then deletes their finished workflows older than seven
+  days, and those of the batches other jobs name to it (the fire batches).
+  What DBOS runs on a schedule is periodic by construction, so nothing is
+  missed when a job is added. Run workflows are kept: the `runs` table is
+  their record.
 - **A workspace is a room running the workspace role, so it works on every
   sandbox provider.** The brain never asks a provider for a shell or a
   filesystem API: it starts `sandbox workspace` in a room through the same

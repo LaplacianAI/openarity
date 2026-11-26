@@ -620,6 +620,7 @@ type Schedule struct {
 	TeamID              uuid.UUID
 	CreatedBy           *uuid.UUID
 	AgentID             *uuid.UUID
+	Hub                 bool
 	Name                string
 	Objective           string
 	Kind                string
@@ -799,6 +800,7 @@ type Watcher struct {
 	TeamID              uuid.UUID
 	CreatedBy           *uuid.UUID
 	AgentID             *uuid.UUID
+	Hub                 bool
 	Name                string
 	Objective           string
 	Source              string

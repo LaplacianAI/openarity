@@ -13,7 +13,7 @@ import (
 )
 
 const claimDueSchedule = `-- name: ClaimDueSchedule :one
-SELECT id, team_id, created_by, agent_id, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
 WHERE status = 'active' AND next_fire_at <= $1::timestamptz
 ORDER BY next_fire_at
 LIMIT 1
@@ -30,6 +30,7 @@ func (q *Queries) ClaimDueSchedule(ctx context.Context, now time.Time) (Schedule
 		&i.TeamID,
 		&i.CreatedBy,
 		&i.AgentID,
+		&i.Hub,
 		&i.Name,
 		&i.Objective,
 		&i.Kind,
@@ -192,15 +193,15 @@ func (q *Queries) CountTriggerRunsInHour(ctx context.Context, arg CountTriggerRu
 const createSchedule = `-- name: CreateSchedule :one
 
 INSERT INTO schedules (
-    id, team_id, created_by, agent_id, name, objective, kind, rule, anchor, timezone,
+    id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone,
     status, next_fire_at, proposed_run, proposed_in
 ) VALUES (
-    $1, $2, $3::uuid, $4,
-    $5, $6, $7, $8, $9,
-    $10, $11, $12,
-    $13, $14
+    $1, $2, $3::uuid, $4, $5,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13,
+    $14, $15
 )
-RETURNING id, team_id, created_by, agent_id, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
 `
 
 type CreateScheduleParams struct {
@@ -208,6 +209,7 @@ type CreateScheduleParams struct {
 	TeamID      uuid.UUID
 	CreatedBy   uuid.UUID
 	AgentID     *uuid.UUID
+	Hub         bool
 	Name        string
 	Objective   string
 	Kind        string
@@ -227,6 +229,7 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.TeamID,
 		arg.CreatedBy,
 		arg.AgentID,
+		arg.Hub,
 		arg.Name,
 		arg.Objective,
 		arg.Kind,
@@ -244,6 +247,7 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.TeamID,
 		&i.CreatedBy,
 		&i.AgentID,
+		&i.Hub,
 		&i.Name,
 		&i.Objective,
 		&i.Kind,
@@ -321,7 +325,7 @@ INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, us
                   token_budget, hub, builder, reply_to_channel, transcript)
 SELECT $1::uuid, ss.team_id, ss.id, $1::uuid,
        a.id, coalesce(a.name, 'orchestrator'), $2::uuid, $3::text,
-       a.token_budget, $4::uuid IS NULL, false,
+       a.token_budget, $4::bool, false,
        -- The dashboard's answer is its stream: there is nothing to post it to.
        ch.provider <> 'dashboard',
        'session:' || ss.id::text
@@ -329,9 +333,11 @@ FROM sessions ss
 JOIN channels ch ON ch.id = ss.channel_id
 LEFT JOIN team_settings ts ON ts.team_id = ss.team_id
 LEFT JOIN agents a ON a.team_id = ss.team_id
-                  AND a.id = coalesce($4::uuid, ts.hub_agent_id)
-WHERE ss.id = $5 AND ss.team_id = $6
+                  AND a.id = CASE WHEN $4::bool THEN ts.hub_agent_id
+                                  ELSE $5::uuid END
+WHERE ss.id = $6 AND ss.team_id = $7
   AND (ss.schedule_id IS NOT NULL OR ss.watcher_id IS NOT NULL)
+  AND ($4::bool OR a.id IS NOT NULL)
 RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since, cached_input_tokens
 `
 
@@ -339,6 +345,7 @@ type CreateTriggeredRunParams struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
 	Input     string
+	Hub       bool
 	AgentID   *uuid.UUID
 	SessionID uuid.UUID
 	TeamID    uuid.UUID
@@ -346,12 +353,14 @@ type CreateTriggeredRunParams struct {
 
 // A run a schedule or a watcher starts: in its own conversation, as its maker,
 // by its agent or the hub. Nothing is asked of it by a message, so it names
-// none; a session that is no trigger's inserts nothing.
+// none. A session that is no trigger's, or an agent that is not the team's,
+// inserts nothing.
 func (q *Queries) CreateTriggeredRun(ctx context.Context, arg CreateTriggeredRunParams) (Run, error) {
 	row := q.db.QueryRow(ctx, createTriggeredRun,
 		arg.ID,
 		arg.UserID,
 		arg.Input,
+		arg.Hub,
 		arg.AgentID,
 		arg.SessionID,
 		arg.TeamID,
@@ -396,6 +405,35 @@ func (q *Queries) CreateTriggeredRun(ctx context.Context, arg CreateTriggeredRun
 	return i, err
 }
 
+const deferFailedFire = `-- name: DeferFailedFire :one
+UPDATE schedules SET
+    consecutive_failures = consecutive_failures + 1,
+    status = CASE WHEN consecutive_failures + 1 >= $1::int THEN 'paused' ELSE status END,
+    paused_reason = CASE WHEN consecutive_failures + 1 >= $1::int THEN 'failing' END,
+    next_fire_at = CASE WHEN consecutive_failures + 1 >= $1::int THEN NULL
+                        ELSE $2::timestamptz END,
+    updated_at = now()
+WHERE id = $3 AND status = 'active'
+RETURNING status
+`
+
+type DeferFailedFireParams struct {
+	PauseAfter int32
+	RetryAt    time.Time
+	ID         uuid.UUID
+}
+
+// A fire that could not even be tried, an error rather than a refusal,
+// counted as a failed run: it is tried again at retry_at, and the fifth in a
+// row pauses the schedule. Pushed past now, so the next claim takes another
+// schedule rather than this one again.
+func (q *Queries) DeferFailedFire(ctx context.Context, arg DeferFailedFireParams) (string, error) {
+	row := q.db.QueryRow(ctx, deferFailedFire, arg.PauseAfter, arg.RetryAt, arg.ID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const expireProposedSchedules = `-- name: ExpireProposedSchedules :execrows
 WITH gone AS (
     UPDATE schedules SET status = 'deleted', deleted_at = now(), updated_at = now()
@@ -417,7 +455,7 @@ func (q *Queries) ExpireProposedSchedules(ctx context.Context, before time.Time)
 }
 
 const getScheduleView = `-- name: GetScheduleView :one
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -446,6 +484,7 @@ func (q *Queries) GetScheduleView(ctx context.Context, arg GetScheduleViewParams
 		&i.Schedule.TeamID,
 		&i.Schedule.CreatedBy,
 		&i.Schedule.AgentID,
+		&i.Schedule.Hub,
 		&i.Schedule.Name,
 		&i.Schedule.Objective,
 		&i.Schedule.Kind,
@@ -495,6 +534,24 @@ func (q *Queries) GetTriggerSessionOfSchedule(ctx context.Context, scheduleID *u
 	return i, err
 }
 
+const holdAgent = `-- name: HoldAgent :one
+SELECT id FROM agents WHERE id = $1 AND team_id = $2 FOR KEY SHARE
+`
+
+type HoldAgentParams struct {
+	ID     uuid.UUID
+	TeamID uuid.UUID
+}
+
+// The agent a fire is about to start, held so it cannot be deleted before
+// the run names it. No row is an agent gone.
+func (q *Queries) HoldAgent(ctx context.Context, arg HoldAgentParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, holdAgent, arg.ID, arg.TeamID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertScheduleFire = `-- name: InsertScheduleFire :execrows
 INSERT INTO schedule_fires (schedule_id, team_id, scheduled_for, fired_at, outcome, run_id)
 VALUES ($1, $2, $3, $4,
@@ -529,21 +586,27 @@ func (q *Queries) InsertScheduleFire(ctx context.Context, arg InsertScheduleFire
 
 const listScheduleFires = `-- name: ListScheduleFires :many
 SELECT schedule_id, team_id, scheduled_for, fired_at, outcome, run_id, seen_at FROM schedule_fires
-WHERE schedule_id = $1
-  AND ($2::timestamptz IS NULL OR scheduled_for < $2::timestamptz)
+WHERE schedule_id = $1 AND team_id = $2
+  AND ($3::timestamptz IS NULL OR scheduled_for < $3::timestamptz)
 ORDER BY scheduled_for DESC
-LIMIT $3
+LIMIT $4
 `
 
 type ListScheduleFiresParams struct {
 	ScheduleID uuid.UUID
+	TeamID     uuid.UUID
 	Before     *time.Time
 	PageSize   int32
 }
 
 // A schedule's fires, newest first, a page at a time.
 func (q *Queries) ListScheduleFires(ctx context.Context, arg ListScheduleFiresParams) ([]ScheduleFire, error) {
-	rows, err := q.db.Query(ctx, listScheduleFires, arg.ScheduleID, arg.Before, arg.PageSize)
+	rows, err := q.db.Query(ctx, listScheduleFires,
+		arg.ScheduleID,
+		arg.TeamID,
+		arg.Before,
+		arg.PageSize,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +641,7 @@ JOIN sessions ss ON ss.schedule_id = s.id
 JOIN channels ch ON ch.id = ss.channel_id
 WHERE s.team_id = $1 AND s.created_by = $2::uuid
   AND s.status <> 'deleted' AND f.seen_at IS NULL
-  AND (f.outcome IN ('failed', 'skipped_busy', 'skipped_cap', 'skipped_maker', 'missed')
+  AND (f.outcome IN ('failed', 'skipped_busy', 'skipped_cap', 'skipped_maker', 'skipped_target', 'missed')
        OR (f.outcome = 'answered' AND ch.provider = 'dashboard'))
 ORDER BY f.fired_at DESC, f.schedule_id
 LIMIT $3
@@ -632,7 +695,7 @@ func (q *Queries) ListScheduleNews(ctx context.Context, arg ListScheduleNewsPara
 }
 
 const listScheduleViews = `-- name: ListScheduleViews :many
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -689,6 +752,7 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 			&i.Schedule.TeamID,
 			&i.Schedule.CreatedBy,
 			&i.Schedule.AgentID,
+			&i.Schedule.Hub,
 			&i.Schedule.Name,
 			&i.Schedule.Objective,
 			&i.Schedule.Kind,
@@ -721,7 +785,7 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 }
 
 const lockSchedule = `-- name: LockSchedule :one
-SELECT id, team_id, created_by, agent_id, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
 WHERE id = $1 AND team_id = $2 AND status <> 'deleted'
 FOR UPDATE
 `
@@ -739,6 +803,7 @@ func (q *Queries) LockSchedule(ctx context.Context, arg LockScheduleParams) (Sch
 		&i.TeamID,
 		&i.CreatedBy,
 		&i.AgentID,
+		&i.Hub,
 		&i.Name,
 		&i.Objective,
 		&i.Kind,
@@ -764,9 +829,8 @@ const lockTeamTriggers = `-- name: LockTeamTriggers :exec
 SELECT pg_advisory_xact_lock(hashtextextended('triggers:' || $1::uuid::text, 0))
 `
 
-// Serialises a team's creates, resumes and fires, so two cannot both slip
-// under a limit counted before either wrote. Held to the end of the
-// transaction.
+// Serialises a team's creates and fires, so two cannot both slip under a
+// limit counted before either wrote. Held to the end of the transaction.
 func (q *Queries) LockTeamTriggers(ctx context.Context, teamID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockTeamTriggers, teamID)
 	return err
@@ -844,27 +908,29 @@ const saveSchedule = `-- name: SaveSchedule :one
 UPDATE schedules SET
     created_by    = $1,
     agent_id      = $2,
-    name          = $3,
-    objective     = $4,
-    kind          = $5,
-    rule          = $6,
-    anchor        = $7,
-    timezone      = $8,
-    status        = $9,
-    paused_reason = $10,
-    deleted_at    = $11,
-    next_fire_at  = $12,
-    last_fired_at = $13,
-    last_local    = $14,
-    consecutive_failures = $15,
+    hub           = $3,
+    name          = $4,
+    objective     = $5,
+    kind          = $6,
+    rule          = $7,
+    anchor        = $8,
+    timezone      = $9,
+    status        = $10,
+    paused_reason = $11,
+    deleted_at    = $12,
+    next_fire_at  = $13,
+    last_fired_at = $14,
+    last_local    = $15,
+    consecutive_failures = $16,
     updated_at    = now()
-WHERE id = $16
-RETURNING id, team_id, created_by, agent_id, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
+WHERE id = $17
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
 `
 
 type SaveScheduleParams struct {
 	CreatedBy           *uuid.UUID
 	AgentID             *uuid.UUID
+	Hub                 bool
 	Name                string
 	Objective           string
 	Kind                string
@@ -887,6 +953,7 @@ func (q *Queries) SaveSchedule(ctx context.Context, arg SaveScheduleParams) (Sch
 	row := q.db.QueryRow(ctx, saveSchedule,
 		arg.CreatedBy,
 		arg.AgentID,
+		arg.Hub,
 		arg.Name,
 		arg.Objective,
 		arg.Kind,
@@ -908,6 +975,7 @@ func (q *Queries) SaveSchedule(ctx context.Context, arg SaveScheduleParams) (Sch
 		&i.TeamID,
 		&i.CreatedBy,
 		&i.AgentID,
+		&i.Hub,
 		&i.Name,
 		&i.Objective,
 		&i.Kind,
@@ -951,7 +1019,7 @@ func (q *Queries) ScheduleIDByName(ctx context.Context, arg ScheduleIDByNamePara
 
 const setFireOutcome = `-- name: SetFireOutcome :one
 UPDATE schedule_fires SET outcome = $1
-WHERE run_id = $2
+WHERE run_id = $2 AND outcome IN ('started', 'late', 'catch_up')
 RETURNING schedule_id
 `
 
@@ -960,7 +1028,9 @@ type SetFireOutcomeParams struct {
 	RunID   *uuid.UUID
 }
 
-// How a fired run ended, on its fire. No row is a run no schedule started.
+// How a fired run ended, on its fire, once: only a fire still waiting on its
+// run takes it. No row is a run no schedule started, or an end already
+// recorded, and neither is counted again.
 func (q *Queries) SetFireOutcome(ctx context.Context, arg SetFireOutcomeParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, setFireOutcome, arg.Outcome, arg.RunID)
 	var schedule_id uuid.UUID

@@ -34,7 +34,6 @@ func TestTheCronsParseAsDBOSReadsThem(t *testing.T) {
 	}{
 		{tickCron, time.Minute, -1, -1, 0},
 		{hourlyCron, time.Hour, -1, 7, 0},
-		{retentionCron, 24 * time.Hour, 3, 40, 0},
 	} {
 		s, err := dbosParser().Parse(c.spec)
 		if err != nil {
@@ -58,7 +57,7 @@ func TestTheJobsSchedulesAreWhatTheyClaim(t *testing.T) {
 		t.Errorf("Name = %q", j.Name())
 	}
 	want := map[string]string{
-		tickSchedule: tickWorkflow, hourlySchedule: hourlyWorkflow, retentionSchedule: retentionWorkflow,
+		tickSchedule: tickWorkflow, hourlySchedule: hourlyWorkflow,
 	}
 	specs := j.schedules()
 	if len(specs) != len(want) {
@@ -166,34 +165,5 @@ func TestATickFiresWhatIsDueThroughItsBatches(t *testing.T) {
 	}
 	if n := l.count(t, `SELECT count(*) FROM runs WHERE session_id = $1`, v.SessionID); n != 1 {
 		t.Errorf("%d runs after the tick ran again, want 1", n)
-	}
-}
-
-// Retention deletes the record of finished background work older than a
-// week, and nothing newer.
-func TestRetentionDeletesOnlyOldFinishedWork(t *testing.T) {
-	l := launch(t)
-	l.clock = time.Now()
-	for _, minute := range []string{"old", "new"} {
-		h, err := dbos.Enqueue[string](l.d, FireQueue, fireWorkflow, minute, dbos.WithEnqueueWorkflowID("fire:"+minute))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := h.GetResult(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	l.exec(t, `UPDATE `+l.schema+`.workflow_status SET completed_at = $1 WHERE workflow_uuid = 'fire:old'`,
-		l.clock.Add(-8*24*time.Hour).UnixMilli())
-
-	n, err := l.job.retainOnce(t.Context())
-	if err != nil || n != 1 {
-		t.Fatalf("retainOnce = %d, %v; want the one old batch", n, err)
-	}
-	if got := l.count(t, `SELECT count(*) FROM `+l.schema+`.workflow_status WHERE workflow_uuid = 'fire:old'`); got != 0 {
-		t.Errorf("the old batch is still recorded")
-	}
-	if got := l.count(t, `SELECT count(*) FROM `+l.schema+`.workflow_status WHERE workflow_uuid = 'fire:new'`); got != 1 {
-		t.Errorf("the new batch was deleted")
 	}
 }

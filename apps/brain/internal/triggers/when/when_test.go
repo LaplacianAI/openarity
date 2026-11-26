@@ -182,11 +182,18 @@ func TestDueKeepsOnlyTheNewestMissed(t *testing.T) {
 	}
 }
 
-func TestDueStartsAgainFromNowPastTheCount(t *testing.T) {
+func TestDueRunsTheNewestAfterALongGap(t *testing.T) {
+	// Eleven months of every five minutes: about 96,000 due times.
 	r := mustParse(t, "every", "300", "UTC", utc("2026-01-01T00:00:00Z"))
 	p := Due(r, utc("2026-01-01T00:00:00Z"), utc("2026-12-01T00:02:00Z"), "")
 	if p.Fire == nil || p.Fire.Outcome != CatchUp {
 		t.Fatalf("fire = %+v, want a catch-up", p.Fire)
+	}
+	if want := utc("2026-12-01T00:00:00Z"); !p.Fire.ScheduledFor.Equal(want) {
+		t.Errorf("the catch-up is for %s, want the newest due time %s", p.Fire.ScheduledFor, want)
+	}
+	if len(p.Missed) != maxMissed || !p.Missed[len(p.Missed)-1].Equal(utc("2026-11-30T23:55:00Z")) {
+		t.Errorf("missed = %d ending %v, want the %d before the catch-up", len(p.Missed), p.Missed[len(p.Missed)-1], maxMissed)
 	}
 	if want := utc("2026-12-01T00:05:00Z"); !p.Next.Equal(want) {
 		t.Errorf("next = %s, want %s: the fire after now, not the one after the last counted", p.Next, want)
@@ -238,6 +245,19 @@ func TestDaylightSaving(t *testing.T) {
 		again := Due(r, p.Next, utc("2026-10-25T02:00:00Z"), p.Fire.Local)
 		if again.Fire != nil && again.Fire.Local == p.Fire.Local {
 			t.Errorf("01:30 fired twice: %s and %s", p.Fire.ScheduledFor, again.Fire.ScheduledFor)
+		}
+	})
+	t.Run("fall back fires both real hours of an hourly rule", func(t *testing.T) {
+		// Each hour is a real hour: 01:00 BST and 01:00 GMT are an hour apart.
+		r := mustParse(t, "cron", "0 * * * *", "Europe/London", time.Time{})
+		first := utc("2026-10-25T00:00:00Z") // 01:00 BST
+		p := Due(r, first, utc("2026-10-25T00:00:30Z"), "")
+		if p.Fire == nil {
+			t.Fatal("the first 01:00 did not fire")
+		}
+		again := Due(r, p.Next, utc("2026-10-25T01:00:30Z"), p.Fire.Local)
+		if again.Fire == nil || !again.Fire.ScheduledFor.Equal(utc("2026-10-25T01:00:00Z")) {
+			t.Errorf("the second 01:00 (GMT) = %+v, want it to fire", again.Fire)
 		}
 	})
 	t.Run("upcoming names the new offset after a change", func(t *testing.T) {

@@ -31,6 +31,9 @@ const (
 	Failing        = "failing"
 	MakerCannotRun = "maker_cannot_run"
 	MakerGone      = "maker_gone"
+	// TargetGone is a schedule whose agent was deleted: it pauses rather than
+	// fall to the hub, which nobody chose.
+	TargetGone = "target_gone"
 )
 
 const (
@@ -56,13 +59,22 @@ type ScheduleInput struct {
 	AgentID         *uuid.UUID
 }
 
-// SchedulePatch changes what it sets. Hub sets the agent back to the hub.
+// SchedulePatch changes what it sets, all at once or none of it. Hub sets the
+// agent back to the hub; Status pauses or resumes. What it does (name,
+// objective, rule, agent) is the maker's alone to change, as it runs as them;
+// one who manages everyone's may pause and resume it.
 type SchedulePatch struct {
 	Name, Objective *string
 	When            *When
 	Timezone        *string
 	AgentID         *uuid.UUID
 	Hub             bool
+	Status          *string
+}
+
+// changesWhatItDoes is a patch that sets more than the status.
+func (p SchedulePatch) changesWhatItDoes() bool {
+	return p.Name != nil || p.Objective != nil || p.When != nil || p.Timezone != nil || p.AgentID != nil || p.Hub
 }
 
 // Ref picks a schedule by id, or by name among the caller's own.
@@ -128,6 +140,10 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 		if err := agentInTeam(ctx, q, who.Team, in.AgentID); err != nil {
 			return err
 		}
+		if err := mayRun(ctx, q, who.Team, who.User, Forbidden,
+			"you may not start runs in this team, so a schedule of yours could not run"); err != nil {
+			return err
+		}
 		if err := underLimits(ctx, q, who.Team, who.User, l); err != nil {
 			return err
 		}
@@ -136,7 +152,7 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 			return fmt.Errorf("read the dashboard channel: %w", err)
 		}
 		row := db.CreateScheduleParams{
-			ID: id, TeamID: who.Team, CreatedBy: who.User, AgentID: in.AgentID,
+			ID: id, TeamID: who.Team, CreatedBy: who.User, AgentID: in.AgentID, Hub: in.AgentID == nil,
 			Name: name, Objective: objective, Kind: string(rule.Kind), Rule: rule.Stored(),
 			Anchor: rule.Anchor, Timezone: zone, Status: Active, NextFireAt: &first,
 		}
@@ -196,80 +212,53 @@ func (s *Service) ListSchedules(ctx context.Context, who Who, everyone bool, sta
 	return out, nil
 }
 
-// Fires is a schedule's history, newest first.
+// Fires is the history, newest first, of a schedule the caller may see.
 func (s *Service) Fires(ctx context.Context, who Who, ref Ref, before *time.Time, limit int32) ([]db.ScheduleFire, error) {
 	id, err := s.resolve(ctx, who, ref)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.store.ListScheduleFires(ctx, db.ListScheduleFiresParams{ScheduleID: id, Before: before, PageSize: limit})
+	// resolve trusts an id as given: whose it is, and which team's, is view's.
+	if _, err := s.view(ctx, who, id); err != nil {
+		return nil, err
+	}
+	rows, err := s.store.ListScheduleFires(ctx, db.ListScheduleFiresParams{
+		ScheduleID: id, TeamID: who.Team, Before: before, PageSize: limit,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list the schedule's fires: %w", err)
 	}
 	return rows, nil
 }
 
-// UpdateSchedule changes what the patch sets. A new rule or zone moves the
-// next fire; the conversation it answers in never moves.
+// UpdateSchedule changes what the patch sets, in one transaction. A new rule
+// or zone moves the next fire; the conversation it answers in never moves.
 func (s *Service) UpdateSchedule(ctx context.Context, who Who, ref Ref, p SchedulePatch) (ScheduleView, error) {
+	if p.Status != nil && *p.Status != Active && *p.Status != Paused {
+		return ScheduleView{}, refuse(Invalid, "status is active or paused")
+	}
 	l, err := s.limits(ctx, who.Team)
 	if err != nil {
 		return ScheduleView{}, err
 	}
 	now := s.now()
 	id, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
-		if p.Name != nil || p.Objective != nil {
-			name, objective := row.Name, row.Objective
-			if p.Name != nil {
-				name = *p.Name
-			}
-			if p.Objective != nil {
-				objective = *p.Objective
-			}
-			var err error
-			if row.Name, row.Objective, err = named(name, objective); err != nil {
+		if p.changesWhatItDoes() {
+			if err := ownsIt(who, *row); err != nil {
 				return err
 			}
+		}
+		if err := applyPatch(ctx, q, row, p, l, now); err != nil {
+			return err
 		}
 		switch {
-		case p.Hub:
-			row.AgentID = nil
-		case p.AgentID != nil:
-			if err := agentInTeam(ctx, q, row.TeamID, p.AgentID); err != nil {
-				return err
-			}
-			row.AgentID = p.AgentID
-		}
-		if p.When == nil && p.Timezone == nil {
+		case p.Status == nil || *p.Status == row.Status:
 			return nil
+		case *p.Status == Paused:
+			return pauseRow(row)
+		default:
+			return resumeRow(ctx, q, row, now)
 		}
-		if row.Status == Done {
-			return refuse(Conflict, "this schedule has already run; make a new one")
-		}
-		zone := row.Timezone
-		if p.Timezone != nil {
-			zone = *p.Timezone
-		}
-		var rule when.Rule
-		var err error
-		if p.When != nil {
-			rule, err = ruleFor(*p.When, zone, now, l.MinInterval)
-		} else if rule, err = when.Parse(row.Kind, row.Rule, zone, row.Anchor); err == nil {
-			err = checked(rule, now, l.MinInterval)
-		}
-		if err != nil {
-			return asInvalid(err)
-		}
-		row.Kind, row.Rule, row.Anchor, row.Timezone = string(rule.Kind), rule.Stored(), rule.Anchor, zone
-		row.LastLocal = nil
-		if row.Status == Active {
-			next, ok := rule.Next(now)
-			if !ok {
-				return refuse(Invalid, "the schedule never fires")
-			}
-			row.NextFireAt = &next
-		}
-		return nil
 	})
 	if err != nil {
 		return ScheduleView{}, err
@@ -277,15 +266,67 @@ func (s *Service) UpdateSchedule(ctx context.Context, who Who, ref Ref, p Schedu
 	return s.view(ctx, who, id)
 }
 
+// applyPatch sets what the patch names on row, checked as a create checks it.
+func applyPatch(ctx context.Context, q *db.Queries, row *db.Schedule, p SchedulePatch, l Limits, now time.Time) error {
+	if p.Name != nil || p.Objective != nil {
+		name, objective := row.Name, row.Objective
+		if p.Name != nil {
+			name = *p.Name
+		}
+		if p.Objective != nil {
+			objective = *p.Objective
+		}
+		var err error
+		if row.Name, row.Objective, err = named(name, objective); err != nil {
+			return err
+		}
+	}
+	switch {
+	case p.Hub:
+		row.AgentID, row.Hub = nil, true
+	case p.AgentID != nil:
+		if err := agentInTeam(ctx, q, row.TeamID, p.AgentID); err != nil {
+			return err
+		}
+		row.AgentID, row.Hub = p.AgentID, false
+	}
+	if p.When == nil && p.Timezone == nil {
+		return nil
+	}
+	if row.Status == Done {
+		return refuse(Conflict, "this schedule has already run; make a new one")
+	}
+	zone := row.Timezone
+	if p.Timezone != nil {
+		zone = *p.Timezone
+	}
+	var rule when.Rule
+	var err error
+	if p.When != nil {
+		rule, err = ruleFor(*p.When, zone, now, l.MinInterval)
+	} else if rule, err = when.Parse(row.Kind, row.Rule, zone, row.Anchor); err == nil {
+		err = checked(rule, now, l.MinInterval)
+	}
+	if err != nil {
+		return asInvalid(err)
+	}
+	row.Kind, row.Rule, row.Anchor, row.Timezone = string(rule.Kind), rule.Stored(), rule.Anchor, zone
+	row.LastLocal = nil
+	if row.Status == Active {
+		next, ok := rule.Next(now)
+		if !ok {
+			return refuse(Invalid, "the schedule never fires")
+		}
+		row.NextFireAt = &next
+	}
+	return nil
+}
+
 // Pause stops a schedule until it is resumed. Missed fires are not caught up
 // after.
 func (s *Service) Pause(ctx context.Context, who Who, ref Ref) (ScheduleView, error) {
 	id, err := s.change(ctx, who, ref, func(_ *db.Queries, row *db.Schedule) error {
-		if row.Status != Active {
-			return refuse(Conflict, "only an active schedule can be paused; this one is %s", row.Status)
-		}
-		row.Status, row.PausedReason, row.NextFireAt = Paused, ptr(ByPerson), nil
-		return nil
+		return pauseRow(row)
 	})
 	if err != nil {
 		return ScheduleView{}, err
@@ -294,38 +335,50 @@ func (s *Service) Pause(ctx context.Context, who Who, ref Ref) (ScheduleView, er
 }
 
 // Resume starts a paused schedule again from now, as long as its maker may
-// still start runs.
+// still start runs and its agent is still there.
 func (s *Service) Resume(ctx context.Context, who Who, ref Ref) (ScheduleView, error) {
 	now := s.now()
 	id, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
-		if row.Status != Paused {
-			return refuse(Conflict, "only a paused schedule can be resumed; this one is %s", row.Status)
-		}
-		if row.CreatedBy == nil {
-			return refuse(Conflict, "the person who made this schedule has left; an admin can take it over first")
-		}
-		may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: runWrite})
-		if err != nil {
-			return fmt.Errorf("check the maker may start runs: %w", err)
-		}
-		if !may {
-			return refuse(Conflict, "the person who made this schedule may no longer start runs in this team")
-		}
-		rule, err := when.Parse(row.Kind, row.Rule, row.Timezone, row.Anchor)
-		if err != nil {
-			return asInvalid(err)
-		}
-		next, ok := rule.Next(now)
-		if !ok {
-			return refuse(Conflict, "this schedule's time has passed; give it a new one")
-		}
-		row.Status, row.PausedReason, row.NextFireAt, row.ConsecutiveFailures = Active, nil, &next, 0
-		return nil
+		return resumeRow(ctx, q, row, now)
 	})
 	if err != nil {
 		return ScheduleView{}, err
 	}
 	return s.view(ctx, who, id)
+}
+
+func pauseRow(row *db.Schedule) error {
+	if row.Status != Active {
+		return refuse(Conflict, "only an active schedule can be paused; this one is %s", row.Status)
+	}
+	row.Status, row.PausedReason, row.NextFireAt = Paused, ptr(ByPerson), nil
+	return nil
+}
+
+func resumeRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Time) error {
+	if row.Status != Paused {
+		return refuse(Conflict, "only a paused schedule can be resumed; this one is %s", row.Status)
+	}
+	if row.CreatedBy == nil {
+		return refuse(Conflict, "the person who made this schedule has left; an admin can take it over first")
+	}
+	if err := mayRun(ctx, q, row.TeamID, *row.CreatedBy, Conflict,
+		"the person who made this schedule may no longer start runs in this team"); err != nil {
+		return err
+	}
+	if !row.Hub && row.AgentID == nil {
+		return refuse(Conflict, "the agent this schedule ran was deleted; choose another, or the hub, first")
+	}
+	rule, err := when.Parse(row.Kind, row.Rule, row.Timezone, row.Anchor)
+	if err != nil {
+		return asInvalid(err)
+	}
+	next, ok := rule.Next(now)
+	if !ok {
+		return refuse(Conflict, "this schedule's time has passed; give it a new one")
+	}
+	row.Status, row.PausedReason, row.NextFireAt, row.ConsecutiveFailures = Active, nil, &next, 0
+	return nil
 }
 
 // Confirm makes a proposal active. From an agent's tool, only a run started by
@@ -419,6 +472,11 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			(*row.PausedReason != MakerGone && *row.PausedReason != MakerCannotRun) {
 			return refuse(Conflict, "only a schedule paused because its maker left or may no longer run can be taken over")
 		}
+		// It runs as whoever takes it, so they must be able to run.
+		if err := mayRun(ctx, q, row.TeamID, who.User, Conflict,
+			"you may not start runs in this team, so a schedule taken over by you could not run"); err != nil {
+			return err
+		}
 		row.CreatedBy = &who.User
 		if err := q.SetTriggerSessionUser(ctx, db.SetTriggerSessionUserParams{UserID: who.User, ScheduleID: row.ID}); err != nil {
 			return fmt.Errorf("hand over the schedule's conversation: %w", err)
@@ -441,6 +499,9 @@ func (s *Service) RunNow(ctx context.Context, who Who, ref Ref) (uuid.UUID, erro
 	now := s.now().Truncate(time.Second)
 	var run uuid.UUID
 	_, err = s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
+		if err := ownsIt(who, *row); err != nil {
+			return err
+		}
 		if row.Status == Proposed {
 			return refuse(Conflict, "confirm this schedule before running it")
 		}
@@ -449,15 +510,17 @@ func (s *Service) RunNow(ctx context.Context, who Who, ref Ref) (uuid.UUID, erro
 		if err != nil {
 			return err
 		}
-		switch st.outcome {
-		case "skipped_maker":
-			return refuse(Conflict, "the person who made this schedule may no longer start runs in this team")
-		case "skipped_cap":
-			return refuse(Limit, "this team's schedules and watchers have started %d runs in the last hour, which is its limit", l.FiresPerHour)
-		case "skipped_busy":
-			return refuse(Conflict, "the schedule's last run is still working; try again when it has finished")
-		case "":
+		switch {
+		case st.already:
 			return refuse(Conflict, "this schedule was just run; try again in a moment")
+		case st.outcome == skippedMaker:
+			return refuse(Conflict, "the person who made this schedule may no longer start runs in this team")
+		case st.outcome == skippedTarget:
+			return refuse(Conflict, "the agent this schedule ran was deleted; choose another, or the hub, first")
+		case st.outcome == skippedCap:
+			return refuse(Limit, "this team's schedules and watchers have started %d runs in the last hour, which is its limit", l.FiresPerHour)
+		case st.outcome == skippedBusy:
+			return refuse(Conflict, "the schedule's last run is still working; try again when it has finished")
 		}
 		run = st.run
 		return nil
@@ -465,8 +528,9 @@ func (s *Service) RunNow(ctx context.Context, who Who, ref Ref) (uuid.UUID, erro
 	if err != nil {
 		return uuid.Nil, err
 	}
-	// A lost enqueue is started by the runtime's sweep.
-	_ = s.runs.Enqueue(ctx, run)
+	if err := s.runs.Enqueue(ctx, run); err != nil {
+		s.logger.WarnContext(ctx, "A schedule's run was not enqueued; the runtime's sweep will start it", "run_id", run, "error", err)
+	}
 	return run, nil
 }
 
@@ -560,7 +624,20 @@ func viewOf(row db.Schedule, session uuid.UUID, last string, now time.Time) Sche
 
 // mine is a schedule the caller made, or one they may manage.
 func mine(who Who, row db.Schedule) bool {
-	return who.Manage || (row.CreatedBy != nil && *row.CreatedBy == who.User)
+	return who.Manage || made(who, row)
+}
+
+func made(who Who, row db.Schedule) bool {
+	return row.CreatedBy != nil && *row.CreatedBy == who.User
+}
+
+// ownsIt holds what a schedule does, and running it, to its maker: its runs
+// are theirs, with their permissions, so nobody else words or starts them.
+func ownsIt(who Who, row db.Schedule) error {
+	if made(who, row) {
+		return nil
+	}
+	return refuse(Forbidden, "only the person who made this schedule may change what it does or run it")
 }
 
 // ruleFor reads a rule as asked: an interval's first fire is one interval
@@ -647,7 +724,7 @@ func nameTaken(err error, name string) error {
 
 func saveOf(r db.Schedule) db.SaveScheduleParams {
 	return db.SaveScheduleParams{
-		ID: r.ID, CreatedBy: r.CreatedBy, AgentID: r.AgentID, Name: r.Name, Objective: r.Objective,
+		ID: r.ID, CreatedBy: r.CreatedBy, AgentID: r.AgentID, Hub: r.Hub, Name: r.Name, Objective: r.Objective,
 		Kind: r.Kind, Rule: r.Rule, Anchor: r.Anchor, Timezone: r.Timezone, Status: r.Status,
 		PausedReason: r.PausedReason, DeletedAt: r.DeletedAt, NextFireAt: r.NextFireAt,
 		LastFiredAt: r.LastFiredAt, LastLocal: r.LastLocal, ConsecutiveFailures: r.ConsecutiveFailures,

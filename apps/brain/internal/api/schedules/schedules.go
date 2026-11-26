@@ -229,6 +229,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		}
 		patch := triggers.SchedulePatch{
 			Name: req.Name, Objective: req.Objective, Timezone: req.Timezone, AgentID: req.AgentID, Hub: req.Hub,
+			Status: req.Status,
 		}
 		if req.Hub && req.AgentID != nil {
 			http.Error(w, "give agent_id or hub, not both", http.StatusBadRequest)
@@ -245,14 +246,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "status must be active or paused", http.StatusBadRequest)
 			return triggers.ScheduleView{}, errAnswered
 		}
-		v, err := h.service.UpdateSchedule(r.Context(), who, ref, patch)
-		if err != nil || req.Status == nil || *req.Status == v.Status {
-			return v, err
-		}
-		if *req.Status == triggers.Paused {
-			return h.service.Pause(r.Context(), who, ref)
-		}
-		return h.service.Resume(r.Context(), who, ref)
+		return h.service.UpdateSchedule(r.Context(), who, ref, patch)
 	})
 }
 

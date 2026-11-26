@@ -2,10 +2,10 @@
 
 -- name: CreateSchedule :one
 INSERT INTO schedules (
-    id, team_id, created_by, agent_id, name, objective, kind, rule, anchor, timezone,
+    id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone,
     status, next_fire_at, proposed_run, proposed_in
 ) VALUES (
-    sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'),
+    sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'), sqlc.arg('hub'),
     sqlc.arg('name'), sqlc.arg('objective'), sqlc.arg('kind'), sqlc.arg('rule'), sqlc.arg('anchor'),
     sqlc.arg('timezone'), sqlc.arg('status'), sqlc.narg('next_fire_at'),
     sqlc.narg('proposed_run'), sqlc.narg('proposed_in')
@@ -23,9 +23,8 @@ VALUES (
 )
 RETURNING *;
 
--- Serialises a team's creates, resumes and fires, so two cannot both slip
--- under a limit counted before either wrote. Held to the end of the
--- transaction.
+-- Serialises a team's creates and fires, so two cannot both slip under a
+-- limit counted before either wrote. Held to the end of the transaction.
 -- name: LockTeamTriggers :exec
 SELECT pg_advisory_xact_lock(hashtextextended('triggers:' || sqlc.arg('team_id')::uuid::text, 0));
 
@@ -63,6 +62,7 @@ WHERE team_id = sqlc.arg('team_id') AND created_by = sqlc.arg('maker')::uuid
 UPDATE schedules SET
     created_by    = sqlc.narg('created_by'),
     agent_id      = sqlc.narg('agent_id'),
+    hub           = sqlc.arg('hub'),
     name          = sqlc.arg('name'),
     objective     = sqlc.arg('objective'),
     kind          = sqlc.arg('kind'),
@@ -141,6 +141,11 @@ ON CONFLICT (schedule_id, scheduled_for) DO NOTHING;
 UPDATE schedule_fires SET run_id = sqlc.arg('run_id')
 WHERE schedule_id = sqlc.arg('schedule_id') AND scheduled_for = sqlc.arg('scheduled_for');
 
+-- The agent a fire is about to start, held so it cannot be deleted before
+-- the run names it. No row is an agent gone.
+-- name: HoldAgent :one
+SELECT id FROM agents WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id') FOR KEY SHARE;
+
 -- Runs a team's schedules and watchers started in the hour before now: what
 -- the hourly cap holds. A webhook's deliveries are checks with runs.
 -- name: CountTriggerRunsInHour :one
@@ -155,13 +160,14 @@ SELECT
 
 -- A run a schedule or a watcher starts: in its own conversation, as its maker,
 -- by its agent or the hub. Nothing is asked of it by a message, so it names
--- none; a session that is no trigger's inserts nothing.
+-- none. A session that is no trigger's, or an agent that is not the team's,
+-- inserts nothing.
 -- name: CreateTriggeredRun :one
 INSERT INTO runs (id, team_id, session_id, root_run_id, agent_id, agent_name, user_id, input,
                   token_budget, hub, builder, reply_to_channel, transcript)
 SELECT sqlc.arg('id')::uuid, ss.team_id, ss.id, sqlc.arg('id')::uuid,
        a.id, coalesce(a.name, 'orchestrator'), sqlc.arg('user_id')::uuid, sqlc.arg('input')::text,
-       a.token_budget, sqlc.narg('agent_id')::uuid IS NULL, false,
+       a.token_budget, sqlc.arg('hub')::bool, false,
        -- The dashboard's answer is its stream: there is nothing to post it to.
        ch.provider <> 'dashboard',
        'session:' || ss.id::text
@@ -169,15 +175,19 @@ FROM sessions ss
 JOIN channels ch ON ch.id = ss.channel_id
 LEFT JOIN team_settings ts ON ts.team_id = ss.team_id
 LEFT JOIN agents a ON a.team_id = ss.team_id
-                  AND a.id = coalesce(sqlc.narg('agent_id')::uuid, ts.hub_agent_id)
+                  AND a.id = CASE WHEN sqlc.arg('hub')::bool THEN ts.hub_agent_id
+                                  ELSE sqlc.narg('agent_id')::uuid END
 WHERE ss.id = sqlc.arg('session_id') AND ss.team_id = sqlc.arg('team_id')
   AND (ss.schedule_id IS NOT NULL OR ss.watcher_id IS NOT NULL)
+  AND (sqlc.arg('hub')::bool OR a.id IS NOT NULL)
 RETURNING *;
 
--- How a fired run ended, on its fire. No row is a run no schedule started.
+-- How a fired run ended, on its fire, once: only a fire still waiting on its
+-- run takes it. No row is a run no schedule started, or an end already
+-- recorded, and neither is counted again.
 -- name: SetFireOutcome :one
 UPDATE schedule_fires SET outcome = sqlc.arg('outcome')
-WHERE run_id = sqlc.arg('run_id')
+WHERE run_id = sqlc.arg('run_id') AND outcome IN ('started', 'late', 'catch_up')
 RETURNING schedule_id;
 
 -- A fired run's end counted on its schedule: a success clears the failures,
@@ -205,10 +215,25 @@ UPDATE schedules SET
 WHERE id = sqlc.arg('id')
 RETURNING status, paused_reason;
 
+-- A fire that could not even be tried, an error rather than a refusal,
+-- counted as a failed run: it is tried again at retry_at, and the fifth in a
+-- row pauses the schedule. Pushed past now, so the next claim takes another
+-- schedule rather than this one again.
+-- name: DeferFailedFire :one
+UPDATE schedules SET
+    consecutive_failures = consecutive_failures + 1,
+    status = CASE WHEN consecutive_failures + 1 >= sqlc.arg('pause_after')::int THEN 'paused' ELSE status END,
+    paused_reason = CASE WHEN consecutive_failures + 1 >= sqlc.arg('pause_after')::int THEN 'failing' END,
+    next_fire_at = CASE WHEN consecutive_failures + 1 >= sqlc.arg('pause_after')::int THEN NULL
+                        ELSE sqlc.arg('retry_at')::timestamptz END,
+    updated_at = now()
+WHERE id = sqlc.arg('id') AND status = 'active'
+RETURNING status;
+
 -- A schedule's fires, newest first, a page at a time.
 -- name: ListScheduleFires :many
 SELECT * FROM schedule_fires
-WHERE schedule_id = sqlc.arg('schedule_id')
+WHERE schedule_id = sqlc.arg('schedule_id') AND team_id = sqlc.arg('team_id')
   AND (sqlc.narg('before')::timestamptz IS NULL OR scheduled_for < sqlc.narg('before')::timestamptz)
 ORDER BY scheduled_for DESC
 LIMIT sqlc.arg('page_size');
@@ -224,7 +249,7 @@ JOIN sessions ss ON ss.schedule_id = s.id
 JOIN channels ch ON ch.id = ss.channel_id
 WHERE s.team_id = sqlc.arg('team_id') AND s.created_by = sqlc.arg('maker')::uuid
   AND s.status <> 'deleted' AND f.seen_at IS NULL
-  AND (f.outcome IN ('failed', 'skipped_busy', 'skipped_cap', 'skipped_maker', 'missed')
+  AND (f.outcome IN ('failed', 'skipped_busy', 'skipped_cap', 'skipped_maker', 'skipped_target', 'missed')
        OR (f.outcome = 'answered' AND ch.provider = 'dashboard'))
 ORDER BY f.fired_at DESC, f.schedule_id
 LIMIT sqlc.arg('page_size');

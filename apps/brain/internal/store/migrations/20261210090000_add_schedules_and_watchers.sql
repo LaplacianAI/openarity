@@ -12,8 +12,11 @@ CREATE TABLE schedules (
     -- Null once the maker's user is gone: the schedule pauses, and an admin
     -- may take it over.
     created_by    uuid REFERENCES users ON DELETE SET NULL,
-    -- Null is the team's hub.
+    -- The agent that answers, or the team's hub when hub is set. An agent
+    -- deleted leaves neither: the schedule pauses rather than falling to
+    -- the hub.
     agent_id      uuid REFERENCES agents ON DELETE SET NULL,
+    hub           boolean NOT NULL DEFAULT false,
     name          text NOT NULL,
     objective     text NOT NULL,
     kind          text NOT NULL,
@@ -49,7 +52,8 @@ CREATE TABLE schedules (
     CONSTRAINT schedules_paused_says_why CHECK ((status = 'paused') = (paused_reason IS NOT NULL)),
     CONSTRAINT schedules_active_has_next CHECK ((status = 'active') = (next_fire_at IS NOT NULL)),
     CONSTRAINT schedules_deleted_at CHECK ((status = 'deleted') = (deleted_at IS NOT NULL)),
-    CONSTRAINT schedules_proposed_names_where CHECK (status <> 'proposed' OR proposed_in IS NOT NULL)
+    CONSTRAINT schedules_proposed_names_where CHECK (status <> 'proposed' OR proposed_in IS NOT NULL),
+    CONSTRAINT schedules_hub_or_agent CHECK (NOT hub OR agent_id IS NULL)
 );
 -- What the tick reads: only what is due, so its cost follows that rather
 -- than how many schedules there are.
@@ -75,7 +79,7 @@ CREATE TABLE schedule_fires (
     PRIMARY KEY (schedule_id, scheduled_for),
     CONSTRAINT schedule_fires_outcome_known CHECK (outcome IN (
         'started', 'late', 'catch_up', 'missed', 'skipped_busy', 'skipped_cap',
-        'skipped_maker', 'silent', 'answered', 'failed'))
+        'skipped_maker', 'skipped_target', 'silent', 'answered', 'failed', 'cancelled'))
 );
 -- Fires that started a run, by team and time: the hourly cap counts these.
 CREATE INDEX schedule_fires_team_hour ON schedule_fires (team_id, fired_at) WHERE run_id IS NOT NULL;
@@ -111,7 +115,9 @@ CREATE TABLE watchers (
     id            uuid PRIMARY KEY,
     team_id       uuid NOT NULL REFERENCES teams ON DELETE CASCADE,
     created_by    uuid REFERENCES users ON DELETE SET NULL,
+    -- As a schedule's: an agent, or the hub when hub is set.
     agent_id      uuid REFERENCES agents ON DELETE SET NULL,
+    hub           boolean NOT NULL DEFAULT false,
     name          text NOT NULL,
     objective     text NOT NULL,
     source        text NOT NULL,
@@ -147,6 +153,7 @@ CREATE TABLE watchers (
     CONSTRAINT watchers_paused_says_why CHECK ((status = 'paused') = (paused_reason IS NOT NULL)),
     CONSTRAINT watchers_deleted_at CHECK ((status = 'deleted') = (deleted_at IS NOT NULL)),
     CONSTRAINT watchers_proposed_names_where CHECK (status <> 'proposed' OR proposed_in IS NOT NULL),
+    CONSTRAINT watchers_hub_or_agent CHECK (NOT hub OR agent_id IS NULL),
     -- A webhook has a hook and nothing to poll; a poller has a target, an
     -- interval and no hook; only a page has a selector.
     CONSTRAINT watchers_source_shape CHECK (
