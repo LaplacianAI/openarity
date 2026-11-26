@@ -175,6 +175,12 @@ UPDATE watch_targets SET etag = sqlc.narg('etag'), last_modified = sqlc.narg('la
     consecutive_errors = 0, failing_since = NULL
 WHERE id = sqlc.arg('id');
 
+-- A target that answered not modified: its errors forgotten, its validators
+-- left as they are, so one forgotten meanwhile stays forgotten.
+-- name: TargetAnswered :exec
+UPDATE watch_targets SET consecutive_errors = 0, failing_since = NULL
+WHERE id = sqlc.arg('id');
+
 -- A target that could not be read: counted, and since when.
 -- name: TargetFailed :one
 UPDATE watch_targets SET consecutive_errors = consecutive_errors + 1,

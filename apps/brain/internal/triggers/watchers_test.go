@@ -660,6 +660,11 @@ func TestAnAddressNobodyWatchesIsNotFetched(t *testing.T) {
 	if hits := w.site.hitsOn("/price"); hits != 0 {
 		t.Errorf("fetched %d times with nobody watching, want none", hits)
 	}
+	var never bool
+	w.scan(t, &never, `SELECT next_check_at = 'infinity' FROM watch_targets`)
+	if !never {
+		t.Error("the target is still due with nobody watching, want it put off until someone does")
+	}
 }
 
 // A paused watcher resumed reads its address whole: others' fetches may have
@@ -829,5 +834,106 @@ func TestOneWatcherFailingLeavesTheValidatorsUnkept(t *testing.T) {
 	w.scan(t, &etag, `SELECT etag FROM watch_targets`)
 	if etag != nil {
 		t.Errorf("etag %q kept though a watcher could not take in the page, want none", *etag)
+	}
+}
+
+// A watcher that cannot be checked is held for its interval, not fetched for
+// each minute's tick, and is tried again after it.
+func TestAWatcherThatCannotBeCheckedIsNotFetchedEachMinute(t *testing.T) {
+	w := newWatching(t)
+	w.site.set("/price", pricePage("$10"))
+	v := w.priceWatcher(t, "price")
+	w.look(t, 0)
+	w.exec(t, `UPDATE watchers SET state = '{"hash": "h", "seen": "not a list"}' WHERE id = $1`, v.ID)
+	w.site.set("/price", pricePage("$12"))
+	w.look(t, time.Hour)
+	hits := w.site.hitsOn("/price")
+	for range 3 {
+		w.look(t, time.Minute)
+	}
+	if got := w.site.hitsOn("/price"); got != hits {
+		t.Errorf("fetched %d more times in three minutes, want none", got-hits)
+	}
+	var next time.Time
+	var status string
+	w.scan(t, &next, `SELECT next_check_at FROM watchers WHERE id = $1`, v.ID)
+	w.scan(t, &status, `SELECT status FROM watchers WHERE id = $1`, v.ID)
+	if got := w.checks(t, v.ID); !same(got, "baseline", "error") || status != Active || next.Before(w.clock.Add(50*time.Minute)) {
+		t.Errorf("checks %v, status %s, next %v; want one error, active, held an hour", got, status, next)
+	}
+	w.look(t, time.Hour)
+	if got := w.site.hitsOn("/price"); got != hits+1 {
+		t.Errorf("fetched %d more times after the hold, want once", got-hits)
+	}
+}
+
+// A watcher not yet due that cannot read what another's fetch read leaves
+// the validators unkept, so its own look reads the page whole; nothing is
+// written for it, and its time is kept.
+func TestAWatcherNotDueThatCannotReadThePageLeavesTheValidatorsUnkept(t *testing.T) {
+	w := newWatching(t)
+	w.site.set("/price", pricePage("$10"))
+	a := w.priceWatcher(t, "a")
+	b := w.watcher(t, WatcherInput{
+		Name: "b", Objective: "Price moves.", Source: SourceWebPage, URL: w.site.url("/price"), Selector: ".price", Every: time.Hour,
+	})
+	w.look(t, 0)
+	later := w.clock.Add(10 * time.Hour)
+	w.exec(t, `UPDATE watchers SET selector = '.gone', next_check_at = $2 WHERE id = $1`, b.ID, later)
+	w.site.set("/price", pricePage("$12"))
+	w.look(t, time.Hour)
+	var etag *string
+	var next time.Time
+	w.scan(t, &etag, `SELECT etag FROM watch_targets`)
+	w.scan(t, &next, `SELECT next_check_at FROM watchers WHERE id = $1`, b.ID)
+	if etag != nil {
+		t.Errorf("etag %q kept though b could not read the page, want none", *etag)
+	}
+	if !same(w.checks(t, a.ID), "baseline", "changed") || !same(w.checks(t, b.ID), "baseline") || !next.Equal(later) {
+		t.Errorf("checks a %v b %v, b's next %v; want a changed, nothing for b, its time kept", w.checks(t, a.ID), w.checks(t, b.ID), next)
+	}
+}
+
+// A 304 ends the target's errors and keeps its validators: a day of them
+// followed by one error pauses nobody.
+func TestANotModifiedAnswerForgetsTheTargetsErrors(t *testing.T) {
+	w := newWatching(t)
+	w.site.set("/price", pricePage("$10"))
+	v := w.priceWatcher(t, "price")
+	w.look(t, 0)
+	var before *string
+	w.scan(t, &before, `SELECT etag FROM watch_targets`)
+	w.exec(t, `UPDATE watch_targets SET consecutive_errors = 3, failing_since = $1`, w.clock.Add(-25*time.Hour))
+	w.look(t, time.Hour)
+	var errs int
+	var since *time.Time
+	var etag *string
+	w.scan(t, &errs, `SELECT consecutive_errors FROM watch_targets`)
+	w.scan(t, &since, `SELECT failing_since FROM watch_targets`)
+	w.scan(t, &etag, `SELECT etag FROM watch_targets`)
+	if errs != 0 || since != nil || etag == nil || before == nil || *etag != *before {
+		t.Fatalf("errors %d since %v etag %v; want the errors forgotten and the etag kept", errs, since, etag)
+	}
+	w.site.set("/price", page{status: http.StatusInternalServerError})
+	w.look(t, time.Hour)
+	if got, _ := w.service.Watcher(t.Context(), w.who(), Ref{ID: v.ID}); got.Status != Active {
+		t.Errorf("status %s after one error, want active", got.Status)
+	}
+}
+
+// A page that stops reading the way its watcher reads it, on a server that
+// sends an ETag, is read whole each look, so a day of it pauses the watcher.
+func TestAPageUnreadableForADayPausesItsWatcherThoughTheServerSends304(t *testing.T) {
+	w := newWatching(t)
+	w.site.set("/price", pricePage("$10"))
+	v := w.priceWatcher(t, "price")
+	w.look(t, 0)
+	w.site.set("/price", page{body: `<html><body><p>Sold out</p></body></html>`})
+	for range 25 {
+		w.look(t, time.Hour)
+	}
+	got, _ := w.service.Watcher(t.Context(), w.who(), Ref{ID: v.ID})
+	if got.Status != Paused || got.PausedReason == nil || *got.PausedReason != Failing {
+		t.Errorf("status %s reason %v after a day unreadable, want paused failing", got.Status, got.PausedReason)
 	}
 }

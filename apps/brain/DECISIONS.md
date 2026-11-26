@@ -140,8 +140,21 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   - **Errors back off on the target** after 1, 5, 15 and then 60 minutes, each
     recorded on the watcher's checks; a page or feed failing for a day, or
     fetched but unreadable as the watcher reads it for a day, pauses it as
-    `failing`. Its runs are counted as a schedule's: five failures in a row
+    `failing`. A 304 ends the target's errors, so a day of them and one more
+    error pauses nobody. A watcher that cannot be read that way is read
+    whole at each look, not told by a 304 that nothing changed, so its day
+    runs on. Its runs are counted as a schedule's: five failures in a row
     pause it, `[silent]` tells nobody, a cancel is neither.
+  - **A watcher that cannot be checked at all** (what it saw cannot be read
+    back, its run cannot be made) records an error and is held for its own
+    interval, between five minutes and an hour, so its address is not
+    fetched each minute for it. It never pauses for this; a fault that
+    lasts writes one error check per hold. Known gap.
+  - **The watcher's source, status and pause reason are described in the
+    spec, not listed as enums.** Listed, they share values with a
+    schedule's, and the client generator (enum names with no prefix, a
+    known gap) then renames every schedule constant in the CLI's client.
+    The brain checks each value itself, and refuses one it does not know.
   - **A deleted watcher lets go of its target** (`target_id` null, which the
     table now allows once deleted), and the hourly sweep deletes targets
     nobody watches. Without that a soft-deleted watcher would hold its target

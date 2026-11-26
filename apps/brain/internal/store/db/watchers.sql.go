@@ -1064,6 +1064,18 @@ func (q *Queries) TakeHost(ctx context.Context, arg TakeHostParams) (string, err
 	return host, err
 }
 
+const targetAnswered = `-- name: TargetAnswered :exec
+UPDATE watch_targets SET consecutive_errors = 0, failing_since = NULL
+WHERE id = $1
+`
+
+// A target that answered not modified: its errors forgotten, its validators
+// left as they are, so one forgotten meanwhile stays forgotten.
+func (q *Queries) TargetAnswered(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, targetAnswered, id)
+	return err
+}
+
 const targetFailed = `-- name: TargetFailed :one
 UPDATE watch_targets SET consecutive_errors = consecutive_errors + 1,
     failing_since = coalesce(failing_since, $1::timestamptz),
