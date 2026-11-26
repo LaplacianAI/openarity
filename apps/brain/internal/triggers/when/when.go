@@ -284,8 +284,10 @@ func (r Rule) pinsHour() bool {
 // times collapse into one: within the grace the newest runs (on time or
 // late); beyond it, or with more than one due, the newest runs as a catch-up
 // and the rest are missed. Never one run per missed time. For a rule that
-// pins its hours, a time whose local wall time repeats the one before is the
-// hour the clocks go back, and is dropped; lastLocal is the last fire's.
+// pins its hours, a time whose local wall time is not after the last one
+// kept is in the hour the clocks go back, a second time, and is dropped:
+// 01:00 and 01:30 each fire once, though the wall reads each twice.
+// lastLocal is the last fire's; wall times in LocalLayout sort as they read.
 func Due(r Rule, from, now time.Time, lastLocal string) Plan {
 	pinned := r.Kind == Cron && r.pinsHour()
 	// The newest due times, the one to run and the misses kept before it.
@@ -293,7 +295,7 @@ func Due(r Rule, from, now time.Time, lastLocal string) Plan {
 	due, prev := 0, lastLocal
 	t, ok := from, true
 	for steps := 0; ok && !t.After(now) && steps < maxSteps; steps++ {
-		if local := t.In(r.Zone).Format(LocalLayout); !pinned || local != prev {
+		if local := t.In(r.Zone).Format(LocalLayout); !pinned || local > prev {
 			due, prev = due+1, local
 			if slots = append(slots, t); len(slots) > maxMissed+1 {
 				slots = slots[1:]

@@ -7221,7 +7221,8 @@ type ClientInterface interface {
 	// once, and runs in a conversation of its own as the caller, with
 	// their permissions when it fires. Its rule is held to the team's
 	// minimum interval, and the team's limits on schedules per person and
-	// per team apply.
+	// per team apply. A caller who may not start runs in the team is
+	// refused with 403, as the schedule would only pause at its first fire.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7234,7 +7235,8 @@ type ClientInterface interface {
 	// once, and runs in a conversation of its own as the caller, with
 	// their permissions when it fires. Its rule is held to the team's
 	// minimum interval, and the team's limits on schedules per person and
-	// per team apply.
+	// per team apply. A caller who may not start runs in the team is
+	// refused with 403, as the schedule would only pause at its first fire.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7279,11 +7281,13 @@ type ClientInterface interface {
 
 	// UpdateScheduleWithBody Change, pause or resume a schedule
 	//
-	// Requires `schedule:write` in this team, and the schedule to be the
-	// caller's own or the caller to hold `schedule:manage`. A new rule or
-	// zone moves its next fire. `status` pauses or resumes it; a resumed
-	// schedule fires from now, and what it missed while paused is not
-	// caught up.
+	// Requires `schedule:write` in this team. What it does (name,
+	// objective, rule, zone, agent) is changed only by its maker, since it
+	// runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a
+	// resumed schedule fires from now, and what it missed while paused is
+	// not caught up. Everything named is changed together, or nothing is.
+	// A new rule or zone moves its next fire.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7292,11 +7296,13 @@ type ClientInterface interface {
 
 	// UpdateSchedule Change, pause or resume a schedule
 	//
-	// Requires `schedule:write` in this team, and the schedule to be the
-	// caller's own or the caller to hold `schedule:manage`. A new rule or
-	// zone moves its next fire. `status` pauses or resumes it; a resumed
-	// schedule fires from now, and what it missed while paused is not
-	// caught up.
+	// Requires `schedule:write` in this team. What it does (name,
+	// objective, rule, zone, agent) is changed only by its maker, since it
+	// runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a
+	// resumed schedule fires from now, and what it missed while paused is
+	// not caught up. Everything named is changed together, or nothing is.
+	// A new rule or zone moves its next fire.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7313,16 +7319,20 @@ type ClientInterface interface {
 
 	// ListScheduleFires List what a schedule did each time it was due
 	//
-	// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+	// Requires `schedule:read` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage` (404
+	// otherwise). Newest first; each schedule keeps its newest 200.
 	//
 	// Corresponds with GET /teams/{id}/schedules/{scheduleID}/fires (the `ListScheduleFires` operationId).
 	ListScheduleFires(ctx context.Context, id TeamID, scheduleID ScheduleID, params *ListScheduleFiresParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RunSchedule Run a schedule now
 	//
-	// Requires `schedule:write` in this team. One extra run, now, under the
-	// same checks as a fire: its maker may still start runs, the team is
-	// under its hourly limit, and its last run has finished.
+	// Requires `schedule:write` in this team, and only its maker may: the
+	// run is theirs, with their permissions (403 otherwise). One extra run,
+	// now, under the same checks as a fire: its maker may still start
+	// runs, its agent is still there, the team is under its hourly limit,
+	// and its last run has finished.
 	//
 	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/run (the `RunSchedule` operationId).
 	RunSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7332,7 +7342,8 @@ type ClientInterface interface {
 	// Requires `schedule:manage` in this team. Only a schedule paused
 	// because its maker left, or may no longer start runs, is taken over.
 	// It stays paused until the caller resumes it, and runs as them from
-	// then.
+	// then, so a caller who may not start runs in the team is refused with
+	// 403.
 	//
 	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
 	TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10302,7 +10313,8 @@ func (c *Client) ListSchedules(ctx context.Context, id TeamID, params *ListSched
 // once, and runs in a conversation of its own as the caller, with
 // their permissions when it fires. Its rule is held to the team's
 // minimum interval, and the team's limits on schedules per person and
-// per team apply.
+// per team apply. A caller who may not start runs in the team is
+// refused with 403, as the schedule would only pause at its first fire.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10325,7 +10337,8 @@ func (c *Client) CreateScheduleWithBody(ctx context.Context, id TeamID, contentT
 // once, and runs in a conversation of its own as the caller, with
 // their permissions when it fires. Its rule is held to the team's
 // minimum interval, and the team's limits on schedules per person and
-// per team apply.
+// per team apply. A caller who may not start runs in the team is
+// refused with 403, as the schedule would only pause at its first fire.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10420,11 +10433,13 @@ func (c *Client) GetSchedule(ctx context.Context, id TeamID, scheduleID Schedule
 
 // UpdateScheduleWithBody Change, pause or resume a schedule
 //
-// Requires `schedule:write` in this team, and the schedule to be the
-// caller's own or the caller to hold `schedule:manage`. A new rule or
-// zone moves its next fire. `status` pauses or resumes it; a resumed
-// schedule fires from now, and what it missed while paused is not
-// caught up.
+// Requires `schedule:write` in this team. What it does (name,
+// objective, rule, zone, agent) is changed only by its maker, since it
+// runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a
+// resumed schedule fires from now, and what it missed while paused is
+// not caught up. Everything named is changed together, or nothing is.
+// A new rule or zone moves its next fire.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10443,11 +10458,13 @@ func (c *Client) UpdateScheduleWithBody(ctx context.Context, id TeamID, schedule
 
 // UpdateSchedule Change, pause or resume a schedule
 //
-// Requires `schedule:write` in this team, and the schedule to be the
-// caller's own or the caller to hold `schedule:manage`. A new rule or
-// zone moves its next fire. `status` pauses or resumes it; a resumed
-// schedule fires from now, and what it missed while paused is not
-// caught up.
+// Requires `schedule:write` in this team. What it does (name,
+// objective, rule, zone, agent) is changed only by its maker, since it
+// runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a
+// resumed schedule fires from now, and what it missed while paused is
+// not caught up. Everything named is changed together, or nothing is.
+// A new rule or zone moves its next fire.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10484,7 +10501,9 @@ func (c *Client) ConfirmSchedule(ctx context.Context, id TeamID, scheduleID Sche
 
 // ListScheduleFires List what a schedule did each time it was due
 //
-// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+// Requires `schedule:read` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage` (404
+// otherwise). Newest first; each schedule keeps its newest 200.
 //
 // Corresponds with GET /teams/{id}/schedules/{scheduleID}/fires (the `ListScheduleFires` operationId).
 func (c *Client) ListScheduleFires(ctx context.Context, id TeamID, scheduleID ScheduleID, params *ListScheduleFiresParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10501,9 +10520,11 @@ func (c *Client) ListScheduleFires(ctx context.Context, id TeamID, scheduleID Sc
 
 // RunSchedule Run a schedule now
 //
-// Requires `schedule:write` in this team. One extra run, now, under the
-// same checks as a fire: its maker may still start runs, the team is
-// under its hourly limit, and its last run has finished.
+// Requires `schedule:write` in this team, and only its maker may: the
+// run is theirs, with their permissions (403 otherwise). One extra run,
+// now, under the same checks as a fire: its maker may still start
+// runs, its agent is still there, the team is under its hourly limit,
+// and its last run has finished.
 //
 // Corresponds with POST /teams/{id}/schedules/{scheduleID}/run (the `RunSchedule` operationId).
 func (c *Client) RunSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10523,7 +10544,8 @@ func (c *Client) RunSchedule(ctx context.Context, id TeamID, scheduleID Schedule
 // Requires `schedule:manage` in this team. Only a schedule paused
 // because its maker left, or may no longer start runs, is taken over.
 // It stays paused until the caller resumes it, and runs as them from
-// then.
+// then, so a caller who may not start runs in the team is refused with
+// 403.
 //
 // Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
 func (c *Client) TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18711,7 +18733,8 @@ type ClientWithResponsesInterface interface {
 	// once, and runs in a conversation of its own as the caller, with
 	// their permissions when it fires. Its rule is held to the team's
 	// minimum interval, and the team's limits on schedules per person and
-	// per team apply.
+	// per team apply. A caller who may not start runs in the team is
+	// refused with 403, as the schedule would only pause at its first fire.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18724,7 +18747,8 @@ type ClientWithResponsesInterface interface {
 	// once, and runs in a conversation of its own as the caller, with
 	// their permissions when it fires. Its rule is held to the team's
 	// minimum interval, and the team's limits on schedules per person and
-	// per team apply.
+	// per team apply. A caller who may not start runs in the team is
+	// refused with 403, as the schedule would only pause at its first fire.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18773,11 +18797,13 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateScheduleWithBodyWithResponse Change, pause or resume a schedule
 	//
-	// Requires `schedule:write` in this team, and the schedule to be the
-	// caller's own or the caller to hold `schedule:manage`. A new rule or
-	// zone moves its next fire. `status` pauses or resumes it; a resumed
-	// schedule fires from now, and what it missed while paused is not
-	// caught up.
+	// Requires `schedule:write` in this team. What it does (name,
+	// objective, rule, zone, agent) is changed only by its maker, since it
+	// runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a
+	// resumed schedule fires from now, and what it missed while paused is
+	// not caught up. Everything named is changed together, or nothing is.
+	// A new rule or zone moves its next fire.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18786,11 +18812,13 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateScheduleWithResponse Change, pause or resume a schedule
 	//
-	// Requires `schedule:write` in this team, and the schedule to be the
-	// caller's own or the caller to hold `schedule:manage`. A new rule or
-	// zone moves its next fire. `status` pauses or resumes it; a resumed
-	// schedule fires from now, and what it missed while paused is not
-	// caught up.
+	// Requires `schedule:write` in this team. What it does (name,
+	// objective, rule, zone, agent) is changed only by its maker, since it
+	// runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a
+	// resumed schedule fires from now, and what it missed while paused is
+	// not caught up. Everything named is changed together, or nothing is.
+	// A new rule or zone moves its next fire.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18809,7 +18837,9 @@ type ClientWithResponsesInterface interface {
 
 	// ListScheduleFiresWithResponse List what a schedule did each time it was due
 	//
-	// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+	// Requires `schedule:read` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage` (404
+	// otherwise). Newest first; each schedule keeps its newest 200.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18818,9 +18848,11 @@ type ClientWithResponsesInterface interface {
 
 	// RunScheduleWithResponse Run a schedule now
 	//
-	// Requires `schedule:write` in this team. One extra run, now, under the
-	// same checks as a fire: its maker may still start runs, the team is
-	// under its hourly limit, and its last run has finished.
+	// Requires `schedule:write` in this team, and only its maker may: the
+	// run is theirs, with their permissions (403 otherwise). One extra run,
+	// now, under the same checks as a fire: its maker may still start
+	// runs, its agent is still there, the team is under its hourly limit,
+	// and its last run has finished.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -18832,7 +18864,8 @@ type ClientWithResponsesInterface interface {
 	// Requires `schedule:manage` in this team. Only a schedule paused
 	// because its maker left, or may no longer start runs, is taken over.
 	// It stays paused until the caller resumes it, and runs as them from
-	// then.
+	// then, so a caller who may not start runs in the team is refused with
+	// 403.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26614,7 +26647,8 @@ func (c *ClientWithResponses) ListSchedulesWithResponse(ctx context.Context, id 
 // once, and runs in a conversation of its own as the caller, with
 // their permissions when it fires. Its rule is held to the team's
 // minimum interval, and the team's limits on schedules per person and
-// per team apply.
+// per team apply. A caller who may not start runs in the team is
+// refused with 403, as the schedule would only pause at its first fire.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26633,7 +26667,8 @@ func (c *ClientWithResponses) CreateScheduleWithBodyWithResponse(ctx context.Con
 // once, and runs in a conversation of its own as the caller, with
 // their permissions when it fires. Its rule is held to the team's
 // minimum interval, and the team's limits on schedules per person and
-// per team apply.
+// per team apply. A caller who may not start runs in the team is
+// refused with 403, as the schedule would only pause at its first fire.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26712,11 +26747,13 @@ func (c *ClientWithResponses) GetScheduleWithResponse(ctx context.Context, id Te
 
 // UpdateScheduleWithBodyWithResponse Change, pause or resume a schedule
 //
-// Requires `schedule:write` in this team, and the schedule to be the
-// caller's own or the caller to hold `schedule:manage`. A new rule or
-// zone moves its next fire. `status` pauses or resumes it; a resumed
-// schedule fires from now, and what it missed while paused is not
-// caught up.
+// Requires `schedule:write` in this team. What it does (name,
+// objective, rule, zone, agent) is changed only by its maker, since it
+// runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a
+// resumed schedule fires from now, and what it missed while paused is
+// not caught up. Everything named is changed together, or nothing is.
+// A new rule or zone moves its next fire.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26731,11 +26768,13 @@ func (c *ClientWithResponses) UpdateScheduleWithBodyWithResponse(ctx context.Con
 
 // UpdateScheduleWithResponse Change, pause or resume a schedule
 //
-// Requires `schedule:write` in this team, and the schedule to be the
-// caller's own or the caller to hold `schedule:manage`. A new rule or
-// zone moves its next fire. `status` pauses or resumes it; a resumed
-// schedule fires from now, and what it missed while paused is not
-// caught up.
+// Requires `schedule:write` in this team. What it does (name,
+// objective, rule, zone, agent) is changed only by its maker, since it
+// runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a
+// resumed schedule fires from now, and what it missed while paused is
+// not caught up. Everything named is changed together, or nothing is.
+// A new rule or zone moves its next fire.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26766,7 +26805,9 @@ func (c *ClientWithResponses) ConfirmScheduleWithResponse(ctx context.Context, i
 
 // ListScheduleFiresWithResponse List what a schedule did each time it was due
 //
-// Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+// Requires `schedule:read` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage` (404
+// otherwise). Newest first; each schedule keeps its newest 200.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26781,9 +26822,11 @@ func (c *ClientWithResponses) ListScheduleFiresWithResponse(ctx context.Context,
 
 // RunScheduleWithResponse Run a schedule now
 //
-// Requires `schedule:write` in this team. One extra run, now, under the
-// same checks as a fire: its maker may still start runs, the team is
-// under its hourly limit, and its last run has finished.
+// Requires `schedule:write` in this team, and only its maker may: the
+// run is theirs, with their permissions (403 otherwise). One extra run,
+// now, under the same checks as a fire: its maker may still start
+// runs, its agent is still there, the team is under its hourly limit,
+// and its last run has finished.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -26801,7 +26844,8 @@ func (c *ClientWithResponses) RunScheduleWithResponse(ctx context.Context, id Te
 // Requires `schedule:manage` in this team. Only a schedule paused
 // because its maker left, or may no longer start runs, is taken over.
 // It stays paused until the caller resumes it, and runs as them from
-// then.
+// then, so a caller who may not start runs in the team is refused with
+// 403.
 //
 // Returns a wrapper object for the known response body format(s).
 //

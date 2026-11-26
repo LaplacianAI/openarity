@@ -138,10 +138,19 @@ One DBOS tick a minute, `openarity.triggers.tick`, reads that table instead:
 An hourly sweep, `openarity.triggers.sweep`, lapses proposals nobody confirmed
 and keeps each schedule's newest 200 fires.
 
-A fire that fails with an error, rather than a refusal, is put off a minute
-and counted as a failed run, so one broken schedule never holds up the rest
-of a batch; five in a row pause it, and the worker logs `A schedule could not
-fire` each time.
+A fire that fails with an error, rather than a refusal, waits a minute and is
+tried again for the time it was due, so one broken schedule never holds up
+the rest of a batch. The worker logs `A schedule could not fire` each time.
+An error of the schedule's own counts as a failed run, and five in a row
+pause it as `failing`; the database's passing trouble (a deadlock, a lock or
+statement timeout, a lost connection) is retried without counting.
+
+A schedule runs as its maker, so only its maker changes what it does or runs
+it now; whoever holds `schedule:manage` sees, pauses, resumes, deletes and
+takes over everyone's. A schedule whose agent is deleted records
+`skipped_target` and pauses as `target_gone` until another agent or the hub
+is chosen. A run cancelled, by a person or the API, is recorded as
+`cancelled`: not a failure, and not news.
 
 ## Retention
 

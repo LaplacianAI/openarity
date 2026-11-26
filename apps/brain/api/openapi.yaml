@@ -3333,7 +3333,8 @@ paths:
         once, and runs in a conversation of its own as the caller, with
         their permissions when it fires. Its rule is held to the team's
         minimum interval, and the team's limits on schedules per person and
-        per team apply.
+        per team apply. A caller who may not start runs in the team is
+        refused with 403, as the schedule would only pause at its first fire.
       requestBody:
         required: true
         content:
@@ -3424,11 +3425,13 @@ paths:
       tags: [schedules]
       summary: Change, pause or resume a schedule
       description: |
-        Requires `schedule:write` in this team, and the schedule to be the
-        caller's own or the caller to hold `schedule:manage`. A new rule or
-        zone moves its next fire. `status` pauses or resumes it; a resumed
-        schedule fires from now, and what it missed while paused is not
-        caught up.
+        Requires `schedule:write` in this team. What it does (name,
+        objective, rule, zone, agent) is changed only by its maker, since it
+        runs as them; another caller is refused with 403. `status` pauses or
+        resumes it, by its maker or one who holds `schedule:manage`; a
+        resumed schedule fires from now, and what it missed while paused is
+        not caught up. Everything named is changed together, or nothing is.
+        A new rule or zone moves its next fire.
       requestBody:
         required: true
         content:
@@ -3520,9 +3523,11 @@ paths:
       tags: [schedules]
       summary: Run a schedule now
       description: |
-        Requires `schedule:write` in this team. One extra run, now, under the
-        same checks as a fire: its maker may still start runs, the team is
-        under its hourly limit, and its last run has finished.
+        Requires `schedule:write` in this team, and only its maker may: the
+        run is theirs, with their permissions (403 otherwise). One extra run,
+        now, under the same checks as a fire: its maker may still start
+        runs, its agent is still there, the team is under its hourly limit,
+        and its last run has finished.
       responses:
         "202":
           description: Started
@@ -3558,7 +3563,8 @@ paths:
         Requires `schedule:manage` in this team. Only a schedule paused
         because its maker left, or may no longer start runs, is taken over.
         It stays paused until the caller resumes it, and runs as them from
-        then.
+        then, so a caller who may not start runs in the team is refused with
+        403.
       responses:
         "200":
           description: Taken over
@@ -3590,7 +3596,10 @@ paths:
       operationId: listScheduleFires
       tags: [schedules]
       summary: List what a schedule did each time it was due
-      description: Requires `schedule:read` in this team. Newest first; each schedule keeps its newest 200.
+      description: |
+        Requires `schedule:read` in this team, and the schedule to be the
+        caller's own or the caller to hold `schedule:manage` (404
+        otherwise). Newest first; each schedule keeps its newest 200.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"

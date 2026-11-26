@@ -631,6 +631,7 @@ type Schedule struct {
 	PausedReason        *string
 	DeletedAt           *time.Time
 	NextFireAt          *time.Time
+	RetryAt             *time.Time
 	LastFiredAt         *time.Time
 	LastLocal           *string
 	ConsecutiveFailures int32

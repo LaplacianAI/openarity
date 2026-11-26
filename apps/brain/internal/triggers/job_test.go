@@ -2,10 +2,12 @@ package triggers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/robfig/cron/v3"
 )
 
@@ -165,5 +168,24 @@ func TestATickFiresWhatIsDueThroughItsBatches(t *testing.T) {
 	}
 	if n := l.count(t, `SELECT count(*) FROM runs WHERE session_id = $1`, v.SessionID); n != 1 {
 		t.Errorf("%d runs after the tick ran again, want 1", n)
+	}
+}
+
+// The database's passing trouble is retried without counting against the
+// schedule; an error of the schedule's own counts.
+func TestOnlyTheDatabasesPassingTroubleGoesUncounted(t *testing.T) {
+	t.Parallel()
+	for err, want := range map[error]bool{
+		&pgconn.PgError{Code: "40001"}:                                            true, // serialization
+		&pgconn.PgError{Code: "40P01"}:                                            true, // deadlock
+		&pgconn.PgError{Code: "55P03"}:                                            true, // lock timeout
+		&pgconn.PgError{Code: "57014"}:                                            true, // statement timeout
+		fmt.Errorf("x: %w", &net.OpError{Op: "dial", Err: errors.New("refused")}): true,
+		&pgconn.PgError{Code: "23503"}:                                            false, // a key the schedule broke
+		errors.New("read the schedule's conversation: no rows"):                   false,
+	} {
+		if got := passing(err); got != want {
+			t.Errorf("passing(%v) = %v, want %v", err, got, want)
+		}
 	}
 }

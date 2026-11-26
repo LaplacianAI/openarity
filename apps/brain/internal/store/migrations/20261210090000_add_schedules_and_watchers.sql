@@ -29,6 +29,9 @@ CREATE TABLE schedules (
     paused_reason text,
     deleted_at    timestamptz,
     next_fire_at  timestamptz,
+    -- A fire that failed with an error waits until then to be tried again,
+    -- still for the time it was due.
+    retry_at      timestamptz,
     last_fired_at timestamptz,
     -- The local wall time of the last fire, 'YYYY-MM-DDTHH:MM': the hour the
     -- clocks go back happens twice, and fires once.

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -26,7 +28,7 @@ const (
 )
 
 // retryAfter is how long a fire that could not be tried waits to be tried
-// again.
+// again, for the same time it was due.
 const retryAfter = time.Minute
 
 // FireStore is what firing reads and writes, in one transaction a schedule.
@@ -105,17 +107,32 @@ type fireFailed struct {
 func (e *fireFailed) Error() string { return fmt.Sprintf("fire schedule %s: %v", e.id, e.err) }
 func (e *fireFailed) Unwrap() error { return e.err }
 
-// putOff moves a schedule whose fire failed past now, counting the failure,
-// in a transaction of its own; the fifth in a row pauses it.
+// putOff has a schedule whose fire failed wait retryAfter, in a transaction
+// of its own, then try the same time again. A failure of its own counts, and
+// the fifth in a row pauses it; the database's passing trouble does not.
 func (f *Firer) putOff(ctx context.Context, bad *fireFailed) error {
-	f.logger.ErrorContext(ctx, "A schedule could not fire; trying it again later", "schedule_id", bad.id, "error", bad.err)
+	counts := !passing(bad.err)
+	f.logger.ErrorContext(ctx, "A schedule could not fire; trying it again later",
+		"schedule_id", bad.id, "counted", counts, "error", bad.err)
 	_, err := f.store.DeferFailedFire(ctx, db.DeferFailedFireParams{
-		ID: bad.id, PauseAfter: store.PauseAfter, RetryAt: f.now().Add(retryAfter),
+		ID: bad.id, Counts: counts, PauseAfter: store.PauseAfter, RetryAt: f.now().Add(retryAfter),
 	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("put off schedule %s: %w", bad.id, err)
 	}
 	return nil
+}
+
+// passing is an error from the database's state rather than the schedule's:
+// a deadlock or a serialization failure, a lock or statement timeout, the
+// server shutting down, or a lost connection. Trying again is its remedy.
+func passing(err error) bool {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return strings.HasPrefix(pg.Code, "40") || strings.HasPrefix(pg.Code, "57") || pg.Code == "55P03"
+	}
+	var nerr net.Error
+	return errors.As(err, &nerr) || pgconn.Timeout(err)
 }
 
 // fireOne takes one due schedule, works out what is due (D4, D6), records it

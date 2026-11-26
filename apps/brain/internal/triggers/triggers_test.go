@@ -783,11 +783,15 @@ func TestAPatchIsAllOrNothing(t *testing.T) {
 }
 
 // One who may not start runs makes no schedule, and takes none over: it would
-// run as them.
+// run as them. A member of a role that holds the schedule permissions and not
+// run:write, not merely a stranger.
 func TestOneWhoMayNotRunNeitherMakesNorTakesOverASchedule(t *testing.T) {
 	w := newWorld(t)
 	v := w.make(t, hourly("mine"))
-	w.exec(t, `DELETE FROM team_members WHERE user_id = $1`, w.maker)
+	w.exec(t, `INSERT INTO roles (name) VALUES ('scheduler')`)
+	w.exec(t, `INSERT INTO role_permissions (role, action) VALUES
+		('scheduler', 'schedule:read'), ('scheduler', 'schedule:write'), ('scheduler', 'schedule:manage')`)
+	w.exec(t, `UPDATE team_members SET role = 'scheduler' WHERE user_id = $1`, w.maker)
 	w.clock = *v.NextFireAt
 	if _, err := w.firer.FireDue(t.Context(), 100, time.Minute); err != nil {
 		t.Fatal(err)
@@ -795,9 +799,11 @@ func TestOneWhoMayNotRunNeitherMakesNorTakesOverASchedule(t *testing.T) {
 
 	_, err := w.service.CreateSchedule(t.Context(), w.who(), Origin{}, hourly("another"))
 	kindIs(t, err, Forbidden, "may not start runs")
-	outsider := Who{Team: w.team, User: w.maker, Manage: true}
-	_, err = w.service.TakeOver(t.Context(), outsider, Ref{ID: v.ID})
-	kindIs(t, err, Conflict, "may not start runs")
+	scheduler := Who{Team: w.team, User: w.maker, Manage: true}
+	_, err = w.service.TakeOver(t.Context(), scheduler, Ref{ID: v.ID})
+	kindIs(t, err, Forbidden, "may not start runs")
+	_, err = w.service.Resume(t.Context(), scheduler, Ref{ID: v.ID})
+	kindIs(t, err, Conflict, "may no longer start runs")
 	if n := w.count(t, `SELECT count(*) FROM schedules`); n != 1 {
 		t.Errorf("%d schedules, want the one", n)
 	}
@@ -876,10 +882,16 @@ func TestAScheduleThatCannotFireDoesNotHoldUpTheRest(t *testing.T) {
 	if w.count(t, `SELECT count(*) FROM schedule_fires WHERE schedule_id = $1 AND run_id IS NOT NULL`, good.ID) != 1 {
 		t.Error("the healthy schedule did not fire")
 	}
-	var next time.Time
+	var next, retry time.Time
 	w.scan(t, &next, `SELECT next_fire_at FROM schedules WHERE id = $1`, bad.ID)
-	if n := w.count(t, `SELECT consecutive_failures FROM schedules WHERE id = $1`, bad.ID); n != 1 || !next.Equal(w.clock.Add(retryAfter)) {
-		t.Errorf("failures %d next %v, want 1 and put off to %v", n, next, w.clock.Add(retryAfter))
+	w.scan(t, &retry, `SELECT retry_at FROM schedules WHERE id = $1`, bad.ID)
+	if n := w.count(t, `SELECT consecutive_failures FROM schedules WHERE id = $1`, bad.ID); n != 1 ||
+		!next.Equal(w.clock.Add(-time.Minute)) || !retry.Equal(w.clock.Add(retryAfter)) {
+		t.Errorf("failures %d next %v retry %v; want 1, still due at its time, retried at %v", n, next, retry, w.clock.Add(retryAfter))
+	}
+	// Before the retry it is not taken again.
+	if fired, err := w.firer.FireDue(t.Context(), 100, time.Minute); err != nil || fired != 0 {
+		t.Errorf("FireDue before the retry = %d, %v; want nothing", fired, err)
 	}
 	for range 4 {
 		w.clock = w.clock.Add(retryAfter)
@@ -943,5 +955,91 @@ func TestAnObjectiveCannotCloseItsWrapper(t *testing.T) {
 	other := Input(row, when.Slot{ScheduledFor: time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC), Outcome: when.Started})
 	if in == other {
 		t.Error("two inputs share an end; it must not be guessable")
+	}
+}
+
+// A fire put off and then able to run is for the time it was due, not the
+// minute it was retried, and its success clears the failure.
+func TestARetriedFireIsForTheTimeItWasDue(t *testing.T) {
+	w := newWorld(t)
+	v := w.make(t, hourly("flaky"))
+	slot := *v.NextFireAt
+	var channel uuid.UUID
+	w.scan(t, &channel, `SELECT channel_id FROM sessions WHERE schedule_id = $1`, v.ID)
+	w.exec(t, `DELETE FROM sessions WHERE schedule_id = $1`, v.ID)
+	w.clock = slot
+	if _, err := w.firer.FireDue(t.Context(), 100, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	w.exec(t, `INSERT INTO sessions (team_id, channel_id, provider_ref, kind, user_id, schedule_id)
+		VALUES ($1, $2, $3, 'direct', $4, $5)`, w.team, channel, "trigger:"+v.ID.String(), w.maker, v.ID)
+	w.clock = slot.Add(retryAfter)
+	if fired, err := w.firer.FireDue(t.Context(), 100, time.Minute); err != nil || fired != 1 {
+		t.Fatalf("FireDue after the retry = %d, %v", fired, err)
+	}
+	var due time.Time
+	w.scan(t, &due, `SELECT scheduled_for FROM schedule_fires WHERE schedule_id = $1 AND run_id IS NOT NULL`, v.ID)
+	if !due.Equal(slot) {
+		t.Errorf("the fire is for %v, want the time it was due, %v", due, slot)
+	}
+	w.finish(t, w.onlyRun(t, v.ID), "succeeded", "done")
+	if n := w.count(t, `SELECT consecutive_failures FROM schedules WHERE id = $1`, v.ID); n != 0 {
+		t.Errorf("%d failures after a success, want 0", n)
+	}
+	if w.count(t, `SELECT count(*) FROM schedules WHERE id = $1 AND retry_at IS NULL`, v.ID) != 1 {
+		t.Error("the wait to retry was not cleared")
+	}
+}
+
+// A run cancelled before a worker took it is recorded on its fire, as one a
+// worker ended would be.
+func TestARunCancelledThroughTheAPIIsRecordedOnItsFire(t *testing.T) {
+	w := newWorld(t)
+	v := w.make(t, hourly("summary"))
+	w.clock = *v.NextFireAt
+	if _, err := w.firer.FireDue(t.Context(), 100, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.store.RequestRunCancel(t.Context(), w.onlyRun(t, v.ID)); err != nil {
+		t.Fatalf("RequestRunCancel: %v", err)
+	}
+	if f := w.fires(t, v.ID); f["cancelled"] != 1 {
+		t.Errorf("fires = %v, want cancelled", f)
+	}
+}
+
+// Run now with the agent gone is refused, as a fire would skip it.
+func TestRunNowWithItsAgentGoneIsRefused(t *testing.T) {
+	w := newWorld(t)
+	var agent uuid.UUID
+	w.scan(t, &agent, `INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'triage', 'test/model', 1024, 'react', 5) RETURNING id`, w.team)
+	in := hourly("by triage")
+	in.AgentID = &agent
+	v := w.make(t, in)
+	w.exec(t, `DELETE FROM agents WHERE id = $1`, agent)
+	_, err := w.service.RunNow(t.Context(), w.who(), Ref{ID: v.ID})
+	kindIs(t, err, Conflict, "was deleted")
+	if n := w.count(t, `SELECT count(*) FROM runs`); n != 0 {
+		t.Errorf("%d runs, want none", n)
+	}
+}
+
+// The table refuses a schedule both by the hub and an agent, and an outcome
+// it does not know.
+func TestTheTableRefusesWhatCannotBe(t *testing.T) {
+	w := newWorld(t)
+	v := w.make(t, hourly("mine"))
+	var agent uuid.UUID
+	w.scan(t, &agent, `INSERT INTO agents (team_id, name, model_name, max_tokens, pattern, max_steps)
+		VALUES ($1, 'triage', 'test/model', 1024, 'react', 5) RETURNING id`, w.team)
+	for _, sql := range []string{
+		`UPDATE schedules SET hub = true, agent_id = '` + agent.String() + `' WHERE id = '` + v.ID.String() + `'`,
+		`INSERT INTO schedule_fires (schedule_id, team_id, scheduled_for, outcome) VALUES ('` +
+			v.ID.String() + `', '` + w.team.String() + `', now(), 'exploded')`,
+	} {
+		if _, err := w.raw.Exec(t.Context(), sql); err == nil || !strings.Contains(err.Error(), "check constraint") {
+			t.Errorf("%s: %v, want a check constraint to refuse it", sql, err)
+		}
 	}
 }

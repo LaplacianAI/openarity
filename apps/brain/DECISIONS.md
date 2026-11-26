@@ -33,9 +33,16 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     often it is reported; a cancelled run is neither a failure nor news.
   - **A fire that errors is put off, not retried at once.** Its transaction
     rolls back, so it would still be the oldest due and be claimed first on
-    every tick, ahead of every other schedule. It is moved a minute on and
-    counted as a failure, in a transaction of its own, so the fifth in a row
-    pauses it as any failing schedule.
+    every tick, ahead of every other schedule. `retry_at` holds it back a
+    minute, in a transaction of its own, and keeps `next_fire_at`, so the
+    retry is for the time it was due and its lateness is judged by the same
+    grace. An error of its own counts as a failure, so the fifth in a row
+    pauses it as any failing schedule; the database's passing trouble
+    (SQLSTATE classes 40 and 57, `55P03`, a lost connection) does not.
+  - **A wall time fires once at fall-back only for a rule that pins hours,**
+    and the test is that the local time moved forward, not that it differs
+    from the last: `0,30 1 * * *` reads 01:00, 01:30, 01:00, 01:30 and fires
+    two of them.
   - **What a schedule does is its maker's alone.** It runs as them, with their
     permissions, so only they change its name, objective, rule or agent, or
     run it now. `schedule:manage` sees, pauses, resumes, deletes and takes

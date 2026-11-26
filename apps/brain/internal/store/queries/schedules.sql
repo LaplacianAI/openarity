@@ -73,6 +73,8 @@ UPDATE schedules SET
     paused_reason = sqlc.narg('paused_reason'),
     deleted_at    = sqlc.narg('deleted_at'),
     next_fire_at  = sqlc.narg('next_fire_at'),
+    -- A fire that went through, and any change, ends a wait to retry.
+    retry_at      = NULL,
     last_fired_at = sqlc.narg('last_fired_at'),
     last_local    = sqlc.narg('last_local'),
     consecutive_failures = sqlc.arg('consecutive_failures'),
@@ -117,13 +119,16 @@ WHERE (schedule_id = sqlc.narg('schedule_id')::uuid OR watcher_id = sqlc.narg('w
 
 -- How many schedules are due: what the tick fans out by.
 -- name: CountDueSchedules :one
-SELECT count(*)::int FROM schedules WHERE status = 'active' AND next_fire_at <= sqlc.arg('now')::timestamptz;
+SELECT count(*)::int FROM schedules
+WHERE status = 'active' AND next_fire_at <= sqlc.arg('now')::timestamptz
+  AND (retry_at IS NULL OR retry_at <= sqlc.arg('now')::timestamptz);
 
 -- One due schedule, taken for the rest of the transaction. Skipped while
 -- another worker holds it, so workers split the due ones between them.
 -- name: ClaimDueSchedule :one
 SELECT * FROM schedules
 WHERE status = 'active' AND next_fire_at <= sqlc.arg('now')::timestamptz
+  AND (retry_at IS NULL OR retry_at <= sqlc.arg('now')::timestamptz)
 ORDER BY next_fire_at
 LIMIT 1
 FOR UPDATE SKIP LOCKED;
@@ -215,17 +220,21 @@ UPDATE schedules SET
 WHERE id = sqlc.arg('id')
 RETURNING status, paused_reason;
 
--- A fire that could not even be tried, an error rather than a refusal,
--- counted as a failed run: it is tried again at retry_at, and the fifth in a
--- row pauses the schedule. Pushed past now, so the next claim takes another
--- schedule rather than this one again.
+-- A fire that could not even be tried, an error rather than a refusal, waits
+-- until retry_at and is then tried again for the time it was due, so the next
+-- claim takes another schedule rather than this one again. One that failed on
+-- its own (not the database's passing trouble) counts as a failed run, and
+-- the fifth in a row pauses the schedule.
 -- name: DeferFailedFire :one
 UPDATE schedules SET
-    consecutive_failures = consecutive_failures + 1,
-    status = CASE WHEN consecutive_failures + 1 >= sqlc.arg('pause_after')::int THEN 'paused' ELSE status END,
-    paused_reason = CASE WHEN consecutive_failures + 1 >= sqlc.arg('pause_after')::int THEN 'failing' END,
-    next_fire_at = CASE WHEN consecutive_failures + 1 >= sqlc.arg('pause_after')::int THEN NULL
-                        ELSE sqlc.arg('retry_at')::timestamptz END,
+    consecutive_failures = consecutive_failures + CASE WHEN sqlc.arg('counts')::bool THEN 1 ELSE 0 END,
+    status = CASE WHEN sqlc.arg('counts')::bool AND consecutive_failures + 1 >= sqlc.arg('pause_after')::int
+                  THEN 'paused' ELSE status END,
+    paused_reason = CASE WHEN sqlc.arg('counts')::bool AND consecutive_failures + 1 >= sqlc.arg('pause_after')::int
+                         THEN 'failing' END,
+    next_fire_at = CASE WHEN sqlc.arg('counts')::bool AND consecutive_failures + 1 >= sqlc.arg('pause_after')::int
+                        THEN NULL ELSE next_fire_at END,
+    retry_at = sqlc.arg('retry_at')::timestamptz,
     updated_at = now()
 WHERE id = sqlc.arg('id') AND status = 'active'
 RETURNING status;

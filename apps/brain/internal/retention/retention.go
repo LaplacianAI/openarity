@@ -29,7 +29,9 @@ const (
 	// Keep is how long finished work stays recorded.
 	Keep        = 7 * 24 * time.Hour
 	deleteBatch = 500
-	maxDeletes  = 40
+	// maxDeletes bounds a day's work at 100,000: the minute tick alone
+	// leaves 1,440 a day, so a backlog clears in days, not never.
+	maxDeletes = 200
 )
 
 // A Job deletes, once a day, the record of finished scheduled work, and of
@@ -77,9 +79,14 @@ func (j *Job) once(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if len(names) == 0 {
+		// DBOS reads no names as no filter: every workflow, runs included.
+		return 0, nil
+	}
 	before := j.now().Add(-Keep)
 	deleted := 0
-	for range maxDeletes {
+	full := false
+	for i := range maxDeletes {
 		old, err := dbos.ListWorkflows(j.dbos,
 			dbos.WithFilterName(names...),
 			dbos.WithFilterStatus(dbos.WorkflowStatusSuccess, dbos.WorkflowStatusError,
@@ -104,6 +111,10 @@ func (j *Job) once(ctx context.Context) (int, error) {
 		if len(old) < deleteBatch {
 			break
 		}
+		full = i == maxDeletes-1
+	}
+	if full {
+		j.logger.WarnContext(ctx, "Retention reached its daily limit; the rest waits for tomorrow", "workflows", deleted)
 	}
 	if deleted > 0 {
 		j.logger.InfoContext(ctx, "Deleted the durable runtime's record of finished background work", "workflows", deleted)

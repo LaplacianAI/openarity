@@ -473,7 +473,7 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			return refuse(Conflict, "only a schedule paused because its maker left or may no longer run can be taken over")
 		}
 		// It runs as whoever takes it, so they must be able to run.
-		if err := mayRun(ctx, q, row.TeamID, who.User, Conflict,
+		if err := mayRun(ctx, q, row.TeamID, who.User, Forbidden,
 			"you may not start runs in this team, so a schedule taken over by you could not run"); err != nil {
 			return err
 		}

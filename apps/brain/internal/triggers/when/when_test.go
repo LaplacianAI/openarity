@@ -247,6 +247,30 @@ func TestDaylightSaving(t *testing.T) {
 			t.Errorf("01:30 fired twice: %s and %s", p.Fire.ScheduledFor, again.Fire.ScheduledFor)
 		}
 	})
+	t.Run("fall back fires each time of a pinned hour once", func(t *testing.T) {
+		// London, 25 October 2026: 01:00, 01:30, then 01:00 and 01:30 again.
+		for _, rule := range []string{"0,30 1 * * *", "*/15 1 * * *"} {
+			r := mustParse(t, "cron", rule, "Europe/London", time.Time{})
+			seen := map[string]int{}
+			from, last := utc("2026-10-25T00:00:00Z"), ""
+			for now := from; now.Before(utc("2026-10-25T02:30:00Z")); now = now.Add(time.Minute) {
+				p := Due(r, from, now, last)
+				if p.Fire == nil {
+					continue
+				}
+				seen[p.Fire.Local]++
+				from, last = p.Next, p.Fire.Local
+			}
+			for local, n := range seen {
+				if n != 1 {
+					t.Errorf("%s: %s fired %d times", rule, local, n)
+				}
+			}
+			if want := map[string]int{"0,30 1 * * *": 2, "*/15 1 * * *": 4}[rule]; len(seen) != want {
+				t.Errorf("%s: %d times fired, want %d: %v", rule, len(seen), want, seen)
+			}
+		}
+	})
 	t.Run("fall back fires both real hours of an hourly rule", func(t *testing.T) {
 		// Each hour is a real hour: 01:00 BST and 01:00 GMT are an hour apart.
 		r := mustParse(t, "cron", "0 * * * *", "Europe/London", time.Time{})

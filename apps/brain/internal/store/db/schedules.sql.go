@@ -13,8 +13,9 @@ import (
 )
 
 const claimDueSchedule = `-- name: ClaimDueSchedule :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
 WHERE status = 'active' AND next_fire_at <= $1::timestamptz
+  AND (retry_at IS NULL OR retry_at <= $1::timestamptz)
 ORDER BY next_fire_at
 LIMIT 1
 FOR UPDATE SKIP LOCKED
@@ -41,6 +42,7 @@ func (q *Queries) ClaimDueSchedule(ctx context.Context, now time.Time) (Schedule
 		&i.PausedReason,
 		&i.DeletedAt,
 		&i.NextFireAt,
+		&i.RetryAt,
 		&i.LastFiredAt,
 		&i.LastLocal,
 		&i.ConsecutiveFailures,
@@ -69,7 +71,9 @@ func (q *Queries) CloseTriggerSession(ctx context.Context, arg CloseTriggerSessi
 }
 
 const countDueSchedules = `-- name: CountDueSchedules :one
-SELECT count(*)::int FROM schedules WHERE status = 'active' AND next_fire_at <= $1::timestamptz
+SELECT count(*)::int FROM schedules
+WHERE status = 'active' AND next_fire_at <= $1::timestamptz
+  AND (retry_at IS NULL OR retry_at <= $1::timestamptz)
 `
 
 // How many schedules are due: what the tick fans out by.
@@ -201,7 +205,7 @@ INSERT INTO schedules (
     $11, $12, $13,
     $14, $15
 )
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
 `
 
 type CreateScheduleParams struct {
@@ -258,6 +262,7 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.PausedReason,
 		&i.DeletedAt,
 		&i.NextFireAt,
+		&i.RetryAt,
 		&i.LastFiredAt,
 		&i.LastLocal,
 		&i.ConsecutiveFailures,
@@ -407,28 +412,38 @@ func (q *Queries) CreateTriggeredRun(ctx context.Context, arg CreateTriggeredRun
 
 const deferFailedFire = `-- name: DeferFailedFire :one
 UPDATE schedules SET
-    consecutive_failures = consecutive_failures + 1,
-    status = CASE WHEN consecutive_failures + 1 >= $1::int THEN 'paused' ELSE status END,
-    paused_reason = CASE WHEN consecutive_failures + 1 >= $1::int THEN 'failing' END,
-    next_fire_at = CASE WHEN consecutive_failures + 1 >= $1::int THEN NULL
-                        ELSE $2::timestamptz END,
+    consecutive_failures = consecutive_failures + CASE WHEN $1::bool THEN 1 ELSE 0 END,
+    status = CASE WHEN $1::bool AND consecutive_failures + 1 >= $2::int
+                  THEN 'paused' ELSE status END,
+    paused_reason = CASE WHEN $1::bool AND consecutive_failures + 1 >= $2::int
+                         THEN 'failing' END,
+    next_fire_at = CASE WHEN $1::bool AND consecutive_failures + 1 >= $2::int
+                        THEN NULL ELSE next_fire_at END,
+    retry_at = $3::timestamptz,
     updated_at = now()
-WHERE id = $3 AND status = 'active'
+WHERE id = $4 AND status = 'active'
 RETURNING status
 `
 
 type DeferFailedFireParams struct {
+	Counts     bool
 	PauseAfter int32
 	RetryAt    time.Time
 	ID         uuid.UUID
 }
 
-// A fire that could not even be tried, an error rather than a refusal,
-// counted as a failed run: it is tried again at retry_at, and the fifth in a
-// row pauses the schedule. Pushed past now, so the next claim takes another
-// schedule rather than this one again.
+// A fire that could not even be tried, an error rather than a refusal, waits
+// until retry_at and is then tried again for the time it was due, so the next
+// claim takes another schedule rather than this one again. One that failed on
+// its own (not the database's passing trouble) counts as a failed run, and
+// the fifth in a row pauses the schedule.
 func (q *Queries) DeferFailedFire(ctx context.Context, arg DeferFailedFireParams) (string, error) {
-	row := q.db.QueryRow(ctx, deferFailedFire, arg.PauseAfter, arg.RetryAt, arg.ID)
+	row := q.db.QueryRow(ctx, deferFailedFire,
+		arg.Counts,
+		arg.PauseAfter,
+		arg.RetryAt,
+		arg.ID,
+	)
 	var status string
 	err := row.Scan(&status)
 	return status, err
@@ -455,7 +470,7 @@ func (q *Queries) ExpireProposedSchedules(ctx context.Context, before time.Time)
 }
 
 const getScheduleView = `-- name: GetScheduleView :one
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -495,6 +510,7 @@ func (q *Queries) GetScheduleView(ctx context.Context, arg GetScheduleViewParams
 		&i.Schedule.PausedReason,
 		&i.Schedule.DeletedAt,
 		&i.Schedule.NextFireAt,
+		&i.Schedule.RetryAt,
 		&i.Schedule.LastFiredAt,
 		&i.Schedule.LastLocal,
 		&i.Schedule.ConsecutiveFailures,
@@ -695,7 +711,7 @@ func (q *Queries) ListScheduleNews(ctx context.Context, arg ListScheduleNewsPara
 }
 
 const listScheduleViews = `-- name: ListScheduleViews :many
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -763,6 +779,7 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 			&i.Schedule.PausedReason,
 			&i.Schedule.DeletedAt,
 			&i.Schedule.NextFireAt,
+			&i.Schedule.RetryAt,
 			&i.Schedule.LastFiredAt,
 			&i.Schedule.LastLocal,
 			&i.Schedule.ConsecutiveFailures,
@@ -785,7 +802,7 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 }
 
 const lockSchedule = `-- name: LockSchedule :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at FROM schedules
 WHERE id = $1 AND team_id = $2 AND status <> 'deleted'
 FOR UPDATE
 `
@@ -814,6 +831,7 @@ func (q *Queries) LockSchedule(ctx context.Context, arg LockScheduleParams) (Sch
 		&i.PausedReason,
 		&i.DeletedAt,
 		&i.NextFireAt,
+		&i.RetryAt,
 		&i.LastFiredAt,
 		&i.LastLocal,
 		&i.ConsecutiveFailures,
@@ -919,12 +937,14 @@ UPDATE schedules SET
     paused_reason = $11,
     deleted_at    = $12,
     next_fire_at  = $13,
+    -- A fire that went through, and any change, ends a wait to retry.
+    retry_at      = NULL,
     last_fired_at = $14,
     last_local    = $15,
     consecutive_failures = $16,
     updated_at    = now()
 WHERE id = $17
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at
 `
 
 type SaveScheduleParams struct {
@@ -986,6 +1006,7 @@ func (q *Queries) SaveSchedule(ctx context.Context, arg SaveScheduleParams) (Sch
 		&i.PausedReason,
 		&i.DeletedAt,
 		&i.NextFireAt,
+		&i.RetryAt,
 		&i.LastFiredAt,
 		&i.LastLocal,
 		&i.ConsecutiveFailures,

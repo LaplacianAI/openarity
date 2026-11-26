@@ -96,6 +96,14 @@ func TestItDeletesOnlyOldFinishedWorkItWasToldOf(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Told of nothing, with nothing scheduled, it deletes nothing: DBOS reads
+	// no names as every workflow.
+	bare := NewJob(quiet())
+	bare.dbos = d
+	if n, err := bare.once(t.Context()); err != nil || n != 0 {
+		t.Fatalf("a job told of nothing deleted %d, %v; want none", n, err)
+	}
+
 	n, err := j.once(t.Context())
 	if err != nil || n != 1 {
 		t.Fatalf("once = %d, %v; want the one old batch", n, err)
