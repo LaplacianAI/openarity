@@ -411,37 +411,46 @@ func (q *Queries) CreateTriggeredRun(ctx context.Context, arg CreateTriggeredRun
 }
 
 const deferFailedFire = `-- name: DeferFailedFire :one
-UPDATE schedules SET
-    consecutive_failures = consecutive_failures + CASE WHEN $1::bool THEN 1 ELSE 0 END,
-    status = CASE WHEN $1::bool AND consecutive_failures + 1 >= $2::int
-                  THEN 'paused' ELSE status END,
-    paused_reason = CASE WHEN $1::bool AND consecutive_failures + 1 >= $2::int
-                         THEN 'failing' END,
-    next_fire_at = CASE WHEN $1::bool AND consecutive_failures + 1 >= $2::int
-                        THEN NULL ELSE next_fire_at END,
-    retry_at = $3::timestamptz,
-    updated_at = now()
-WHERE id = $4 AND status = 'active'
-RETURNING status
+UPDATE schedules s SET
+    consecutive_failures = s.consecutive_failures + CASE WHEN c.counts THEN 1 ELSE 0 END,
+    status        = CASE WHEN c.pauses THEN 'paused' ELSE s.status END,
+    paused_reason = CASE WHEN c.pauses THEN 'failing' END,
+    next_fire_at  = CASE WHEN c.pauses THEN NULL ELSE s.next_fire_at END,
+    retry_at      = CASE WHEN c.pauses THEN NULL ELSE $1::timestamptz END,
+    updated_at    = now()
+FROM (
+    SELECT id, counts, counts AND consecutive_failures + 1 >= $2::int AS pauses
+    FROM (
+        SELECT j.id, j.consecutive_failures,
+               $3::bool OR j.next_fire_at < $4::timestamptz AS counts
+        FROM schedules j WHERE j.id = $5
+    ) judged
+) c
+WHERE s.id = c.id AND s.status = 'active'
+RETURNING s.status
 `
 
 type DeferFailedFireParams struct {
-	Counts     bool
-	PauseAfter int32
-	RetryAt    time.Time
-	ID         uuid.UUID
+	RetryAt     time.Time
+	PauseAfter  int32
+	Counts      bool
+	StuckBefore time.Time
+	ID          uuid.UUID
 }
 
 // A fire that could not even be tried, an error rather than a refusal, waits
 // until retry_at and is then tried again for the time it was due, so the next
-// claim takes another schedule rather than this one again. One that failed on
-// its own (not the database's passing trouble) counts as a failed run, and
-// the fifth in a row pauses the schedule.
+// claim takes another schedule rather than this one again. It counts as a
+// failed run when it failed on its own, or when the database's passing
+// trouble has not passed since stuck_before: next_fire_at stays on the time
+// it was due while it retries, so that is how long it has been stuck. The
+// fifth count in a row pauses the schedule, with no retry left waiting.
 func (q *Queries) DeferFailedFire(ctx context.Context, arg DeferFailedFireParams) (string, error) {
 	row := q.db.QueryRow(ctx, deferFailedFire,
-		arg.Counts,
-		arg.PauseAfter,
 		arg.RetryAt,
+		arg.PauseAfter,
+		arg.Counts,
+		arg.StuckBefore,
 		arg.ID,
 	)
 	var status string

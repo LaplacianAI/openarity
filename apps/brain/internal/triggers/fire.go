@@ -27,9 +27,15 @@ const (
 	skippedTarget = "skipped_target"
 )
 
-// retryAfter is how long a fire that could not be tried waits to be tried
-// again, for the same time it was due.
-const retryAfter = time.Minute
+const (
+	// retryAfter is how long a fire that could not be tried waits to be
+	// tried again, for the same time it was due.
+	retryAfter = time.Minute
+	// stuckAfter is how long the database's passing trouble may go on for one
+	// schedule before its retries count: trouble that never passes is the
+	// schedule's to show, not a silent retry each minute.
+	stuckAfter = time.Hour
+)
 
 // FireStore is what firing reads and writes, in one transaction a schedule.
 type FireStore interface {
@@ -109,13 +115,16 @@ func (e *fireFailed) Unwrap() error { return e.err }
 
 // putOff has a schedule whose fire failed wait retryAfter, in a transaction
 // of its own, then try the same time again. A failure of its own counts, and
-// the fifth in a row pauses it; the database's passing trouble does not.
+// the fifth in a row pauses it; the database's passing trouble counts only
+// once it has gone on for stuckAfter.
 func (f *Firer) putOff(ctx context.Context, bad *fireFailed) error {
 	counts := !passing(bad.err)
+	now := f.now()
 	f.logger.ErrorContext(ctx, "A schedule could not fire; trying it again later",
-		"schedule_id", bad.id, "counted", counts, "error", bad.err)
+		"schedule_id", bad.id, "its_own", counts, "error", bad.err)
 	_, err := f.store.DeferFailedFire(ctx, db.DeferFailedFireParams{
-		ID: bad.id, Counts: counts, PauseAfter: store.PauseAfter, RetryAt: f.now().Add(retryAfter),
+		ID: bad.id, Counts: counts, StuckBefore: now.Add(-stuckAfter),
+		PauseAfter: store.PauseAfter, RetryAt: now.Add(retryAfter),
 	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("put off schedule %s: %w", bad.id, err)
@@ -124,15 +133,22 @@ func (f *Firer) putOff(ctx context.Context, bad *fireFailed) error {
 }
 
 // passing is an error from the database's state rather than the schedule's:
-// a deadlock or a serialization failure, a lock or statement timeout, the
-// server shutting down, or a lost connection. Trying again is its remedy.
+// a lost connection (08), the server short of resources (53), a deadlock or
+// a serialization failure (40), a statement timeout or the server shutting
+// down (57), a lock timeout, or a connection that failed or timed out before
+// any of those. Trying again is its remedy.
 func passing(err error) bool {
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) {
-		return strings.HasPrefix(pg.Code, "40") || strings.HasPrefix(pg.Code, "57") || pg.Code == "55P03"
+		for _, class := range []string{"08", "40", "53", "57"} {
+			if strings.HasPrefix(pg.Code, class) {
+				return true
+			}
+		}
+		return pg.Code == "55P03"
 	}
 	var nerr net.Error
-	return errors.As(err, &nerr) || pgconn.Timeout(err)
+	return errors.As(err, &nerr) || pgconn.Timeout(err) || pgconn.SafeToRetry(err)
 }
 
 // fireOne takes one due schedule, works out what is due (D4, D6), records it

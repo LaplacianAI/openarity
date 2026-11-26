@@ -3465,9 +3465,10 @@ paths:
       tags: [schedules]
       summary: Delete a schedule
       description: |
-        Requires `schedule:write` in this team. It fires no more, and its
-        conversation is closed and kept, with its runs. A run already
-        working finishes.
+        Requires `schedule:write` in this team, and the schedule to be the
+        caller's own or the caller to hold `schedule:manage` (404
+        otherwise). It fires no more, and its conversation is closed and
+        kept, with its runs. A run already working finishes.
       responses:
         "204":
           description: Deleted

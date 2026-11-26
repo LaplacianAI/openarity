@@ -1043,3 +1043,38 @@ func TestTheTableRefusesWhatCannotBe(t *testing.T) {
 		}
 	}
 }
+
+// The database's passing trouble is retried uncounted, but not forever: once
+// a schedule has been stuck on it past stuckAfter, each retry counts, so it
+// pauses as failing rather than retry silently each minute.
+func TestTroubleThatNeverPassesCountsAfterAnHour(t *testing.T) {
+	w := newWorld(t)
+	v := w.make(t, hourly("stuck"))
+	putOff := func() {
+		t.Helper()
+		if _, err := w.store.DeferFailedFire(t.Context(), db.DeferFailedFireParams{
+			ID: v.ID, Counts: false, StuckBefore: w.clock.Add(-stuckAfter),
+			PauseAfter: store.PauseAfter, RetryAt: w.clock.Add(retryAfter),
+		}); err != nil {
+			t.Fatalf("DeferFailedFire: %v", err)
+		}
+	}
+	w.due(t, v.ID, w.clock.Add(-10*time.Minute))
+	putOff()
+	if n := w.count(t, `SELECT consecutive_failures FROM schedules WHERE id = $1`, v.ID); n != 0 {
+		t.Errorf("%d failures ten minutes in, want none", n)
+	}
+	w.due(t, v.ID, w.clock.Add(-stuckAfter-time.Minute))
+	for range store.PauseAfter {
+		putOff()
+	}
+	var status, reason string
+	w.scan(t, &status, `SELECT status FROM schedules WHERE id = $1`, v.ID)
+	w.scan(t, &reason, `SELECT coalesce(paused_reason, '') FROM schedules WHERE id = $1`, v.ID)
+	if status != Paused || reason != Failing {
+		t.Errorf("status %s reason %q after an hour stuck, want paused as failing", status, reason)
+	}
+	if w.count(t, `SELECT count(*) FROM schedules WHERE id = $1 AND retry_at IS NULL AND next_fire_at IS NULL`, v.ID) != 1 {
+		t.Error("a paused schedule still waits on a retry or a next fire")
+	}
+}

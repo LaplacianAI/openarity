@@ -222,22 +222,29 @@ RETURNING status, paused_reason;
 
 -- A fire that could not even be tried, an error rather than a refusal, waits
 -- until retry_at and is then tried again for the time it was due, so the next
--- claim takes another schedule rather than this one again. One that failed on
--- its own (not the database's passing trouble) counts as a failed run, and
--- the fifth in a row pauses the schedule.
+-- claim takes another schedule rather than this one again. It counts as a
+-- failed run when it failed on its own, or when the database's passing
+-- trouble has not passed since stuck_before: next_fire_at stays on the time
+-- it was due while it retries, so that is how long it has been stuck. The
+-- fifth count in a row pauses the schedule, with no retry left waiting.
 -- name: DeferFailedFire :one
-UPDATE schedules SET
-    consecutive_failures = consecutive_failures + CASE WHEN sqlc.arg('counts')::bool THEN 1 ELSE 0 END,
-    status = CASE WHEN sqlc.arg('counts')::bool AND consecutive_failures + 1 >= sqlc.arg('pause_after')::int
-                  THEN 'paused' ELSE status END,
-    paused_reason = CASE WHEN sqlc.arg('counts')::bool AND consecutive_failures + 1 >= sqlc.arg('pause_after')::int
-                         THEN 'failing' END,
-    next_fire_at = CASE WHEN sqlc.arg('counts')::bool AND consecutive_failures + 1 >= sqlc.arg('pause_after')::int
-                        THEN NULL ELSE next_fire_at END,
-    retry_at = sqlc.arg('retry_at')::timestamptz,
-    updated_at = now()
-WHERE id = sqlc.arg('id') AND status = 'active'
-RETURNING status;
+UPDATE schedules s SET
+    consecutive_failures = s.consecutive_failures + CASE WHEN c.counts THEN 1 ELSE 0 END,
+    status        = CASE WHEN c.pauses THEN 'paused' ELSE s.status END,
+    paused_reason = CASE WHEN c.pauses THEN 'failing' END,
+    next_fire_at  = CASE WHEN c.pauses THEN NULL ELSE s.next_fire_at END,
+    retry_at      = CASE WHEN c.pauses THEN NULL ELSE sqlc.arg('retry_at')::timestamptz END,
+    updated_at    = now()
+FROM (
+    SELECT id, counts, counts AND consecutive_failures + 1 >= sqlc.arg('pause_after')::int AS pauses
+    FROM (
+        SELECT j.id, j.consecutive_failures,
+               sqlc.arg('counts')::bool OR j.next_fire_at < sqlc.arg('stuck_before')::timestamptz AS counts
+        FROM schedules j WHERE j.id = sqlc.arg('id')
+    ) judged
+) c
+WHERE s.id = c.id AND s.status = 'active'
+RETURNING s.status;
 
 -- A schedule's fires, newest first, a page at a time.
 -- name: ListScheduleFires :many

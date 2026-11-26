@@ -7265,9 +7265,10 @@ type ClientInterface interface {
 
 	// DeleteSchedule Delete a schedule
 	//
-	// Requires `schedule:write` in this team. It fires no more, and its
-	// conversation is closed and kept, with its runs. A run already
-	// working finishes.
+	// Requires `schedule:write` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage` (404
+	// otherwise). It fires no more, and its conversation is closed and
+	// kept, with its runs. A run already working finishes.
 	//
 	// Corresponds with DELETE /teams/{id}/schedules/{scheduleID} (the `DeleteSchedule` operationId).
 	DeleteSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10397,9 +10398,10 @@ func (c *Client) PreviewSchedule(ctx context.Context, id TeamID, body PreviewSch
 
 // DeleteSchedule Delete a schedule
 //
-// Requires `schedule:write` in this team. It fires no more, and its
-// conversation is closed and kept, with its runs. A run already
-// working finishes.
+// Requires `schedule:write` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage` (404
+// otherwise). It fires no more, and its conversation is closed and
+// kept, with its runs. A run already working finishes.
 //
 // Corresponds with DELETE /teams/{id}/schedules/{scheduleID} (the `DeleteSchedule` operationId).
 func (c *Client) DeleteSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18777,9 +18779,10 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteScheduleWithResponse Delete a schedule
 	//
-	// Requires `schedule:write` in this team. It fires no more, and its
-	// conversation is closed and kept, with its runs. A run already
-	// working finishes.
+	// Requires `schedule:write` in this team, and the schedule to be the
+	// caller's own or the caller to hold `schedule:manage` (404
+	// otherwise). It fires no more, and its conversation is closed and
+	// kept, with its runs. A run already working finishes.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -26715,9 +26718,10 @@ func (c *ClientWithResponses) PreviewScheduleWithResponse(ctx context.Context, i
 
 // DeleteScheduleWithResponse Delete a schedule
 //
-// Requires `schedule:write` in this team. It fires no more, and its
-// conversation is closed and kept, with its runs. A run already
-// working finishes.
+// Requires `schedule:write` in this team, and the schedule to be the
+// caller's own or the caller to hold `schedule:manage` (404
+// otherwise). It fires no more, and its conversation is closed and
+// kept, with its runs. A run already working finishes.
 //
 // Returns a wrapper object for the known response body format(s).
 //

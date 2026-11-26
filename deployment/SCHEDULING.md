@@ -142,8 +142,17 @@ A fire that fails with an error, rather than a refusal, waits a minute and is
 tried again for the time it was due, so one broken schedule never holds up
 the rest of a batch. The worker logs `A schedule could not fire` each time.
 An error of the schedule's own counts as a failed run, and five in a row
-pause it as `failing`; the database's passing trouble (a deadlock, a lock or
-statement timeout, a lost connection) is retried without counting.
+pause it as `failing`. The database's passing trouble (a lost connection, a
+deadlock, a lock or statement timeout, the server short of resources) is
+retried without counting, until one schedule has been stuck on it for an
+hour; then its retries count too, so it pauses rather than retry silently.
+
+A schedule's rule is read in its zone, on the wall clock. When the clocks go
+back, a time that names its hour (01:30 each day) fires once, though the wall
+reads it twice; a rule over every hour fires in each real hour. When they go
+forward, a time in the hour that is skipped (02:30 in New York on 8 March
+2026) does not happen that day: nothing fires and nothing is recorded as
+missed, and the next day fires as usual.
 
 A schedule runs as its maker, so only its maker changes what it does or runs
 it now; whoever holds `schedule:manage` sees, pauses, resumes, deletes and

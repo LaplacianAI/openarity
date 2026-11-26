@@ -38,7 +38,15 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     retry is for the time it was due and its lateness is judged by the same
     grace. An error of its own counts as a failure, so the fifth in a row
     pauses it as any failing schedule; the database's passing trouble
-    (SQLSTATE classes 40 and 57, `55P03`, a lost connection) does not.
+    (SQLSTATE classes 08, 40, 53 and 57, `55P03`, a lost connection) does
+    not, until the schedule has been stuck on it for an hour. That needs no
+    column of its own: `next_fire_at` stays on the time it was due while it
+    retries, so its age is how long it has been stuck. A pause clears the
+    retry with it.
+  - **A time the clocks skip does not fire that day.** On the morning they go
+    forward, a rule's 02:30 does not exist on the wall, so nothing fires and
+    nothing is missed; firing at the next valid minute instead is a product
+    choice not made yet.
   - **A wall time fires once at fall-back only for a rule that pins hours,**
     and the test is that the local time moved forward, not that it differs
     from the last: `0,30 1 * * *` reads 01:00, 01:30, 01:00, 01:30 and fires

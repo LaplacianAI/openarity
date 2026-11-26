@@ -180,6 +180,10 @@ func TestOnlyTheDatabasesPassingTroubleGoesUncounted(t *testing.T) {
 		&pgconn.PgError{Code: "40P01"}:                                            true, // deadlock
 		&pgconn.PgError{Code: "55P03"}:                                            true, // lock timeout
 		&pgconn.PgError{Code: "57014"}:                                            true, // statement timeout
+		&pgconn.PgError{Code: "08006"}:                                            true, // connection failure
+		&pgconn.PgError{Code: "53300"}:                                            true, // too many connections
+		fmt.Errorf("claim: %w", &pgconn.PgError{Code: "40001"}):                   true, // wrapped
+		fmt.Errorf("x: %w", context.DeadlineExceeded):                             true,
 		fmt.Errorf("x: %w", &net.OpError{Op: "dial", Err: errors.New("refused")}): true,
 		&pgconn.PgError{Code: "23503"}:                                            false, // a key the schedule broke
 		errors.New("read the schedule's conversation: no rows"):                   false,
