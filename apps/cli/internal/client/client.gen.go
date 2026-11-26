@@ -458,16 +458,16 @@ func (e ChannelPairingState) Valid() bool {
 
 // Defines values for CreateWatcherRequestSource.
 const (
-	CreateWatcherRequestSourceFeed    CreateWatcherRequestSource = "feed"
-	CreateWatcherRequestSourceWebPage CreateWatcherRequestSource = "web_page"
+	Feed    CreateWatcherRequestSource = "feed"
+	WebPage CreateWatcherRequestSource = "web_page"
 )
 
 // Valid indicates whether the value is a known member of the CreateWatcherRequestSource enum.
 func (e CreateWatcherRequestSource) Valid() bool {
 	switch e {
-	case CreateWatcherRequestSourceFeed:
+	case Feed:
 		return true
-	case CreateWatcherRequestSourceWebPage:
+	case WebPage:
 		return true
 	default:
 		return false
@@ -1409,25 +1409,25 @@ func (e SandboxTemplateBuildStatus) Valid() bool {
 
 // Defines values for SchedulePausedReason.
 const (
-	SchedulePausedReasonByPerson       SchedulePausedReason = "by_person"
-	SchedulePausedReasonFailing        SchedulePausedReason = "failing"
-	SchedulePausedReasonMakerCannotRun SchedulePausedReason = "maker_cannot_run"
-	SchedulePausedReasonMakerGone      SchedulePausedReason = "maker_gone"
-	SchedulePausedReasonTargetGone     SchedulePausedReason = "target_gone"
+	ByPerson       SchedulePausedReason = "by_person"
+	Failing        SchedulePausedReason = "failing"
+	MakerCannotRun SchedulePausedReason = "maker_cannot_run"
+	MakerGone      SchedulePausedReason = "maker_gone"
+	TargetGone     SchedulePausedReason = "target_gone"
 )
 
 // Valid indicates whether the value is a known member of the SchedulePausedReason enum.
 func (e SchedulePausedReason) Valid() bool {
 	switch e {
-	case SchedulePausedReasonByPerson:
+	case ByPerson:
 		return true
-	case SchedulePausedReasonFailing:
+	case Failing:
 		return true
-	case SchedulePausedReasonMakerCannotRun:
+	case MakerCannotRun:
 		return true
-	case SchedulePausedReasonMakerGone:
+	case MakerGone:
 		return true
-	case SchedulePausedReasonTargetGone:
+	case TargetGone:
 		return true
 	default:
 		return false
@@ -1776,99 +1776,6 @@ func (e UpdateScheduleRequestStatus) Valid() bool {
 	case UpdateScheduleRequestStatusActive:
 		return true
 	case UpdateScheduleRequestStatusPaused:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for UpdateWatcherRequestStatus.
-const (
-	UpdateWatcherRequestStatusActive UpdateWatcherRequestStatus = "active"
-	UpdateWatcherRequestStatusPaused UpdateWatcherRequestStatus = "paused"
-)
-
-// Valid indicates whether the value is a known member of the UpdateWatcherRequestStatus enum.
-func (e UpdateWatcherRequestStatus) Valid() bool {
-	switch e {
-	case UpdateWatcherRequestStatusActive:
-		return true
-	case UpdateWatcherRequestStatusPaused:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for WatcherPausedReason.
-const (
-	WatcherPausedReasonByPerson       WatcherPausedReason = "by_person"
-	WatcherPausedReasonFailing        WatcherPausedReason = "failing"
-	WatcherPausedReasonMakerCannotRun WatcherPausedReason = "maker_cannot_run"
-	WatcherPausedReasonMakerGone      WatcherPausedReason = "maker_gone"
-	WatcherPausedReasonTargetGone     WatcherPausedReason = "target_gone"
-)
-
-// Valid indicates whether the value is a known member of the WatcherPausedReason enum.
-func (e WatcherPausedReason) Valid() bool {
-	switch e {
-	case WatcherPausedReasonByPerson:
-		return true
-	case WatcherPausedReasonFailing:
-		return true
-	case WatcherPausedReasonMakerCannotRun:
-		return true
-	case WatcherPausedReasonMakerGone:
-		return true
-	case WatcherPausedReasonTargetGone:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for WatcherSource.
-const (
-	WatcherSourceFeed    WatcherSource = "feed"
-	WatcherSourceWebPage WatcherSource = "web_page"
-	WatcherSourceWebhook WatcherSource = "webhook"
-)
-
-// Valid indicates whether the value is a known member of the WatcherSource enum.
-func (e WatcherSource) Valid() bool {
-	switch e {
-	case WatcherSourceFeed:
-		return true
-	case WatcherSourceWebPage:
-		return true
-	case WatcherSourceWebhook:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for WatcherStatus.
-const (
-	WatcherStatusActive        WatcherStatus = "active"
-	WatcherStatusDeleted       WatcherStatus = "deleted"
-	WatcherStatusPaused        WatcherStatus = "paused"
-	WatcherStatusProposed      WatcherStatus = "proposed"
-	WatcherStatusWaitingSecret WatcherStatus = "waiting_secret"
-)
-
-// Valid indicates whether the value is a known member of the WatcherStatus enum.
-func (e WatcherStatus) Valid() bool {
-	switch e {
-	case WatcherStatusActive:
-		return true
-	case WatcherStatusDeleted:
-		return true
-	case WatcherStatusPaused:
-		return true
-	case WatcherStatusProposed:
-		return true
-	case WatcherStatusWaitingSecret:
 		return true
 	default:
 		return false
@@ -5449,12 +5356,11 @@ type UpdateWatcherRequest struct {
 	Objective *string `json:"objective,omitempty" yaml:"objective,omitempty"`
 
 	// Selector An empty string clears it.
-	Selector *string                     `json:"selector,omitempty" yaml:"selector,omitempty"`
-	Status   *UpdateWatcherRequestStatus `json:"status,omitempty" yaml:"status,omitempty"`
-}
+	Selector *string `json:"selector,omitempty" yaml:"selector,omitempty"`
 
-// UpdateWatcherRequestStatus defines model for UpdateWatcherRequest.Status.
-type UpdateWatcherRequestStatus string
+	// Status `active` or `paused`.
+	Status *string `json:"status,omitempty" yaml:"status,omitempty"`
+}
 
 // User defines model for User.
 type User struct {
@@ -5501,31 +5407,27 @@ type Watcher struct {
 	NextCheckAt     *time.Time          `json:"next_check_at,omitempty" yaml:"next_check_at,omitempty"`
 	Objective       string              `json:"objective" yaml:"objective"`
 
-	// PausedReason Why it is paused. `failing` is five failed runs in a row, or what
+	// PausedReason Why it is paused: one of `by_person`, `failing`,
+	// `maker_cannot_run`, `maker_gone` or `target_gone`, as for a
+	// schedule. `failing` is five failed runs in a row, or what
 	// it looks at failing for a day.
-	PausedReason *WatcherPausedReason `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
+	PausedReason *string `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
 
 	// Selector The CSS selector whose text a web_page watcher compares; absent is the page's whole text.
 	Selector  *string            `json:"selector,omitempty" yaml:"selector,omitempty"`
 	SessionID openapi_types.UUID `json:"session_id" yaml:"session_id"`
-	Source    WatcherSource      `json:"source" yaml:"source"`
-	Status    WatcherStatus      `json:"status" yaml:"status"`
-	Target    ScheduleTarget     `json:"target" yaml:"target"`
-	UpdatedAt time.Time          `json:"updated_at" yaml:"updated_at"`
+
+	// Source One of `web_page`, `feed` or `webhook`.
+	Source string `json:"source" yaml:"source"`
+
+	// Status One of `proposed`, `waiting_secret`, `active`, `paused` or `deleted`.
+	Status    string         `json:"status" yaml:"status"`
+	Target    ScheduleTarget `json:"target" yaml:"target"`
+	UpdatedAt time.Time      `json:"updated_at" yaml:"updated_at"`
 
 	// URL The address it looks at, as it was normalised; absent once it is deleted.
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
-
-// WatcherPausedReason Why it is paused. `failing` is five failed runs in a row, or what
-// it looks at failing for a day.
-type WatcherPausedReason string
-
-// WatcherSource defines model for Watcher.Source.
-type WatcherSource string
-
-// WatcherStatus defines model for Watcher.Status.
-type WatcherStatus string
 
 // WatcherCheck defines model for WatcherCheck.
 type WatcherCheck struct {
