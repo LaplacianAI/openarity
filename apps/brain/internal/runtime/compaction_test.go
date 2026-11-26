@@ -1,10 +1,14 @@
 package runtime
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/LaplacianAI/openarity/sdk/agent"
+	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 // A run compacts at a tenth of its budget, held between the team's least and
@@ -290,5 +294,97 @@ func TestARunNearItsLastStepIsAskedToWrapUpOnce(t *testing.T) {
 	four.hold(&fakeRun{})
 	if four.stepped(1) != nil || four.stepped(2) == nil {
 		t.Fatal("a run of 4 steps should be asked at step 2, not before")
+	}
+}
+
+// textTool is a tool whose result is text: each line numbered, so a read of the
+// middle names which line it got.
+func textTool(name, text string) agent.Tool {
+	return agent.Tool{
+		Name: name, Schema: json.RawMessage(`{"type":"object"}`),
+		Invoke: func(context.Context, json.RawMessage) (string, error) { return text, nil },
+	}
+}
+
+// numbered is n numbered lines of about 40 bytes.
+func numbered(n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, "line %05d of a file a review read whole\n", i+1)
+	}
+	return b.String()
+}
+
+// sentAfter runs one call of tool through a run as the brain builds one, then
+// read_output with args when set, and is what the model was sent of each
+// result.
+func sentAfter(t *testing.T, tool agent.Tool, readArgs string) []agent.Message {
+	t.Helper()
+	turns := []turn{callTool("c1", tool.Name, `{}`)}
+	if readArgs != "" {
+		turns = append(turns, callTool("r1", agent.ReadOutputToolName, readArgs))
+	}
+	model := newScripted(append(turns, answer("done", 10, 5))...)
+	runner, err := agent.New(func(agent.Endpoint) (agent.ModelClient, error) { return model, nil }, patterns.ReAct())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := agent.Spec{
+		Model: agent.ModelRef{Name: "m", MaxTokens: 100}, Pattern: agent.PatternReAct, MaxSteps: 4,
+		Tools:      []agent.Tool{tool},
+		Compaction: compactionFor(defaultTeamSettings(), maxTokens),
+	}
+	task := []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "review it"}}}}
+	if _, err := runner.Run(t.Context(), spec, task, agent.Endpoint{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	reqs := model.requests()
+	var out []agent.Message
+	for _, m := range reqs[len(reqs)-1].Messages {
+		if m.Role == agent.RoleTool {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// A result over 8 KiB reaches the model as its two ends and a handle, from
+// the first request after it; one under is sent whole.
+func TestAResultOver8KiBIsShownAsItsEnds(t *testing.T) {
+	t.Parallel()
+
+	big := numbered(500) // about 20 KiB
+	got := sentAfter(t, textTool("Bash", big), "")
+	if len(got) != 1 || strings.Contains(got[0].Text(), "line 00250") || !strings.Contains(got[0].Text(), "line 00001") ||
+		!strings.Contains(got[0].Text(), "line 00500") || !strings.Contains(got[0].Text(), agent.ReadOutputToolName) {
+		t.Fatalf("a 20 KiB result was sent as %d bytes; want its ends and a read_output handle", len(got[0].Text()))
+	}
+	if len(got[0].Text()) > 7<<10 {
+		t.Errorf("the preview is %d bytes, want about 6 KiB", len(got[0].Text()))
+	}
+
+	small := numbered(170) // about 7 KiB
+	if got := sentAfter(t, textTool("Bash", small), ""); len(got) != 1 || got[0].Text() != small {
+		t.Errorf("a 7 KiB result was not sent whole")
+	}
+}
+
+// What a preview leaves out, read_output reads back: the middle by its line.
+func TestTheMiddleOfAPreviewedResultIsReadBack(t *testing.T) {
+	t.Parallel()
+
+	got := sentAfter(t, textTool("Bash", numbered(500)), `{"call":"c1","from_line":250,"lines":2}`)
+	if len(got) != 2 || !strings.Contains(got[1].Text(), "line 00250") {
+		t.Fatalf("read_output of line 250 gave %.200q", got[len(got)-1].Text())
+	}
+}
+
+// A skill is the model's instructions, never cut.
+func TestASkillOver8KiBIsSentWhole(t *testing.T) {
+	t.Parallel()
+
+	skill := numbered(300) // about 12 KiB
+	if got := sentAfter(t, textTool(agent.SkillToolName, skill), ""); len(got) != 1 || got[0].Text() != skill {
+		t.Errorf("a 12 KiB skill was cut")
 	}
 }

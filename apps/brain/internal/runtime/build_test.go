@@ -599,7 +599,7 @@ func TestAnAgentRowBecomesTheSpecItDescribes(t *testing.T) {
 			}
 
 			got := built.Spec
-			if want := (agent.Compaction{AfterMessages: 100, AfterInputTokens: 60_000}); got.Compaction == nil ||
+			if want := (agent.Compaction{AfterMessages: 100, AfterInputTokens: 60_000, Preview: agent.Preview{Over: 8 << 10}}); got.Compaction == nil ||
 				*got.Compaction != want {
 				t.Errorf("compaction = %+v, want %+v: the default team setting and a tenth of the default budget, "+
 					"capped", got.Compaction, want)
@@ -627,7 +627,7 @@ func TestARunCompactsBetweenItsTeamsSavedLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if want := (agent.Compaction{AfterMessages: 30, AfterInputTokens: 80_000}); built.Spec.Compaction == nil ||
+	if want := (agent.Compaction{AfterMessages: 30, AfterInputTokens: 80_000, Preview: agent.Preview{Over: 8 << 10}}); built.Spec.Compaction == nil ||
 		*built.Spec.Compaction != want {
 		t.Errorf("compaction = %+v, want %+v: the team's messages, and its least", built.Spec.Compaction, want)
 	}

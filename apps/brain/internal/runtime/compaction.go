@@ -29,6 +29,13 @@ const (
 	// steps between compactions.
 	defaultCompactionTokensMin = 50_000
 	defaultCompactionTokensMax = 60_000
+	// previewOver is the size past which a tool result reaches the model as
+	// its first 4 KiB and last 2 KiB and a read_output handle, not the SDK's
+	// 48 KiB. On staging (2026-11-20 to 27), review delegates' results over
+	// 8 KiB were 22% of them and 46% of their bytes, each written to the cache
+	// whole and resent on every later call; a model that needs the rest reads
+	// it by line or match.
+	previewOver = 8 << 10
 	// defaultCompactionMessages is team_settings.compaction_messages' default,
 	// for a team that never saved its settings.
 	defaultCompactionMessages = 100
@@ -90,11 +97,13 @@ func defaultTeamSettings() db.TeamSetting {
 
 // compactionFor is how a run compacts: past the team's message count, or past
 // a tenth of the run's budget, held between the team's least and most tokens.
-// The settings handler and the table keep least at or under most.
+// The settings handler and the table keep least at or under most. A result
+// over previewOver is previewed.
 func compactionFor(s db.TeamSetting, budget int64) *agent.Compaction {
 	return &agent.Compaction{
 		AfterMessages:    int(s.CompactionMessages),
 		AfterInputTokens: int(min(int64(s.CompactionTokensMax), max(budget/10, int64(s.CompactionTokensMin)))),
+		Preview:          agent.Preview{Over: previewOver},
 	}
 }
 
