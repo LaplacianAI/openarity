@@ -93,8 +93,9 @@ A read is the page's text with every link, button and field numbered:
 like one is escaped. A read keeps at most 200,000 characters of the page, and
 leaves out what a password field holds. A page is sent whole up to 48 KiB, so
 every ref on it reaches the model; a longer one, like any long result, as its
-first 4 KiB and last 2 KiB, with the rest read by line or match. `browser_type` takes at most 4,000
-characters, and in a select it chooses the option with that name or value.
+first 4 KiB and last 2 KiB, with the rest read by line or match.
+`browser_type` takes at most 4,000 characters, and in a select it chooses the
+option with that name or value.
 After a click or a submit the read waits for the page it goes to, up to 15
 seconds; what a page fetches for itself later may come only with
 `browser_snapshot`. No call takes more than 30 seconds.
