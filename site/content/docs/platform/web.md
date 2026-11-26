@@ -41,7 +41,7 @@ every other team has them read by the brain itself:
   a PDF, is refused before the body is read. HTML is reduced to its article
   before it becomes markdown, so menus and banners stay out.
 - **At most 2 MiB is read, and kept whole.** A page is shown like any tool
-  result: up to 48 KiB whole, a longer one as its first 4 KiB and last 2 KiB,
+  result: up to 8 KiB whole, a longer one as its first 4 KiB and last 2 KiB,
   so both ends of its envelope, and the model reads the rest with
   `read_output`, by line or by match. A page the fetch stopped at 2 MiB says
   so.
@@ -91,8 +91,11 @@ A read is the page's text with every link, button and field numbered:
 
 `ref` is that number, good until the next read; a page's own text that looks
 like one is escaped. A read keeps at most 200,000 characters of the page, and
-leaves out what a password field holds. `browser_type` takes at most 4,000
-characters, and in a select it chooses the option with that name or value.
+leaves out what a password field holds. A page is sent whole up to 48 KiB, so
+every ref on it reaches the model; a longer one, like any long result, as its
+first 4 KiB and last 2 KiB, with the rest read by line or match.
+`browser_type` takes at most 4,000 characters, and in a select it chooses the
+option with that name or value.
 After a click or a submit the read waits for the page it goes to, up to 15
 seconds; what a page fetches for itself later may come only with
 `browser_snapshot`. No call takes more than 30 seconds.

@@ -189,6 +189,25 @@ last one had cleared. It is a field of its own rather than a kind of summary,
 so code from before it reads it as a short note, not as a summary that
 stands for everything before it.
 
+`ClearingFor(msgs)` is that mark for a transcript a caller is about to hand
+on: every result over 1 KiB after the latest summary or clearing, a skill's
+excepted, or none when there is nothing to clear. Appended before the next
+turn's message, it has the earlier turns' results sent as handles from the
+first request, before the token threshold is reached; `read_output` still
+reads each one back, a range of lines or the lines a regular expression
+matches. Only a run with `Spec.Compaction` acts on the mark; without it
+`read_output` is not there to read the handles, so the run sends the results
+whole. A model or gateway that reuses call ids can make a handle's id name
+more than one result: `read_output` returns the latest and says how many
+share it.
+
+```go
+if mark, ok := agent.ClearingFor(msgs); ok {
+	msgs = append(msgs, mark)
+}
+msgs = append(msgs, agent.Message{Role: agent.RoleUser, Content: …})
+```
+
 A summary or a clearing records a hash of the messages before it. A transcript
 edited before one no longer starts with what it stands for, so the run drops
 it and compacts again as it needs. A pattern never sees either message. A run

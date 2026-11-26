@@ -256,9 +256,15 @@ func parseBrowser(name string, raw json.RawMessage) (browserArgs, error) {
 	return a, nil
 }
 
+// browserPreview keeps a page whole up to 48 KiB, past a run's previewOver:
+// the model clicks and types by the [N] refs in a snapshot's text, and a
+// preview would hide the refs in the middle of the page. Head and tail are
+// the run's.
+var browserPreview = agent.Preview{Over: 48 << 10}
+
 // tool is one of the browser's tools over r.
 func (r *runBrowser) tool(name, description string, schema json.RawMessage) agent.Tool {
-	t := agent.Tool{Name: name, Description: description, Schema: schema}
+	t := agent.Tool{Name: name, Description: description, Schema: schema, Preview: browserPreview}
 	t.Result = func(ctx context.Context, raw json.RawMessage) (agent.ToolResult, error) {
 		a, err := parseBrowser(name, raw)
 		if err != nil {

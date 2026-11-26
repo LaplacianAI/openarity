@@ -19,7 +19,6 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/websearch"
 	"github.com/LaplacianAI/openarity/sdk/agent"
-	"github.com/LaplacianAI/openarity/sdk/agent/patterns"
 )
 
 // --- fakes ---
@@ -716,22 +715,8 @@ func TestTheHubIsToldFetchedPagesAreData(t *testing.T) {
 func TestTheModelSeesALongPagesEndsAndCanReadTheRest(t *testing.T) {
 	middle := strings.Repeat("the middle of the page\n", 3000) // about 66 KiB
 	fetcher := &fakeFetcher{page: webfetch.Page{URL: "https://example.com/doc", Title: "Doc", Markdown: middle}}
-	model := newScripted(callTool("c1", WebFetchToolName, `{"url":"https://example.com/doc"}`), answer("done", 10, 5))
-	runner, err := agent.New(func(agent.Endpoint) (agent.ModelClient, error) { return model, nil }, patterns.ReAct())
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := agent.Spec{
-		Model: agent.ModelRef{Name: "m", MaxTokens: 100}, Pattern: agent.PatternReAct, MaxSteps: 3,
-		Tools:      []agent.Tool{WebFetchTool(fetcher, nil)},
-		Compaction: compactionFor(defaultTeamSettings(), maxTokens),
-	}
-	task := []agent.Message{{Role: agent.RoleUser, Content: []agent.Content{{Type: agent.ContentText, Text: "read it"}}}}
-
-	result, err := runner.Run(t.Context(), spec, task, agent.Endpoint{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	model, result := runCompacting(t, []agent.Tool{WebFetchTool(fetcher, nil)},
+		callTool("c1", WebFetchToolName, `{"url":"https://example.com/doc"}`), answer("done", 10, 5))
 
 	sent := model.requests()[1].Messages
 	shown := sent[len(sent)-1].Text()
