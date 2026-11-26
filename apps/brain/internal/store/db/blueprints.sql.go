@@ -90,7 +90,7 @@ func (q *Queries) ListTeamAgentSkills(ctx context.Context, teamID uuid.UUID) ([]
 
 const listTeamAgents = `-- name: ListTeamAgents :many
 
-SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace FROM agents WHERE team_id = $1 ORDER BY name
+SELECT id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace, schedule FROM agents WHERE team_id = $1 ORDER BY name
 `
 
 // A blueprint is planned against everything its team holds, read table by
@@ -129,6 +129,7 @@ func (q *Queries) ListTeamAgents(ctx context.Context, teamID uuid.UUID) ([]Agent
 			&i.Web,
 			&i.Browser,
 			&i.Workspace,
+			&i.Schedule,
 		); err != nil {
 			return nil, err
 		}

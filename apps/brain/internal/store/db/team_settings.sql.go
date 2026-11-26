@@ -13,7 +13,7 @@ import (
 )
 
 const getTeamSettings = `-- name: GetTeamSettings :one
-SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily FROM team_settings WHERE team_id = $1
+SELECT team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily, agents_may_schedule, timezone, schedule_min_interval_minutes, schedules_per_member, schedules_per_team, fires_per_hour FROM team_settings WHERE team_id = $1
 `
 
 // No row means the team never saved: the caller reads that as the defaults.
@@ -68,6 +68,12 @@ func (q *Queries) GetTeamSettings(ctx context.Context, teamID uuid.UUID) (TeamSe
 		&i.ImprovementReplayTokens,
 		&i.ImprovementReplayMinutes,
 		&i.ImprovementReplayDaily,
+		&i.AgentsMaySchedule,
+		&i.Timezone,
+		&i.ScheduleMinIntervalMinutes,
+		&i.SchedulesPerMember,
+		&i.SchedulesPerTeam,
+		&i.FiresPerHour,
 	)
 	return i, err
 }
@@ -97,7 +103,7 @@ ON CONFLICT (team_id) DO UPDATE SET
     approval_mode        = EXCLUDED.approval_mode,
     approval_ttl_minutes = EXCLUDED.approval_ttl_minutes,
     updated_at           = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily, agents_may_schedule, timezone, schedule_min_interval_minutes, schedules_per_member, schedules_per_team, fires_per_hour
 `
 
 type SetTeamApprovalParams struct {
@@ -160,6 +166,113 @@ func (q *Queries) SetTeamApproval(ctx context.Context, arg SetTeamApprovalParams
 		&i.ImprovementReplayTokens,
 		&i.ImprovementReplayMinutes,
 		&i.ImprovementReplayDaily,
+		&i.AgentsMaySchedule,
+		&i.Timezone,
+		&i.ScheduleMinIntervalMinutes,
+		&i.SchedulesPerMember,
+		&i.SchedulesPerTeam,
+		&i.FiresPerHour,
+	)
+	return i, err
+}
+
+const setTeamSchedules = `-- name: SetTeamSchedules :one
+INSERT INTO team_settings (
+    team_id, agents_may_schedule, timezone, schedule_min_interval_minutes,
+    schedules_per_member, schedules_per_team, fires_per_hour
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7
+)
+ON CONFLICT (team_id) DO UPDATE SET
+    agents_may_schedule           = EXCLUDED.agents_may_schedule,
+    timezone                      = EXCLUDED.timezone,
+    schedule_min_interval_minutes = EXCLUDED.schedule_min_interval_minutes,
+    schedules_per_member          = EXCLUDED.schedules_per_member,
+    schedules_per_team            = EXCLUDED.schedules_per_team,
+    fires_per_hour                = EXCLUDED.fires_per_hour,
+    updated_at                    = now()
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily, agents_may_schedule, timezone, schedule_min_interval_minutes, schedules_per_member, schedules_per_team, fires_per_hour
+`
+
+type SetTeamSchedulesParams struct {
+	TeamID                     uuid.UUID
+	AgentsMaySchedule          bool
+	Timezone                   string
+	ScheduleMinIntervalMinutes int32
+	SchedulesPerMember         int32
+	SchedulesPerTeam           int32
+	FiresPerHour               int32
+}
+
+// Only the schedule columns, as SetTeamApproval: a team that never saved its
+// settings gets a row holding the defaults for everything else, and
+// UpsertTeamSettings, which writes the rest, leaves these alone.
+func (q *Queries) SetTeamSchedules(ctx context.Context, arg SetTeamSchedulesParams) (TeamSetting, error) {
+	row := q.db.QueryRow(ctx, setTeamSchedules,
+		arg.TeamID,
+		arg.AgentsMaySchedule,
+		arg.Timezone,
+		arg.ScheduleMinIntervalMinutes,
+		arg.SchedulesPerMember,
+		arg.SchedulesPerTeam,
+		arg.FiresPerHour,
+	)
+	var i TeamSetting
+	err := row.Scan(
+		&i.TeamID,
+		&i.ModelName,
+		&i.ModelMaxTokens,
+		&i.ModelTemperature,
+		&i.SearchProvider,
+		&i.SearchUrl,
+		&i.SearchSecretID,
+		&i.Improvement,
+		&i.CompactionMessages,
+		&i.UpdatedAt,
+		&i.HubAgentID,
+		&i.SandboxProvider,
+		&i.SandboxUrl,
+		&i.SandboxSecretID,
+		&i.SandboxTemplate,
+		&i.ApprovalMode,
+		&i.ApprovalTtlMinutes,
+		&i.BrowserProvider,
+		&i.BrowserUrl,
+		&i.BrowserSecretID,
+		&i.CompactionTokensMin,
+		&i.CompactionTokensMax,
+		&i.JudgeModelName,
+		&i.JudgeModelMaxTokens,
+		&i.JudgeModelTemperature,
+		&i.ImprovementSampleShare,
+		&i.ImprovementSince,
+		&i.ImprovementDailyPasses,
+		&i.ImprovementPassTokens,
+		&i.ImprovementPassMinutes,
+		&i.SandboxKeepHours,
+		&i.SandboxIdleMinutes,
+		&i.SandboxWorkspaceMemoryMb,
+		&i.SandboxWorkspaceCpus,
+		&i.SandboxWorkspaceDiskMb,
+		&i.ImprovementDailyRuns,
+		&i.ImprovementEfficiency,
+		&i.ImprovementEfficiencyRuns,
+		&i.ImprovementEfficiencyDays,
+		&i.ImprovementEfficiencySpread,
+		&i.ImprovementEfficiencyMarkRuns,
+		&i.ImprovementEfficiencyMargin,
+		&i.ImprovementReplay,
+		&i.ImprovementReplayRuns,
+		&i.ImprovementReplayTokens,
+		&i.ImprovementReplayMinutes,
+		&i.ImprovementReplayDaily,
+		&i.AgentsMaySchedule,
+		&i.Timezone,
+		&i.ScheduleMinIntervalMinutes,
+		&i.SchedulesPerMember,
+		&i.SchedulesPerTeam,
+		&i.FiresPerHour,
 	)
 	return i, err
 }
@@ -272,7 +385,7 @@ ON CONFLICT (team_id) DO UPDATE SET
         WHEN EXCLUDED.improvement AND NOT team_settings.improvement THEN now()
         ELSE team_settings.improvement_since END,
     updated_at          = now()
-RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily
+RETURNING team_id, model_name, model_max_tokens, model_temperature, search_provider, search_url, search_secret_id, improvement, compaction_messages, updated_at, hub_agent_id, sandbox_provider, sandbox_url, sandbox_secret_id, sandbox_template, approval_mode, approval_ttl_minutes, browser_provider, browser_url, browser_secret_id, compaction_tokens_min, compaction_tokens_max, judge_model_name, judge_model_max_tokens, judge_model_temperature, improvement_sample_share, improvement_since, improvement_daily_passes, improvement_pass_tokens, improvement_pass_minutes, sandbox_keep_hours, sandbox_idle_minutes, sandbox_workspace_memory_mb, sandbox_workspace_cpus, sandbox_workspace_disk_mb, improvement_daily_runs, improvement_efficiency, improvement_efficiency_runs, improvement_efficiency_days, improvement_efficiency_spread, improvement_efficiency_mark_runs, improvement_efficiency_margin, improvement_replay, improvement_replay_runs, improvement_replay_tokens, improvement_replay_minutes, improvement_replay_daily, agents_may_schedule, timezone, schedule_min_interval_minutes, schedules_per_member, schedules_per_team, fires_per_hour
 `
 
 type UpsertTeamSettingsParams struct {
@@ -419,6 +532,12 @@ func (q *Queries) UpsertTeamSettings(ctx context.Context, arg UpsertTeamSettings
 		&i.ImprovementReplayTokens,
 		&i.ImprovementReplayMinutes,
 		&i.ImprovementReplayDaily,
+		&i.AgentsMaySchedule,
+		&i.Timezone,
+		&i.ScheduleMinIntervalMinutes,
+		&i.SchedulesPerMember,
+		&i.SchedulesPerTeam,
+		&i.FiresPerHour,
 	)
 	return i, err
 }

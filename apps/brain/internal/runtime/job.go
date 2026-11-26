@@ -219,6 +219,10 @@ func enqueue(c dbos.Client, id uuid.UUID, attempt int32) error {
 	return nil
 }
 
+// EnqueueRun hands a new run to the workers, as its first attempt: how
+// another job's run (a schedule's) reaches the run queue.
+func EnqueueRun(c dbos.Client, id uuid.UUID) error { return enqueue(c, id, 0) }
+
 type Enqueuer struct {
 	client dbos.Client
 }

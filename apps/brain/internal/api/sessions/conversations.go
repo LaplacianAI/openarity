@@ -86,6 +86,10 @@ func (h *handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this conversation is not one on the dashboard; write in it where it is held", http.StatusConflict)
 		return
 	}
+	if session.ScheduleID != nil || session.WatcherID != nil {
+		http.Error(w, "this conversation is a schedule's: it is where its runs answer, and nobody writes in it", http.StatusConflict)
+		return
+	}
 	if session.UserID == nil || *session.UserID != u.ID {
 		http.Error(w, "only the person this conversation is with may write in it", http.StatusForbidden)
 		return

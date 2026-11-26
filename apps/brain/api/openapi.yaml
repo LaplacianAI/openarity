@@ -55,6 +55,8 @@ tags:
     description: A team's model, web search, self-improvement and compaction
   - name: approvals
     description: What agents ask a person before acting, and when they ask
+  - name: schedules
+    description: Runs started on the clock, what each did, and a team's limits for them
   - name: improvements
     description: Changes a team's agents propose to their own harness, and a person's decision on each
 
@@ -3280,6 +3282,446 @@ paths:
                 type: string
                 examples: ["the agent changed since this was proposed; reject it, and the next proposal is made from it as it is now"]
 
+  /teams/{id}/schedules:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listSchedules
+      tags: [schedules]
+      summary: List schedules
+      description: |
+        Requires `schedule:read` in this team. The caller's own, newest
+        first; `all=true` lists everyone's and requires `schedule:manage`.
+        Deleted schedules are listed only when `status=deleted` is asked for.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          description: Only schedules in these states.
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [proposed, active, paused, done, deleted]
+        - name: all
+          in: query
+          description: Everyone's, not only the caller's.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: A page of schedules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createSchedule
+      tags: [schedules]
+      summary: Make a schedule
+      description: |
+        Requires `schedule:write` in this team. The schedule is active at
+        once, and runs in a conversation of its own as the caller, with
+        their permissions when it fires. Its rule is held to the team's
+        minimum interval, and the team's limits on schedules per person and
+        per team apply. A caller who may not start runs in the team is
+        refused with 403, as the schedule would only pause at its first fire.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScheduleRequest"
+      responses:
+        "201":
+          description: Made
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The name is taken, or a team limit is reached
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["you already have 5 schedules and watchers, which is this team's limit per person; delete one first"]
+
+  /teams/{id}/schedules/preview:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: previewSchedule
+      tags: [schedules]
+      summary: Say when a rule would fire, before saving it
+      description: |
+        Requires `schedule:read` in this team. The next three times, and the
+        zone they are read in: the team's when none is given.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewScheduleRequest"
+      responses:
+        "200":
+          description: The next times
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulePreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/schedules/{scheduleID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ScheduleID"
+    get:
+      operationId: getSchedule
+      tags: [schedules]
+      summary: Read a schedule
+      description: Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+      responses:
+        "200":
+          description: The schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateSchedule
+      tags: [schedules]
+      summary: Change, pause or resume a schedule
+      description: |
+        Requires `schedule:write` in this team. What it does (name,
+        objective, rule, zone, agent) is changed only by its maker, since it
+        runs as them; another caller is refused with 403. `status` pauses or
+        resumes it, by its maker or one who holds `schedule:manage`; a
+        resumed schedule fires from now, and what it missed while paused is
+        not caught up. Everything named is changed together, or nothing is.
+        A new rule or zone moves its next fire.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateScheduleRequest"
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Its state does not allow it
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["only a paused schedule can be resumed; this one is active"]
+    delete:
+      operationId: deleteSchedule
+      tags: [schedules]
+      summary: Delete a schedule
+      description: |
+        Requires `schedule:write` in this team, and the schedule to be the
+        caller's own or the caller to hold `schedule:manage` (404
+        otherwise). It fires no more, and its conversation is closed and
+        kept, with its runs. A run already working finishes.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/schedules/{scheduleID}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ScheduleID"
+    post:
+      operationId: confirmSchedule
+      tags: [schedules]
+      summary: Confirm a schedule an agent proposed
+      description: |
+        Requires `schedule:write` in this team, and the caller to be the
+        person it was proposed to. A proposal lapses after an hour.
+      responses:
+        "200":
+          description: Active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It is not waiting to be confirmed, or it lapsed
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the proposal waited more than an hour and lapsed; ask for it again"]
+
+  /teams/{id}/schedules/{scheduleID}/run:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ScheduleID"
+    post:
+      operationId: runSchedule
+      tags: [schedules]
+      summary: Run a schedule now
+      description: |
+        Requires `schedule:write` in this team, and only its maker may: the
+        run is theirs, with their permissions (403 otherwise). One extra run,
+        now, under the same checks as a fire: its maker may still start
+        runs, its agent is still there, the team is under its hourly limit,
+        and its last run has finished.
+      responses:
+        "202":
+          description: Started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A check refused it
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["the schedule's last run is still working; try again when it has finished"]
+
+  /teams/{id}/schedules/{scheduleID}/take-over:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ScheduleID"
+    post:
+      operationId: takeOverSchedule
+      tags: [schedules]
+      summary: Take over a schedule whose maker left
+      description: |
+        Requires `schedule:manage` in this team. Only a schedule paused
+        because its maker left, or may no longer start runs, is taken over.
+        It stays paused until the caller resumes it, and runs as them from
+        then, so a caller who may not start runs in the team is refused with
+        403.
+      responses:
+        "200":
+          description: Taken over
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It is not paused for its maker
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["only a schedule paused because its maker left or may no longer run can be taken over"]
+
+  /teams/{id}/schedules/{scheduleID}/fires:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/ScheduleID"
+    get:
+      operationId: listScheduleFires
+      tags: [schedules]
+      summary: List what a schedule did each time it was due
+      description: |
+        Requires `schedule:read` in this team, and the schedule to be the
+        caller's own or the caller to hold `schedule:manage` (404
+        otherwise). Newest first; each schedule keeps its newest 200.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of fires
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleFirePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/scheduled/news:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getScheduledNews
+      tags: [schedules]
+      summary: What the caller's schedules did that they have not seen
+      description: |
+        Requires `schedule:read` in this team. Every fire that failed, was
+        skipped or was missed, wherever the schedule answers, and every
+        answer kept in a schedule's own conversation. A run with nothing to
+        say tells nobody.
+      responses:
+        "200":
+          description: The news
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduledNews"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/scheduled/news/seen:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    post:
+      operationId: markScheduledNewsSeen
+      tags: [schedules]
+      summary: Mark what one of the caller's schedules did as seen
+      description: Requires `schedule:read` in this team.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduledNewsSeenRequest"
+      responses:
+        "204":
+          description: Seen
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/schedule-settings:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: getScheduleSettings
+      tags: [schedules]
+      summary: Read a team's limits for schedules
+      description: Any member may read them. A team that never saved them reads the defaults.
+      responses:
+        "200":
+          description: The settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: saveScheduleSettings
+      tags: [schedules]
+      summary: Change a team's limits for schedules
+      description: Requires `team:settings` in this team. Schedules already made keep their rules; the limits hold from their next fire or change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleSettings"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /teams/{id}/approval-settings:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -4146,6 +4588,15 @@ components:
       in: path
       required: true
       description: The run
+      schema:
+        type: string
+        format: uuid
+
+    ScheduleID:
+      name: scheduleID
+      in: path
+      required: true
+      description: The schedule
       schema:
         type: string
         format: uuid
@@ -8237,6 +8688,323 @@ components:
           type: string
           enum: [dashboard, cli]
           description: Where the person answered. Absent is dashboard. A record, never a permission.
+
+    ScheduleWhen:
+      type: object
+      required: [kind]
+      description: When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
+      properties:
+        kind:
+          type: string
+          enum: [at, every, cron]
+        at:
+          type: string
+          format: date-time
+          description: Once, at this instant; at most a year away.
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 2678400
+          description: Every this many seconds, in whole minutes, from one interval after it was made; at least the team's minimum interval.
+        cron:
+          type: string
+          maxLength: 200
+          description: Five fields, minute hour day month weekday (`0 9 * * 1-5`), or a descriptor such as `@daily`, read in the schedule's zone; firing at most once per the team's minimum interval.
+          examples: ["0 9 * * 1-5"]
+
+    ScheduleTarget:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [own]
+          description: Where it answers. `own` is a conversation of its own on the dashboard, whose answers reach its maker as news.
+
+    Schedule:
+      type: object
+      required: [id, name, objective, when, timezone, hub, target, session_id, status, upcoming, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 80
+        objective:
+          type: string
+          maxLength: 4000
+          description: What to do each time it runs.
+        when:
+          $ref: "#/components/schemas/ScheduleWhen"
+        timezone:
+          type: string
+          description: The IANA zone its rule is read in.
+          examples: ["Europe/London"]
+        agent_id:
+          type: string
+          format: uuid
+          description: The agent that answers. Absent with `hub` false is an agent since deleted, and the schedule is paused as `target_gone`.
+        hub:
+          type: boolean
+          description: Whether the team's hub answers, rather than an agent.
+        target:
+          $ref: "#/components/schemas/ScheduleTarget"
+        session_id:
+          type: string
+          format: uuid
+          description: The conversation its runs answer in.
+        status:
+          type: string
+          enum: [proposed, active, paused, done, deleted]
+          description: |
+            `proposed` waits for its maker to confirm what an agent proposed;
+            `done` is a one-shot that has run or was missed.
+        paused_reason:
+          type: string
+          enum: [by_person, failing, maker_cannot_run, maker_gone, target_gone]
+          description: |
+            Why it is paused. `failing` is five failed runs, or fires that
+            could not be tried, in a row; `target_gone` is its agent deleted,
+            until another or the hub is chosen.
+        next_fire_at:
+          type: string
+          format: date-time
+        upcoming:
+          type: array
+          maxItems: 3
+          items:
+            type: string
+            format: date-time
+          description: Its next three fires, for an active or proposed schedule.
+        last_fired_at:
+          type: string
+          format: date-time
+        last_outcome:
+          type: string
+          description: What its newest fire did; see ScheduleFire.
+        created_by:
+          type: string
+          format: uuid
+          description: Whom it runs as. Absent once they have left.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SchedulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Schedule"
+        next_cursor:
+          type: string
+          description: Absent on the last page.
+
+    CreateScheduleRequest:
+      type: object
+      required: [name, objective, when]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Yours once; it is how you pick it later.
+        objective:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        when:
+          $ref: "#/components/schemas/ScheduleWhen"
+        timezone:
+          type: string
+          description: An IANA zone. Absent is the team's.
+        agent_id:
+          type: string
+          format: uuid
+          description: Absent is the team's hub.
+        target:
+          $ref: "#/components/schemas/ScheduleTarget"
+
+    UpdateScheduleRequest:
+      type: object
+      description: Changes only what it names.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        objective:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        when:
+          $ref: "#/components/schemas/ScheduleWhen"
+        timezone:
+          type: string
+        agent_id:
+          type: string
+          format: uuid
+        hub:
+          type: boolean
+          description: Answer by the team's hub again. Not with `agent_id`.
+        status:
+          type: string
+          enum: [active, paused]
+          description: Pause, or resume, it.
+
+    PreviewScheduleRequest:
+      type: object
+      required: [when]
+      properties:
+        when:
+          $ref: "#/components/schemas/ScheduleWhen"
+        timezone:
+          type: string
+
+    SchedulePreview:
+      type: object
+      required: [timezone, upcoming]
+      properties:
+        timezone:
+          type: string
+        upcoming:
+          type: array
+          maxItems: 3
+          items:
+            type: string
+            format: date-time
+
+    ScheduleRun:
+      type: object
+      required: [run_id]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+
+    ScheduleFire:
+      type: object
+      required: [scheduled_for, fired_at, outcome]
+      properties:
+        scheduled_for:
+          type: string
+          format: date-time
+        fired_at:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+          enum: [started, late, catch_up, missed, skipped_busy, skipped_cap, skipped_maker, skipped_target, silent, answered, failed, cancelled]
+          description: |
+            `started`, `late` and `catch_up` are runs still going; `answered`,
+            `silent` (nothing to say), `failed` and `cancelled` how one ended.
+            `missed` came and went while the team was not running;
+            `skipped_busy` found its last run still working; `skipped_cap`
+            was over the team's hourly limit; `skipped_maker` found its maker
+            could no longer start runs; `skipped_target` found its agent
+            deleted.
+        run_id:
+          type: string
+          format: uuid
+
+    ScheduleFirePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleFire"
+        next_cursor:
+          type: string
+
+    ScheduledNewsItem:
+      type: object
+      required: [schedule_id, name, session_id, scheduled_for, fired_at, outcome]
+      properties:
+        schedule_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        scheduled_for:
+          type: string
+          format: date-time
+        fired_at:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+        run_id:
+          type: string
+          format: uuid
+
+    ScheduledNews:
+      type: object
+      required: [items, count, more]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/ScheduledNewsItem"
+        count:
+          type: integer
+        more:
+          type: boolean
+          description: There is more than one page shows.
+
+    ScheduledNewsSeenRequest:
+      type: object
+      required: [schedule_id]
+      properties:
+        schedule_id:
+          type: string
+          format: uuid
+
+    ScheduleSettings:
+      type: object
+      required: [agents_may_schedule, timezone, schedule_min_interval_minutes, schedules_per_member, schedules_per_team, fires_per_hour]
+      properties:
+        agents_may_schedule:
+          type: boolean
+          description: Whether agents may propose schedules in a chat.
+        timezone:
+          type: string
+          description: The zone a schedule reads its rule in when it names none.
+        schedule_min_interval_minutes:
+          type: integer
+          format: int32
+          minimum: 5
+          maximum: 10080
+        schedules_per_member:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+          description: Schedules and watchers one person may have.
+        schedules_per_team:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 1000
+          description: Schedules and watchers the team may have; at least the per-person limit.
+        fires_per_hour:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 1000
+          description: Runs the team's schedules and watchers may start in an hour; past it, a fire is skipped and recorded.
 
     ApprovalSettings:
       type: object

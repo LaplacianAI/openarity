@@ -17,11 +17,13 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/purge"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/reaper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/replay"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/retention"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/keeper"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
@@ -109,6 +111,8 @@ func newJobs(
 	judging := newImproveJob(cfg, logger, dbStore)
 	templates := keeper.TemplatesJob(newTemplates(cfg, logger, dbStore, secretStore))
 	watching := improve.NewWatchJob(improve.NewWatcher(dbStore, logger))
+	scheduling := triggers.NewJob(dbStore, runtime.EnqueueRun, logger)
+	retaining := retention.NewJob(logger, triggers.FireWorkflow)
 	deps, err := newRunDeps(cfg, logger, dbStore, secretStore)
 	if err != nil {
 		return nil, nil, err
@@ -124,7 +128,7 @@ func newJobs(
 		if err != nil {
 			return nil, nil, err
 		}
-		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent, gateway.KickFile), judging, improving, replaying, watching, templates}, func() {}, nil
+		return []worker.Job{sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent, gateway.KickFile), judging, improving, replaying, watching, scheduling, retaining, templates}, func() {}, nil
 	}
 
 	g, embedder, closeGraph, err := dialGraph(ctx, cfg)
@@ -144,7 +148,7 @@ func newJobs(
 	}
 	projector := graph.NewProjector(dbStore, g, embedder, logger)
 	return []worker.Job{
-		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent, gateway.KickFile), graph.DrainJob(projector, logger), judging, improving, replaying, watching, templates,
+		sweep, teamPurge, replies, runs.SendsReplies(gateway.KickReplies, gateway.KickEvent, gateway.KickFile), graph.DrainJob(projector, logger), judging, improving, replaying, watching, scheduling, retaining, templates,
 	}, closeGraph, nil
 }
 

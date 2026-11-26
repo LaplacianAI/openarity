@@ -8,6 +8,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	// Schedules read IANA zones; the binary carries them, so a brain on an
+	// image with no zone files still knows them.
+	_ "time/tzdata"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"

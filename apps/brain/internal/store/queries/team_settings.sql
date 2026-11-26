@@ -127,3 +127,24 @@ RETURNING *;
 -- column takes its default, as a team that never saved reads them.
 -- name: StartTeamSettings :exec
 INSERT INTO team_settings (team_id, approval_mode) VALUES ($1, 'writes');
+
+-- name: SetTeamSchedules :one
+-- Only the schedule columns, as SetTeamApproval: a team that never saved its
+-- settings gets a row holding the defaults for everything else, and
+-- UpsertTeamSettings, which writes the rest, leaves these alone.
+INSERT INTO team_settings (
+    team_id, agents_may_schedule, timezone, schedule_min_interval_minutes,
+    schedules_per_member, schedules_per_team, fires_per_hour
+) VALUES (
+    sqlc.arg(team_id), sqlc.arg(agents_may_schedule), sqlc.arg(timezone), sqlc.arg(schedule_min_interval_minutes),
+    sqlc.arg(schedules_per_member), sqlc.arg(schedules_per_team), sqlc.arg(fires_per_hour)
+)
+ON CONFLICT (team_id) DO UPDATE SET
+    agents_may_schedule           = EXCLUDED.agents_may_schedule,
+    timezone                      = EXCLUDED.timezone,
+    schedule_min_interval_minutes = EXCLUDED.schedule_min_interval_minutes,
+    schedules_per_member          = EXCLUDED.schedules_per_member,
+    schedules_per_team            = EXCLUDED.schedules_per_team,
+    fires_per_hour                = EXCLUDED.fires_per_hour,
+    updated_at                    = now()
+RETURNING *;

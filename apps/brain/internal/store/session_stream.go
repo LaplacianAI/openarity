@@ -34,7 +34,8 @@ func (s *Store) AppendRunEvent(ctx context.Context, arg db.AppendRunEventParams)
 // RequestRunCancel cancels a queued or waiting run at once, with every child
 // it left running or waiting, and flags a running one for its worker. Each run it ends says so
 // with a finished event, since no worker is there to write one, and what a
-// cancelled tree still asked is cancelled with it.
+// cancelled tree still asked is cancelled with it. A schedule's run ended so
+// is recorded on its fire, as a worker's end would be.
 func (s *Store) RequestRunCancel(ctx context.Context, id uuid.UUID) (db.Run, error) {
 	var run db.Run
 	err := s.InTx(ctx, func(q *db.Queries) error {
@@ -57,8 +58,15 @@ func (s *Store) RequestRunCancel(ctx context.Context, id uuid.UUID) (db.Run, err
 				return err
 			}
 		}
-		run, err = q.GetRun(ctx, id)
-		return err
+		if run, err = q.GetRun(ctx, id); err != nil {
+			return err
+		}
+		if run.Status == "cancelled" {
+			if _, err := finishFired(ctx, q, run, db.FinishRunParams{Status: "cancelled"}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return run, err
 }

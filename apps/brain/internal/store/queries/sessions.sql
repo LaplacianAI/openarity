@@ -33,6 +33,10 @@ WHERE id = sqlc.arg('id') AND team_id = sqlc.arg('team_id')
 -- let a second approved sender take over somebody else's private thread.
 --
 -- Nor is builder: who answers a conversation is decided when it starts.
+--
+-- A schedule's or a watcher's conversation shares its chat's channel and ref,
+-- so its answers post there, and is never the one a message arrives in: the
+-- predicate leaves them out, as sessions_open_chat_key does.
 -- name: EnsureSession :one
 INSERT INTO sessions (team_id, channel_id, provider_ref, kind, user_id, builder)
 VALUES (
@@ -43,7 +47,7 @@ VALUES (
     sqlc.narg('user_id')::uuid,
     sqlc.arg('builder')::bool
 )
-ON CONFLICT (channel_id, provider_ref) WHERE status = 'open'
+ON CONFLICT (channel_id, provider_ref) WHERE status = 'open' AND schedule_id IS NULL AND watcher_id IS NULL
 DO UPDATE SET last_message_at = now()
 RETURNING *;
 

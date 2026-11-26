@@ -21,6 +21,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpoauth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/runs"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/api/schedules"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/sessions"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/skills"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/teamgraph"
@@ -41,6 +42,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/server"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers"
 )
 
 // channelSecrets reads as well as writes: deleting a Telegram channel reads
@@ -83,6 +85,7 @@ func newRouters(
 		loops.New(logger, runtime.Loops()),
 		runs.New(logger, runStore{dbStore}, authorizer, starter),
 		approvals.New(logger, dbStore, authorizer, decider{store: dbStore, resumer: starter}),
+		schedules.New(logger, dbStore, authorizer, triggers.NewService(dbStore, starter, logger)),
 		improvements.New(logger, dbStore, authorizer, proposals.NewDecider(dbStore, attachments, runtime.Loops())),
 		teamgraph.New(logger, graphs),
 		teamsummary.New(logger, dbStore, authorizer),

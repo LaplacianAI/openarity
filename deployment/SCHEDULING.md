@@ -93,9 +93,8 @@ schedule ticking once a second:
 
 About 560 bytes of row data a tick before indexes. At ten seconds that is
 8,640 ticks a day for a job whose real state is already the outbox; at a
-minute it is 1,440, and the reaper's fifteen minutes is 96. None of it is ever
-removed, so a long-lived deployment should expect to prune `dbos.workflow_status`
-by hand or by policy. That is a gap, and it is the reaper's too.
+minute it is 1,440, and the reaper's fifteen minutes is 96. The library never
+removes them, so the worker does: see [Retention](#retention).
 
 Two ways this job differs from the reaper, both on purpose:
 
@@ -110,6 +109,65 @@ Two ways this job differs from the reaper, both on purpose:
 
 `brain graph rebuild` takes the same lock and waits for it, so it is safe to
 run beside a worker.
+
+## People's schedules
+
+A schedule a person makes ("every weekday at 9, summarise the repo") is a row
+in the brain's own `schedules` table, not a DBOS schedule. DBOS holds every
+schedule it runs in each worker's memory and re-reads all of them every 30
+seconds, and its backfill replays every missed time: right for the brain's
+handful of sweeps, not for one row per person's schedule.
+
+One DBOS tick a minute, `openarity.triggers.tick`, reads that table instead:
+
+- It counts the schedules due through an index on `next_fire_at`, and hands
+  out one batch per hundred, at most eight, onto the `openarity-triggers`
+  queue (two at a time per worker). Its cost follows what is due, not how many
+  schedules exist.
+- Each batch claims due rows one at a time with `FOR UPDATE SKIP LOCKED`, so
+  every worker fires and no two fire one schedule. A fire is a row keyed on
+  the schedule and the time it was due, written before its run: a time fires
+  once, whatever retries or restarts.
+- A batch's id is the tick's minute and its place, so a tick run again starts
+  nothing twice. It does not backfill: a fire missed while every worker was
+  down runs late, within half its period, or once as a catch-up for all of
+  them.
+- A fire starts an ordinary run on `openarity-runs`. A rush at 09:00 delays
+  when the runs start, never whether they fire.
+
+An hourly sweep, `openarity.triggers.sweep`, lapses proposals nobody confirmed
+and keeps each schedule's newest 200 fires.
+
+A fire that fails with an error, rather than a refusal, waits a minute and is
+tried again for the time it was due, so one broken schedule never holds up
+the rest of a batch. The worker logs `A schedule could not fire` each time.
+An error of the schedule's own counts as a failed run, and five in a row
+pause it as `failing`. The database's passing trouble (a lost connection, a
+deadlock, a lock or statement timeout, the server short of resources) is
+retried without counting, until one schedule has been stuck on it for an
+hour; then its retries count too, so it pauses rather than retry silently.
+
+A schedule's rule is read in its zone, on the wall clock. When the clocks go
+back, a time that names its hour (01:30 each day) fires once, though the wall
+reads it twice; a rule over every hour fires in each real hour. When they go
+forward, a time in the hour that is skipped (02:30 in New York on 8 March
+2026) does not happen that day: nothing fires and nothing is recorded as
+missed, and the next day fires as usual.
+
+A schedule runs as its maker, so only its maker changes what it does or runs
+it now; whoever holds `schedule:manage` sees, pauses, resumes, deletes and
+takes over everyone's. A schedule whose agent is deleted records
+`skipped_target` and pauses as `target_gone` until another agent or the hub
+is chosen. A run cancelled, by a person or the API, is recorded as
+`cancelled`: not a failure, and not news.
+
+## Retention
+
+Once a day, at 03:40, `openarity.retention` deletes DBOS's record of
+background work that finished more than seven days ago: every scheduled
+sweep's ticks, whatever job registered them, and the fire batches. A run's
+own workflow is kept; the `runs` table is its record, and pruning those is a
+separate decision. Up to 20,000 are deleted a day, 500 at a time.
 
 ## If you would rather the platform owned the clock
 
