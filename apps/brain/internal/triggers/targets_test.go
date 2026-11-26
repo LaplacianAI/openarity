@@ -2,6 +2,7 @@ package triggers
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -16,12 +17,14 @@ import (
 // platform is a fake of the gateway's lookups: Slack lists channels and opens
 // direct conversations; nothing else does.
 type platform struct {
-	mu       sync.Mutex
-	channels map[uuid.UUID][]gateway.PlatformChannel
-	refused  map[uuid.UUID]string
-	opened   []string
-	openErr  error
-	nameErr  error
+	mu         sync.Mutex
+	channels   map[uuid.UUID][]gateway.PlatformChannel
+	refused    map[uuid.UUID]string
+	failed     map[uuid.UUID]error
+	incomplete map[uuid.UUID]bool
+	opened     []string
+	openErr    error
+	nameErr    error
 }
 
 func (*platform) OpensDirect(p string) bool   { return p == "slack" }
@@ -45,11 +48,14 @@ func (f *platform) ChannelName(_ context.Context, _, _ uuid.UUID, _, ref string)
 	return "chan-" + strings.ToLower(ref), nil
 }
 
-func (f *platform) ListChannels(_ context.Context, _, ch uuid.UUID, _ string) ([]gateway.PlatformChannel, error) {
+func (f *platform) ListChannels(_ context.Context, _, ch uuid.UUID, _ string) (gateway.ChannelList, error) {
 	if msg, ok := f.refused[ch]; ok {
-		return nil, &gateway.Refusal{Msg: msg}
+		return gateway.ChannelList{}, &gateway.Refusal{Msg: msg}
 	}
-	return f.channels[ch], nil
+	if err, ok := f.failed[ch]; ok {
+		return gateway.ChannelList{}, err
+	}
+	return gateway.ChannelList{Channels: f.channels[ch], Complete: !f.incomplete[ch]}, nil
 }
 
 // chats is a world with a Slack and a Telegram channel and the fake platform.
@@ -62,11 +68,29 @@ type chats struct {
 func newChats(t *testing.T) *chats {
 	t.Helper()
 	w := newWorld(t)
-	c := &chats{world: w, plat: &platform{channels: map[uuid.UUID][]gateway.PlatformChannel{}, refused: map[uuid.UUID]string{}}}
+	c := &chats{world: w, plat: &platform{
+		channels: map[uuid.UUID][]gateway.PlatformChannel{}, refused: map[uuid.UUID]string{},
+		failed: map[uuid.UUID]error{}, incomplete: map[uuid.UUID]bool{},
+	}}
 	w.scan(t, &c.slack, `INSERT INTO channels (team_id, provider, name) VALUES ($1, 'slack', 'Acme Slack') RETURNING id`, w.team)
 	w.scan(t, &c.telegram, `INSERT INTO channels (team_id, provider, name) VALUES ($1, 'telegram', 'Ops bot') RETURNING id`, w.team)
 	w.service.WithChats(c.plat)
 	return c
+}
+
+// writer is the maker as an admin, who may write to channels.
+func (c *chats) writer(t *testing.T) Who {
+	t.Helper()
+	c.exec(t, `UPDATE team_members SET role = 'admin' WHERE team_id = $1 AND user_id = $2`, c.team, c.maker)
+	w := c.who()
+	w.ChannelWrite = true
+	return w
+}
+
+// sent marks a run's answer delivered, as the gateway does once it posts.
+func (c *chats) sent(t *testing.T, run uuid.UUID, posted string) {
+	t.Helper()
+	c.exec(t, `UPDATE replies SET status = 'sent', sent_at = now(), posted_ref = nullif($2, '') WHERE run_id = $1`, run, posted)
 }
 
 // session opens a conversation on a channel, and has user say something in
@@ -141,8 +165,8 @@ func TestChannelsAreListedAndSayWhyOneCannotBePicked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 3 {
-		t.Fatalf("channels = %+v, want two Slack channels and the Telegram group", page.Items)
+	if len(page.Items) != 2 {
+		t.Fatalf("channels = %+v, want the public Slack channel and the Telegram group, the private one left out", page.Items)
 	}
 	for _, it := range page.Items {
 		if it.Available || it.Reason != ReasonNeedsChannelWrite {
@@ -153,9 +177,7 @@ func TestChannelsAreListedAndSayWhyOneCannotBePicked(t *testing.T) {
 		t.Errorf("problems = %+v, want the refusing workspace", page.Problems)
 	}
 
-	writer := c.who()
-	writer.ChannelWrite = true
-	page, _ = c.service.Targets(t.Context(), writer, TargetQuery{Kind: TargetChannel, Limit: 50})
+	page, _ = c.service.Targets(t.Context(), c.writer(t), TargetQuery{Kind: TargetChannel, Limit: 50})
 	byLabel := map[string]TargetItem{}
 	for _, it := range page.Items {
 		byLabel[it.Label] = it
@@ -168,6 +190,72 @@ func TestChannelsAreListedAndSayWhyOneCannotBePicked(t *testing.T) {
 	}
 	if it := byLabel["A group"]; !it.Available || it.Target.SessionID != group || it.Provider != "telegram" {
 		t.Errorf("the Telegram group = %+v", it)
+	}
+	if len(page.Items) != 3 {
+		t.Errorf("with channel:write %d channels, want the private one too", len(page.Items))
+	}
+}
+
+// A workspace that could not be asked, or has more channels than are read,
+// is a problem beside the rest: the picker still lists every other place, and
+// the error's own words stay in the log.
+func TestAWorkspaceThatCannotBeAskedIsAProblemNotAFailure(t *testing.T) {
+	c := newChats(t)
+	var busy uuid.UUID
+	c.scan(t, &busy, `INSERT INTO channels (team_id, provider, name) VALUES ($1, 'slack', 'Busy Slack') RETURNING id`, c.team)
+	c.plat.failed[busy] = errors.New("dial tcp: i/o timeout")
+	c.plat.channels[c.slack] = []gateway.PlatformChannel{{Ref: "C0RELEASE", Name: "releases", Member: true}}
+	c.plat.incomplete[c.slack] = true
+	c.session(t, c.slack, "D0MINE", "direct", &c.maker, time.Now())
+
+	page, err := c.service.Targets(t.Context(), c.writer(t), TargetQuery{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 {
+		t.Errorf("items = %+v, want the chat and #releases", page.Items)
+	}
+	texts := map[uuid.UUID]string{}
+	for _, p := range page.Problems {
+		texts[p.ChannelID] = p.Text
+	}
+	if txt := texts[busy]; !strings.Contains(txt, "try again") || strings.Contains(txt, "tcp") {
+		t.Errorf("the busy workspace's problem = %q, want it said for a person", txt)
+	}
+	if txt := texts[c.slack]; !strings.Contains(txt, "more channels") {
+		t.Errorf("the long workspace's problem = %q, want it said the list is not all", txt)
+	}
+}
+
+// A group's chat is its top level: everyone in it reads the answer, so it
+// takes channel:write as a channel does, listed and made.
+func TestAGroupsChatTakesChannelWrite(t *testing.T) {
+	c := newChats(t)
+	now := time.Now()
+	c.clock = now
+	group := c.session(t, c.telegram, "-100777", "group", &c.maker, now.Add(-time.Hour))
+
+	page, err := c.service.Targets(t.Context(), c.who(), TargetQuery{Kind: TargetChat, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Available || page.Items[0].Reason != ReasonNeedsChannelWrite {
+		t.Fatalf("the group's chat without channel:write = %+v, want listed with why", page.Items)
+	}
+	in := hourly("in the group")
+	in.Target = Target{Kind: TargetChat, SessionID: group}
+	_, err = c.service.CreateSchedule(t.Context(), c.who(), Origin{}, in)
+	kindIs(t, err, Forbidden, "channel:write")
+	if n := c.count(t, `SELECT count(*) FROM schedules`); n != 0 {
+		t.Errorf("%d schedules after a refusal, want none", n)
+	}
+
+	w := c.writer(t)
+	if page, _ := c.service.Targets(t.Context(), w, TargetQuery{Kind: TargetChat, Limit: 50}); len(page.Items) != 1 || !page.Items[0].Available {
+		t.Errorf("with channel:write = %+v, want it pickable", page.Items)
+	}
+	if _, err := c.service.CreateSchedule(t.Context(), w, Origin{}, in); err != nil {
+		t.Errorf("with channel:write: %v", err)
 	}
 }
 
@@ -250,18 +338,38 @@ func TestAScheduleInAChatSharesItAndAMessageStillFindsThePersons(t *testing.T) {
 		t.Errorf("reply_to_channel %v and %d answers queued, want the answer sent to the chat",
 			reply, c.count(t, `SELECT count(*) FROM replies WHERE run_id = $1`, run))
 	}
-	// And the person's conversation reads what it said.
-	posted, err := c.store.ListPostedTriggerAnswers(t.Context(), db.ListPostedTriggerAnswersParams{
-		SessionID: mine, After: time.Time{}, Before: time.Now().Add(time.Minute), PageSize: 10,
-	})
-	if err != nil || len(posted) != 1 || posted[0].Name != "in my DM" || posted[0].Text != "The release went out at nine." {
-		t.Errorf("posted = %+v, %v", posted, err)
+	// The person's conversation reads what it said once it reached them.
+	read := func() []db.ListPostedTriggerAnswersRow {
+		t.Helper()
+		posted, err := c.store.ListPostedTriggerAnswers(t.Context(), db.ListPostedTriggerAnswersParams{
+			SessionID: mine, After: time.Time{}, Before: time.Now().Add(time.Minute), PageSize: 10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return posted
+	}
+	if posted := read(); len(posted) != 0 {
+		t.Errorf("posted before it was sent = %+v, want nothing", posted)
+	}
+	c.sent(t, run, "")
+	if posted := read(); len(posted) != 1 || posted[0].Name != "in my DM" || posted[0].Text != "The release went out at nine." {
+		t.Errorf("posted = %+v", posted)
 	}
 
 	// Its maker's DM is theirs alone: it is not handed on.
 	c.exec(t, `UPDATE schedules SET status = 'paused', paused_reason = 'maker_gone', next_fire_at = NULL WHERE id = $1`, v.ID)
 	_, err = c.service.TakeOver(t.Context(), Who{Team: c.team, User: c.other, Manage: true}, Ref{ID: v.ID})
 	kindIs(t, err, Conflict, "direct messages")
+
+	// Nor is one in their own thread.
+	thread := c.session(t, c.slack, "C0RELEASE:1700000000.000900", "thread", &c.maker, now.Add(-time.Hour))
+	in = hourly("in my thread")
+	in.Target = Target{Kind: TargetChat, SessionID: thread}
+	th := c.make(t, in)
+	c.exec(t, `UPDATE schedules SET status = 'paused', paused_reason = 'maker_gone', next_fire_at = NULL WHERE id = $1`, th.ID)
+	_, err = c.service.TakeOver(t.Context(), Who{Team: c.team, User: c.other, Manage: true, ChannelWrite: true}, Ref{ID: th.ID})
+	kindIs(t, err, Conflict, "own thread")
 }
 
 // Posting at a channel's top level takes channel:write and is checked on the
@@ -273,8 +381,7 @@ func TestAChannelPostIsCheckedAgainAndItsThreadReadsIt(t *testing.T) {
 	_, err := c.service.CreateSchedule(t.Context(), c.who(), Origin{}, in)
 	kindIs(t, err, Forbidden, "channel:write")
 
-	writer := c.who()
-	writer.ChannelWrite = true
+	writer := c.writer(t)
 	c.plat.nameErr = &gateway.Refusal{Msg: "the app is not in that channel: invite it first, with /invite"}
 	_, err = c.service.CreateSchedule(t.Context(), writer, Origin{}, in)
 	kindIs(t, err, Invalid, "/invite")
@@ -300,13 +407,48 @@ func TestAChannelPostIsCheckedAgainAndItsThreadReadsIt(t *testing.T) {
 	}
 	run := c.onlyRun(t, v.ID)
 	c.finish(t, run, "succeeded", "Three changes went out.")
-	c.exec(t, `UPDATE replies SET posted_ref = 'C0RELEASE:1700000000.000100' WHERE run_id = $1`, run)
+	c.sent(t, run, "C0RELEASE:1700000000.000100")
 	thread := c.session(t, c.slack, "C0RELEASE:1700000000.000100", "thread", &c.other, time.Now())
 	posted, err := c.store.ListPostedTriggerAnswers(t.Context(), db.ListPostedTriggerAnswersParams{
 		SessionID: thread, After: time.Time{}, Before: time.Now().Add(time.Minute), PageSize: 10,
 	})
 	if err != nil || len(posted) != 1 || posted[0].Text != "Three changes went out." {
 		t.Errorf("the thread reads %+v, %v; want the post it hangs from", posted, err)
+	}
+
+	// It can be handed on, to one who may write to channels.
+	c.exec(t, `UPDATE schedules SET status = 'paused', paused_reason = 'maker_gone', next_fire_at = NULL WHERE id = $1`, v.ID)
+	_, err = c.service.TakeOver(t.Context(), Who{Team: c.team, User: c.other, Manage: true}, Ref{ID: v.ID})
+	kindIs(t, err, Forbidden, "channel:write")
+	if _, err := c.service.TakeOver(t.Context(), Who{Team: c.team, User: c.other, Manage: true, ChannelWrite: true}, Ref{ID: v.ID}); err != nil {
+		t.Errorf("a take-over with channel:write: %v", err)
+	}
+}
+
+// A maker who may no longer write to channels stops a channel schedule at
+// its next fire, recorded, as one who may no longer run does.
+func TestAMakerWhoMayNoLongerPostPausesAChannelSchedule(t *testing.T) {
+	c := newChats(t)
+	in := hourly("release notes")
+	in.Target = Target{Kind: TargetChannel, ChannelID: c.slack, Ref: "C0RELEASE"}
+	v, err := c.service.CreateSchedule(t.Context(), c.writer(t), Origin{}, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.exec(t, `UPDATE team_members SET role = 'member' WHERE team_id = $1 AND user_id = $2`, c.team, c.maker)
+	c.clock = *v.NextFireAt
+	if _, err := c.firer.FireDue(t.Context(), 100, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.service.Schedule(t.Context(), Who{Team: c.team, Manage: true}, Ref{ID: v.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != Paused || got.PausedReason == nil || *got.PausedReason != MakerCannotRun {
+		t.Errorf("status %s reason %v, want paused because the maker may not post", got.Status, got.PausedReason)
+	}
+	if f := c.fires(t, v.ID); f["skipped_maker"] != 1 || c.count(t, `SELECT count(*) FROM runs`) != 0 {
+		t.Errorf("fires = %v and %d runs, want one skipped, no run", f, c.count(t, `SELECT count(*) FROM runs`))
 	}
 }
 

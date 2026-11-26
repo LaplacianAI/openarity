@@ -107,7 +107,11 @@ func historyTool(s HistoryStore, session uuid.UUID) agent.Tool {
 				return "", fmt.Errorf("reading the conversation: %w", err)
 			}
 			out := historyOf(rows, limit)
-			if out.Scheduled, err = scheduledIn(ctx, s, session, rows, out, a.Before == nil); err != nil {
+			upTo, err := pageEnd(ctx, s, session, a.Before)
+			if err != nil {
+				return "", err
+			}
+			if out.Scheduled, err = scheduledIn(ctx, s, session, rows, out, upTo); err != nil {
 				return "", err
 			}
 			b, err := json.Marshal(out)
@@ -147,20 +151,31 @@ func historyOf(rows []db.ListSessionHistoryRow, limit int) historyPageOut {
 	return out
 }
 
+// pageEnd is where a page's span ends: now on the first page, and on an
+// earlier one the message its before names, where the later page began. So
+// the pages' spans meet, and a post between them is on one.
+func pageEnd(ctx context.Context, s HistoryStore, session uuid.UUID, before *int64) (time.Time, error) {
+	if before == nil {
+		return time.Now().Add(time.Minute), nil
+	}
+	rows, err := s.ListSessionHistory(ctx, db.ListSessionHistoryParams{SessionID: session, Before: min(*before, math.MaxInt64-1) + 1, PageSize: 1})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("reading where the page ends: %w", err)
+	}
+	if len(rows) == 0 {
+		return time.Time{}, nil
+	}
+	return rows[0].At, nil
+}
+
 // scheduledIn is what schedules posted into the chat within the page's span:
-// from its oldest message (or ever, on the last page) up to its newest (or
-// now, on the first).
+// from its oldest message (or ever, on the last page) up to upTo.
 func scheduledIn(ctx context.Context, s HistoryStore, session uuid.UUID, rows []db.ListSessionHistoryRow,
-	page historyPageOut, first bool,
+	page historyPageOut, upTo time.Time,
 ) ([]scheduledLine, error) {
-	after, before := time.Time{}, time.Now().Add(time.Minute)
-	if len(page.Messages) > 0 {
-		if page.More {
-			after = rowAt(rows, page.Messages[0].N)
-		}
-		if !first {
-			before = rowAt(rows, page.Messages[len(page.Messages)-1].N)
-		}
+	after, before := time.Time{}, upTo
+	if page.More && len(page.Messages) > 0 {
+		after = rowAt(rows, page.Messages[0].N)
 	}
 	posted, err := s.ListPostedTriggerAnswers(ctx, db.ListPostedTriggerAnswersParams{
 		SessionID: session, After: after, Before: before, PageSize: historyScheduled,

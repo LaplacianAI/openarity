@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -41,7 +40,8 @@ const (
 	// chatsSince is how lately a person must have talked in a chat for it to
 	// be theirs to pick.
 	chatsSince = 90 * 24 * time.Hour
-	// maxTargetRows bounds what each group reads before the search narrows it.
+	// maxTargetRows bounds what each group reads before the search narrows
+	// it: a search finds among a person's most recent places, not all of them.
 	maxTargetRows = 200
 	// maxLabel bounds a stored label, as the table does.
 	maxLabel = 200
@@ -57,7 +57,7 @@ type Chats interface {
 	Listers() []string
 	OpenDirect(ctx context.Context, team, channel uuid.UUID, provider, user string) (string, error)
 	ChannelName(ctx context.Context, team, channel uuid.UUID, provider, ref string) (string, error)
-	ListChannels(ctx context.Context, team, channel uuid.UUID, provider string) ([]gateway.PlatformChannel, error)
+	ListChannels(ctx context.Context, team, channel uuid.UUID, provider string) (gateway.ChannelList, error)
 }
 
 // A Target is where a schedule is asked to answer, as a picked place carries
@@ -106,7 +106,9 @@ type TargetQuery struct {
 
 // Targets lists where the caller may have a schedule answer, newest chats
 // first, then channels and groups, then their direct conversations. A place
-// they may not use is listed with why, so the picker can say it.
+// they may not use is listed with why, so the picker can say it. Pages are by
+// offset over the list as it is when asked, so a place that appears between
+// two pages may shift the next by one.
 func (s *Service) Targets(ctx context.Context, who Who, q TargetQuery) (TargetPage, error) {
 	if q.Kind != "" && q.Kind != TargetChat && q.Kind != TargetChannel && q.Kind != TargetDirect {
 		return TargetPage{}, refuse(Invalid, "kind is chat, channel or direct")
@@ -115,7 +117,7 @@ func (s *Service) Targets(ctx context.Context, who Who, q TargetQuery) (TargetPa
 	var all []TargetItem
 	want := func(k string) bool { return q.Kind == "" || q.Kind == k }
 	if want(TargetChat) {
-		items, err := s.chatItems(ctx, who, nil)
+		items, err := s.chatItems(ctx, who)
 		if err != nil {
 			return TargetPage{}, err
 		}
@@ -129,7 +131,7 @@ func (s *Service) Targets(ctx context.Context, who Who, q TargetQuery) (TargetPa
 		all, page.Problems = append(all, items...), problems
 	}
 	if want(TargetDirect) {
-		items, err := s.directItems(ctx, who, nil)
+		items, err := s.directItems(ctx, who)
 		if err != nil {
 			return TargetPage{}, err
 		}
@@ -151,9 +153,9 @@ func matches(it TargetItem, q string) bool {
 	return strings.Contains(strings.ToLower(it.Label+"\n"+it.Detail+"\n"+it.ChannelName), q)
 }
 
-func (s *Service) chatItems(ctx context.Context, who Who, session *uuid.UUID) ([]TargetItem, error) {
+func (s *Service) chatItems(ctx context.Context, who Who) ([]TargetItem, error) {
 	rows, err := s.store.ListTargetChats(ctx, db.ListTargetChatsParams{
-		TeamID: who.Team, UserID: who.User, Since: s.now().Add(-chatsSince), SessionID: session, PageSize: maxTargetRows,
+		TeamID: who.Team, UserID: who.User, Since: s.now().Add(-chatsSince), PageSize: maxTargetRows,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list the chats the caller talked in: %w", err)
@@ -161,9 +163,14 @@ func (s *Service) chatItems(ctx context.Context, who Who, session *uuid.UUID) ([
 	out := make([]TargetItem, len(rows))
 	for i, r := range rows {
 		at := r.LastSaid
+		reason := ""
+		if postsToGroup(TargetChat, r.Kind) && !who.ChannelWrite {
+			reason = ReasonNeedsChannelWrite // a group's chat is its top level
+		}
 		out[i] = TargetItem{
 			Kind: TargetChat, Label: chatLabel(r.Kind), Detail: "You: " + clipped(r.LastText, snippet),
-			ChannelID: r.ChannelID, ChannelName: r.ChannelName, Provider: r.Provider, At: &at, Available: true,
+			ChannelID: r.ChannelID, ChannelName: r.ChannelName, Provider: r.Provider, At: &at,
+			Available: reason == "", Reason: reason,
 			Target: Target{Kind: TargetChat, SessionID: r.ID},
 		}
 	}
@@ -171,20 +178,37 @@ func (s *Service) chatItems(ctx context.Context, who Who, session *uuid.UUID) ([
 }
 
 func chatLabel(kind string) string {
-	switch kind {
-	case "direct":
+	switch gateway.SessionKind(kind) {
+	case gateway.SessionDirect:
 		return "Your direct messages"
-	case "thread":
+	case gateway.SessionThread:
 		return "A thread"
-	default:
+	case gateway.SessionGroup:
 		return "A group"
 	}
+	return "A chat"
+}
+
+// postsToGroup is a schedule whose answers a group reads: at a channel's top
+// level, or in a group chat. Its maker needs channel:write, when it is made
+// and each time it fires.
+func postsToGroup(target, sessionKind string) bool {
+	return target == TargetChannel || (target == TargetChat && sessionKind == string(gateway.SessionGroup))
+}
+
+// groupsFromSessions is a provider whose groups are known only by the
+// conversations the bot has seen in them, as it lists none (Telegram,
+// WhatsApp).
+func (s *Service) groupsFromSessions(provider string) bool {
+	return !s.chats.ListsChannels(provider)
 }
 
 // channelItems is the channels a schedule may post at the top level of: a
 // platform's own list where it gives one (Slack), and the groups the bot has
 // heard from elsewhere (Telegram, WhatsApp). Without channel:write each is
-// listed, not pickable.
+// listed, not pickable, and a private channel is left out: its name is not
+// for one who may not post there. A workspace that cannot be listed is a
+// problem beside the rest, not a failure of them.
 func (s *Service) channelItems(ctx context.Context, who Who) ([]TargetItem, []TargetProblem, error) {
 	reason := ""
 	if !who.ChannelWrite {
@@ -205,9 +229,23 @@ func (s *Service) channelItems(ctx context.Context, who Who) ([]TargetItem, []Ta
 				problems = append(problems, TargetProblem{ChannelID: ch.ID, Provider: ch.Provider, Text: refused.Msg})
 				continue
 			case err != nil:
-				return nil, nil, fmt.Errorf("list channel %s's channels: %w", ch.ID, err)
+				s.logger.WarnContext(ctx, "A workspace's channels could not be listed",
+					"channel_id", ch.ID, "provider", ch.Provider, "error", err)
+				problems = append(problems, TargetProblem{
+					ChannelID: ch.ID, Provider: ch.Provider, Text: "its channels could not be listed just now; try again in a moment",
+				})
+				continue
 			}
-			for _, pc := range listed {
+			if !listed.Complete {
+				problems = append(problems, TargetProblem{
+					ChannelID: ch.ID, Provider: ch.Provider,
+					Text: "it has more channels than are listed here; one missing can be found once the list is shorter",
+				})
+			}
+			for _, pc := range listed.Channels {
+				if pc.Private && !who.ChannelWrite {
+					continue
+				}
 				it := TargetItem{
 					Kind: TargetChannel, Label: "#" + pc.Name, Detail: placeDetail(pc),
 					ChannelID: ch.ID, ChannelName: ch.Name, Provider: ch.Provider, Available: reason == "", Reason: reason,
@@ -223,7 +261,7 @@ func (s *Service) channelItems(ctx context.Context, who Who) ([]TargetItem, []Ta
 			return strings.Compare(a.ChannelName+"\x00"+a.Label, b.ChannelName+"\x00"+b.Label)
 		})
 	}
-	groups, err := s.groupItems(ctx, who, nil, reason)
+	groups, err := s.groupItems(ctx, who, reason)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -245,14 +283,14 @@ func placeDetail(pc gateway.PlatformChannel) string {
 	return d
 }
 
-func (s *Service) groupItems(ctx context.Context, who Who, session *uuid.UUID, reason string) ([]TargetItem, error) {
-	rows, err := s.store.ListTargetGroups(ctx, db.ListTargetGroupsParams{TeamID: who.Team, SessionID: session, PageSize: maxTargetRows})
+func (s *Service) groupItems(ctx context.Context, who Who, reason string) ([]TargetItem, error) {
+	rows, err := s.store.ListTargetGroups(ctx, db.ListTargetGroupsParams{TeamID: who.Team, PageSize: maxTargetRows})
 	if err != nil {
 		return nil, fmt.Errorf("list the groups the bot is in: %w", err)
 	}
 	out := make([]TargetItem, 0, len(rows))
 	for _, r := range rows {
-		if s.chats.ListsChannels(r.Provider) {
+		if !s.groupsFromSessions(r.Provider) {
 			continue // its channels are the platform's own list
 		}
 		at := r.LastMessageAt
@@ -268,8 +306,8 @@ func (s *Service) groupItems(ctx context.Context, who Who, session *uuid.UUID, r
 
 // directItems is the channels where the platform opens the caller's direct
 // conversation with the bot by itself. Elsewhere it is one of their chats.
-func (s *Service) directItems(ctx context.Context, who Who, channel *uuid.UUID) ([]TargetItem, error) {
-	rows, err := s.store.ListSenderChannels(ctx, db.ListSenderChannelsParams{TeamID: who.Team, UserID: who.User, ChannelID: channel})
+func (s *Service) directItems(ctx context.Context, who Who) ([]TargetItem, error) {
+	rows, err := s.store.ListSenderChannels(ctx, db.ListSenderChannelsParams{TeamID: who.Team, UserID: who.User})
 	if err != nil {
 		return nil, fmt.Errorf("list the channels the caller is let in on: %w", err)
 	}
@@ -287,117 +325,6 @@ func (s *Service) directItems(ctx context.Context, who Who, channel *uuid.UUID) 
 	return out, nil
 }
 
-// placed is where a schedule's conversation is opened: the session it is
-// made as, and how the place is shown.
-type placed struct {
-	target, label string
-	channel       uuid.UUID
-	ref, kind     string
-	user          *uuid.UUID
-}
-
-// place checks a picked target again, as the caller may pick it now, and
-// says where the schedule's conversation goes. It may ask the platform, so it
-// runs before the transaction that saves the schedule.
-func (s *Service) place(ctx context.Context, who Who, t Target) (*placed, error) {
-	switch t.Kind {
-	case "", TargetOwn:
-		return nil, nil // its own conversation on the dashboard
-	case TargetChat:
-		if t.SessionID == uuid.Nil {
-			return nil, refuse(Invalid, "a chat names its conversation")
-		}
-		row, err := s.store.ListTargetChats(ctx, db.ListTargetChatsParams{
-			TeamID: who.Team, UserID: who.User, Since: s.now().Add(-chatsSince), SessionID: &t.SessionID, PageSize: 1,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("read the chat: %w", err)
-		}
-		if len(row) == 0 {
-			return nil, refuse(Invalid, "that is not a chat you have talked in lately")
-		}
-		r := row[0]
-		return &placed{
-			target: TargetChat, label: label(r.ChannelName, chatLabel(r.Kind)), channel: r.ChannelID,
-			ref: r.ProviderRef, kind: r.Kind, user: r.UserID,
-		}, nil
-	case TargetChannel:
-		if !who.ChannelWrite {
-			return nil, refuse(Forbidden, "posting at a channel's top level takes channel:write")
-		}
-		if t.SessionID != uuid.Nil {
-			rows, err := s.store.ListTargetGroups(ctx, db.ListTargetGroupsParams{TeamID: who.Team, SessionID: &t.SessionID, PageSize: 1})
-			if err != nil {
-				return nil, fmt.Errorf("read the group: %w", err)
-			}
-			if len(rows) == 0 || s.chats.ListsChannels(rows[0].Provider) {
-				return nil, refuse(Invalid, "that is not a group the bot is in")
-			}
-			r := rows[0]
-			return &placed{
-				target: TargetChannel, label: label(r.ChannelName, "A group"), channel: r.ChannelID,
-				ref: r.ProviderRef, kind: "group",
-			}, nil
-		}
-		chans, err := s.store.ListChannelsOn(ctx, db.ListChannelsOnParams{TeamID: who.Team, Providers: s.chats.Listers(), ChannelID: &t.ChannelID})
-		if err != nil {
-			return nil, fmt.Errorf("read the channel: %w", err)
-		}
-		if len(chans) == 0 || t.Ref == "" {
-			return nil, refuse(Invalid, "no such channel in this team")
-		}
-		name, err := s.chats.ChannelName(ctx, who.Team, chans[0].ID, chans[0].Provider, t.Ref)
-		if err := platformRefusal(err); err != nil {
-			return nil, err
-		}
-		return &placed{
-			target: TargetChannel, label: label(chans[0].Name, "#"+name), channel: chans[0].ID,
-			ref: t.Ref, kind: "group",
-		}, nil
-	case TargetDirect:
-		rows, err := s.store.ListSenderChannels(ctx, db.ListSenderChannelsParams{TeamID: who.Team, UserID: who.User, ChannelID: &t.ChannelID})
-		if err != nil {
-			return nil, fmt.Errorf("read the channel: %w", err)
-		}
-		if len(rows) == 0 || !s.chats.OpensDirect(rows[0].Provider) {
-			return nil, refuse(Invalid, "the bot cannot open a direct conversation with you on that channel")
-		}
-		r := rows[0]
-		ref, err := s.chats.OpenDirect(ctx, who.Team, r.ID, r.Provider, r.SenderRef)
-		if err := platformRefusal(err); err != nil {
-			return nil, err
-		}
-		return &placed{
-			target: TargetDirect, label: label(r.Name, "Your direct messages"), channel: r.ID,
-			ref: ref, kind: "direct", user: &who.User,
-		}, nil
-	}
-	return nil, refuse(Invalid, "a target is own, chat, channel or direct")
-}
-
-// platformRefusal passes the platform's no on as a refusal said for a person,
-// and anything else as a failure.
-func platformRefusal(err error) error {
-	var refused *gateway.Refusal
-	if errors.As(err, &refused) {
-		return refuse(Invalid, "%s", refused.Msg)
-	}
-	return err
-}
-
-func label(channel, place string) string {
-	return clipped(channel+" · "+place, maxLabel)
-}
-
-// clipped is s to n runes, on one line.
-func clipped(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n-1]) + "…"
-}
-
 // noChats is a service that asks no platform: no channel lists, nothing opens.
 type noChats struct{}
 
@@ -412,6 +339,6 @@ func (noChats) ChannelName(context.Context, uuid.UUID, uuid.UUID, string, string
 	return "", gateway.ErrCannot
 }
 
-func (noChats) ListChannels(context.Context, uuid.UUID, uuid.UUID, string) ([]gateway.PlatformChannel, error) {
-	return nil, gateway.ErrCannot
+func (noChats) ListChannels(context.Context, uuid.UUID, uuid.UUID, string) (gateway.ChannelList, error) {
+	return gateway.ChannelList{}, gateway.ErrCannot
 }

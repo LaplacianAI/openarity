@@ -26,10 +26,8 @@ const (
 	manageEveryones = authz.Action("schedule:manage")
 	// writeChannels is what posting at a channel's top level takes.
 	writeChannels = authz.Action("channel:write")
-	// placesPage is how many places a page of the picker shows by default.
-	placesPage = 50
-	maxBody    = 64 << 10
-	newsPage   = 50
+	maxBody       = 64 << 10
+	newsPage      = 50
 )
 
 var statuses = []string{"proposed", "active", "paused", "done", "deleted"}
@@ -535,15 +533,16 @@ func (h *handler) targets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if r.URL.Query().Get("limit") == "" {
-		limit = placesPage
+	q, ok := api.Query(w, r)
+	if !ok {
+		return
 	}
 	var offset int
 	if raw := r.URL.Query().Get("cursor"); raw != "" && !api.DecodeCursor(w, raw, &offset) {
 		return
 	}
 	page, err := h.service.Targets(r.Context(), who, triggers.TargetQuery{
-		Q: r.URL.Query().Get("q"), Kind: r.URL.Query().Get("kind"), Offset: max(offset, 0), Limit: int(limit),
+		Q: q, Kind: r.URL.Query().Get("kind"), Offset: max(offset, 0), Limit: int(limit),
 	})
 	if err != nil {
 		h.answer(w, r, "failed to list where a schedule may answer", err)

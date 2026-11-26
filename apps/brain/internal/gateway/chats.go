@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 )
@@ -34,15 +35,24 @@ type Chats struct {
 	poster  Poster
 	now     func() time.Time
 
-	mu     sync.Mutex
-	listed map[uuid.UUID]listing
+	mu      sync.Mutex
+	listed  map[uuid.UUID]listing
+	listing singleflight.Group
 }
 
-// A listing is a workspace's channels as they were when last asked.
+// A ChannelList is a workspace's channels. Complete is false when there were
+// more than one listing reads, and only the first were read.
+type ChannelList struct {
+	Channels []PlatformChannel
+	Complete bool
+}
+
+// A listing is a workspace's channels, or the platform's no, as they were
+// when last asked, kept until until.
 type listing struct {
-	at       time.Time
-	channels []PlatformChannel
-	err      error
+	until time.Time
+	list  ChannelList
+	err   error
 }
 
 const (
@@ -50,6 +60,10 @@ const (
 	// search by name and lets a list be asked for only so often, so a person
 	// typing a search reads the kept list, not Slack.
 	listFor = 5 * time.Minute
+	// refusedFor is how long the platform's no is kept: long enough that a
+	// person typing a search does not ask on every keystroke, short enough
+	// that a scope just added, or a rate limit, clears soon.
+	refusedFor = 30 * time.Second
 	// maxListPages bounds one listing at a few thousand channels.
 	maxListPages = 15
 )
@@ -72,66 +86,75 @@ func (c *Chats) ListsChannels(provider string) bool {
 }
 
 // ListChannels is the channel's workspace's channels, kept for listFor. A
-// *Refusal is the platform's no, kept as long, so a missing scope is not
-// asked about on every keystroke.
-func (c *Chats) ListChannels(ctx context.Context, team, channel uuid.UUID, provider string) ([]PlatformChannel, error) {
+// *Refusal is the platform's no, kept for refusedFor. A failure to ask is not
+// kept. Callers asking at once for one workspace share one listing.
+func (c *Chats) ListChannels(ctx context.Context, team, channel uuid.UUID, provider string) (ChannelList, error) {
 	l, ok := c.reg.ChannelLister(provider)
 	if !ok {
-		return nil, ErrCannot
+		return ChannelList{}, ErrCannot
 	}
 	c.mu.Lock()
 	kept, ok := c.listed[channel]
 	c.mu.Unlock()
-	if ok && c.now().Sub(kept.at) < listFor {
-		return kept.channels, kept.err
+	if ok && c.now().Before(kept.until) {
+		return kept.list, kept.err
 	}
+	v, err, _ := c.listing.Do(channel.String(), func() (any, error) {
+		return c.list(ctx, team, channel, provider, l)
+	})
+	if err != nil {
+		return ChannelList{}, err
+	}
+	list, _ := v.(ChannelList)
+	return list, nil
+}
+
+func (c *Chats) list(ctx context.Context, team, channel uuid.UUID, provider string, l ChannelLister) (ChannelList, error) {
 	creds, err := c.credentials(ctx, team, channel, provider)
 	if err != nil {
-		return nil, err
+		return ChannelList{}, err
 	}
-	var all []PlatformChannel
+	var all ChannelList
 	cursor := ""
 	for range maxListPages {
 		req, err := l.ListRequest(creds, cursor)
 		if err != nil {
-			return nil, &Refusal{Msg: err.Error()}
+			return ChannelList{}, &Refusal{Msg: err.Error()}
 		}
 		body, err := c.ask(ctx, channel, req)
 		if err != nil {
-			return nil, err
+			return ChannelList{}, err
 		}
 		page, next, err := l.ListPage(body)
 		if err != nil {
-			// The platform's no is kept; a failure to ask is not.
 			refused := &Refusal{Msg: err.Error()}
-			c.keep(channel, listing{at: c.now(), err: refused})
-			return nil, refused
+			c.keep(channel, listing{until: c.now().Add(refusedFor), err: refused})
+			return ChannelList{}, refused
 		}
-		all = append(all, page...)
+		all.Channels = append(all.Channels, page...)
 		if next == "" {
+			all.Complete = true
 			break
 		}
 		cursor = next
 	}
-	c.keep(channel, listing{at: c.now(), channels: all})
+	c.keep(channel, listing{until: c.now().Add(listFor), list: all})
 	return all, nil
 }
 
+// keep keeps a listing, and lets go of those past their time, so a channel
+// deleted is not kept for ever.
 func (c *Chats) keep(channel uuid.UUID, l listing) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	now := c.now()
+	maps.DeleteFunc(c.listed, func(_ uuid.UUID, k listing) bool { return !now.Before(k.until) })
 	c.listed[channel] = l
 }
 
 // OpensDirect is whether a provider opens a direct conversation by itself.
 func (c *Chats) OpensDirect(provider string) bool {
 	_, ok := c.reg.DirectOpener(provider)
-	return ok
-}
-
-// FindsChannels is whether a provider looks up a channel by its id.
-func (c *Chats) FindsChannels(provider string) bool {
-	_, ok := c.reg.ChannelFinder(provider)
 	return ok
 }
 

@@ -4390,8 +4390,10 @@ type Schedule struct {
 	Objective string `json:"objective" yaml:"objective"`
 
 	// PausedReason Why it is paused. `failing` is five failed runs, or fires that
-	// could not be tried, in a row; `target_gone` is its agent deleted,
-	// until another or the hub is chosen.
+	// could not be tried, in a row; `maker_cannot_run` is its maker no
+	// longer allowed to start runs, or, for one posting where a group
+	// reads it, to write to channels; `target_gone` is its agent
+	// deleted, until another or the hub is chosen.
 	PausedReason *SchedulePausedReason `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
 
 	// SessionID The conversation its runs answer in.
@@ -4416,8 +4418,10 @@ type Schedule struct {
 }
 
 // SchedulePausedReason Why it is paused. `failing` is five failed runs, or fires that
-// could not be tried, in a row; `target_gone` is its agent deleted,
-// until another or the hub is chosen.
+// could not be tried, in a row; `maker_cannot_run` is its maker no
+// longer allowed to start runs, or, for one posting where a group
+// reads it, to write to channels; `target_gone` is its agent
+// deleted, until another or the hub is chosen.
 type SchedulePausedReason string
 
 // ScheduleStatus `proposed` waits for its maker to confirm what an agent proposed;
@@ -4433,7 +4437,7 @@ type ScheduleFire struct {
 	// `missed` came and went while the team was not running;
 	// `skipped_busy` found its last run still working; `skipped_cap`
 	// was over the team's hourly limit; `skipped_maker` found its maker
-	// could no longer start runs; `skipped_target` found its agent
+	// could no longer start runs, or post where it answers; `skipped_target` found its agent
 	// deleted.
 	Outcome      ScheduleFireOutcome `json:"outcome" yaml:"outcome"`
 	RunID        *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
@@ -4445,7 +4449,7 @@ type ScheduleFire struct {
 // `missed` came and went while the team was not running;
 // `skipped_busy` found its last run still working; `skipped_cap`
 // was over the team's hourly limit; `skipped_maker` found its maker
-// could no longer start runs; `skipped_target` found its agent
+// could no longer start runs, or post where it answers; `skipped_target` found its agent
 // deleted.
 type ScheduleFireOutcome string
 
@@ -7388,8 +7392,13 @@ type ClientInterface interface {
 	// own list where it gives one, as Slack does, else the groups the bot
 	// has heard from); then their direct messages, where the platform opens
 	// them. A place the caller cannot use is listed with `available` false
-	// and why. A channel whose platform refused to list is one entry in
-	// `problems`. Slack's lists are kept for about five minutes.
+	// and why, except a private channel, which is left out unless the
+	// caller holds `channel:write`. A group's chat takes `channel:write`
+	// too. A channel whose platform refused to list, could not be asked, or
+	// has more channels than are listed, is one entry in `problems`.
+	// Slack's lists are kept for about five minutes, a refusal for about
+	// thirty seconds. Each kind reads the caller's 200 most recent places
+	// before the search narrows them.
 	//
 	// Corresponds with GET /teams/{id}/schedule-targets (the `ListScheduleTargets` operationId).
 	ListScheduleTargets(ctx context.Context, id TeamID, params *ListScheduleTargetsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7570,7 +7579,9 @@ type ClientInterface interface {
 	// because its maker left, or may no longer start runs, is taken over.
 	// It stays paused until the caller resumes it, and runs as them from
 	// then, so a caller who may not start runs in the team is refused with
-	// 403.
+	// 403, as is one without `channel:write` for a schedule posting where a
+	// group reads it. A schedule answering in its maker's direct messages
+	// or their own thread cannot be handed on: 409.
 	//
 	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
 	TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10469,8 +10480,13 @@ func (c *Client) SaveScheduleSettings(ctx context.Context, id TeamID, body SaveS
 // own list where it gives one, as Slack does, else the groups the bot
 // has heard from); then their direct messages, where the platform opens
 // them. A place the caller cannot use is listed with `available` false
-// and why. A channel whose platform refused to list is one entry in
-// `problems`. Slack's lists are kept for about five minutes.
+// and why, except a private channel, which is left out unless the
+// caller holds `channel:write`. A group's chat takes `channel:write`
+// too. A channel whose platform refused to list, could not be asked, or
+// has more channels than are listed, is one entry in `problems`.
+// Slack's lists are kept for about five minutes, a refusal for about
+// thirty seconds. Each kind reads the caller's 200 most recent places
+// before the search narrows them.
 //
 // Corresponds with GET /teams/{id}/schedule-targets (the `ListScheduleTargets` operationId).
 func (c *Client) ListScheduleTargets(ctx context.Context, id TeamID, params *ListScheduleTargetsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10811,7 +10827,9 @@ func (c *Client) RunSchedule(ctx context.Context, id TeamID, scheduleID Schedule
 // because its maker left, or may no longer start runs, is taken over.
 // It stays paused until the caller resumes it, and runs as them from
 // then, so a caller who may not start runs in the team is refused with
-// 403.
+// 403, as is one without `channel:write` for a schedule posting where a
+// group reads it. A schedule answering in its maker's direct messages
+// or their own thread cannot be handed on: 409.
 //
 // Corresponds with POST /teams/{id}/schedules/{scheduleID}/take-over (the `TakeOverSchedule` operationId).
 func (c *Client) TakeOverSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -19061,8 +19079,13 @@ type ClientWithResponsesInterface interface {
 	// own list where it gives one, as Slack does, else the groups the bot
 	// has heard from); then their direct messages, where the platform opens
 	// them. A place the caller cannot use is listed with `available` false
-	// and why. A channel whose platform refused to list is one entry in
-	// `problems`. Slack's lists are kept for about five minutes.
+	// and why, except a private channel, which is left out unless the
+	// caller holds `channel:write`. A group's chat takes `channel:write`
+	// too. A channel whose platform refused to list, could not be asked, or
+	// has more channels than are listed, is one entry in `problems`.
+	// Slack's lists are kept for about five minutes, a refusal for about
+	// thirty seconds. Each kind reads the caller's 200 most recent places
+	// before the search narrows them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -19259,7 +19282,9 @@ type ClientWithResponsesInterface interface {
 	// because its maker left, or may no longer start runs, is taken over.
 	// It stays paused until the caller resumes it, and runs as them from
 	// then, so a caller who may not start runs in the team is refused with
-	// 403.
+	// 403, as is one without `channel:write` for a schedule posting where a
+	// group reads it. A schedule answering in its maker's direct messages
+	// or their own thread cannot be handed on: 409.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27030,8 +27055,13 @@ func (c *ClientWithResponses) SaveScheduleSettingsWithResponse(ctx context.Conte
 // own list where it gives one, as Slack does, else the groups the bot
 // has heard from); then their direct messages, where the platform opens
 // them. A place the caller cannot use is listed with `available` false
-// and why. A channel whose platform refused to list is one entry in
-// `problems`. Slack's lists are kept for about five minutes.
+// and why, except a private channel, which is left out unless the
+// caller holds `channel:write`. A group's chat takes `channel:write`
+// too. A channel whose platform refused to list, could not be asked, or
+// has more channels than are listed, is one entry in `problems`.
+// Slack's lists are kept for about five minutes, a refusal for about
+// thirty seconds. Each kind reads the caller's 200 most recent places
+// before the search narrows them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -27324,7 +27354,9 @@ func (c *ClientWithResponses) RunScheduleWithResponse(ctx context.Context, id Te
 // because its maker left, or may no longer start runs, is taken over.
 // It stays paused until the caller resumes it, and runs as them from
 // then, so a caller who may not start runs in the team is refused with
-// 403.
+// 403, as is one without `channel:write` for a schedule posting where a
+// group reads it. A schedule answering in its maker's direct messages
+// or their own thread cannot be handed on: 409.
 //
 // Returns a wrapper object for the known response body format(s).
 //

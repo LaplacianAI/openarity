@@ -87,7 +87,7 @@ func TestChannelsAreListedOnceAndKept(t *testing.T) {
 	team, ch := uuid.New(), uuid.New()
 
 	got, err := c.ListChannels(t.Context(), team, ch, "lister")
-	if err != nil || len(got) != 2 || e.asked != 2 {
+	if err != nil || len(got.Channels) != 2 || !got.Complete || e.asked != 2 {
 		t.Fatalf("ListChannels = %v, %v after %d asks; want both pages", got, err, e.asked)
 	}
 	if _, err := c.ListChannels(t.Context(), team, ch, "lister"); err != nil || e.asked != 2 {
@@ -102,12 +102,15 @@ func TestChannelsAreListedOnceAndKept(t *testing.T) {
 	}
 }
 
-// The platform's no is a Refusal said for a person, and is kept as long as a
-// list, so a missing scope is not asked about on every keystroke.
-func TestARefusalToListIsKeptToo(t *testing.T) {
+// The platform's no is a Refusal said for a person, and is kept briefly, so a
+// missing scope is not asked about on every keystroke, and a scope just added
+// shows soon.
+func TestARefusalToListIsKeptBriefly(t *testing.T) {
 	t.Parallel()
 	l := &lister{err: errors.New("the app needs channels:read")}
 	c, e := newChats(t, l)
+	clock := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return clock }
 	team, ch := uuid.New(), uuid.New()
 	_, err := c.ListChannels(t.Context(), team, ch, "lister")
 	var refused *Refusal
@@ -117,8 +120,33 @@ func TestARefusalToListIsKeptToo(t *testing.T) {
 	if _, err := c.ListChannels(t.Context(), team, ch, "lister"); !errors.As(err, &refused) || e.asked != 1 {
 		t.Errorf("asked %d times, want the refusal kept", e.asked)
 	}
+	clock = clock.Add(refusedFor)
+	l.err, l.pages = nil, [][]PlatformChannel{{{Ref: "C1", Name: "a"}}}
+	if got, err := c.ListChannels(t.Context(), team, ch, "lister"); err != nil || len(got.Channels) != 1 || e.asked != 2 {
+		t.Errorf("after %s ListChannels = %v, %v after %d asks; want it asked again", refusedFor, got, err, e.asked)
+	}
 	if _, err := c.ListChannels(t.Context(), team, ch, "nobody"); !errors.Is(err, ErrCannot) {
 		t.Errorf("a provider that lists nothing = %v, want ErrCannot", err)
+	}
+}
+
+// A workspace with more channels than a listing reads is kept as far as it
+// was read, and says it is not complete.
+func TestAListTooLongIsKeptAndSaidIncomplete(t *testing.T) {
+	t.Parallel()
+	pages := make([][]PlatformChannel, maxListPages+1)
+	for i := range pages {
+		pages[i] = []PlatformChannel{{Ref: "C", Name: "c"}}
+	}
+	c, e := newChats(t, &lister{pages: pages})
+	team, ch := uuid.New(), uuid.New()
+	got, err := c.ListChannels(t.Context(), team, ch, "lister")
+	if err != nil || got.Complete || len(got.Channels) != maxListPages || e.asked != maxListPages {
+		t.Fatalf("ListChannels = %d channels, complete %v, %v after %d asks; want %d, incomplete",
+			len(got.Channels), got.Complete, err, e.asked, maxListPages)
+	}
+	if _, err := c.ListChannels(t.Context(), team, ch, "lister"); err != nil || e.asked != maxListPages {
+		t.Errorf("asked %d times, want the incomplete list kept", e.asked)
 	}
 }
 

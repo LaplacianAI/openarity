@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers/when"
 )
@@ -137,6 +138,20 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 	if !ok {
 		return ScheduleView{}, refuse(Invalid, "the schedule never fires")
 	}
+	// What needs only the database is checked before the platform is asked;
+	// the limits are checked again under the team's lock.
+	if err := s.store.InTx(ctx, func(q *db.Queries) error {
+		if err := agentInTeam(ctx, q, who.Team, in.AgentID); err != nil {
+			return err
+		}
+		if err := mayRun(ctx, q, who.Team, who.User, Forbidden,
+			"you may not start runs in this team, so a schedule of yours could not run"); err != nil {
+			return err
+		}
+		return underLimits(ctx, q, who.Team, who.User, l)
+	}); err != nil {
+		return ScheduleView{}, err
+	}
 	// Where it answers is checked, and looked up on its platform, before the
 	// transaction: a direct conversation is opened by asking Slack.
 	at, err := s.place(ctx, who, in.Target)
@@ -157,7 +172,7 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 			return err
 		}
 		session := db.CreateTriggerSessionParams{
-			TeamID: who.Team, ProviderRef: "trigger:" + id.String(), Kind: "direct", UserID: &who.User, ScheduleID: &id,
+			TeamID: who.Team, ProviderRef: "trigger:" + id.String(), Kind: string(gateway.SessionDirect), UserID: &who.User, ScheduleID: &id,
 		}
 		target, label := TargetOwn, ""
 		if at != nil {
@@ -489,16 +504,24 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			(*row.PausedReason != MakerGone && *row.PausedReason != MakerCannotRun) {
 			return refuse(Conflict, "only a schedule paused because its maker left or may no longer run can be taken over")
 		}
-		// Its answers would still reach the person who left, in their own
-		// direct messages.
-		if row.Target == TargetDirect || (row.Target == TargetChat && isDirect(ctx, q, row.ID)) {
-			return refuse(Conflict, "this schedule answers in its maker's direct messages, so it cannot be "+
-				"handed on; delete it and make another")
+		ss, err := q.GetTriggerSessionOfSchedule(ctx, &row.ID)
+		if err != nil {
+			return fmt.Errorf("read the schedule's conversation: %w", err)
 		}
-		// It runs as whoever takes it, so they must be able to run.
+		// Its answers would still reach the person who left, in their own
+		// direct messages or their own thread.
+		if row.Target == TargetDirect || (row.Target == TargetChat && !postsToGroup(row.Target, ss.Kind)) {
+			return refuse(Conflict, "this schedule answers in its maker's direct messages or their own thread, "+
+				"so it cannot be handed on; delete it and make another")
+		}
+		// It runs as whoever takes it, so they must be able to run, and to
+		// post where a group reads it.
 		if err := mayRun(ctx, q, row.TeamID, who.User, Forbidden,
 			"you may not start runs in this team, so a schedule taken over by you could not run"); err != nil {
 			return err
+		}
+		if postsToGroup(row.Target, ss.Kind) && !who.ChannelWrite {
+			return refuse(Forbidden, "this schedule posts where a group reads it, which takes channel:write")
 		}
 		row.CreatedBy = &who.User
 		if err := q.SetTriggerSessionUser(ctx, db.SetTriggerSessionUserParams{UserID: who.User, ScheduleID: row.ID}); err != nil {
@@ -537,7 +560,8 @@ func (s *Service) RunNow(ctx context.Context, who Who, ref Ref) (uuid.UUID, erro
 		case st.already:
 			return refuse(Conflict, "this schedule was just run; try again in a moment")
 		case st.outcome == skippedMaker:
-			return refuse(Conflict, "the person who made this schedule may no longer start runs in this team")
+			return refuse(Conflict, "the person who made this schedule may no longer start runs in this team, "+
+				"or post where it answers")
 		case st.outcome == skippedTarget:
 			return refuse(Conflict, "the agent this schedule ran was deleted; choose another, or the hub, first")
 		case st.outcome == skippedCap:
@@ -759,10 +783,4 @@ func zoneOr(name string) *time.Location {
 		return loc
 	}
 	return time.UTC
-}
-
-// isDirect is a schedule whose conversation is a direct one on a chat.
-func isDirect(ctx context.Context, q *db.Queries, schedule uuid.UUID) bool {
-	ss, err := q.GetTriggerSessionOfSchedule(ctx, &schedule)
-	return err == nil && ss.Kind == "direct"
 }

@@ -566,13 +566,18 @@ through the replies' poster, so they reach only what replies may.
   `conversations.open` is "the Slack app needs the im:write scope …, then
   Reinstall to Workspace", unlike a reply's raw `missing_scope`: here a
   person is waiting for the answer, and nothing retries.
-- **Slack's channel list is kept about five minutes per workspace,** a refusal
-  too. Slack has no search by name and lets the list be asked for only so
-  often, so a person typing a search reads the kept list.
+- **Slack's channel list is kept about five minutes per workspace,** and a
+  refusal about thirty seconds. Slack has no search by name and lets the list
+  be asked for only so often, so a person typing a search reads the kept list;
+  a refusal is kept briefly so a scope just added, or a rate limit, clears
+  soon. Callers asking at once share one listing. A list is read to fifteen
+  pages (3,000 channels); one longer is kept as read and said incomplete.
+  Failing to ask is not kept, and is a problem beside the other places.
 - **Telegram and WhatsApp have none of the three.** A bot may not start a chat
   with someone who never wrote to it, and neither lists its groups, so their
   places are the conversations the brain has already seen.
 - **Where a post landed is read from the same answer** (`OutboundRequest.Posted`)
   and kept on the reply as `posted_ref`, for the first part only, so `history`
   can show the post a thread replies to. A reply in that thread still needs a
-  mention, as in every thread (*user*, 2026-11-26).
+  mention, as in every thread (*user*, 2026-11-26). A file sent as its own
+  reply records none: it is not a post a thread grows from.

@@ -3,21 +3,26 @@
 
 -- Conversations a person talked in lately, on a chat rather than the
 -- dashboard, newest first: a schedule may answer there. Never another
--- schedule's or watcher's own.
+-- schedule's or watcher's own. A conversation's last message bounds the scan,
+-- and each one's newest message of theirs is read by its index.
 -- name: ListTargetChats :many
 SELECT ss.id, ss.channel_id::uuid AS channel_id, ch.name AS channel_name, ch.provider,
        ss.kind, ss.provider_ref::text AS provider_ref, ss.user_id,
-       max(m.received_at)::timestamptz AS last_said,
-       (array_agg(left(m.text, 200) ORDER BY m.received_at DESC))[1]::text AS last_text
+       last.received_at::timestamptz AS last_said, left(last.text, 200)::text AS last_text
 FROM sessions ss
 JOIN channels ch ON ch.id = ss.channel_id
-JOIN messages m ON m.session_id = ss.id
+CROSS JOIN LATERAL (
+    SELECT m.received_at, m.text
+    FROM messages m
+    WHERE m.session_id = ss.id AND m.user_id = sqlc.arg('user_id')::uuid AND NOT m.answer
+      AND m.received_at > sqlc.arg('since')::timestamptz
+    ORDER BY m.received_at DESC
+    LIMIT 1
+) last
 WHERE ss.team_id = sqlc.arg('team_id') AND ss.status = 'open'
+  AND ss.last_message_at > sqlc.arg('since')::timestamptz
   AND ss.schedule_id IS NULL AND ss.watcher_id IS NULL AND ch.provider <> 'dashboard'
-  AND m.user_id = sqlc.arg('user_id')::uuid AND NOT m.answer
-  AND m.received_at > sqlc.arg('since')::timestamptz
   AND (sqlc.narg('session_id')::uuid IS NULL OR ss.id = sqlc.narg('session_id')::uuid)
-GROUP BY ss.id, ch.name, ch.provider
 ORDER BY last_said DESC, ss.id
 LIMIT sqlc.arg('page_size');
 
@@ -35,8 +40,9 @@ WHERE ss.team_id = sqlc.arg('team_id') AND ss.status = 'open' AND ss.kind = 'gro
 ORDER BY ss.last_message_at DESC, ss.id
 LIMIT sqlc.arg('page_size');
 
--- Channels a person is let in on, with the platform's id for them, newest
--- link first: where a schedule may open their direct conversation.
+-- Channels a person is let in on, one row each with the platform's id for
+-- them (their newest link on it): where a schedule may open their direct
+-- conversation.
 -- name: ListSenderChannels :many
 SELECT DISTINCT ON (c.id) c.id, c.name, c.provider, cs.sender_ref
 FROM channel_senders cs

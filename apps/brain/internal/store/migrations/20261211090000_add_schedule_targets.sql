@@ -6,8 +6,8 @@
 -- (a channel's top level needs channel:write).
 SET LOCAL lock_timeout = '3s';
 
--- target_label is how it was shown when it was picked ("#releases", "Slack:
--- a thread"): a channel's name is the platform's, read once then, so it is
+-- target_label is how it was shown when it was picked ("Acme Slack ·
+-- #releases"): a channel's name is the platform's, read once then, so it is
 -- kept rather than asked again.
 ALTER TABLE schedules
     ADD COLUMN target text NOT NULL DEFAULT 'own',

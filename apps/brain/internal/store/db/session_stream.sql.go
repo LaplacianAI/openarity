@@ -184,34 +184,41 @@ func (q *Queries) GetMessageByExternalID(ctx context.Context, arg GetMessageByEx
 
 const listPostedTriggerAnswers = `-- name: ListPostedTriggerAnswers :many
 WITH here AS (
-    SELECT channel_id, provider_ref FROM sessions WHERE id = $1::uuid
+    SELECT channel_id, provider_ref FROM sessions WHERE id = $4::uuid
+), posted AS (
+    SELECT r.id
+    FROM here
+    JOIN sessions ts ON ts.channel_id = here.channel_id AND ts.provider_ref = here.provider_ref
+    JOIN runs r ON r.session_id = ts.id
+    WHERE (ts.schedule_id IS NOT NULL OR ts.watcher_id IS NOT NULL)
+      AND ts.id <> $4::uuid
+    UNION
+    SELECT rp.run_id
+    FROM here
+    JOIN replies rp ON rp.channel_id = here.channel_id AND rp.posted_ref = here.provider_ref
 )
 SELECT r.finished_at::timestamptz AS at, coalesce(sc.name, w.name, '')::text AS name,
        left(r.output, 2000)::text AS text
-FROM runs r
+FROM posted p
+JOIN runs r ON r.id = p.id
 JOIN sessions ts ON ts.id = r.session_id
 LEFT JOIN schedules sc ON sc.id = ts.schedule_id
 LEFT JOIN watchers w ON w.id = ts.watcher_id
-CROSS JOIN here
 WHERE (ts.schedule_id IS NOT NULL OR ts.watcher_id IS NOT NULL)
-  AND ts.id <> $1::uuid
   AND r.parent_run_id IS NULL AND r.status = 'succeeded'
   AND coalesce(r.output, '') <> '' AND btrim(r.output, E' \t\r\n') <> '[silent]'
-  AND r.finished_at > $2::timestamptz
-  AND r.finished_at < $3::timestamptz
-  AND ((ts.channel_id = here.channel_id AND ts.provider_ref = here.provider_ref)
-       OR EXISTS (SELECT 1 FROM replies rp
-                  WHERE rp.run_id = r.id AND rp.channel_id = here.channel_id
-                    AND rp.posted_ref = here.provider_ref))
+  AND r.finished_at >= $1::timestamptz
+  AND r.finished_at < $2::timestamptz
+  AND EXISTS (SELECT 1 FROM replies d WHERE d.run_id = r.id AND d.kind = 'answer' AND d.status = 'sent')
 ORDER BY r.finished_at DESC
-LIMIT $4
+LIMIT $3
 `
 
 type ListPostedTriggerAnswersParams struct {
-	SessionID uuid.UUID
 	After     time.Time
 	Before    time.Time
 	PageSize  int32
+	SessionID uuid.UUID
 }
 
 type ListPostedTriggerAnswersRow struct {
@@ -220,17 +227,17 @@ type ListPostedTriggerAnswersRow struct {
 	Text string
 }
 
-// What schedules and watchers posted into this chat, newest first, between
-// after and before: a schedule answering in a chat its maker talked in shares
-// the chat's channel and ref, and one posting at a channel's top level is the
-// root of a thread whose ref is where it landed. Only answers, never what a
-// tool returned, and never a silent run's.
+// What schedules and watchers posted into this chat, newest first, from
+// after up to before: a schedule answering in a chat its maker talked in
+// shares the chat's channel and ref, and one posting at a channel's top level
+// is the root of a thread whose ref is where it landed. Only answers that
+// reached the chat, never what a tool returned, and never a silent run's.
 func (q *Queries) ListPostedTriggerAnswers(ctx context.Context, arg ListPostedTriggerAnswersParams) ([]ListPostedTriggerAnswersRow, error) {
 	rows, err := q.db.Query(ctx, listPostedTriggerAnswers,
-		arg.SessionID,
 		arg.After,
 		arg.Before,
 		arg.PageSize,
+		arg.SessionID,
 	)
 	if err != nil {
 		return nil, err

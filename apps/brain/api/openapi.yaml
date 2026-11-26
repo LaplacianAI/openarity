@@ -3574,7 +3574,9 @@ paths:
         because its maker left, or may no longer start runs, is taken over.
         It stays paused until the caller resumes it, and runs as them from
         then, so a caller who may not start runs in the team is refused with
-        403.
+        403, as is one without `channel:write` for a schedule posting where a
+        group reads it. A schedule answering in its maker's direct messages
+        or their own thread cannot be handed on: 409.
       responses:
         "200":
           description: Taken over
@@ -3697,8 +3699,13 @@ paths:
         own list where it gives one, as Slack does, else the groups the bot
         has heard from); then their direct messages, where the platform opens
         them. A place the caller cannot use is listed with `available` false
-        and why. A channel whose platform refused to list is one entry in
-        `problems`. Slack's lists are kept for about five minutes.
+        and why, except a private channel, which is left out unless the
+        caller holds `channel:write`. A group's chat takes `channel:write`
+        too. A channel whose platform refused to list, could not be asked, or
+        has more channels than are listed, is one entry in `problems`.
+        Slack's lists are kept for about five minutes, a refusal for about
+        thirty seconds. Each kind reads the caller's 200 most recent places
+        before the search narrows them.
       parameters:
         - name: q
           in: query
@@ -8927,8 +8934,10 @@ components:
           enum: [by_person, failing, maker_cannot_run, maker_gone, target_gone]
           description: |
             Why it is paused. `failing` is five failed runs, or fires that
-            could not be tried, in a row; `target_gone` is its agent deleted,
-            until another or the hub is chosen.
+            could not be tried, in a row; `maker_cannot_run` is its maker no
+            longer allowed to start runs, or, for one posting where a group
+            reads it, to write to channels; `target_gone` is its agent
+            deleted, until another or the hub is chosen.
         next_fire_at:
           type: string
           format: date-time
@@ -9069,7 +9078,7 @@ components:
             `missed` came and went while the team was not running;
             `skipped_busy` found its last run still working; `skipped_cap`
             was over the team's hourly limit; `skipped_maker` found its maker
-            could no longer start runs; `skipped_target` found its agent
+            could no longer start runs, or post where it answers; `skipped_target` found its agent
             deleted.
         run_id:
           type: string

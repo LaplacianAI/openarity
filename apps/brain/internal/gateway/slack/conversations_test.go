@@ -91,11 +91,12 @@ func TestAChannelIsLookedUpAsTheBotSeesIt(t *testing.T) {
 		t.Errorf("ChannelName = %q, %v", name, err)
 	}
 	for body, says := range map[string]string{
-		`{"ok":true,"channel":{"name":"releases","is_member":false}}`:              "/invite",
-		`{"ok":true,"channel":{"name":"old","is_member":true,"is_archived":true}}`: "archived",
-		`{"ok":true,"channel":{"name":"x","is_member":true,"is_im":true}}`:         "direct message",
-		`{"ok":false,"error":"channel_not_found"}`:                                 "invite the app",
-		`{"ok":false,"error":"missing_scope"}`:                                     "channels:read",
+		`{"ok":true,"channel":{"name":"releases","is_member":false}}`:                  "/invite",
+		`{"ok":true,"channel":{"name":"old","is_member":true,"is_archived":true}}`:     "archived",
+		`{"ok":true,"channel":{"name":"x","is_member":true,"is_im":true}}`:             "direct message",
+		`{"ok":true,"channel":{"name":"mpdm-a--b-1","is_member":true,"is_mpim":true}}`: "direct message",
+		`{"ok":false,"error":"channel_not_found"}`:                                     "invite the app",
+		`{"ok":false,"error":"missing_scope"}`:                                         "channels:read",
 	} {
 		if _, err := p.ChannelName([]byte(body)); err == nil || !strings.Contains(err.Error(), says) {
 			t.Errorf("ChannelName(%s) = %v, want it to say %q", body, err, says)

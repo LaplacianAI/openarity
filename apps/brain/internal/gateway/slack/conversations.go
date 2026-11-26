@@ -80,6 +80,7 @@ func (provider) ChannelName(body []byte) (string, error) {
 			IsMember   bool   `json:"is_member"`
 			IsArchived bool   `json:"is_archived"`
 			IsIM       bool   `json:"is_im"`
+			IsMpIM     bool   `json:"is_mpim"`
 		} `json:"channel"`
 	}
 	if err := json.Unmarshal(body, &a); err != nil {
@@ -93,7 +94,7 @@ func (provider) ChannelName(body []byte) (string, error) {
 			"groups:read for a private one")
 	case !a.OK:
 		return "", fmt.Errorf("slack would not say what the channel is: %s", clip(a.Error))
-	case a.Channel.IsIM:
+	case a.Channel.IsIM, a.Channel.IsMpIM:
 		return "", errors.New("that is a direct message, not a channel")
 	case a.Channel.IsArchived:
 		return "", errors.New("that channel is archived")
@@ -103,8 +104,8 @@ func (provider) ChannelName(body []byte) (string, error) {
 	return a.Channel.Name, nil
 }
 
-// listPage is how many channels one conversations.list call asks for.
-const listPage = "200"
+// channelsPerPage is how many channels one conversations.list call asks for.
+const channelsPerPage = "200"
 
 // ListRequest asks for one page of the workspace's channels, public and
 // private, archived left out: conversations.list, which needs channels:read
@@ -114,7 +115,7 @@ func (provider) ListRequest(creds gateway.Credentials, cursor string) (gateway.O
 	if token == "" {
 		return gateway.OutboundRequest{}, errors.New("slack: no bot token")
 	}
-	v := url.Values{"types": {"public_channel,private_channel"}, "exclude_archived": {"true"}, "limit": {listPage}}
+	v := url.Values{"types": {"public_channel,private_channel"}, "exclude_archived": {"true"}, "limit": {channelsPerPage}}
 	if cursor != "" {
 		v.Set("cursor", cursor)
 	}

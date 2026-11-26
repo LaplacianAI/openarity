@@ -22,7 +22,10 @@ import (
 )
 
 // runWrite is what a fire needs its maker to still hold.
-const runWrite = "run:write"
+const (
+	runWrite     = "run:write"
+	channelWrite = "channel:write"
+)
 
 const (
 	// proposalLife is how long an agent's proposal waits to be confirmed.

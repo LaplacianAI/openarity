@@ -75,8 +75,9 @@ type ListSenderChannelsRow struct {
 	SenderRef string
 }
 
-// Channels a person is let in on, with the platform's id for them, newest
-// link first: where a schedule may open their direct conversation.
+// Channels a person is let in on, one row each with the platform's id for
+// them (their newest link on it): where a schedule may open their direct
+// conversation.
 func (q *Queries) ListSenderChannels(ctx context.Context, arg ListSenderChannelsParams) ([]ListSenderChannelsRow, error) {
 	rows, err := q.db.Query(ctx, listSenderChannels, arg.TeamID, arg.UserID, arg.ChannelID)
 	if err != nil {
@@ -106,25 +107,29 @@ const listTargetChats = `-- name: ListTargetChats :many
 
 SELECT ss.id, ss.channel_id::uuid AS channel_id, ch.name AS channel_name, ch.provider,
        ss.kind, ss.provider_ref::text AS provider_ref, ss.user_id,
-       max(m.received_at)::timestamptz AS last_said,
-       (array_agg(left(m.text, 200) ORDER BY m.received_at DESC))[1]::text AS last_text
+       last.received_at::timestamptz AS last_said, left(last.text, 200)::text AS last_text
 FROM sessions ss
 JOIN channels ch ON ch.id = ss.channel_id
-JOIN messages m ON m.session_id = ss.id
-WHERE ss.team_id = $1 AND ss.status = 'open'
+CROSS JOIN LATERAL (
+    SELECT m.received_at, m.text
+    FROM messages m
+    WHERE m.session_id = ss.id AND m.user_id = $1::uuid AND NOT m.answer
+      AND m.received_at > $2::timestamptz
+    ORDER BY m.received_at DESC
+    LIMIT 1
+) last
+WHERE ss.team_id = $3 AND ss.status = 'open'
+  AND ss.last_message_at > $2::timestamptz
   AND ss.schedule_id IS NULL AND ss.watcher_id IS NULL AND ch.provider <> 'dashboard'
-  AND m.user_id = $2::uuid AND NOT m.answer
-  AND m.received_at > $3::timestamptz
   AND ($4::uuid IS NULL OR ss.id = $4::uuid)
-GROUP BY ss.id, ch.name, ch.provider
 ORDER BY last_said DESC, ss.id
 LIMIT $5
 `
 
 type ListTargetChatsParams struct {
-	TeamID    uuid.UUID
 	UserID    uuid.UUID
 	Since     time.Time
+	TeamID    uuid.UUID
 	SessionID *uuid.UUID
 	PageSize  int32
 }
@@ -145,12 +150,13 @@ type ListTargetChatsRow struct {
 // See internal/triggers.
 // Conversations a person talked in lately, on a chat rather than the
 // dashboard, newest first: a schedule may answer there. Never another
-// schedule's or watcher's own.
+// schedule's or watcher's own. A conversation's last message bounds the scan,
+// and each one's newest message of theirs is read by its index.
 func (q *Queries) ListTargetChats(ctx context.Context, arg ListTargetChatsParams) ([]ListTargetChatsRow, error) {
 	rows, err := q.db.Query(ctx, listTargetChats,
-		arg.TeamID,
 		arg.UserID,
 		arg.Since,
+		arg.TeamID,
 		arg.SessionID,
 		arg.PageSize,
 	)

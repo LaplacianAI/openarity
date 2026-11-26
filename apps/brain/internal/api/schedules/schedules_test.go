@@ -453,6 +453,23 @@ func TestThePlacesToAnswerAndPickingOne(t *testing.T) {
 	if page := decode[placePage](t, w.serve(t, w.other, "GET", "/schedule-targets", nil)); len(page.Items) != 0 {
 		t.Errorf("another member sees %d of the maker's chats", len(page.Items))
 	}
+	want(t, w.serve(t, w.maker, "GET", "/schedule-targets?q="+strings.Repeat("a", 201), nil), http.StatusBadRequest, "at most 200")
+	want(t, w.serve(t, w.maker, "GET", "/schedule-targets?q=%00", nil), http.StatusBadRequest, "must be text")
+	want(t, w.serve(t, w.maker, "GET", "/schedule-targets?cursor=zzz", nil), http.StatusBadRequest, "invalid cursor")
+	want(t, w.serve(t, w.maker, "GET", "/schedule-targets?limit=0", nil), http.StatusBadRequest, "positive integer")
+	one := decode[placePage](t, w.serve(t, w.maker, "GET", "/schedule-targets?limit=1&kind=chat", nil))
+	if len(one.Items) != 1 || one.NextCursor != "" {
+		t.Errorf("a page of one = %+v, want the chat and no next page", one)
+	}
+
+	// Another member's chat is not theirs to pick, and nothing is made.
+	theirs := hourly("in their DM")
+	theirs["target"] = it.Target
+	want(t, w.serve(t, w.other, "POST", "/schedules", theirs), http.StatusBadRequest, "not a chat you have talked in")
+	var made int
+	if err := w.raw.QueryRow(ctx, `SELECT count(*) FROM schedules`).Scan(&made); err != nil || made != 0 {
+		t.Errorf("%d schedules after a refused pick, want none", made)
+	}
 
 	body := hourly("in my DM")
 	body["target"] = it.Target

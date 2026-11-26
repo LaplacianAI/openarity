@@ -136,7 +136,7 @@ func (f *fakeStore) ListPostedTriggerAnswers(_ context.Context, arg db.ListPoste
 	defer f.mu.Unlock()
 	var out []db.ListPostedTriggerAnswersRow
 	for _, r := range f.posted[arg.SessionID] {
-		if r.At.After(arg.After) && r.At.Before(arg.Before) && len(out) < int(arg.PageSize) {
+		if !r.At.Before(arg.After) && r.At.Before(arg.Before) && len(out) < int(arg.PageSize) {
 			out = append(out, r)
 		}
 	}

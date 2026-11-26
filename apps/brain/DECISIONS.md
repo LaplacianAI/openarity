@@ -67,9 +67,21 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     is dropped for that. A place is checked again when the schedule is made,
     and looked up on its platform before the transaction; how it was shown is
     kept as `target_label`, as a channel's name is the platform's. Posting at
-    a channel's top level takes `channel:write`. A schedule answering in its
-    maker's direct messages is not handed on by take-over: the new owner's
-    runs would land in the old maker's DM.
+    a channel's top level, or in a group's chat, takes `channel:write`, when
+    the schedule is made and again at each fire: a maker who lost it pauses
+    the schedule as one who may no longer run does (`maker_cannot_run`). A
+    bot removed from the channel is not looked up at fire; the platform
+    refuses the post (*user*, 2026-11-26). Without `channel:write` the picker
+    leaves private channels out: their names are not for one who may not post
+    there.
+  - **Take-over hands on a channel or group schedule, not a person's own
+    chat.** One answering in its maker's direct messages or their own thread
+    is refused, as the new owner's runs would land in the old maker's
+    conversation; one posting where a group reads it goes to an admin who
+    holds `channel:write` (*user*, 2026-11-26).
+  - **Dropping the old open-conversation index is a deploy gate.** A brain
+    older than #306 names it in `EnsureSession`, so a rollback past #306 must
+    migrate down past `20261211090200` first.
   - **The pause notice in a chat is not built yet.** The `notices` outbox is
     for senders waiting to be let in, and a reply needs a run; a pause has
     neither. The maker hears of a pause through news until one exists.
