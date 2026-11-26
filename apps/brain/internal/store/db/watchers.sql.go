@@ -12,19 +12,72 @@ import (
 	"github.com/google/uuid"
 )
 
+const activeWatchersOfTarget = `-- name: ActiveWatchersOfTarget :many
+SELECT id, team_id, (next_check_at <= $1::timestamptz)::bool AS due,
+       ((state->>'hash') IS NULL AND jsonb_typeof(state->'seen') IS DISTINCT FROM 'array')::bool AS fresh
+FROM watchers
+WHERE target_id = $2 AND status = 'active'
+ORDER BY next_check_at, id
+`
+
+type ActiveWatchersOfTargetParams struct {
+	DueBy    time.Time
+	TargetID *uuid.UUID
+}
+
+type ActiveWatchersOfTargetRow struct {
+	ID     uuid.UUID
+	TeamID uuid.UUID
+	Due    bool
+	Fresh  bool
+}
+
+// The active watchers of a target: every one is compared with what a fetch
+// reads, due or not, as the fetch moves the target's validators for all of
+// them. due is one whose own time has come; fresh one that has seen nothing
+// yet, whose look must read the body, so the fetch is not conditional. fresh
+// reads the keys of watch.State: hash for a page, seen for a feed.
+func (q *Queries) ActiveWatchersOfTarget(ctx context.Context, arg ActiveWatchersOfTargetParams) ([]ActiveWatchersOfTargetRow, error) {
+	rows, err := q.db.Query(ctx, activeWatchersOfTarget, arg.DueBy, arg.TargetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActiveWatchersOfTargetRow
+	for rows.Next() {
+		var i ActiveWatchersOfTargetRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.Due,
+			&i.Fresh,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const backOffHost = `-- name: BackOffHost :exec
-UPDATE watch_hosts SET backoff_until = greatest(backoff_until, $1::timestamptz), busy_until = '-infinity'
-WHERE host = $2
+UPDATE watch_hosts SET backoff_until = greatest(backoff_until, $1::timestamptz),
+    busy_until = CASE WHEN busy_until = $2::timestamptz THEN '-infinity' ELSE busy_until END
+WHERE host = $3
 `
 
 type BackOffHostParams struct {
 	Until time.Time
+	Held  time.Time
 	Host  string
 }
 
-// A host that answered 429 or 503 is left alone until it said, or a default.
+// A host that answered 429 or 503 is left alone until it said, or a default,
+// whoever holds it; the batch that held it lets it go.
 func (q *Queries) BackOffHost(ctx context.Context, arg BackOffHostParams) error {
-	_, err := q.db.Exec(ctx, backOffHost, arg.Until, arg.Host)
+	_, err := q.db.Exec(ctx, backOffHost, arg.Until, arg.Held, arg.Host)
 	return err
 }
 
@@ -257,49 +310,6 @@ func (q *Queries) DeleteUnwatchedTargets(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
-const dueWatchersOfTarget = `-- name: DueWatchersOfTarget :many
-SELECT id, team_id,
-       ((state->>'hash') IS NULL AND jsonb_typeof(state->'seen') IS DISTINCT FROM 'array')::bool AS fresh
-FROM watchers
-WHERE target_id = $1 AND status = 'active'
-  AND next_check_at <= $2::timestamptz
-ORDER BY next_check_at, id
-`
-
-type DueWatchersOfTargetParams struct {
-	TargetID *uuid.UUID
-	DueBy    time.Time
-}
-
-type DueWatchersOfTargetRow struct {
-	ID     uuid.UUID
-	TeamID uuid.UUID
-	Fresh  bool
-}
-
-// The active watchers of a target due by then: what one fetch is checked
-// for. fresh is one that has seen nothing yet, whose look must read the
-// body, so the fetch is not conditional.
-func (q *Queries) DueWatchersOfTarget(ctx context.Context, arg DueWatchersOfTargetParams) ([]DueWatchersOfTargetRow, error) {
-	rows, err := q.db.Query(ctx, dueWatchersOfTarget, arg.TargetID, arg.DueBy)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []DueWatchersOfTargetRow
-	for rows.Next() {
-		var i DueWatchersOfTargetRow
-		if err := rows.Scan(&i.ID, &i.TeamID, &i.Fresh); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const expireProposedWatchers = `-- name: ExpireProposedWatchers :execrows
 WITH gone AS (
     UPDATE watchers SET status = 'deleted', deleted_at = now(), next_check_at = NULL,
@@ -325,6 +335,17 @@ func (q *Queries) ExpireProposedWatchers(ctx context.Context, arg ExpireProposed
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const forgetTargetValidators = `-- name: ForgetTargetValidators :exec
+UPDATE watch_targets SET etag = NULL, last_modified = NULL WHERE id = $1
+`
+
+// A target read whole at its next look: a watcher resumed may have missed
+// what another's fetches saw while it was paused.
+func (q *Queries) ForgetTargetValidators(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, forgetTargetValidators, id)
+	return err
 }
 
 const getTriggerSessionOfWatcher = `-- name: GetTriggerSessionOfWatcher :one
@@ -438,6 +459,18 @@ func (q *Queries) GetWatcherView(ctx context.Context, arg GetWatcherViewParams) 
 		&i.LastCheckedAt,
 	)
 	return i, err
+}
+
+const hostFreeAt = `-- name: HostFreeAt :one
+SELECT greatest(busy_until, backoff_until)::timestamptz FROM watch_hosts WHERE host = $1
+`
+
+// When a host not free now is free again: another batch's hold, or its wait.
+func (q *Queries) HostFreeAt(ctx context.Context, host string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, hostFreeAt, host)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const insertWatcherCheck = `-- name: InsertWatcherCheck :one
@@ -824,12 +857,40 @@ func (q *Queries) PullTargetCheck(ctx context.Context, arg PullTargetCheckParams
 }
 
 const releaseHost = `-- name: ReleaseHost :exec
-UPDATE watch_hosts SET busy_until = '-infinity' WHERE host = $1
+UPDATE watch_hosts SET busy_until = '-infinity'
+WHERE host = $1 AND busy_until = $2::timestamptz
 `
 
-func (q *Queries) ReleaseHost(ctx context.Context, host string) error {
-	_, err := q.db.Exec(ctx, releaseHost, host)
+type ReleaseHostParams struct {
+	Host string
+	Held time.Time
+}
+
+// A host let go by the batch that holds it, and only by it.
+func (q *Queries) ReleaseHost(ctx context.Context, arg ReleaseHostParams) error {
+	_, err := q.db.Exec(ctx, releaseHost, arg.Host, arg.Held)
 	return err
+}
+
+const renewHost = `-- name: RenewHost :execrows
+UPDATE watch_hosts SET busy_until = $1::timestamptz
+WHERE host = $2 AND busy_until = $3::timestamptz
+`
+
+type RenewHostParams struct {
+	Until time.Time
+	Host  string
+	Held  time.Time
+}
+
+// A host's hold renewed by the batch that holds it, before each fetch. No row
+// is a hold lost: another batch took the host once the hold lapsed.
+func (q *Queries) RenewHost(ctx context.Context, arg RenewHostParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renewHost, arg.Until, arg.Host, arg.Held)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const saveWatcher = `-- name: SaveWatcher :one
@@ -1042,8 +1103,9 @@ type TargetFetchedParams struct {
 	ID           uuid.UUID
 }
 
-// A target read: its validators kept for the next conditional request, and
-// its errors forgotten.
+// A target read: its validators kept for the next conditional request, or
+// none when a watcher could not take in what was read, so its next look reads
+// it whole again; and its errors forgotten.
 func (q *Queries) TargetFetched(ctx context.Context, arg TargetFetchedParams) error {
 	_, err := q.db.Exec(ctx, targetFetched, arg.Etag, arg.LastModified, arg.ID)
 	return err

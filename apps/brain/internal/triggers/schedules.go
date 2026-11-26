@@ -455,8 +455,6 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 	return s.view(ctx, who, id)
 }
 
-// laterMessage holds a confirmation from a tool to the conversation and the
-// person the schedule was proposed to, and to a run a later message started.
 // A proposal is what confirming one reads: which run proposed it, where, to
 // whom, and when.
 type proposal struct {
@@ -469,6 +467,9 @@ func proposalOf(row *db.Schedule) proposal {
 	return proposal{run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: row.CreatedAt, noun: "schedule"}
 }
 
+// laterMessage holds a confirmation from a tool to the conversation and the
+// person a schedule or watcher was proposed to, and to a run a later message
+// started.
 func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origin) error {
 	if row.run != nil && *row.run == origin.Run {
 		return refuse(Conflict, "ask the person; a %s is confirmed by their next message, not in the run that proposed it", row.noun)

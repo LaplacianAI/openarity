@@ -142,19 +142,34 @@ WHERE watch_hosts.busy_until < sqlc.arg('now')::timestamptz
   AND watch_hosts.backoff_until < sqlc.arg('now')::timestamptz
 RETURNING host;
 
--- name: ReleaseHost :exec
-UPDATE watch_hosts SET busy_until = '-infinity' WHERE host = sqlc.arg('host');
+-- A host's hold renewed by the batch that holds it, before each fetch. No row
+-- is a hold lost: another batch took the host once the hold lapsed.
+-- name: RenewHost :execrows
+UPDATE watch_hosts SET busy_until = sqlc.arg('until')::timestamptz
+WHERE host = sqlc.arg('host') AND busy_until = sqlc.arg('held')::timestamptz;
 
--- A host that answered 429 or 503 is left alone until it said, or a default.
+-- A host let go by the batch that holds it, and only by it.
+-- name: ReleaseHost :exec
+UPDATE watch_hosts SET busy_until = '-infinity'
+WHERE host = sqlc.arg('host') AND busy_until = sqlc.arg('held')::timestamptz;
+
+-- A host that answered 429 or 503 is left alone until it said, or a default,
+-- whoever holds it; the batch that held it lets it go.
 -- name: BackOffHost :exec
-UPDATE watch_hosts SET backoff_until = greatest(backoff_until, sqlc.arg('until')::timestamptz), busy_until = '-infinity'
+UPDATE watch_hosts SET backoff_until = greatest(backoff_until, sqlc.arg('until')::timestamptz),
+    busy_until = CASE WHEN busy_until = sqlc.arg('held')::timestamptz THEN '-infinity' ELSE busy_until END
 WHERE host = sqlc.arg('host');
+
+-- When a host not free now is free again: another batch's hold, or its wait.
+-- name: HostFreeAt :one
+SELECT greatest(busy_until, backoff_until)::timestamptz FROM watch_hosts WHERE host = sqlc.arg('host');
 
 -- name: DeferTarget :exec
 UPDATE watch_targets SET next_check_at = sqlc.arg('at')::timestamptz WHERE id = sqlc.arg('id');
 
--- A target read: its validators kept for the next conditional request, and
--- its errors forgotten.
+-- A target read: its validators kept for the next conditional request, or
+-- none when a watcher could not take in what was read, so its next look reads
+-- it whole again; and its errors forgotten.
 -- name: TargetFetched :exec
 UPDATE watch_targets SET etag = sqlc.narg('etag'), last_modified = sqlc.narg('last_modified'),
     consecutive_errors = 0, failing_since = NULL
@@ -168,16 +183,22 @@ UPDATE watch_targets SET consecutive_errors = consecutive_errors + 1,
 WHERE id = sqlc.arg('id')
 RETURNING consecutive_errors, failing_since;
 
--- The active watchers of a target due by then: what one fetch is checked
--- for. fresh is one that has seen nothing yet, whose look must read the
--- body, so the fetch is not conditional.
--- name: DueWatchersOfTarget :many
-SELECT id, team_id,
+-- The active watchers of a target: every one is compared with what a fetch
+-- reads, due or not, as the fetch moves the target's validators for all of
+-- them. due is one whose own time has come; fresh one that has seen nothing
+-- yet, whose look must read the body, so the fetch is not conditional. fresh
+-- reads the keys of watch.State: hash for a page, seen for a feed.
+-- name: ActiveWatchersOfTarget :many
+SELECT id, team_id, (next_check_at <= sqlc.arg('due_by')::timestamptz)::bool AS due,
        ((state->>'hash') IS NULL AND jsonb_typeof(state->'seen') IS DISTINCT FROM 'array')::bool AS fresh
 FROM watchers
 WHERE target_id = sqlc.arg('target_id') AND status = 'active'
-  AND next_check_at <= sqlc.arg('due_by')::timestamptz
 ORDER BY next_check_at, id;
+
+-- A target read whole at its next look: a watcher resumed may have missed
+-- what another's fetches saw while it was paused.
+-- name: ForgetTargetValidators :exec
+UPDATE watch_targets SET etag = NULL, last_modified = NULL WHERE id = sqlc.arg('id');
 
 -- A target is next checked when its soonest active watcher is due; with none
 -- active it is not checked until one is.

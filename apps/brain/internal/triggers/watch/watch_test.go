@@ -480,3 +480,32 @@ func TestPendingMergeCut(t *testing.T) {
 		t.Fatal("merge with no pending")
 	}
 }
+
+// A look that finds nothing new, a body the same or a 304, runs a held
+// change once the cooldown has passed, and keeps it held before.
+func TestReleaseRunsAHeldChangeOnlyPastTheCooldown(t *testing.T) {
+	now := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	ran := now.Add(-30 * time.Minute)
+	since := now.Add(-time.Hour)
+	held := State{Hash: "h", Pending: "+ $15", ErrorsSince: &since}
+	for _, c := range []struct {
+		name    string
+		st      State
+		at      time.Time
+		lastRun *time.Time
+		want    string
+		change  string
+	}{
+		{"within the cooldown", held, now, &ran, Unchanged, ""},
+		{"at its end", held, ran.Add(time.Hour), &ran, Changed, "+ $15"},
+		{"past it", held, now.Add(time.Hour), &ran, Changed, "+ $15"},
+		{"never run", held, now, nil, Changed, "+ $15"},
+		{"nothing held", State{Hash: "h"}, now, nil, Unchanged, ""},
+	} {
+		r := Release(c.st, c.at, c.lastRun, time.Hour)
+		stillHeld := c.want == Unchanged && c.st.Pending != ""
+		if r.Outcome != c.want || r.Change != c.change || r.State.ErrorsSince != nil || stillHeld != (r.State.Pending != "") {
+			t.Errorf("%s: %+v", c.name, r)
+		}
+	}
+}

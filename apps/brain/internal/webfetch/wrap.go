@@ -5,6 +5,7 @@ import (
 	"html"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -22,7 +23,7 @@ type Attr struct {
 // web_fetch's pages, the browser's snapshots and a watcher's changes all come
 // in it.
 func Wrap(tag string, attrs []Attr, body, end string) string {
-	opener := regexp.MustCompile(`(?i)<(/?` + regexp.QuoteMeta(tag) + `)`)
+	opener := openerOf(tag)
 	var b strings.Builder
 	b.WriteString("<" + tag)
 	for _, a := range attrs {
@@ -30,6 +31,21 @@ func Wrap(tag string, attrs []Attr, body, end string) string {
 	}
 	fmt.Fprintf(&b, " end=\"%s\">\n%s\n</%s end=\"%s\">", end, opener.ReplaceAllString(body, "&lt;$1"), tag, end)
 	return b.String()
+}
+
+// openers holds each tag's pattern, compiled once: Wrap is on every page
+// web_fetch and the browser return.
+var openers sync.Map
+
+func openerOf(tag string) *regexp.Regexp {
+	if v, ok := openers.Load(tag); ok {
+		if re, ok := v.(*regexp.Regexp); ok {
+			return re
+		}
+	}
+	re := regexp.MustCompile(`(?i)<(/?` + regexp.QuoteMeta(tag) + `)`)
+	openers.Store(tag, re)
+	return re
 }
 
 // attribute is s escaped, then cut on a rune to at most n bytes when n is

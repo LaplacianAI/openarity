@@ -106,9 +106,10 @@ func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
 	dbos.RegisterWorkflow(d, j.check, dbos.WithWorkflowName(CheckWorkflow))
 	dbos.RegisterWorkflow(d, j.sweep, dbos.WithWorkflowName(hourlyWorkflow))
 	j.dbos = d
-	j.firer = NewFirer(j.store, enqueuerFunc(func(_ context.Context, id uuid.UUID) error { return j.enqueue(d, id) }), j.logger)
+	runs := enqueuerFunc(func(_ context.Context, id uuid.UUID) error { return j.enqueue(d, id) })
+	j.firer = NewFirer(j.store, runs, j.logger)
 	j.firer.now = j.now
-	j.checker = NewChecker(j.store, enqueuerFunc(func(_ context.Context, id uuid.UUID) error { return j.enqueue(d, id) }), j.client, j.logger)
+	j.checker = NewChecker(j.store, runs, j.client, j.logger)
 	j.checker.now = j.now
 	return j.schedules(), nil
 }
@@ -198,9 +199,9 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 	} else if n > 0 {
 		j.logger.InfoContext(ctx, "Lapsed watchers nobody confirmed", "watchers", n)
 	}
-	failed = append(failed, prune(ctx, "fires", func() (int64, error) {
+	failed = append(failed, prune("fires", func() (int64, error) {
 		return j.store.PruneScheduleFires(ctx, db.PruneScheduleFiresParams{Keep: keepFires, Batch: pruneBatch})
-	}), prune(ctx, "checks", func() (int64, error) {
+	}), prune("checks", func() (int64, error) {
 		return j.store.PruneWatcherChecks(ctx, db.PruneWatcherChecksParams{Keep: keepFires, Batch: pruneBatch})
 	}))
 	if _, err := j.store.DeleteUnwatchedTargets(ctx); err != nil {
@@ -210,7 +211,7 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 }
 
 // prune deletes a batch at a time until a batch comes back short.
-func prune(_ context.Context, what string, batch func() (int64, error)) error {
+func prune(what string, batch func() (int64, error)) error {
 	for range maxPrunes {
 		n, err := batch()
 		if err != nil {

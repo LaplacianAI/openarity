@@ -34,11 +34,16 @@ const (
 	// checkLease is how long a claimed target is kept from other batches: a
 	// check that crashed is tried again after it.
 	checkLease = 10 * time.Minute
-	// hostLease is how long a batch holds a host; it is let go when done.
+	// hostLease is how long a batch holds a host at a time: renewed before
+	// each fetch, and let go when done.
 	hostLease = 2 * time.Minute
 	// hostBusyWait is how soon a target whose host another batch holds is
 	// tried again.
 	hostBusyWait = time.Minute
+	// perHost bounds how many of one host's targets a batch fetches, one
+	// after another, so its batch ends within their lease even at the
+	// fetch client's longest wait; the rest are tried a minute later.
+	perHost = 10
 	// hostsAtOnce bounds how many hosts one batch fetches from at a time;
 	// each host's targets are fetched one after another (D17).
 	hostsAtOnce = 8
@@ -66,12 +71,14 @@ type CheckStore interface {
 	CountDueTargets(ctx context.Context, now time.Time) (int32, error)
 	ClaimDueTargets(ctx context.Context, arg db.ClaimDueTargetsParams) ([]db.WatchTarget, error)
 	TakeHost(ctx context.Context, arg db.TakeHostParams) (string, error)
-	ReleaseHost(ctx context.Context, host string) error
+	RenewHost(ctx context.Context, arg db.RenewHostParams) (int64, error)
+	HostFreeAt(ctx context.Context, host string) (time.Time, error)
+	ReleaseHost(ctx context.Context, arg db.ReleaseHostParams) error
 	BackOffHost(ctx context.Context, arg db.BackOffHostParams) error
 	DeferTarget(ctx context.Context, arg db.DeferTargetParams) error
 	TargetFetched(ctx context.Context, arg db.TargetFetchedParams) error
 	TargetFailed(ctx context.Context, arg db.TargetFailedParams) (db.TargetFailedRow, error)
-	DueWatchersOfTarget(ctx context.Context, arg db.DueWatchersOfTargetParams) ([]db.DueWatchersOfTargetRow, error)
+	ActiveWatchersOfTarget(ctx context.Context, arg db.ActiveWatchersOfTargetParams) ([]db.ActiveWatchersOfTargetRow, error)
 	SetTargetNextCheck(ctx context.Context, id uuid.UUID) error
 	PauseFailingWatchers(ctx context.Context, targetID *uuid.UUID) ([]db.PauseFailingWatchersRow, error)
 }
@@ -136,6 +143,13 @@ func (c *Checker) CheckDue(ctx context.Context, maxTargets int) (int, error) {
 		go func(host string, ts []db.WatchTarget) {
 			defer wg.Done()
 			defer func() { <-slots }()
+			defer func() {
+				// One host's trouble must not take the worker down with it.
+				if r := recover(); r != nil {
+					c.logger.ErrorContext(ctx, "Checking a host panicked; its targets are tried when their lease runs out",
+						"host", host, "panic", r)
+				}
+			}()
 			c.checkHost(ctx, host, ts)
 		}(h, byHost[h])
 	}
@@ -144,25 +158,50 @@ func (c *Checker) CheckDue(ctx context.Context, maxTargets int) (int, error) {
 }
 
 // checkHost fetches a host's targets one after another, holding the host so
-// no other batch fetches from it at the same time.
+// no other batch fetches from it at the same time. The hold is renewed before
+// each fetch and let go only by its holder; one lost to another batch leaves
+// the rest to it. A host's batch is at most perHost targets, so it ends well
+// within their lease.
 func (c *Checker) checkHost(ctx context.Context, host string, ts []db.WatchTarget) {
 	now := c.now()
-	if _, err := c.store.TakeHost(ctx, db.TakeHostParams{Host: host, Now: now, Until: now.Add(hostLease)}); err != nil {
+	for _, t := range ts[min(len(ts), perHost):] {
+		c.later(ctx, t.ID, now.Add(hostBusyWait))
+	}
+	ts = ts[:min(len(ts), perHost)]
+	held := now.Add(hostLease).Truncate(time.Microsecond)
+	if _, err := c.store.TakeHost(ctx, db.TakeHostParams{Host: host, Now: now, Until: held}); err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			c.logger.ErrorContext(ctx, "A host could not be taken for checking", "host", host, "error", err)
 		}
+		at := now.Add(hostBusyWait)
+		if free, err := c.store.HostFreeAt(ctx, host); err == nil && free.After(at) {
+			at = free // a host that asked us to wait is not asked each minute
+		}
 		for _, t := range ts {
-			c.later(ctx, t.ID, now.Add(hostBusyWait+c.jitter(hostBusyWait)))
+			c.later(ctx, t.ID, at)
 		}
 		return
 	}
 	defer func() {
-		if err := c.store.ReleaseHost(context.WithoutCancel(ctx), host); err != nil {
-			c.logger.WarnContext(ctx, "A host was not let go; its lease runs out by itself", "host", host, "error", err)
+		if err := c.store.ReleaseHost(context.WithoutCancel(ctx), db.ReleaseHostParams{Host: host, Held: held}); err != nil {
+			c.logger.WarnContext(ctx, "A host was not let go; its hold runs out by itself", "host", host, "error", err)
 		}
 	}()
 	for i, t := range ts {
-		if until, wait := c.checkTarget(ctx, t); wait {
+		if i > 0 {
+			until := c.now().Add(hostLease).Truncate(time.Microsecond)
+			n, err := c.store.RenewHost(ctx, db.RenewHostParams{Host: host, Held: held, Until: until})
+			if err != nil || n == 0 {
+				// The hold lapsed and another batch has the host: what is left
+				// is tried when it is free.
+				for _, rest := range ts[i:] {
+					c.later(ctx, rest.ID, c.now().Add(hostBusyWait))
+				}
+				return
+			}
+			held = until
+		}
+		if until, wait := c.checkTarget(ctx, t, held); wait {
 			// The host asked us to wait: what is left of its batch waits too.
 			for _, rest := range ts[i+1:] {
 				c.later(ctx, rest.ID, until)
@@ -173,7 +212,7 @@ func (c *Checker) checkHost(ctx context.Context, host string, ts []db.WatchTarge
 }
 
 func (c *Checker) later(ctx context.Context, target uuid.UUID, at time.Time) {
-	if err := c.store.DeferTarget(ctx, db.DeferTargetParams{ID: target, At: at}); err != nil {
+	if err := c.store.DeferTarget(context.WithoutCancel(ctx), db.DeferTargetParams{ID: target, At: at}); err != nil {
 		c.logger.WarnContext(ctx, "A target was not put off; its lease runs out by itself", "target_id", target, "error", err)
 	}
 }
@@ -186,13 +225,24 @@ type fetched struct {
 	retryAfter   time.Duration
 }
 
-// checkTarget fetches one target and checks each of its due watchers
-// against it. It says whether the host asked us to wait, and until when.
-func (c *Checker) checkTarget(ctx context.Context, t db.WatchTarget) (time.Time, bool) {
+// errTooBig is a page or feed over maxBody: read whole or not at all, so a
+// change past the cut is never missed in silence.
+var errTooBig = fmt.Errorf("the address's answer is over %d bytes, more than a watcher reads", maxBody)
+
+// checkTarget fetches one target and compares every active watcher of it
+// with what was read: the fetch moves the validators for all of them, so one
+// not yet due that skipped a change would never see it. It says whether the
+// host asked us to wait, and until when.
+func (c *Checker) checkTarget(ctx context.Context, t db.WatchTarget, held time.Time) (time.Time, bool) {
 	now := c.now()
-	watchers, err := c.store.DueWatchersOfTarget(ctx, db.DueWatchersOfTargetParams{TargetID: &t.ID, DueBy: now.Add(time.Minute)})
+	watchers, err := c.store.ActiveWatchersOfTarget(ctx, db.ActiveWatchersOfTargetParams{TargetID: &t.ID, DueBy: now.Add(time.Minute)})
 	if err != nil {
 		c.logger.ErrorContext(ctx, "A target's watchers were not read; it is tried when its lease runs out", "target_id", t.ID, "error", err)
+		return time.Time{}, false
+	}
+	if len(watchers) == 0 {
+		// Nobody to tell: no fetch, so no validators kept.
+		c.nextCheck(ctx, t.ID)
 		return time.Time{}, false
 	}
 	// A watcher that has seen nothing yet must read the body, so the fetch
@@ -209,29 +259,44 @@ func (c *Checker) checkTarget(ctx context.Context, t db.WatchTarget) (time.Time,
 			wait = defaultBackoff
 		}
 		until := now.Add(min(wait, maxBackoff))
-		if err := c.store.BackOffHost(ctx, db.BackOffHostParams{Host: t.Host, Until: until}); err != nil {
+		if err := c.store.BackOffHost(ctx, db.BackOffHostParams{Host: t.Host, Held: held, Until: until}); err != nil {
 			c.logger.WarnContext(ctx, "A host's wait was not kept", "host", t.Host, "error", err)
 		}
 		c.later(ctx, t.ID, until)
 		return until, true
+	case errors.Is(err, errTooBig):
+		c.failed(ctx, t, watchers, now, errTooBig.Error())
+		return time.Time{}, false
 	case err != nil:
-		c.failed(ctx, t, watchers, now, clip(err.Error(), maxDetail))
+		// The dialer's own words name the address it refused; they are for
+		// the log, not for whoever reads the watcher's checks.
+		c.logger.InfoContext(ctx, "A watched address could not be reached", "target_id", t.ID, "host", t.Host, "error", err)
+		c.failed(ctx, t, watchers, now, "the address could not be reached")
+		return time.Time{}, false
 	case got.status == http.StatusNotModified:
 		c.checkWatchers(ctx, t, watchers, now, nil)
 	case got.status < 200 || got.status > 299:
 		c.failed(ctx, t, watchers, now, fmt.Sprintf("the address answered %d", got.status))
+		return time.Time{}, false
 	default:
-		if err := c.store.TargetFetched(ctx, db.TargetFetchedParams{
-			ID: t.ID, Etag: nonEmpty(got.etag), LastModified: nonEmpty(got.lastMd),
-		}); err != nil {
+		etag, lastMd := nonEmpty(got.etag), nonEmpty(got.lastMd)
+		if !c.checkWatchers(ctx, t, watchers, now, got.body) {
+			// One watcher did not take in what was read: its next look must
+			// read it whole, not be told nothing changed.
+			etag, lastMd = nil, nil
+		}
+		if err := c.store.TargetFetched(ctx, db.TargetFetchedParams{ID: t.ID, Etag: etag, LastModified: lastMd}); err != nil {
 			c.logger.ErrorContext(ctx, "A target's validators were not kept", "target_id", t.ID, "error", err)
 		}
-		c.checkWatchers(ctx, t, watchers, now, got.body)
 	}
-	if err := c.store.SetTargetNextCheck(ctx, t.ID); err != nil {
-		c.logger.ErrorContext(ctx, "A target's next check was not set; its lease runs out by itself", "target_id", t.ID, "error", err)
-	}
+	c.nextCheck(ctx, t.ID)
 	return time.Time{}, false
+}
+
+func (c *Checker) nextCheck(ctx context.Context, target uuid.UUID) {
+	if err := c.store.SetTargetNextCheck(ctx, target); err != nil {
+		c.logger.ErrorContext(ctx, "A target's next check was not set; its lease runs out by itself", "target_id", target, "error", err)
+	}
 }
 
 func (c *Checker) fetch(ctx context.Context, t db.WatchTarget, conditional bool) (fetched, error) {
@@ -256,30 +321,34 @@ func (c *Checker) fetch(ctx context.Context, t db.WatchTarget, conditional bool)
 		retryAfter: retryAfterOf(resp.Header.Get("Retry-After"), c.now()),
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		if out.body, err = io.ReadAll(io.LimitReader(resp.Body, maxBody)); err != nil {
+		if out.body, err = io.ReadAll(io.LimitReader(resp.Body, maxBody+1)); err != nil {
 			return fetched{}, fmt.Errorf("the address's answer could not be read: %w", err)
+		}
+		if len(out.body) > maxBody {
+			return fetched{}, errTooBig
 		}
 	}
 	return out, nil
 }
 
-// retryAfterOf reads Retry-After as seconds or as a date.
+// retryAfterOf reads Retry-After as seconds or as a date, no more than
+// maxBackoff, before it could overflow.
 func retryAfterOf(v string, now time.Time) time.Duration {
 	if v == "" {
 		return 0
 	}
-	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
-		return time.Duration(n) * time.Second
+	if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && n >= 0 {
+		return time.Duration(min(n, int64(maxBackoff/time.Second))) * time.Second
 	}
 	if at, err := http.ParseTime(v); err == nil {
-		return at.Sub(now)
+		return min(at.Sub(now), maxBackoff)
 	}
 	return 0
 }
 
-// failed counts an error on the target, has it wait longer each time, and
-// records it on each due watcher. Failing for a day pauses them.
-func (c *Checker) failed(ctx context.Context, t db.WatchTarget, watchers []db.DueWatchersOfTargetRow, now time.Time, why string) {
+// failed counts an error on the target, which waits longer each time, and
+// records it on each watcher due now. Failing for a day pauses them.
+func (c *Checker) failed(ctx context.Context, t db.WatchTarget, watchers []db.ActiveWatchersOfTargetRow, now time.Time, why string) {
 	wait := errorBackoff[min(int(t.ConsecutiveErrors), len(errorBackoff)-1)]
 	next := now.Add(wait)
 	row, err := c.store.TargetFailed(ctx, db.TargetFailedParams{ID: t.ID, Now: now, NextCheckAt: next})
@@ -290,19 +359,29 @@ func (c *Checker) failed(ctx context.Context, t db.WatchTarget, watchers []db.Du
 	c.logger.InfoContext(ctx, "A watched address could not be read", "target_id", t.ID, "host", t.Host,
 		"errors", row.ConsecutiveErrors, "why", why)
 	for _, w := range watchers {
+		if !w.Due {
+			continue // its own time has not come; the target's backoff stands for it
+		}
 		if err := c.store.InTx(ctx, func(q *db.Queries) error {
 			row, err := q.LockWatcher(ctx, db.LockWatcherParams{ID: w.ID, TeamID: w.TeamID})
 			if err != nil {
-				return err
+				return fmt.Errorf("lock the watcher: %w", err)
 			}
-			row.NextCheckAt = &next
+			if row.Status != Active {
+				return nil // paused or deleted while it was fetched
+			}
+			if row.NextCheckAt == nil || row.NextCheckAt.Before(next) {
+				row.NextCheckAt = &next
+			}
 			if _, err := q.InsertWatcherCheck(ctx, db.InsertWatcherCheckParams{
 				WatcherID: row.ID, TeamID: row.TeamID, CheckedAt: now, Outcome: checkError, Detail: &why,
 			}); err != nil {
-				return err
+				return fmt.Errorf("record the check: %w", err)
 			}
-			_, err = q.SaveWatcher(ctx, saveWatcherOf(row))
-			return err
+			if _, err := q.SaveWatcher(ctx, saveWatcherOf(row)); err != nil {
+				return fmt.Errorf("move the watcher on: %w", err)
+			}
+			return nil
 		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			c.logger.ErrorContext(ctx, "A watcher's error was not recorded", "watcher_id", w.ID, "error", err)
 		}
@@ -320,9 +399,13 @@ func (c *Checker) failed(ctx context.Context, t db.WatchTarget, watchers []db.Du
 	}
 }
 
-// checkWatchers checks each due watcher of a target against what was
-// fetched, a body or, for nil, a 304, each in a transaction of its own.
-func (c *Checker) checkWatchers(ctx context.Context, t db.WatchTarget, watchers []db.DueWatchersOfTargetRow, now time.Time, body []byte) {
+// checkWatchers compares each active watcher of a target with what was
+// fetched, a body or, for nil, a 304, each in a transaction of its own. It
+// says whether every one took it in.
+func (c *Checker) checkWatchers(ctx context.Context, t db.WatchTarget, watchers []db.ActiveWatchersOfTargetRow,
+	now time.Time, body []byte,
+) bool {
+	all := true
 	for _, w := range watchers {
 		var run uuid.UUID
 		err := c.store.InTx(ctx, func(q *db.Queries) error {
@@ -330,8 +413,10 @@ func (c *Checker) checkWatchers(ctx context.Context, t db.WatchTarget, watchers 
 			run, err = c.checkOne(ctx, q, w, t, now, body)
 			return err
 		})
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			c.logger.ErrorContext(ctx, "A watcher could not be checked; it is tried at its next time", "watcher_id", w.ID, "error", err)
+		if err != nil {
+			all = false
+			c.logger.ErrorContext(ctx, "A watcher could not be checked; its next look reads the address whole",
+				"watcher_id", w.ID, "error", err)
 			continue
 		}
 		if run == uuid.Nil {
@@ -341,16 +426,23 @@ func (c *Checker) checkWatchers(ctx context.Context, t db.WatchTarget, watchers 
 			c.logger.WarnContext(ctx, "A watcher's run was not enqueued; the runtime's sweep will start it", "run_id", run, "error", err)
 		}
 	}
+	return all
 }
 
-// checkOne compares one watcher with what was fetched, records the check,
-// moves its next check on, and starts its run on a change past the cooldown.
-func (c *Checker) checkOne(ctx context.Context, q *db.Queries, w db.DueWatchersOfTargetRow, t db.WatchTarget,
+// checkOne compares one watcher with what was fetched and starts its run on a
+// change past the cooldown. A watcher due now records the check and moves on
+// to its next time; one not yet due is only told of a change, and keeps its
+// time, so a fetch for another watcher writes nothing for it when nothing is
+// new.
+func (c *Checker) checkOne(ctx context.Context, q *db.Queries, w db.ActiveWatchersOfTargetRow, t db.WatchTarget,
 	now time.Time, body []byte,
 ) (uuid.UUID, error) {
 	row, err := q.LockWatcher(ctx, db.LockWatcherParams{ID: w.ID, TeamID: w.TeamID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil // deleted while it was fetched
+	}
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, fmt.Errorf("lock the watcher: %w", err)
 	}
 	if row.Status != Active {
 		return uuid.Nil, nil
@@ -360,13 +452,15 @@ func (c *Checker) checkOne(ctx context.Context, q *db.Queries, w db.DueWatchersO
 		return uuid.Nil, err
 	}
 	cooldown := time.Duration(row.CooldownSeconds) * time.Second
-	every := time.Duration(*row.EverySeconds) * time.Second
-	next := now.Add(every + c.jitter(min(every/10, maxJitter)))
-	row.NextCheckAt = &next
+	if w.Due {
+		every := time.Duration(*row.EverySeconds) * time.Second
+		next := now.Add(every + c.jitter(min(every/10, maxJitter)))
+		row.NextCheckAt = &next
+	}
 
 	var res watch.Result
 	if body == nil {
-		res = released(old, now, row.LastRunAt, cooldown)
+		res = watch.Release(old, now, row.LastRunAt, cooldown)
 	} else {
 		selector := ""
 		if row.Selector != nil {
@@ -374,23 +468,29 @@ func (c *Checker) checkOne(ctx context.Context, q *db.Queries, w db.DueWatchersO
 		}
 		res, err = watch.Compare(row.Source, selector, old, body, now, row.LastRunAt, cooldown)
 		if err != nil {
+			if !w.Due {
+				return uuid.Nil, nil // its own look will say so
+			}
 			return uuid.Nil, c.unreadable(ctx, q, &row, old, now, err)
 		}
+	}
+	if !w.Due && res.Outcome != watch.Changed && res.Outcome != watch.Held {
+		return uuid.Nil, nil // nothing new for it: its own look comes at its time
 	}
 
 	outcome, detail, run := res.Outcome, (*string)(nil), uuid.Nil
 	if res.Outcome == watch.Changed {
 		l, err := LimitsOf(q.GetTeamSettings(ctx, row.TeamID))
 		if err != nil {
-			return uuid.Nil, err
+			return uuid.Nil, fmt.Errorf("read the team's limits: %w", err)
 		}
 		st, err := startWatcher(ctx, q, &row, l, res.Change, t, now)
 		if err != nil {
-			return uuid.Nil, err
+			return uuid.Nil, fmt.Errorf("start the watcher's run: %w", err)
 		}
 		outcome, run = st.outcome, st.run
 		if run == uuid.Nil {
-			// Not started, so not lost: it waits for the next check that may run.
+			// Not started, so not lost: it waits for the next look that may run.
 			res.State.Pending = res.Change
 		}
 		if st.pause != "" {
@@ -413,18 +513,6 @@ func (c *Checker) checkOne(ctx context.Context, q *db.Queries, w db.DueWatchersO
 		return uuid.Nil, fmt.Errorf("move the watcher on: %w", err)
 	}
 	return run, nil
-}
-
-// released is a 304's check: nothing new, but a change held by the cooldown
-// runs once the cooldown has passed.
-func released(old watch.State, now time.Time, lastRun *time.Time, cooldown time.Duration) watch.Result {
-	old.ErrorsSince = nil
-	if old.Pending != "" && (lastRun == nil || !lastRun.Add(cooldown).After(now)) {
-		change := old.Pending
-		old.Pending = ""
-		return watch.Result{Outcome: watch.Changed, Change: change, State: old}
-	}
-	return watch.Result{Outcome: watch.Unchanged, State: old}
 }
 
 // unreadable records a page or feed that was fetched but could not be read
@@ -463,54 +551,16 @@ func (c *Checker) unreadable(ctx context.Context, q *db.Queries, row *db.Watcher
 func startWatcher(ctx context.Context, q *db.Queries, row *db.Watcher, l Limits, change string, t db.WatchTarget,
 	now time.Time,
 ) (started, error) {
-	if row.CreatedBy == nil {
-		return started{outcome: skippedMaker, pause: MakerGone}, nil
-	}
-	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: runWrite})
-	if err != nil {
-		return started{}, fmt.Errorf("check the maker may start runs: %w", err)
-	}
-	if !may {
-		return started{outcome: skippedMaker, pause: MakerCannotRun}, nil
-	}
-	session, err := q.GetTriggerSessionOfWatcher(ctx, &row.ID)
-	if err != nil {
-		return started{}, fmt.Errorf("read the watcher's conversation: %w", err)
-	}
-	if postsToGroup(row.Target, session.Kind) {
-		may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: channelWrite})
-		if err != nil {
-			return started{}, fmt.Errorf("check the maker may post in the channel: %w", err)
-		}
-		if !may {
-			return started{outcome: skippedMaker, pause: MakerCannotRun}, nil
-		}
-	}
-	if !row.Hub && row.AgentID == nil {
-		return started{outcome: skippedTarget, pause: TargetGone}, nil
-	}
-	if !row.Hub {
-		if _, err := q.HoldAgent(ctx, db.HoldAgentParams{ID: *row.AgentID, TeamID: row.TeamID}); errors.Is(err, pgx.ErrNoRows) {
-			return started{outcome: skippedTarget, pause: TargetGone}, nil
-		} else if err != nil {
-			return started{}, fmt.Errorf("hold the watcher's agent: %w", err)
-		}
-	}
-	if err := q.LockTeamTriggers(ctx, row.TeamID); err != nil {
-		return started{}, fmt.Errorf("lock the team's schedules: %w", err)
-	}
-	ran, err := q.CountTriggerRunsInHour(ctx, db.CountTriggerRunsInHourParams{TeamID: row.TeamID, Now: now})
-	if err != nil {
-		return started{}, fmt.Errorf("count the team's runs this hour: %w", err)
-	}
-	if int(ran) >= l.FiresPerHour {
-		return started{outcome: skippedCap}, nil
-	}
-	if _, err := q.ActiveSessionRun(ctx, session.ID); err == nil {
+	g, err := gateOf(ctx, q, watcherOf(row), l, now)
+	switch {
+	case err != nil:
+		return started{}, err
+	case g.busy:
 		return started{outcome: watch.Held}, nil
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return started{}, fmt.Errorf("check the watcher's last run: %w", err)
+	case g.outcome != "":
+		return started{outcome: g.outcome, pause: g.pause}, nil
 	}
+	session := g.session
 	id := uuid.New()
 	if _, err := q.CreateTriggeredRun(ctx, db.CreateTriggeredRunParams{
 		ID: id, TeamID: row.TeamID, SessionID: session.ID, UserID: *row.CreatedBy,
@@ -529,8 +579,7 @@ func WatchInput(row db.Watcher, t db.WatchTarget, change string, checked time.Ti
 	fmt.Fprintf(&b, "This is a run of the watcher %q: what it watches changed.\n", row.Name)
 	fmt.Fprintf(&b, "Do what the objective asks about the change. If there is nothing worth telling the person, "+
 		"answer exactly %s and nothing else.\n\n", store.Silent)
-	end := rand.Text()
-	fmt.Fprintf(&b, "<objective end=\"%s\">\n%s\n</objective end=\"%s\">\n\n", end, unclose(row.Objective), end)
+	b.WriteString(webfetch.Wrap("objective", nil, row.Objective, rand.Text()) + "\n\n")
 	b.WriteString(webfetch.Wrap("change", []webfetch.Attr{
 		{Name: "source", Value: row.Source},
 		{Name: "url", Value: t.Url, Max: 1 << 10},

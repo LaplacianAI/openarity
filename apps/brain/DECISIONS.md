@@ -102,13 +102,28 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     `openarity-watch`; a batch claims its targets with `SKIP LOCKED` and moves
     `next_check_at` ten minutes on as a lease, so a check that crashed is
     tried again then.
+  - **A fetch is compared by every active watcher of its address,** due or
+    not: it moves the address's validators for all of them, so one not yet due
+    that skipped a change would get a 304 at its own time and never see it. A
+    watcher not due is told only of a change and keeps its own time; nothing is
+    written for it otherwise. When one watcher cannot take in what was read,
+    the validators are not kept, so its next look reads the address whole; a
+    watcher resumed forgets them too, as others' fetches may have moved them
+    past a change it never saw.
   - **One host at a time, and a host that asks us to wait is waited for.** A
-    batch takes a host in `watch_hosts` for two minutes and fetches its
-    targets one after another, eight hosts at once. A 429 or 503 leaves the
+    batch takes a host in `watch_hosts` for two minutes, renews the hold
+    before each fetch and lets it go only if it is still its own, and fetches
+    at most ten of its targets one after another (the rest a minute later),
+    eight hosts at once. A batch that lost its hold leaves the rest to the
+    batch that has it. A redirect to another host is fetched under the first
+    host's hold, and a 429 from it backs off the first host. A 429 or 503 leaves the
     host alone for its `Retry-After`, five minutes if it gives none, six
     hours at most. Each fetch is one conditional GET through web fetch's
-    public-address-only client, 2 MiB at most, except when a watcher has
-    seen nothing yet: a 304 would leave it with no baseline.
+    public-address-only client, except when a watcher has seen nothing yet:
+    a 304 would leave it with no baseline. An answer over 2 MiB is an error,
+    never a change judged on part of it. Why an address could not be
+    reached is said on the check in a fixed sentence; the dialer's own words,
+    which name the address it refused, go to the log only.
   - **The first look is a baseline and starts nothing.** A page's text (of
     the selector's matches, else the body without scripts and styles) is
     compared line by line; a feed's new items by id. Readability is not used:

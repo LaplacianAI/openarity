@@ -20,17 +20,18 @@ ALTER TABLE watchers ADD CONSTRAINT watchers_source_shape CHECK (
     (selector IS NULL OR source = 'web_page')) NOT VALID;
 
 -- +goose Down
--- Fails, and must, once a check was recorded as one of the new outcomes, or
--- a deleted poller let go of its target: those rows are what the old checks
--- forbid. Delete or relabel them first.
+-- The old checks come back NOT VALID, so rolling back neither scans nor
+-- fails on rows written since (a check recorded as one of the new outcomes, a
+-- deleted poller with no target); new writes are held to them at once.
+-- Relabel those rows before validating them again.
 SET LOCAL lock_timeout = '3s';
 ALTER TABLE watchers DROP CONSTRAINT watchers_source_shape;
 ALTER TABLE watchers ADD CONSTRAINT watchers_source_shape CHECK (
     (source = 'webhook') = (hook_id IS NOT NULL) AND
     (source = 'webhook') = (target_id IS NULL) AND
     (source = 'webhook') = (every_seconds IS NULL) AND
-    (selector IS NULL OR source = 'web_page'));
+    (selector IS NULL OR source = 'web_page')) NOT VALID;
 ALTER TABLE watcher_checks DROP CONSTRAINT watcher_checks_outcome_known;
 ALTER TABLE watcher_checks ADD CONSTRAINT watcher_checks_outcome_known CHECK (outcome IN (
     'unchanged', 'baseline', 'changed', 'held', 'error', 'delivered', 'duplicate',
-    'skipped_cap', 'skipped_maker', 'silent', 'answered', 'failed'));
+    'skipped_cap', 'skipped_maker', 'silent', 'answered', 'failed')) NOT VALID;

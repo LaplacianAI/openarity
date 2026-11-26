@@ -166,19 +166,35 @@ func Compare(kind, selector string, old State, body []byte, now time.Time, lastR
 	if baseline {
 		return Result{Outcome: Baseline, State: next}, nil
 	}
-	ready := lastRun == nil || !lastRun.Add(cooldown).After(now)
-	switch {
-	case !changed && old.Pending != "" && ready:
-		return Result{Outcome: Changed, Change: old.Pending, State: next}, nil
-	case !changed:
+	if !changed {
 		next.Pending = old.Pending
-		return Result{Outcome: Unchanged, State: next}, nil
-	case ready:
+		return Release(next, now, lastRun, cooldown), nil
+	}
+	switch {
+	case ready(now, lastRun, cooldown):
 		return Result{Outcome: Changed, Change: merge(old.Pending, change), State: next}, nil
 	default:
 		next.Pending = merge(old.Pending, change)
 		return Result{Outcome: Held, State: next}, nil
 	}
+}
+
+// Release is a look that found nothing new, a body the same or a 304: a
+// change held by the cooldown runs once the cooldown has passed, and
+// otherwise stays held. Errors end, as the address answered.
+func Release(st State, now time.Time, lastRun *time.Time, cooldown time.Duration) Result {
+	st.ErrorsSince = nil
+	if st.Pending != "" && ready(now, lastRun, cooldown) {
+		change := st.Pending
+		st.Pending = ""
+		return Result{Outcome: Changed, Change: change, State: st}
+	}
+	return Result{Outcome: Unchanged, State: st}
+}
+
+// ready is the cooldown passed: no run yet, or the last one long enough ago.
+func ready(now time.Time, lastRun *time.Time, cooldown time.Duration) bool {
+	return lastRun == nil || !lastRun.Add(cooldown).After(now)
 }
 
 // merge joins a held change and a new one, oldest first. When the result is

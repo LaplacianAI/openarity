@@ -404,6 +404,13 @@ func resumeWatcher(ctx context.Context, q *db.Queries, row *db.Watcher, now time
 		return refuse(Conflict, "the agent this watcher ran was deleted; choose another, or the hub, first")
 	}
 	row.Status, row.PausedReason, row.NextCheckAt, row.ConsecutiveFailures = Active, nil, &now, 0
+	// Others' fetches may have moved the target's validators past a change
+	// it never saw while paused: its next look reads the address whole.
+	if row.TargetID != nil {
+		if err := q.ForgetTargetValidators(ctx, *row.TargetID); err != nil {
+			return fmt.Errorf("have the watcher's next look read the address whole: %w", err)
+		}
+	}
 	return checkSoon(ctx, q, row, now)
 }
 
