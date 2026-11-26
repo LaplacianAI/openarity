@@ -37,6 +37,41 @@ const (
 	v2Magic    = "OAo2"
 )
 
+// ErrTruncated is a source that stopped before its end: a connection that
+// closed early, which io.ReadFull would otherwise take as a short last chunk.
+var ErrTruncated = errors.New("the file stopped before its end")
+
+// strict is a source whose only end is io.EOF, and whose first error is its
+// every error after: a reader that fails once may not then read on, or seal a
+// cut-off file as a whole one.
+type strict struct {
+	r   io.Reader
+	err error
+}
+
+// Strict is r ended only by io.EOF. io.ReadFull turns a source's own EOF into
+// io.ErrUnexpectedEOF for a short read, which is a file's end; a source that
+// says io.ErrUnexpectedEOF itself is cut off, and Strict says ErrTruncated.
+func Strict(r io.Reader) io.Reader {
+	if s, ok := r.(*strict); ok {
+		return s
+	}
+	return &strict{r: r}
+}
+
+func (s *strict) Read(p []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	n, err := s.r.Read(p)
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		// Its text only, so the chain no longer holds io.ErrUnexpectedEOF.
+		err = fmt.Errorf("%w: %s", ErrTruncated, err.Error())
+	}
+	s.err = err
+	return n, err
+}
+
 // fileAEAD is the object's own cipher, derived from the team's key.
 func fileAEAD(teamKey, salt []byte, key string) (cipher.AEAD, error) {
 	if len(teamKey) != KeySize {
@@ -80,7 +115,7 @@ func newSealing(src io.Reader, teamKey []byte, key string) (*sealing, error) {
 		return nil, err
 	}
 	return &sealing{
-		src: src, aead: aead, in: make([]byte, chunkSize+1),
+		src: Strict(src), aead: aead, in: make([]byte, chunkSize+1),
 		sealed: make([]byte, 0, chunkSize+aead.Overhead()), out: header,
 	}, nil
 }
@@ -134,6 +169,10 @@ type opening struct {
 
 func newOpening(src io.ReadCloser, aead cipher.AEAD, key string) *opening {
 	sealed := chunkSize + aead.Overhead()
+	src = struct {
+		io.Reader
+		io.Closer
+	}{Strict(src), src}
 	return &opening{src: src, key: key, aead: aead, in: make([]byte, sealed+1), opened: make([]byte, 0, chunkSize)}
 }
 

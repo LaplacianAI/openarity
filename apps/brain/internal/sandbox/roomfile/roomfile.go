@@ -121,9 +121,20 @@ func (b *bounded) Read(p []byte) (int, error) {
 		return n + int(b.left), b.over()
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
-		return n, fmt.Errorf("reading the file from the room: %s", cause(err))
+		return n, readFailed(err)
 	}
 	return n, err
+}
+
+// readFailed is a body's failed read, never with its URL: a deadline or a
+// cancel is still one, so a caller can say which.
+func readFailed(err error) error {
+	for _, c := range []error{context.DeadlineExceeded, context.Canceled} {
+		if errors.Is(err, c) {
+			return fmt.Errorf("reading the file from the room: %w", c)
+		}
+	}
+	return fmt.Errorf("reading the file from the room: %s", cause(err))
 }
 
 func (b *bounded) over() error {

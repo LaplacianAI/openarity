@@ -241,3 +241,37 @@ func TestAFailedStreamLeavesNothingInARealStore(t *testing.T) {
 type failing struct{ err error }
 
 func (f failing) Read([]byte) (int, error) { return 0, f.err }
+
+// A source cut off, under one part or past it, stores nothing: never a short
+// object written as whole.
+func TestACutOffStreamLeavesNothingInARealStore(t *testing.T) {
+	t.Parallel()
+
+	s := liveS3(t)
+	for _, n := range []int{5, partSize + 10} {
+		k := liveKey()
+		r := io.MultiReader(bytes.NewReader(make([]byte, n)), failing{io.ErrUnexpectedEOF})
+		if err := asWriter(t, s).PutStream(t.Context(), k, r); !errors.Is(err, objects.ErrTruncated) {
+			t.Errorf("%d: PutStream = %v, want ErrTruncated", n, err)
+		}
+		if _, err := s.Get(t.Context(), k); !errors.Is(err, objects.ErrNotFound) {
+			t.Errorf("%d: an object was left: %v", n, err)
+		}
+	}
+}
+
+// An object past what Get reads whole says so, rather than coming back cut.
+func TestGetOfAnObjectTooLargeSaysSoAgainstARealStore(t *testing.T) {
+	t.Parallel()
+
+	s := liveS3(t)
+	w := asWriter(t, s)
+	k := liveKey()
+	if err := w.PutStream(t.Context(), k, bytes.NewReader(make([]byte, maxObjectSize+1))); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Delete(context.WithoutCancel(t.Context()), k) })
+	if _, err := s.Get(t.Context(), k); !errors.Is(err, objects.ErrTooLarge) {
+		t.Errorf("Get = %v, want ErrTooLarge", err)
+	}
+}

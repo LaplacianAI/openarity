@@ -9,7 +9,11 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrNotFound = errors.New("object not found")
+var (
+	ErrNotFound = errors.New("object not found")
+	// ErrTooLarge is an object larger than a backend's Get reads whole.
+	ErrTooLarge = errors.New("object is too large to read whole")
+)
 
 // A Store reads objects: whole, bounded by the backend, or streamed. A
 // streamed object is the caller's to close.

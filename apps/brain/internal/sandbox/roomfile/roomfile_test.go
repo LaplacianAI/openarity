@@ -177,3 +177,39 @@ func TestABodyPastMaxKeepsFailing(t *testing.T) {
 		}
 	}
 }
+
+// failingBody fails its first read with err.
+type failingBody struct{ err error }
+
+func (f failingBody) Read([]byte) (int, error) { return 0, f.err }
+func (failingBody) Close() error               { return nil }
+
+// A body's read that failed keeps a deadline or a cancel as one, so the
+// caller can say the file was still arriving, and never says the URL, which
+// can carry a provider's token.
+func TestAFailedReadKeepsItsKindAndNotItsURL(t *testing.T) {
+	t.Parallel()
+
+	const secret = "https://room.example/file?token=s3cr3t"
+	for _, c := range []struct {
+		cause    error
+		deadline bool
+		canceled bool
+	}{
+		{context.DeadlineExceeded, true, false},
+		{context.Canceled, false, true},
+		{errors.New("connection reset"), false, false},
+	} {
+		b := &bounded{body: failingBody{&url.Error{Op: "Get", URL: secret, Err: c.cause}}, left: Max, path: "a.bin"}
+		_, err := b.Read(make([]byte, 10))
+		if err == nil {
+			t.Fatalf("%v: no error", c.cause)
+		}
+		if errors.Is(err, context.DeadlineExceeded) != c.deadline || errors.Is(err, context.Canceled) != c.canceled {
+			t.Errorf("%v: %v has the wrong kind", c.cause, err)
+		}
+		if strings.Contains(err.Error(), "s3cr3t") {
+			t.Errorf("%v: the URL was said: %v", c.cause, err)
+		}
+	}
+}

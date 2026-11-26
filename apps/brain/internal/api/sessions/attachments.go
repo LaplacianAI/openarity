@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -21,6 +22,20 @@ import (
 // sent as it is opened, never held.
 type Objects interface {
 	Open(ctx context.Context, teamID uuid.UUID, key string) (io.ReadCloser, error)
+}
+
+const (
+	// downloadBase is what a download is given before its size counts: the
+	// server's own write timeout.
+	downloadBase = 30 * time.Second
+	// downloadMinRate is the slowest a download is kept open for, in bytes a
+	// second: 100 MiB is given 30s and 400s more.
+	downloadMinRate = 256 << 10
+)
+
+// downloadBudget is how long a file of size bytes is given to be sent.
+func downloadBudget(size int64) time.Duration {
+	return downloadBase + time.Duration(max(size, 0)/downloadMinRate)*time.Second
 }
 
 var renderable = map[string]bool{
@@ -138,6 +153,13 @@ func (h *handler) getAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = body.Close() }()
 
+	// The server's write timeout bounds a whole response, and a large file
+	// over a slow link takes longer.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadBudget(row.SizeBytes))); err != nil &&
+		!errors.Is(err, http.ErrNotSupported) {
+		h.logger.WarnContext(r.Context(), "an attachment's write deadline was not extended",
+			"attachment", row.ID, "error", err)
+	}
 	writeAttachment(w, row)
 	// The status is sent: a chunk that fails now cuts the body short of its
 	// length, which a client takes as a failed download, never a whole one.

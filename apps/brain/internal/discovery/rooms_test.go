@@ -223,7 +223,7 @@ func TestThePlainClientHoldsThePolicy(t *testing.T) {
 
 // The room client dials only what the policy allows, takes no redirect, and
 // reads a body whole past the plain client's 8 MiB: a room's file is up to
-// 25 MiB, and its reader bounds it.
+// 100 MiB, and its reader bounds it.
 func TestTheRoomClientHoldsThePolicyAndReadsAFileWhole(t *testing.T) {
 	t.Parallel()
 

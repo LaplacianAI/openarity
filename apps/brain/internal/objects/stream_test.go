@@ -372,3 +372,134 @@ func TestALargeFileIsNeverHeldWhole(t *testing.T) {
 		t.Errorf("opening 100 MiB allocated %d MiB", alloc>>20)
 	}
 }
+
+// A source that says io.ErrUnexpectedEOF itself was cut off, at whatever
+// size: the write fails and nothing is stored, never a short file sealed as
+// whole.
+func TestASourceCutOffStoresNothing(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{0, 5, chunkSize - 1, chunkSize, chunkSize + 5, 3 * chunkSize} {
+		inner := newFakeStore()
+		e := newEncrypted(t, inner, newOneKey(0x11))
+		team := uuid.New()
+		key := objectKey(team, "f")
+		r := io.MultiReader(bytes.NewReader(fileOf(n)), errReader{io.ErrUnexpectedEOF})
+		err := e.PutStream(t.Context(), team, key, r)
+		if !errors.Is(err, ErrTruncated) || errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Errorf("%d: PutStream = %v, want ErrTruncated alone", n, err)
+		}
+		if _, err := inner.Get(t.Context(), key); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%d: something was stored: %v", n, err)
+		}
+	}
+}
+
+// once fills what it is asked for and fails with it, then says it ended: the
+// failure is one io.ReadFull drops, as the buffer is full.
+type once struct {
+	err  error
+	done bool
+}
+
+func (o *once) Read(p []byte) (int, error) {
+	if o.done {
+		return 0, io.EOF
+	}
+	o.done = true
+	return len(p), o.err
+}
+
+// A source's first error is its last word: one that fails, then says it
+// ended, is a failed write, not a file.
+func TestAFailureIsNotForgotten(t *testing.T) {
+	t.Parallel()
+
+	inner := newFakeStore()
+	e := newEncrypted(t, inner, newOneKey(0x11))
+	team := uuid.New()
+	key := objectKey(team, "f")
+	broke := errors.New("the room hung up")
+	if err := e.PutStream(t.Context(), team, key, &once{err: broke}); !errors.Is(err, broke) {
+		t.Fatalf("PutStream = %v, want %v", err, broke)
+	}
+	if _, err := inner.Get(t.Context(), key); !errors.Is(err, ErrNotFound) {
+		t.Errorf("something was stored: %v", err)
+	}
+}
+
+// cutStore hands back each object cut off after its first at bytes, the way
+// a connection that closes early is, and counts what it is asked to open and
+// what is read.
+type cutStore struct {
+	*fakeStore
+	at    int
+	opens int
+	read  int64
+}
+
+func (c *cutStore) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	body, err := c.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	c.opens++
+	var r io.Reader = bytes.NewReader(body)
+	if c.at >= 0 && c.at < len(body) {
+		r = io.MultiReader(bytes.NewReader(body[:c.at]), errReader{io.ErrUnexpectedEOF})
+	}
+	return io.NopCloser(&counted{r: r, n: &c.read}), nil
+}
+
+type counted struct {
+	r io.Reader
+	n *int64
+}
+
+func (c *counted) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	*c.n += int64(n)
+	return n, err
+}
+
+// An object whose connection closes early fails as the connection, not as a
+// damaged object: it is not taken for a v1 object and fetched again.
+func TestAnObjectCutOffInTransitIsNotCorrupt(t *testing.T) {
+	t.Parallel()
+
+	for _, at := range []int{10, headerSize + 10, headerSize + chunkSize + 20} {
+		inner := &cutStore{fakeStore: newFakeStore(), at: -1}
+		e := newEncrypted(t, inner, newOneKey(0x11))
+		team := uuid.New()
+		key := objectKey(team, "f")
+		if err := e.Put(t.Context(), team, key, fileOf(3*chunkSize)); err != nil {
+			t.Fatal(err)
+		}
+		inner.at = at
+		_, err := streamed(t, e, team, key)
+		if !errors.Is(err, ErrTruncated) || errors.Is(err, ErrCorrupt) {
+			t.Errorf("cut at %d: %v, want ErrTruncated and not ErrCorrupt", at, err)
+		}
+		if inner.opens != 1 {
+			t.Errorf("cut at %d: opened %d times, want once", at, inner.opens)
+		}
+	}
+}
+
+// An object that is not v2 and is larger than any v1 object is not read
+// whole to find that out.
+func TestAnObjectTooLargeForV1IsNotReadWhole(t *testing.T) {
+	t.Parallel()
+
+	inner := &cutStore{fakeStore: newFakeStore(), at: -1}
+	e := newEncrypted(t, inner, newOneKey(0x11))
+	team := uuid.New()
+	key := objectKey(team, "f")
+	_ = inner.Put(t.Context(), key, make([]byte, maxV1+5<<20))
+	if _, err := e.Open(t.Context(), team, key); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("Open = %v, want ErrCorrupt", err)
+	}
+	if inner.read > maxV1+1 {
+		t.Errorf("read %d bytes, past the %d any v1 object is", inner.read, maxV1)
+	}
+}

@@ -69,6 +69,11 @@ func New(cfg Config) (objects.Store, error) {
 		Region:       region,
 		Credentials:  creds,
 		UsePathStyle: true,
+		// Checksums only where an operation needs one: not every S3 clone
+		// takes the SDK's default CRC32 on a part, and GCM already
+		// authenticates every chunk.
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
+		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
 
 	return &store{client: client, bucket: cfg.Bucket}, nil
@@ -84,9 +89,12 @@ func (s *store) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 	defer func() { _ = out.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(out.Body, maxObjectSize))
+	body, err := io.ReadAll(io.LimitReader(out.Body, maxObjectSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", key, err)
+	}
+	if len(body) > maxObjectSize {
+		return nil, fmt.Errorf("%w: %s is over %d bytes; Open reads it", objects.ErrTooLarge, key, maxObjectSize)
 	}
 	return body, nil
 }
@@ -102,18 +110,19 @@ func (s *store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
-// PutStream holds one part at a time. An object that fits one part is one
-// PutObject; a larger one is a multipart upload, aborted if anything fails,
-// so a failed write leaves no object. An upload the brain dies in the middle
-// of is the bucket's lifecycle rule's to abort.
+// PutStream holds one part at a time, and a small object only its own
+// bytes. An object that fits one part is one PutObject; a larger one is a
+// multipart upload, aborted if anything fails, so a failed write leaves no
+// object. An upload the brain dies in the middle of is the bucket's lifecycle
+// rule's to abort.
 func (s *store) PutStream(ctx context.Context, key string, r io.Reader) error {
-	buf := make([]byte, partSize)
-	n, err := io.ReadFull(r, buf)
-	switch {
-	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		return s.Put(ctx, key, buf[:n])
-	case err != nil:
+	r = objects.Strict(r)
+	buf, err := io.ReadAll(io.LimitReader(r, partSize))
+	if err != nil {
 		return fmt.Errorf("reading %s: %w", key, err)
+	}
+	if len(buf) < partSize {
+		return s.Put(ctx, key, buf)
 	}
 
 	up, err := s.client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
@@ -123,12 +132,15 @@ func (s *store) PutStream(ctx context.Context, key string, r io.Reader) error {
 	if err != nil {
 		return s.wrap("writing", key, err)
 	}
-	if err := s.upload(ctx, key, up.UploadId, r, buf); err != nil {
+	if err := s.upload(ctx, key, up.UploadId, r, buf[:partSize]); err != nil {
 		aborting, cancel := context.WithTimeout(context.WithoutCancel(ctx), abortTimeout)
 		defer cancel()
-		_, _ = s.client.AbortMultipartUpload(aborting, &awss3.AbortMultipartUploadInput{
+		if _, abortErr := s.client.AbortMultipartUpload(aborting, &awss3.AbortMultipartUploadInput{
 			Bucket: aws.String(s.bucket), Key: aws.String(key), UploadId: up.UploadId,
-		})
+		}); abortErr != nil {
+			// The parts stay until the bucket's lifecycle rule aborts them.
+			return errors.Join(err, s.wrap("aborting the upload of", key, abortErr))
+		}
 		return err
 	}
 	return nil
@@ -148,7 +160,7 @@ func (s *store) upload(ctx context.Context, key string, id *string, r io.Reader,
 			return s.wrap("writing", key, err)
 		}
 		parts = append(parts, types.CompletedPart{
-			ETag: got.ETag, PartNumber: aws.Int32(num), ChecksumCRC32: got.ChecksumCRC32,
+			ETag: got.ETag, PartNumber: aws.Int32(num),
 		})
 		if last {
 			break

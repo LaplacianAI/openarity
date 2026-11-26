@@ -8,11 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/google/uuid"
 )
 
-const KeySize = 32
+const (
+	KeySize = 32
+	// maxV1 is more than any v1 object: a file was kept up to MaxAttachment
+	// before v2, and a backend read no more than 32 MiB whole.
+	maxV1 = 32 << 20
+)
 
 var (
 	ErrWrongTeam = errors.New("object does not belong to this team")
@@ -75,7 +81,6 @@ func (e *Encrypted) Open(ctx context.Context, teamID uuid.UUID, key string) (io.
 	if err != nil {
 		return nil, err
 	}
-
 	teamKey, err := e.keys.TeamKey(ctx, teamID)
 	if err != nil {
 		_ = src.Close()
@@ -83,47 +88,56 @@ func (e *Encrypted) Open(ctx context.Context, teamID uuid.UUID, key string) (io.
 	}
 
 	header := make([]byte, headerSize)
-	n, err := io.ReadFull(src, header)
+	n, err := io.ReadFull(Strict(src), header)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		_ = src.Close()
 		return nil, fmt.Errorf("reading %s: %w", key, err)
 	}
 	if n == headerSize && isV2(header) {
-		aead, err := fileAEAD(teamKey, header[len(v2Magic):], key)
-		if err != nil {
-			_ = src.Close()
-			return nil, fmt.Errorf("%w: %s: %w", ErrCorrupt, key, err)
-		}
-		o := newOpening(src, aead, key)
-		if err := o.next(); err == nil {
+		o, err := openV2(src, teamKey, key, header)
+		if err == nil {
 			return o, nil
-		} else if !errors.Is(err, ErrCorrupt) {
-			_ = src.Close()
+		}
+		_ = src.Close()
+		if !errors.Is(err, ErrCorrupt) {
 			return nil, fmt.Errorf("reading %s: %w", key, err)
 		}
 		// Perhaps a v1 object whose nonce begins as v2's magic: read again,
-		// whole, as v1 objects are small.
-		_ = src.Close()
-		return e.openV1(ctx, teamKey, key)
+		// from the start.
+		if src, err = e.reader.Open(ctx, key); err != nil {
+			return nil, err
+		}
+		n = 0
 	}
+	defer func() { _ = src.Close() }()
+	return openLegacy(src, teamKey, key, header[:n])
+}
 
-	// v1, which is never over the most a file was then: read whole.
-	rest, err := io.ReadAll(src)
-	_ = src.Close()
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", key, err)
-	}
-	plaintext, err := unseal(teamKey, key, append(header[:n], rest...))
+// openV2 is a v2 object's stream, its first chunk opened. A chunk that does
+// not open is ErrCorrupt; a source that fails is its own error, never taken
+// for a v1 object.
+func openV2(src io.ReadCloser, teamKey []byte, key string, header []byte) (io.ReadCloser, error) {
+	aead, err := fileAEAD(teamKey, header[len(v2Magic):], key)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrCorrupt, key, err)
 	}
-	return io.NopCloser(bytes.NewReader(plaintext)), nil
+	o := newOpening(src, aead, key)
+	if err := o.next(); err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
-func (e *Encrypted) openV1(ctx context.Context, teamKey []byte, key string) (io.ReadCloser, error) {
-	sealed, err := e.reader.Get(ctx, key)
+// openLegacy is a v1 object, read whole after head, the bytes of it read
+// already. No v1 object is over maxV1, so one that is, is not v1.
+func openLegacy(src io.Reader, teamKey []byte, key string, head []byte) (io.ReadCloser, error) {
+	rest, err := io.ReadAll(io.LimitReader(src, maxV1+1-int64(len(head))))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading %s: %w", key, err)
+	}
+	sealed := slices.Concat(head, rest)
+	if len(sealed) > maxV1 {
+		return nil, fmt.Errorf("%w: %s: over %d bytes, which no v1 object is", ErrCorrupt, key, maxV1)
 	}
 	plaintext, err := unseal(teamKey, key, sealed)
 	if err != nil {

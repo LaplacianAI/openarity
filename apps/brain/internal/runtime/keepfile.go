@@ -67,13 +67,13 @@ func (b *Builder) WithRoomFiles(r RoomFiles) *Builder {
 	return b
 }
 
-// keepFile is the tool: a file read from the run's workspace or one of its
-// command servers' rooms, then kept as F2 keeps a tool's file.
 // streamKeeper keeps a file as it is read: the run's F2 keeper.
 type streamKeeper interface {
 	KeepStream(ctx context.Context, tool, name string, r io.Reader) (streamed, error)
 }
 
+// keepFile is the tool: a file read from the run's workspace or one of its
+// command servers' rooms, then kept as F2 keeps a tool's file.
 type keepFile struct {
 	keep    streamKeeper
 	ws      *runWorkspace // nil when the run has no workspace
@@ -81,10 +81,11 @@ type keepFile struct {
 	rooms   ServerRooms
 	client  *http.Client
 	team    uuid.UUID
+	timeout time.Duration // keepTimeout, but in a test
 	kept    atomic.Int64
-	// one keeps a run's files one at a time: each is held whole, up to
-	// 25 MiB, and a model can ask for twenty at once. A channel, so a call
-	// waiting its turn can be given up on.
+	// one keeps a run's files one at a time: each holds a room's connection
+	// and a part of the store's upload, and a model can ask for twenty at
+	// once. A channel, so a call waiting its turn can be given up on.
 	one chan struct{}
 }
 
@@ -101,7 +102,7 @@ func (k *keepFile) tool() agent.Tool {
 		Description: fmt.Sprintf("Keep a file a tool wrote, in %s, as a file of this conversation: "+
 			"it returns the file's id, which send_file sends to the person and read_attachment reads. "+
 			"Use it when a tool saved a file and said where rather than returning it. "+
-			"A file is kept up to 100 MiB; a run tries at most %d, and a try that fails counts.", strings.Join(from, " or "), keptPerRun),
+			"A file is kept up to %d MiB; a run tries at most %d, and a try that fails counts.", strings.Join(from, " or "), roomfile.Max>>20, keptPerRun),
 		Schema: json.RawMessage(`{"type":"object","properties":{` +
 			`"path":{"type":"string","description":"the file's path in the room"},` +
 			`"server":{"type":"string","description":"the MCP server whose room it is in; leave out for the workspace"}},` +
@@ -143,7 +144,7 @@ func (k *keepFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	}
 	// The file goes from the room into the store as it is read, so one
 	// deadline covers both.
-	reading, cancel := context.WithTimeout(ctx, keepTimeout)
+	reading, cancel := context.WithTimeout(ctx, k.timeout)
 	defer cancel()
 	body, err := read(reading, p)
 	if err != nil {
@@ -159,8 +160,8 @@ func (k *keepFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 		return "", fmt.Errorf("%s is empty: there is nothing to keep", p)
 	case errors.As(err, &prob):
 		return "", errors.New(prob.Msg)
-	case ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded):
-		return "", fmt.Errorf("%s was still arriving after %s, the most a file is read for; nothing was kept", p, keepTimeout)
+	case ctx.Err() == nil && errors.Is(reading.Err(), context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded):
+		return "", fmt.Errorf("%s was still arriving after %s, the most a file is read for; nothing was kept", p, k.timeout)
 	default:
 		// The cause is logged by the keeper: it can name the store.
 		return "", fmt.Errorf("%s could not be read and kept whole; nothing was kept", p)
@@ -280,7 +281,7 @@ func (b *Builder) keepFileFor(
 	k := &keepFile{
 		keep: b.files.keeperFor(run), ws: ws, team: run.TeamID,
 		rooms: b.roomFiles.Servers, client: b.roomFiles.Client, servers: b.serverRooms(commands),
-		one: make(chan struct{}, 1),
+		timeout: keepTimeout, one: make(chan struct{}, 1),
 	}
 	n, err := b.roomFiles.Store.CountRunKeptFiles(ctx, db.CountRunKeptFilesParams{RunID: run.ID, Tool: KeepFileToolName})
 	if err != nil {

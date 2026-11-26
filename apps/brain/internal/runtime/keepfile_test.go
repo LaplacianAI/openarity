@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -462,11 +463,19 @@ func TestALargeFileIsKeptAndOneTooLargeOrCutShortIsNot(t *testing.T) {
 	}
 }
 
-// stubKeeper fails a keep as it is told.
-type stubKeeper struct{ err error }
+// stubKeeper fails a keep as it is told; with wait, it waits for its
+// deadline, as a file still arriving does.
+type stubKeeper struct {
+	err  error
+	wait bool
+}
 
-func (s stubKeeper) KeepStream(_ context.Context, _, _ string, r io.Reader) (streamed, error) {
+func (s stubKeeper) KeepStream(ctx context.Context, _, _ string, r io.Reader) (streamed, error) {
 	_, _ = io.Copy(io.Discard, r)
+	if s.wait {
+		<-ctx.Done()
+		return streamed{}, fmt.Errorf("reading the file from the room: %w", ctx.Err())
+	}
 	return streamed{}, s.err
 }
 
@@ -476,19 +485,23 @@ func (s stubKeeper) KeepStream(_ context.Context, _, _ string, r io.Reader) (str
 func TestAFailureWhileStreamingSaysWhy(t *testing.T) {
 	for name, tc := range map[string]struct {
 		err  error
+		wait bool
 		says string
 	}{
-		"the room's refusal": {&roomfile.Problem{Msg: "out.bin is over 104857600 bytes"}, "out.bin is over 104857600 bytes"},
-		"nothing in it":      {errEmpty, "out.bin is empty"},
-		"the store":          {errors.New("s3: access denied for bucket openarity"), "could not be read and kept whole"},
+		"the room's refusal":   {err: &roomfile.Problem{Msg: "out.bin is over 104857600 bytes"}, says: "out.bin is over 104857600 bytes"},
+		"nothing in it":        {err: errEmpty, says: "out.bin is empty"},
+		"the store":            {err: errors.New("s3: access denied for bucket openarity"), says: "could not be read and kept whole"},
+		"still arriving":       {wait: true, says: "out.bin was still arriving after 50ms"},
+		"a deadline elsewhere": {err: fmt.Errorf("the store: %w", context.DeadlineExceeded), says: "could not be read and kept whole"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rooms := newServerRooms(t)
 			rooms.files["mail"] = map[string]string{"out.bin": "x"}
 			k := &keepFile{
-				keep:    stubKeeper{tc.err},
+				keep:    stubKeeper{err: tc.err, wait: tc.wait},
 				servers: map[string]db.McpServer{"mail": {Name: "mail"}},
 				rooms:   rooms, client: http.DefaultClient, one: make(chan struct{}, 1),
+				timeout: 50 * time.Millisecond,
 			}
 			_, err := k.invoke(t.Context(), []byte(`{"path":"out.bin","server":"mail"}`))
 			if err == nil || !strings.Contains(err.Error(), tc.says) || strings.Contains(err.Error(), "s3:") {

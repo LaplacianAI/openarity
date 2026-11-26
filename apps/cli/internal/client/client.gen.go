@@ -7485,6 +7485,10 @@ type ClientInterface interface {
 	// without executing anything. Everything else downloads, including PDFs:
 	// a same-origin PDF runs JavaScript in every major viewer.
 	//
+	// The file is streamed as it is decrypted, never held, up to 100 MiB.
+	// `Content-Length` is its recorded size; a body that ends short of it
+	// failed on the way, and is a failed download, never a whole one.
+	//
 	// An attachment id belonging to another conversation answers 404, the
 	// same as one that does not exist.
 	//
@@ -10757,6 +10761,10 @@ func (c *Client) ListSessionAttachments(ctx context.Context, id TeamID, sessionI
 // `image/gif`, `image/webp` and `text/plain`, which a browser can display
 // without executing anything. Everything else downloads, including PDFs:
 // a same-origin PDF runs JavaScript in every major viewer.
+//
+// The file is streamed as it is decrypted, never held, up to 100 MiB.
+// `Content-Length` is its recorded size; a body that ends short of it
+// failed on the way, and is a failed download, never a whole one.
 //
 // An attachment id belonging to another conversation answers 404, the
 // same as one that does not exist.
@@ -19019,6 +19027,10 @@ type ClientWithResponsesInterface interface {
 	// without executing anything. Everything else downloads, including PDFs:
 	// a same-origin PDF runs JavaScript in every major viewer.
 	//
+	// The file is streamed as it is decrypted, never held, up to 100 MiB.
+	// `Content-Length` is its recorded size; a body that ends short of it
+	// failed on the way, and is a failed download, never a whole one.
+	//
 	// An attachment id belonging to another conversation answers 404, the
 	// same as one that does not exist.
 	//
@@ -27041,6 +27053,10 @@ func (c *ClientWithResponses) ListSessionAttachmentsWithResponse(ctx context.Con
 // `image/gif`, `image/webp` and `text/plain`, which a browser can display
 // without executing anything. Everything else downloads, including PDFs:
 // a same-origin PDF runs JavaScript in every major viewer.
+//
+// The file is streamed as it is decrypted, never held, up to 100 MiB.
+// `Content-Length` is its recorded size; a body that ends short of it
+// failed on the way, and is a failed download, never a whole one.
 //
 // An attachment id belonging to another conversation answers 404, the
 // same as one that does not exist.
