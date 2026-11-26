@@ -320,8 +320,9 @@ func TestWhatIsWiredUpEncryptsBeforeItWrites(t *testing.T) {
 	if bytes.Contains(onDisk, plaintext) {
 		t.Fatal("the plaintext is on disk; nothing encrypted it on the way through")
 	}
-	if len(onDisk) != len(plaintext)+12+16 {
-		t.Errorf("%d bytes on disk for a %d byte file, want a 12-byte nonce and "+
+	// v2: the 4-byte magic and 32-byte salt, then one chunk and its tag.
+	if !bytes.HasPrefix(onDisk, []byte("OAo2")) || len(onDisk) != 4+32+len(plaintext)+16 {
+		t.Errorf("%d bytes on disk for a %d byte file, want v2: a 36-byte header and "+
 			"a 16-byte tag around it", len(onDisk), len(plaintext))
 	}
 

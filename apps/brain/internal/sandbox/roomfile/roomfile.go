@@ -14,12 +14,12 @@ import (
 	"strings"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
-	"github.com/LaplacianAI/openarity/sdk/agent/tools/mcp"
 )
 
 const (
-	// Max is the largest file read: the most kept as an attachment.
-	Max = mcp.MaxKeptBytes
+	// Max is the largest file read from a room: the most keep_file keeps.
+	// Keep it equal to the sandbox's roomfile.MaxDownload.
+	Max = 100 << 20
 	// Route is where a room serves its files.
 	Route = "/file"
 	// problemHeader marks an answer as the room's own refusal.
@@ -38,21 +38,26 @@ func (p *Problem) Error() string { return p.Msg }
 // address, or the provider says it has no such room.
 var ErrGone = errors.New("the room is gone")
 
-// Get reads the file at path from the room whose /file route is ep. A path is
+// Open reads the file at path from the room whose /file route is ep: its
+// body, streamed, and its length, or -1 when the room did not say. A path is
 // the room's to resolve: relative to where its process runs, or absolute.
-func Get(ctx context.Context, hc *http.Client, ep sandbox.Endpoint, path string) ([]byte, error) {
+// net/http ends the body at its length and fails one that ends short of it;
+// the body fails a read past Max, for a room that gave no length. So a file
+// is never taken for more or less than the room sent. It is the caller's to
+// close.
+func Open(ctx context.Context, hc *http.Client, ep sandbox.Endpoint, path string) (io.ReadCloser, int64, error) {
 	// Added to the address's own query, which can hold a provider's token.
 	u, err := url.Parse(ep.URL)
 	if err != nil {
 		// Never the URL, or url's error, which quotes it.
-		return nil, errors.New("the room's address is not a URL")
+		return nil, 0, errors.New("the room's address is not a URL")
 	}
 	q := u.Query()
 	q.Set("path", path)
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
-		return nil, errors.New("the room's address is not one a request can be made to")
+		return nil, 0, errors.New("the room's address is not one a request can be made to")
 	}
 	for k, vs := range ep.Header {
 		for _, v := range vs {
@@ -63,46 +68,69 @@ func Get(ctx context.Context, hc *http.Client, ep sandbox.Endpoint, path string)
 	if err != nil {
 		// Never the URL: a provider's address can carry its token.
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		}
 		var op *net.OpError
 		if errors.As(err, &op) && op.Op == "dial" {
-			return nil, fmt.Errorf("%w: %s", ErrGone, cause(err))
+			return nil, 0, fmt.Errorf("%w: %s", ErrGone, cause(err))
 		}
-		return nil, fmt.Errorf("reading the file from the room: %s", cause(err))
+		return nil, 0, fmt.Errorf("reading the file from the room: %s", cause(err))
 	}
-	defer resp.Body.Close()
 
 	if resp.Header.Get(problemHeader) == "1" {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxProblem))
-		return nil, &Problem{Msg: strings.TrimSpace(string(msg))}
+		_ = resp.Body.Close()
+		return nil, 0, &Problem{Msg: strings.TrimSpace(string(msg))}
 	}
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
+		_ = resp.Body.Close()
 		// Unmarked, so not the room's /file: the provider has no such room,
 		// or the room's image is older than the route.
-		return nil, fmt.Errorf("%w: it answered %d without the room's mark", ErrGone, resp.StatusCode)
+		return nil, 0, fmt.Errorf("%w: it answered %d without the room's mark", ErrGone, resp.StatusCode)
 	default:
-		return nil, fmt.Errorf("the room answered %d", resp.StatusCode)
+		_ = resp.Body.Close()
+		return nil, 0, fmt.Errorf("the room answered %d", resp.StatusCode)
 	}
 	if resp.ContentLength > Max {
-		return nil, &Problem{Msg: fmt.Sprintf("%s is %d bytes; a file is kept up to %d", path, resp.ContentLength, Max)}
+		_ = resp.Body.Close()
+		return nil, 0, &Problem{Msg: fmt.Sprintf("%s is %d bytes; a file is kept up to %d", path, resp.ContentLength, Max)}
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, Max+1))
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("reading the file from the room: %s", cause(err))
-	}
-	if len(data) > Max {
-		return nil, &Problem{Msg: fmt.Sprintf("%s is over %d bytes; a file is kept up to %d", path, Max, Max)}
-	}
-	// A body cut short of its length is net/http's error above: a file that
-	// shrank while it was sent is never taken for the whole of it.
-	return data, nil
+	return &bounded{body: resp.Body, left: Max, path: path}, resp.ContentLength, nil
 }
+
+// bounded is a room's file that may not pass Max.
+type bounded struct {
+	body io.ReadCloser
+	left int64
+	path string
+}
+
+func (b *bounded) Read(p []byte) (int, error) {
+	if b.left < 0 {
+		return 0, b.over()
+	}
+	// One byte past the limit is asked for, so a body that goes on is seen.
+	if int64(len(p)) > b.left+1 {
+		p = p[:b.left+1]
+	}
+	n, err := b.body.Read(p)
+	b.left -= int64(n)
+	if b.left < 0 {
+		return n + int(b.left), b.over()
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return n, fmt.Errorf("reading the file from the room: %s", cause(err))
+	}
+	return n, err
+}
+
+func (b *bounded) over() error {
+	return &Problem{Msg: fmt.Sprintf("%s is over %d bytes; a file is kept up to %d", b.path, Max, Max)}
+}
+
+func (b *bounded) Close() error { return b.body.Close() }
 
 // cause is a failed request's cause without the URL it was for.
 func cause(err error) string {

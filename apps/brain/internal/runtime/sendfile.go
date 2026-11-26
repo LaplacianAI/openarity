@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/stream"
@@ -59,6 +60,7 @@ type sendFile struct {
 	logger    *slog.Logger
 	run       db.Run
 	toChannel bool
+	provider  string // the channel's, when toChannel
 	note      func(ctx context.Context, kind string, payload any) error
 	kick      func(callID string)
 	// sent counts this attempt's tries at a file that was found, on top of
@@ -107,6 +109,14 @@ func (s *sendFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	}
 	if err != nil {
 		return "", fmt.Errorf("reading file %s: %w", id, err)
+	}
+	// A channel's reply holds the file whole, so a file over what a person
+	// sends is refused before it is queued, and costs no slot: it would fail
+	// the same way every time.
+	if s.toChannel && row.SizeBytes > objects.MaxAttachment {
+		return "", fmt.Errorf("%s is %s; files go to %s up to %s here, so it was not sent. "+
+			"It is in this conversation on the dashboard; say so, and what is in it",
+			row.Filename, sizeOf(row.SizeBytes), channelName(s.provider), sizeOf(objects.MaxAttachment))
 	}
 	// Counted once the file is found, so a wrong id costs no slot; a send that
 	// then fails still does, so a channel that is down is not tried an
@@ -214,7 +224,7 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 		return agent.Tool{}, false, fmt.Errorf("reading how many files the run has sent: %w", err)
 	}
 	s := &sendFile{
-		store: b.sends.Store, logger: b.sends.Logger, run: run, toChannel: toChannel,
+		store: b.sends.Store, logger: b.sends.Logger, run: run, toChannel: toChannel, provider: reach.Provider,
 		note: func(ctx context.Context, kind string, p any) error { return b.note(ctx, run.ID, l.Worker, kind, p) },
 	}
 	s.sent.Store(sent)
@@ -222,4 +232,17 @@ func (b *Builder) sendFileFor(ctx context.Context, run db.Run, l Lineage) (agent
 		s.kick = func(call string) { b.kickFile(run.ID, call) }
 	}
 	return s.tool(), true, nil
+}
+
+// channelName is a channel's provider as a person names it.
+func channelName(provider string) string {
+	switch provider {
+	case "telegram":
+		return "Telegram"
+	case "whatsapp":
+		return "WhatsApp"
+	case "slack":
+		return "Slack"
+	}
+	return "this channel"
 }

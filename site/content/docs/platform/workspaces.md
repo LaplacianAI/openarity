@@ -175,7 +175,7 @@ send_file    {"id": "7c2e…"}            → the person gets chart.png
 ```
 
 A path is from `/workspace` unless it is absolute; any regular file in the
-room can be kept, up to 25 MiB, apart from those under `/proc`. A run tries
+room can be kept, up to 100 MiB, apart from those under `/proc`. A run tries
 twenty at most, a try that fails among them. A run that holds `keep_file` holds
 `read_attachment` with it, and `send_file` wherever it can send, so a file
 kept is read or sent in the same run. A file kept stays with the conversation however long the room
@@ -203,4 +203,6 @@ grants it.
   sandboxd when its disk budget is spent. Saving
   `/workspace` somewhere longer-lived comes later.
 - **A granted skill's scripts** are not yet copied into the room.
-- **A file over 25 MiB** cannot yet be kept.
+- **A file over 100 MiB** cannot be kept.
+- **A file over 25 MB goes to a channel** only as a mention: it can be
+  downloaded from the conversation on the dashboard, and `send_file` says so.

@@ -346,6 +346,12 @@ func (s *Sender) fileOf(row db.ClaimDueRepliesRow) func(ctx context.Context) (*O
 		if err != nil {
 			return nil, fmt.Errorf("reading the reply's file: %w", err)
 		}
+		// A reply holds its file whole: one over what a channel is sent is
+		// never read, as send_file refuses it before it is queued.
+		if f.SizeBytes > objects.MaxAttachment {
+			return nil, fmt.Errorf("%w: the file %s is %d bytes, over the %d a channel is sent",
+				ErrUnsendable, f.Filename, f.SizeBytes, objects.MaxAttachment)
+		}
 		data, err := s.objects.Get(ctx, f.TeamID, f.ObjectKey)
 		switch {
 		case errors.Is(err, objects.ErrNotFound):

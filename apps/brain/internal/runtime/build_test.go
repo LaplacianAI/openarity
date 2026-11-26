@@ -196,6 +196,14 @@ func (f *fakeObjects) Put(_ context.Context, teamID uuid.UUID, key string, body 
 	return nil
 }
 
+func (f *fakeObjects) PutStream(ctx context.Context, teamID uuid.UUID, key string, r io.Reader) error {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	return f.Put(ctx, teamID, key, body)
+}
+
 func (f *fakeObjects) Get(_ context.Context, teamID uuid.UUID, key string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

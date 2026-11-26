@@ -651,3 +651,43 @@ func TestASendFileThatWouldAskIsLeftOutOfAPlannedRun(t *testing.T) {
 		t.Errorf("send_file held %v, unavailable %+v", held(b, SendFileToolName), b.Unavailable)
 	}
 }
+
+// A file over what a channel is sent is refused at the call, queues nothing
+// and costs no slot; on the dashboard, which downloads it, it is sent.
+func TestALargeFileGoesToTheDashboardButNotAChannel(t *testing.T) {
+	for _, tc := range []struct {
+		reach db.GetSessionFileReachRow
+		sent  bool
+	}{{telegram, false}, {dashboard, true}} {
+		t.Run(tc.reach.Provider, func(t *testing.T) {
+			f := newSendFixture(tc.reach)
+			f.sends.before = filesPerRun - 1
+			large := attachedFile(f.run.SessionID, "render.mp4", "video/mp4", 80<<20)
+			f.store.attached = []db.Attachment{f.file, large}
+			send := tool(t, f.build(t), SendFileToolName)
+			call := func(id uuid.UUID) (string, error) {
+				return send.Invoke(agent.WithToolCallID(t.Context(), "c-"+id.String()[:8]),
+					json.RawMessage(`{"id":"`+id.String()+`"}`))
+			}
+
+			out, err := call(large.ID)
+			if tc.sent {
+				if err != nil || !strings.HasPrefix(out, "Sent render.mp4") {
+					t.Fatalf("send_file = %q, %v; want it sent", out, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "files go to Telegram up to 25.0 MB") ||
+				!strings.Contains(err.Error(), "on the dashboard") {
+				t.Fatalf("send_file = %v, want the channel's limit and where the file is", err)
+			}
+			if f.sends.written() != 0 || len(f.notes) != 0 {
+				t.Errorf("%d replies and %d events for a refused file", f.sends.written(), len(f.notes))
+			}
+			// The run's last slot is still there for a file that can go.
+			if _, err := call(f.file.ID); err != nil {
+				t.Errorf("the tenth send after a refused one = %v; the refusal cost a slot", err)
+			}
+		})
+	}
+}

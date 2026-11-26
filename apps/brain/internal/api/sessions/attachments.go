@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"strconv"
@@ -16,8 +17,10 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
+// Objects is where a conversation's files are read, streamed: a large one is
+// sent as it is opened, never held.
 type Objects interface {
-	Get(ctx context.Context, teamID uuid.UUID, key string) ([]byte, error)
+	Open(ctx context.Context, teamID uuid.UUID, key string) (io.ReadCloser, error)
 }
 
 var renderable = map[string]bool{
@@ -124,7 +127,7 @@ func (h *handler) getAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := h.objects.Get(r.Context(), teamID, row.ObjectKey)
+	body, err := h.objects.Open(r.Context(), teamID, row.ObjectKey)
 	switch {
 	case errors.Is(err, objects.ErrNotFound):
 		api.Fail(w, h.logger, u, "attachment object is missing", err)
@@ -133,20 +136,25 @@ func (h *handler) getAttachment(w http.ResponseWriter, r *http.Request) {
 		api.Fail(w, h.logger, u, "failed to read attachment object", err)
 		return
 	}
+	defer func() { _ = body.Close() }()
 
-	writeAttachment(w, row, body)
+	writeAttachment(w, row)
+	// The status is sent: a chunk that fails now cuts the body short of its
+	// length, which a client takes as a failed download, never a whole one.
+	if n, err := io.Copy(w, body); err != nil && r.Context().Err() == nil {
+		h.logger.ErrorContext(r.Context(), "an attachment was cut short",
+			"attachment", row.ID, "sent", n, "size", row.SizeBytes, "error", err)
+	}
 }
 
-func writeAttachment(w http.ResponseWriter, row db.Attachment, body []byte) {
+func writeAttachment(w http.ResponseWriter, row db.Attachment) {
 	w.Header().Set("Content-Type", row.MediaType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", disposition(row.MediaType, row.Filename))
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.Header().Set("Content-Length", strconv.FormatInt(row.SizeBytes, 10))
 	w.Header().Set("Cache-Control", "private, no-store")
 
 	w.WriteHeader(http.StatusOK)
-
-	_, _ = w.Write(body) //nolint:gosec // G705: mitigated by the headers above
 }
 
 func disposition(mediaType, filename string) string {

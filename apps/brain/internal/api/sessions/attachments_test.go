@@ -355,3 +355,33 @@ func TestAFailedObjectReadDoesNotLeak(t *testing.T) {
 		t.Errorf("the response repeated the internal error: %s", rec.Body)
 	}
 }
+
+// A large file is sent as it is read, at its recorded length; one that fails
+// mid-way is cut short of that length, which a client takes as a failed
+// download, and the failure is logged.
+func TestALargeAttachmentIsStreamedAndOneCutShortSaysSo(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	body := make([]byte, 30<<20)
+	body[len(body)-1] = 0xff
+	row := seedAttachment(f, "render.mp4", "video/mp4", body)
+
+	rec := f.get(t, f.attachmentAt(row.ID))
+	if rec.Code != http.StatusOK || rec.Body.Len() != len(body) || rec.Body.Bytes()[len(body)-1] != 0xff {
+		t.Fatalf("status %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	if got := rec.Result().Header.Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length = %q", got)
+	}
+
+	f.objects.cutAt = 1 << 20
+	rec = f.get(t, f.attachmentAt(row.ID))
+	if rec.Body.Len() != 1<<20 || rec.Result().Header.Get("Content-Length") != strconv.Itoa(len(body)) {
+		t.Errorf("a cut file sent %d bytes under Content-Length %s; want it short of its length",
+			rec.Body.Len(), rec.Result().Header.Get("Content-Length"))
+	}
+	if !strings.Contains(f.logs(), "an attachment was cut short") {
+		t.Errorf("the cut was not logged: %s", f.logs())
+	}
+}

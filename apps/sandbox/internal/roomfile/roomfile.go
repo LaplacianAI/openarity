@@ -20,7 +20,7 @@ import (
 const (
 	// MaxDownload is the largest file handed over whole: the most the brain
 	// keeps as an attachment. Keep it equal to the brain's roomfile.Max.
-	MaxDownload = 25 << 20
+	MaxDownload = 100 << 20
 	// ProblemHeader marks an answer as the room's own refusal, whose text is
 	// for the model, whatever its status.
 	ProblemHeader = "X-Room-Problem"

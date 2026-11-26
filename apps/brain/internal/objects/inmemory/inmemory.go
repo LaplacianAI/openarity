@@ -1,8 +1,10 @@
 package inmemory
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"sync"
 
@@ -27,6 +29,23 @@ func (s *store) Put(_ context.Context, key string, body []byte) error {
 
 	s.data[key] = slices.Clone(body)
 	return nil
+}
+
+// PutStream reads r whole: memory is where this store keeps everything.
+func (s *store) PutStream(ctx context.Context, key string, r io.Reader) error {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", key, err)
+	}
+	return s.Put(ctx, key, body)
+}
+
+func (s *store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	body, err := s.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(body)), nil
 }
 
 func (s *store) Get(_ context.Context, key string) ([]byte, error) {

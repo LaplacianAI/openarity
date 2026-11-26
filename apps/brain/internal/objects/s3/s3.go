@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -17,7 +18,15 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 )
 
-const maxObjectSize = 32 << 20
+const (
+	// maxObjectSize bounds Get, which reads an object whole; Open does not.
+	maxObjectSize = 32 << 20
+	// partSize is what PutStream holds at once: one part of a multipart
+	// upload. Over S3's 5 MiB least, and few parts for the largest file.
+	partSize = 8 << 20
+	// abortTimeout bounds cleaning up an upload that failed.
+	abortTimeout = 30 * time.Second
+)
 
 type Config struct {
 	Endpoint  string
@@ -80,6 +89,88 @@ func (s *store) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("reading %s: %w", key, err)
 	}
 	return body, nil
+}
+
+func (s *store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	out, err := s.client.GetObject(ctx, &awss3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, s.wrap("reading", key, err)
+	}
+	return out.Body, nil
+}
+
+// PutStream holds one part at a time. An object that fits one part is one
+// PutObject; a larger one is a multipart upload, aborted if anything fails,
+// so a failed write leaves no object. An upload the brain dies in the middle
+// of is the bucket's lifecycle rule's to abort.
+func (s *store) PutStream(ctx context.Context, key string, r io.Reader) error {
+	buf := make([]byte, partSize)
+	n, err := io.ReadFull(r, buf)
+	switch {
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return s.Put(ctx, key, buf[:n])
+	case err != nil:
+		return fmt.Errorf("reading %s: %w", key, err)
+	}
+
+	up, err := s.client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return s.wrap("writing", key, err)
+	}
+	if err := s.upload(ctx, key, up.UploadId, r, buf); err != nil {
+		aborting, cancel := context.WithTimeout(context.WithoutCancel(ctx), abortTimeout)
+		defer cancel()
+		_, _ = s.client.AbortMultipartUpload(aborting, &awss3.AbortMultipartUploadInput{
+			Bucket: aws.String(s.bucket), Key: aws.String(key), UploadId: up.UploadId,
+		})
+		return err
+	}
+	return nil
+}
+
+// upload sends buf, which holds a full first part, and every part after it,
+// then completes the upload.
+func (s *store) upload(ctx context.Context, key string, id *string, r io.Reader, buf []byte) error {
+	var parts []types.CompletedPart
+	n, last := len(buf), false
+	for num := int32(1); ; num++ {
+		got, err := s.client.UploadPart(ctx, &awss3.UploadPartInput{
+			Bucket: aws.String(s.bucket), Key: aws.String(key), UploadId: id,
+			PartNumber: aws.Int32(num), Body: bytes.NewReader(buf[:n]),
+		})
+		if err != nil {
+			return s.wrap("writing", key, err)
+		}
+		parts = append(parts, types.CompletedPart{
+			ETag: got.ETag, PartNumber: aws.Int32(num), ChecksumCRC32: got.ChecksumCRC32,
+		})
+		if last {
+			break
+		}
+		n, err = io.ReadFull(r, buf)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			last = true
+		} else if err != nil {
+			return fmt.Errorf("reading %s: %w", key, err)
+		}
+	}
+	_, err := s.client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
+		Bucket: aws.String(s.bucket), Key: aws.String(key), UploadId: id,
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
+	})
+	if err != nil {
+		return s.wrap("writing", key, err)
+	}
+	return nil
 }
 
 func (s *store) Put(ctx context.Context, key string, body []byte) error {

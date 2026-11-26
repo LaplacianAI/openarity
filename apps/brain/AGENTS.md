@@ -104,6 +104,7 @@ apps/brain/
     static/            the in-process fallback, for a brain with no OpenBao
   internal/objects/    the port: Store, Writer, object keys and team prefixes
     encrypt.go         AES-256-GCM over any backend — a layer, not a backend
+    stream.go          v2, the format every object is written in: a file sealed in 64 KiB chunks, streamed both ways
     sniff.go           what a file is, and whether it may be stored
     s3/                the S3 API — SeaweedFS, MinIO, Ceph, R2, GCS, AWS; also built for seaweedfs
     filesystem/        a volume, for a single-host deployment with no S3

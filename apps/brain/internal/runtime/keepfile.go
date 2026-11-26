@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -14,13 +15,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/roomfile"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/workroom"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
-	"github.com/LaplacianAI/openarity/sdk/agent/tools/mcp"
 )
 
 const (
@@ -31,9 +30,9 @@ const (
 	keptPerRun = 20
 	// maxPath is the longest path taken: any real one is far shorter.
 	maxPath = 4096
-	// keepTimeout bounds reading one file from its room: 25 MiB at a slow
-	// megabyte a second, and then some.
-	keepTimeout = 2 * time.Minute
+	// keepTimeout bounds reading one file from its room and storing it:
+	// 100 MiB at a slow 300 KB a second.
+	keepTimeout = 6 * time.Minute
 	// maxName is the most of a file's name kept, in runes: a name a person
 	// reads, well inside the 512 an attachment's filename may be. Keep it
 	// equal to the SDK's maxNameRunes, so a file is named alike either way.
@@ -70,8 +69,13 @@ func (b *Builder) WithRoomFiles(r RoomFiles) *Builder {
 
 // keepFile is the tool: a file read from the run's workspace or one of its
 // command servers' rooms, then kept as F2 keeps a tool's file.
+// streamKeeper keeps a file as it is read: the run's F2 keeper.
+type streamKeeper interface {
+	KeepStream(ctx context.Context, tool, name string, r io.Reader) (streamed, error)
+}
+
 type keepFile struct {
-	keep    mcp.Keeper
+	keep    streamKeeper
 	ws      *runWorkspace // nil when the run has no workspace
 	servers map[string]db.McpServer
 	rooms   ServerRooms
@@ -97,7 +101,7 @@ func (k *keepFile) tool() agent.Tool {
 		Description: fmt.Sprintf("Keep a file a tool wrote, in %s, as a file of this conversation: "+
 			"it returns the file's id, which send_file sends to the person and read_attachment reads. "+
 			"Use it when a tool saved a file and said where rather than returning it. "+
-			"A file is kept up to 25 MiB; a run tries at most %d, and a try that fails counts.", strings.Join(from, " or "), keptPerRun),
+			"A file is kept up to 100 MiB; a run tries at most %d, and a try that fails counts.", strings.Join(from, " or "), keptPerRun),
 		Schema: json.RawMessage(`{"type":"object","properties":{` +
 			`"path":{"type":"string","description":"the file's path in the room"},` +
 			`"server":{"type":"string","description":"the MCP server whose room it is in; leave out for the workspace"}},` +
@@ -137,22 +141,31 @@ func (k *keepFile) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
+	// The file goes from the room into the store as it is read, so one
+	// deadline covers both.
 	reading, cancel := context.WithTimeout(ctx, keepTimeout)
-	data, err := read(reading, p)
-	cancel()
+	defer cancel()
+	body, err := read(reading, p)
 	if err != nil {
 		return "", err
 	}
-	if len(data) == 0 {
-		return "", fmt.Errorf("%s is empty: there is nothing to keep", p)
-	}
+	defer body.Close()
 	name := nameOf(p)
-	kept, err := k.keep.Keep(ctx, mcp.File{Tool: KeepFileToolName, Name: name, Data: data})
-	if err != nil {
+	kept, err := k.keep.KeepStream(reading, KeepFileToolName, name, body)
+	var prob *roomfile.Problem
+	switch {
+	case err == nil:
+	case errors.Is(err, errEmpty):
+		return "", fmt.Errorf("%s is empty: there is nothing to keep", p)
+	case errors.As(err, &prob):
+		return "", errors.New(prob.Msg)
+	case ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded):
+		return "", fmt.Errorf("%s was still arriving after %s, the most a file is read for; nothing was kept", p, keepTimeout)
+	default:
 		// The cause is logged by the keeper: it can name the store.
-		return "", fmt.Errorf("%s was read but could not be kept", p)
+		return "", fmt.Errorf("%s could not be read and kept whole; nothing was kept", p)
 	}
-	return fmt.Sprintf("Kept %s (%s, %s) as file %s.", name, objects.Sniff(data), sizeOf(int64(len(data))), kept.ID), nil
+	return fmt.Sprintf("Kept %s (%s, %s) as file %s.", name, kept.MediaType, sizeOf(kept.Size), kept.ID), nil
 }
 
 // nameOf is the name a file is kept under: its path's last element, without
@@ -176,7 +189,7 @@ func nameOf(p string) string {
 
 // reader is how the file is read: from the workspace with no server, or from
 // the named server's room, when it is one of the run's command servers.
-func (k *keepFile) reader(server string) (func(context.Context, string) ([]byte, error), error) {
+func (k *keepFile) reader(server string) (func(context.Context, string) (io.ReadCloser, error), error) {
 	if server == "" {
 		if k.ws == nil {
 			return nil, errors.New("this run has no workspace; name the MCP server whose room the file is in")
@@ -187,23 +200,23 @@ func (k *keepFile) reader(server string) (func(context.Context, string) ([]byte,
 	if !ok {
 		return nil, fmt.Errorf("this run has no command MCP server named %q whose room could hold the file", server)
 	}
-	return func(ctx context.Context, p string) ([]byte, error) { return k.fromServer(ctx, s, p) }, nil
+	return func(ctx context.Context, p string) (io.ReadCloser, error) { return k.fromServer(ctx, s, p) }, nil
 }
 
-func (k *keepFile) fromWorkspace(ctx context.Context, p string) ([]byte, error) {
-	var data []byte
+func (k *keepFile) fromWorkspace(ctx context.Context, p string) (io.ReadCloser, error) {
+	var body io.ReadCloser
 	_, err := k.ws.call(ctx, func(c *workroom.Client) (string, error) {
 		var err error
-		data, err = c.File(ctx, p)
+		body, err = c.File(ctx, p)
 		return "", err
 	})
 	if errors.Is(err, sandbox.ErrReplaced) {
 		return nil, fmt.Errorf("%s is gone: the workspace was replaced by a fresh one, without its files", p)
 	}
-	return data, err
+	return body, err
 }
 
-func (k *keepFile) fromServer(ctx context.Context, s db.McpServer, p string) ([]byte, error) {
+func (k *keepFile) fromServer(ctx context.Context, s db.McpServer, p string) (io.ReadCloser, error) {
 	ep, err := k.rooms.Files(ctx, k.team, s)
 	if errors.Is(err, sandbox.ErrNoRoom) {
 		return nil, fmt.Errorf("%s cannot be read: %s's room is not running. "+
@@ -213,7 +226,7 @@ func (k *keepFile) fromServer(ctx context.Context, s db.McpServer, p string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("%s's room could not be reached: %w", s.Name, err)
 	}
-	data, err := roomfile.Get(ctx, k.client, ep, p)
+	body, _, err := roomfile.Open(ctx, k.client, ep, p)
 	var prob *roomfile.Problem
 	switch {
 	case errors.As(err, &prob):
@@ -224,7 +237,7 @@ func (k *keepFile) fromServer(ctx context.Context, s db.McpServer, p string) ([]
 	case err != nil:
 		return nil, fmt.Errorf("%s could not be read from %s's room: %w", p, s.Name, err)
 	}
-	return data, nil
+	return body, nil
 }
 
 // keepsRoomFiles is whether a run holds keep_file: one with a workspace or a
@@ -232,14 +245,14 @@ func (k *keepFile) fromServer(ctx context.Context, s db.McpServer, p string) ([]
 // A replay holds a stand-in wherever a run might, as its rooms have moved on.
 // The attachment tools are held with it, so the file it keeps can be read
 // and sent in the same run.
-func (b *Builder) keepsRoomFiles(run db.Run, work bool, commands map[string]db.McpServer) bool {
+func (b *Builder) keepsRoomFiles(work bool, commands map[string]db.McpServer) bool {
 	if !work && len(commands) == 0 {
 		return false
 	}
 	if b.replay {
 		return true
 	}
-	if b.keeperFor(run) == nil || b.roomFiles == nil {
+	if b.files == nil || b.roomFiles == nil {
 		return false
 	}
 	return work || len(b.serverRooms(commands)) > 0
@@ -258,14 +271,14 @@ func (b *Builder) serverRooms(commands map[string]db.McpServer) map[string]db.Mc
 func (b *Builder) keepFileFor(
 	ctx context.Context, run db.Run, ws *runWorkspace, work bool, commands map[string]db.McpServer,
 ) (agent.Tool, bool, error) {
-	if !b.keepsRoomFiles(run, work, commands) {
+	if !b.keepsRoomFiles(work, commands) {
 		return agent.Tool{}, false, nil
 	}
 	if b.replay {
 		return (&keepFile{}).tool(), true, nil
 	}
 	k := &keepFile{
-		keep: b.keeperFor(run), ws: ws, team: run.TeamID,
+		keep: b.files.keeperFor(run), ws: ws, team: run.TeamID,
 		rooms: b.roomFiles.Servers, client: b.roomFiles.Client, servers: b.serverRooms(commands),
 		one: make(chan struct{}, 1),
 	}
