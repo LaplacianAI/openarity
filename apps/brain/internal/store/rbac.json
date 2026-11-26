@@ -82,15 +82,15 @@
     },
     {
       "name": "schedule:read",
-      "description": "See your own schedules and what they did"
+      "description": "See your own schedules and watchers and what they did"
     },
     {
       "name": "schedule:write",
-      "description": "Make and change your own schedules, and let an agent propose them in a chat"
+      "description": "Make and change your own schedules and watchers, and let an agent propose them in a chat"
     },
     {
       "name": "schedule:manage",
-      "description": "See, pause, delete and take over everyone's schedules in a team"
+      "description": "See, pause, delete and take over everyone's schedules and watchers in a team"
     }
   ],
   "roles": [
@@ -708,6 +708,60 @@
       "path": "/teams/{id}/schedules/{scheduleID}/take-over",
       "scope": "team",
       "permission": "schedule:manage"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/watchers",
+      "scope": "team",
+      "permission": "schedule:read"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/watchers",
+      "scope": "team",
+      "permission": "schedule:write"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/watchers/{watcherID}",
+      "scope": "team",
+      "permission": "schedule:read"
+    },
+    {
+      "method": "PATCH",
+      "path": "/teams/{id}/watchers/{watcherID}",
+      "scope": "team",
+      "permission": "schedule:write"
+    },
+    {
+      "method": "DELETE",
+      "path": "/teams/{id}/watchers/{watcherID}",
+      "scope": "team",
+      "permission": "schedule:write"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/watchers/{watcherID}/confirm",
+      "scope": "team",
+      "permission": "schedule:write"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/watchers/{watcherID}/run",
+      "scope": "team",
+      "permission": "schedule:write"
+    },
+    {
+      "method": "POST",
+      "path": "/teams/{id}/watchers/{watcherID}/take-over",
+      "scope": "team",
+      "permission": "schedule:manage"
+    },
+    {
+      "method": "GET",
+      "path": "/teams/{id}/watchers/{watcherID}/checks",
+      "scope": "team",
+      "permission": "schedule:read"
     },
     {
       "method": "GET",

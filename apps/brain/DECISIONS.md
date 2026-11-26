@@ -88,12 +88,59 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     for senders waiting to be let in, and a reply needs a run; a pause has
     neither. The maker hears of a pause through news until one exists.
   - **The rules are written once,** in `internal/triggers`, below the routes,
-    for the API, an agent's tools and the jobs.
+    for the API, an agent's tools and the jobs. A schedule and a watcher are
+    each a `trigger` to the rules they share (whether its maker may still
+    post where it answers, whether they are stuck, how a proposal is
+    confirmed), so the two cannot drift.
+- **A watcher polls a page or a feed on the same minute tick, and runs when
+  what it sees changes** (design: schedules and watchers, D12, D13, D17).
+  - **Watchers of one address share one fetch.** The address is normalised
+    (scheme and host lowercased, the default port and the fragment dropped,
+    the query kept) and is one `watch_targets` row; each watcher keeps its own
+    selector and what it last saw (`watchers.state`). The tick counts the due
+    targets and hands out batches of fifty, at most eight, onto
+    `openarity-watch`; a batch claims its targets with `SKIP LOCKED` and moves
+    `next_check_at` ten minutes on as a lease, so a check that crashed is
+    tried again then.
+  - **One host at a time, and a host that asks us to wait is waited for.** A
+    batch takes a host in `watch_hosts` for two minutes and fetches its
+    targets one after another, eight hosts at once. A 429 or 503 leaves the
+    host alone for its `Retry-After`, five minutes if it gives none, six
+    hours at most. Each fetch is one conditional GET through web fetch's
+    public-address-only client, 2 MiB at most, except when a watcher has
+    seen nothing yet: a 304 would leave it with no baseline.
+  - **The first look is a baseline and starts nothing.** A page's text (of
+    the selector's matches, else the body without scripts and styles) is
+    compared line by line; a feed's new items by id. Readability is not used:
+    its choice of article can change when the content has not. A new
+    selector makes the next look a baseline again.
+  - **A change is never lost.** Within the cooldown (an hour by default), or
+    while the watcher's last run still works, or over the team's hourly cap,
+    the change is held in `state.pending` and given to the next run that may
+    start, at the next look past it, even one that finds nothing new. A
+    schedule's busy fire is skipped instead: its next time is the same
+    question again, a page's next look may not be.
+  - **The change is text from the web,** wrapped as `web_fetch`'s pages are
+    (`webfetch.Wrap`, which both now use), with the same warning.
+  - **Errors back off on the target** after 1, 5, 15 and then 60 minutes, each
+    recorded on the watcher's checks; a page or feed failing for a day, or
+    fetched but unreadable as the watcher reads it for a day, pauses it as
+    `failing`. Its runs are counted as a schedule's: five failures in a row
+    pause it, `[silent]` tells nobody, a cancel is neither.
+  - **A deleted watcher lets go of its target** (`target_id` null, which the
+    table now allows once deleted), and the hourly sweep deletes targets
+    nobody watches. Without that a soft-deleted watcher would hold its target
+    for ever.
+  - **Run now, for a watcher, is look now.** A run with no change would have
+    nothing to say; a look now finds the change, if there is one.
+  - **A webhook watcher cannot be made yet;** it comes with the webhook
+    listener.
 - **The worker deletes DBOS's record of finished background work after a
   week.** DBOS v1.2.0 never deletes a workflow row, and every tick of every
   sweep leaves one. `internal/retention`, a job of its own, lists the
   schedules DBOS runs, then deletes their finished workflows older than seven
-  days, and those of the batches other jobs name to it (the fire batches).
+  days, and those of the batches other jobs name to it (the fire and check
+  batches).
   What DBOS runs on a schedule is periodic by construction, so nothing is
   missed when a job is added. Run workflows are kept: the `runs` table is
   their record.

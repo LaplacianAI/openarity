@@ -15,7 +15,7 @@ import (
 
 const (
 	maxBody   = 2 << 20
-	userAgent = "Openarity (+https://github.com/LaplacianAI/openarity)"
+	userAgent = webfetch.UserAgent
 )
 
 type fetcher struct{ client *http.Client }

@@ -116,6 +116,15 @@ var routes = []struct{ method, path string }{
 	{"POST", "/teams/{id}/schedules/{scheduleID}/run"},
 	{"POST", "/teams/{id}/schedules/{scheduleID}/take-over"},
 	{"GET", "/teams/{id}/schedules/{scheduleID}/fires"},
+	{"GET", "/teams/{id}/watchers"},
+	{"POST", "/teams/{id}/watchers"},
+	{"GET", "/teams/{id}/watchers/{watcherID}"},
+	{"PATCH", "/teams/{id}/watchers/{watcherID}"},
+	{"DELETE", "/teams/{id}/watchers/{watcherID}"},
+	{"POST", "/teams/{id}/watchers/{watcherID}/confirm"},
+	{"POST", "/teams/{id}/watchers/{watcherID}/run"},
+	{"POST", "/teams/{id}/watchers/{watcherID}/take-over"},
+	{"GET", "/teams/{id}/watchers/{watcherID}/checks"},
 	{"GET", "/teams/{id}/scheduled/news"},
 	{"POST", "/teams/{id}/scheduled/news/seen"},
 	{"GET", "/teams/{id}/schedule-targets"},
@@ -353,7 +362,7 @@ func TestNewsAndSeen(t *testing.T) {
 	if n.Count != 1 || n.More || n.Items[0].Name != "summary" || n.Items[0].Outcome != "skipped_cap" {
 		t.Fatalf("news %+v", n)
 	}
-	want(t, w.serve(t, w.maker, "POST", "/scheduled/news/seen", map[string]any{}), http.StatusBadRequest, "schedule_id is required")
+	want(t, w.serve(t, w.maker, "POST", "/scheduled/news/seen", map[string]any{}), http.StatusBadRequest, "give schedule_id or watcher_id")
 	want(t, w.serve(t, w.maker, "POST", "/scheduled/news/seen", map[string]any{"schedule_id": s.ID}), http.StatusNoContent, "")
 	if n := decode[news](t, w.serve(t, w.maker, "GET", "/scheduled/news", nil)); n.Count != 0 {
 		t.Errorf("news after seen %+v", n)

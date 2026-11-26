@@ -19,8 +19,8 @@ const Silent = "[silent]"
 // pauses itself: a run that failed, or a fire that could not be tried.
 const PauseAfter = 5
 
-// finishFired records how a run a schedule started ended, on its fire, and
-// counts it on the schedule: a success clears its failures, a failure adds
+// finishFired records how a run a schedule or a watcher started ended, on its
+// fire or check, and counts it on the schedule or watcher: a success clears its failures, a failure adds
 // one and the fifth pauses it, a cancelled run is neither. It says whether the
 // run was silent, so no reply is written for it. A run no schedule started
 // changes nothing, and nor does an end already recorded: a finish that comes
@@ -41,7 +41,7 @@ func finishFired(ctx context.Context, q *db.Queries, run db.Run, finish db.Finis
 	}
 	schedule, err := q.SetFireOutcome(ctx, db.SetFireOutcomeParams{Outcome: outcome, RunID: &run.ID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return finishWatched(ctx, q, run, finish, outcome, silent)
 	}
 	if err != nil {
 		return false, fmt.Errorf("record how run %s's fire went: %w", run.ID, err)
@@ -50,6 +50,24 @@ func finishFired(ctx context.Context, q *db.Queries, run db.Run, finish db.Finis
 		ID: schedule, Failed: finish.Status == "failed", Succeeded: finish.Status == "succeeded", PauseAfter: PauseAfter,
 	}); err != nil {
 		return false, fmt.Errorf("count run %s on its schedule: %w", run.ID, err)
+	}
+	return silent, nil
+}
+
+// finishWatched is finishFired for a run a watcher started: its check takes
+// the outcome once, and the watcher counts it.
+func finishWatched(ctx context.Context, q *db.Queries, run db.Run, finish db.FinishRunParams, outcome string, silent bool) (bool, error) {
+	watcher, err := q.SetCheckOutcome(ctx, db.SetCheckOutcomeParams{Outcome: outcome, RunID: &run.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("record how run %s's check went: %w", run.ID, err)
+	}
+	if _, err := q.CountWatcherRun(ctx, db.CountWatcherRunParams{
+		ID: watcher, Failed: finish.Status == "failed", Succeeded: finish.Status == "succeeded", PauseAfter: PauseAfter,
+	}); err != nil {
+		return false, fmt.Errorf("count run %s on its watcher: %w", run.ID, err)
 	}
 	return silent, nil
 }

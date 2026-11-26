@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
@@ -24,6 +25,11 @@ const (
 	FireQueue      = "openarity-triggers"
 	firesPerWorker = 2
 
+	// CheckWorkflow is a batch of watched pages and feeds a tick hands out.
+	CheckWorkflow   = "openarity.triggers.check"
+	CheckQueue      = "openarity-watch"
+	checksPerWorker = 2
+
 	hourlyWorkflow = "openarity.triggers.sweep"
 	hourlySchedule = "triggers-sweep"
 	hourlyCron     = "0 7 * * * *"
@@ -36,6 +42,11 @@ const (
 	fireBudget       = 45 * time.Second
 	maxFireWorkflows = 8
 
+	// checkBatch bounds the targets one check workflow claims;
+	// maxCheckWorkflows bounds how many one tick starts.
+	checkBatch        = 50
+	maxCheckWorkflows = 8
+
 	pruneBatch = 1000
 	maxPrunes  = 20
 )
@@ -43,25 +54,34 @@ const (
 // JobStore is what the jobs read and write.
 type JobStore interface {
 	FireStore
+	CheckStore
 	ExpireProposedSchedules(ctx context.Context, before time.Time) (int64, error)
 	PruneScheduleFires(ctx context.Context, arg db.PruneScheduleFiresParams) (int64, error)
+	ExpireProposedWatchers(ctx context.Context, arg db.ExpireProposedWatchersParams) (int64, error)
+	PruneWatcherChecks(ctx context.Context, arg db.PruneWatcherChecksParams) (int64, error)
+	DeleteUnwatchedTargets(ctx context.Context) (int64, error)
 }
 
-// A Job fires schedules on a minute tick, and lapses proposals and prunes
-// history hourly. The record DBOS keeps of its batches is deleted by the
-// retention job, told of them as FireWorkflow.
+// A Job fires schedules and checks watched pages and feeds on a minute tick,
+// and lapses proposals and prunes history hourly. The record DBOS keeps of
+// its batches is deleted by the retention job, told of them as FireWorkflow
+// and CheckWorkflow.
 type Job struct {
 	store   JobStore
 	logger  *slog.Logger
 	enqueue func(dbos.Client, uuid.UUID) error
+	client  *http.Client
 	firer   *Firer
+	checker *Checker
 	dbos    dbos.Context
 	now     func() time.Time
 }
 
-// NewJob takes how a run is handed to the workers: the runtime's.
-func NewJob(s JobStore, enqueueRun func(dbos.Client, uuid.UUID) error, logger *slog.Logger) *Job {
-	return &Job{store: s, logger: logger, enqueue: enqueueRun, now: time.Now}
+// NewJob takes how a run is handed to the workers, the runtime's, and the
+// client watched pages and feeds are fetched through, which must refuse every
+// address a watcher may not reach.
+func NewJob(s JobStore, enqueueRun func(dbos.Client, uuid.UUID) error, client *http.Client, logger *slog.Logger) *Job {
+	return &Job{store: s, logger: logger, enqueue: enqueueRun, client: client, now: time.Now}
 }
 
 func (*Job) Name() string { return "triggers" }
@@ -72,18 +92,24 @@ type enqueuerFunc func(context.Context, uuid.UUID) error
 func (f enqueuerFunc) Enqueue(ctx context.Context, id uuid.UUID) error { return f(ctx, id) }
 
 func (j *Job) Register(d dbos.Context) ([]dbos.ScheduleSpec, error) {
-	if j.store == nil || j.enqueue == nil {
-		return nil, errors.New("the triggers job has no store or no way to start a run, so every fire would fail")
+	if j.store == nil || j.enqueue == nil || j.client == nil {
+		return nil, errors.New("the triggers job has no store, no way to start a run or no way to fetch, so every fire would fail")
 	}
 	if _, err := dbos.RegisterQueue(d, FireQueue, dbos.WithWorkerConcurrency(firesPerWorker)); err != nil {
 		return nil, fmt.Errorf("registering the fire queue: %w", err)
 	}
+	if _, err := dbos.RegisterQueue(d, CheckQueue, dbos.WithWorkerConcurrency(checksPerWorker)); err != nil {
+		return nil, fmt.Errorf("registering the check queue: %w", err)
+	}
 	dbos.RegisterWorkflow(d, j.tick, dbos.WithWorkflowName(tickWorkflow))
 	dbos.RegisterWorkflow(d, j.fire, dbos.WithWorkflowName(FireWorkflow))
+	dbos.RegisterWorkflow(d, j.check, dbos.WithWorkflowName(CheckWorkflow))
 	dbos.RegisterWorkflow(d, j.sweep, dbos.WithWorkflowName(hourlyWorkflow))
 	j.dbos = d
 	j.firer = NewFirer(j.store, enqueuerFunc(func(_ context.Context, id uuid.UUID) error { return j.enqueue(d, id) }), j.logger)
 	j.firer.now = j.now
+	j.checker = NewChecker(j.store, enqueuerFunc(func(_ context.Context, id uuid.UUID) error { return j.enqueue(d, id) }), j.client, j.logger)
+	j.checker.now = j.now
 	return j.schedules(), nil
 }
 
@@ -111,6 +137,16 @@ func (j *Job) tick(ctx dbos.Context, in dbos.ScheduledWorkflowInput) (string, er
 				return minute, fmt.Errorf("handing out fire batch %d: %w", i, err)
 			}
 		}
+		due, err := j.checker.Due(sctx)
+		if err != nil {
+			return minute, err
+		}
+		for i := range checkBatches(due) {
+			if _, err := dbos.Enqueue[string](j.dbos, CheckQueue, CheckWorkflow, minute,
+				dbos.WithEnqueueWorkflowID(fmt.Sprintf("check:%s:%d", minute, i))); err != nil {
+				return minute, fmt.Errorf("handing out check batch %d: %w", i, err)
+			}
+		}
 		return minute, nil
 	})
 }
@@ -118,6 +154,18 @@ func (j *Job) tick(ctx dbos.Context, in dbos.ScheduledWorkflowInput) (string, er
 // batches is how many fire workflows n due schedules take.
 func batches(n int) int {
 	return min((n+fireBatch-1)/fireBatch, maxFireWorkflows)
+}
+
+// checkBatches is how many check workflows n due targets take.
+func checkBatches(n int) int {
+	return min((n+checkBatch-1)/checkBatch, maxCheckWorkflows)
+}
+
+func (j *Job) check(ctx dbos.Context, minute string) (string, error) {
+	return dbos.RunAsStep(ctx, func(sctx context.Context) (string, error) {
+		checked, err := j.checker.CheckDue(sctx, checkBatch)
+		return fmt.Sprintf("%s: %d", minute, checked), err
+	})
 }
 
 func (j *Job) fire(ctx dbos.Context, minute string) (string, error) {
@@ -142,15 +190,35 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 	} else if n > 0 {
 		j.logger.InfoContext(ctx, "Lapsed schedules nobody confirmed", "schedules", n)
 	}
-	for range maxPrunes {
-		n, err := j.store.PruneScheduleFires(ctx, db.PruneScheduleFiresParams{Keep: keepFires, Batch: pruneBatch})
-		if err != nil {
-			failed = append(failed, fmt.Errorf("pruning old fires: %w", err))
-			break
-		}
-		if n < pruneBatch {
-			break
-		}
+	now := j.now()
+	if n, err := j.store.ExpireProposedWatchers(ctx, db.ExpireProposedWatchersParams{
+		ProposedBefore: now.Add(-proposalLife), WaitingBefore: now.Add(-waitingLife),
+	}); err != nil {
+		failed = append(failed, fmt.Errorf("lapsing unconfirmed watchers: %w", err))
+	} else if n > 0 {
+		j.logger.InfoContext(ctx, "Lapsed watchers nobody confirmed", "watchers", n)
+	}
+	failed = append(failed, prune(ctx, "fires", func() (int64, error) {
+		return j.store.PruneScheduleFires(ctx, db.PruneScheduleFiresParams{Keep: keepFires, Batch: pruneBatch})
+	}), prune(ctx, "checks", func() (int64, error) {
+		return j.store.PruneWatcherChecks(ctx, db.PruneWatcherChecksParams{Keep: keepFires, Batch: pruneBatch})
+	}))
+	if _, err := j.store.DeleteUnwatchedTargets(ctx); err != nil {
+		failed = append(failed, fmt.Errorf("deleting addresses nobody watches: %w", err))
 	}
 	return errors.Join(failed...)
+}
+
+// prune deletes a batch at a time until a batch comes back short.
+func prune(_ context.Context, what string, batch func() (int64, error)) error {
+	for range maxPrunes {
+		n, err := batch()
+		if err != nil {
+			return fmt.Errorf("pruning old %s: %w", what, err)
+		}
+		if n < pruneBatch {
+			return nil
+		}
+	}
+	return nil
 }

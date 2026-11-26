@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// UserAgent is what the brain says it is when it reads the web.
+const UserAgent = "Openarity (+https://github.com/LaplacianAI/openarity)"
+
 type Page struct {
 	URL      string
 	Title    string
