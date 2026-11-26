@@ -1392,3 +1392,43 @@ func TestACallWithNoArgumentTextHasEmptyArguments(t *testing.T) {
 		}
 	})
 }
+
+// Blank argument text is an empty object; any other text is passed on as it
+// came, broken or not, for the pattern to judge.
+func TestArgumentsOf(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"":          `{}`,
+		" \n\t":     `{}`,
+		`{}`:        `{}`,
+		`null`:      `null`,
+		`{"a":1}`:   `{"a":1}`,
+		`{"a`:       `{"a`,
+		` {"a":1} `: ` {"a":1} `,
+	} {
+		if got := string(argumentsOf(in)); got != want {
+			t.Errorf("argumentsOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A turn replayed with a call that has no arguments, as a transcript stored
+// before this fix holds, goes out as {}: a provider refuses "".
+func TestAReplayedCallWithNoArgumentsGoesOutAsAnEmptyObject(t *testing.T) {
+	t.Parallel()
+
+	c, sent := serve(t, answer(t, completion("done", nil, "stop")))
+	history := []agent.Message{
+		userSays("list the files"),
+		{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{ID: "toolu_1", Name: "attachments"}}},
+		{Role: agent.RoleTool, ToolCallID: "toolu_1", Content: []agent.Content{{Type: agent.ContentText, Text: "[]"}}},
+	}
+	if _, err := c.Complete(t.Context(), agent.Request{Model: agent.ModelRef{Name: "probe"}, Messages: history}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	raw, _ := json.Marshal(sent())
+	if !strings.Contains(string(raw), `"arguments":"{}"`) {
+		t.Errorf("the replayed call's arguments are not {}:\n%s", raw)
+	}
+}

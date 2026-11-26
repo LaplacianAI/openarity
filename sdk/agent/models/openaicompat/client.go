@@ -249,10 +249,13 @@ func (s *stream) assembled() []agent.ToolCall {
 	return out
 }
 
-// argumentsOf is a call's arguments as JSON. A tool that takes none is
-// called with no argument text at all by some models behind this API
-// (Anthropic's, streamed through a compatible gateway), which is an empty
-// object, not invalid JSON.
+// argumentsOf is a call's arguments as JSON, wherever a call crosses this
+// API: from a completion, from a stream, and back out in a replayed turn. A
+// tool that takes none is called with no argument text at all by some models
+// behind this API (Anthropic's, through a compatible gateway), which is an
+// empty object, not invalid JSON. A stream cut off cleanly after a call's
+// name, with no finish reason and no argument text, reads the same way; a
+// cut that leaves part of the text is still refused as not JSON.
 func argumentsOf(s string) json.RawMessage {
 	if strings.TrimSpace(s) == "" {
 		return json.RawMessage(`{}`)
@@ -442,7 +445,7 @@ func toAssistant(m agent.Message, model string) (openai.ChatCompletionMessagePar
 				ID: call.ID,
 				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
 					Name:      call.Name,
-					Arguments: string(call.Arguments),
+					Arguments: string(argumentsOf(string(call.Arguments))),
 				},
 			},
 		})
