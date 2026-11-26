@@ -2095,7 +2095,7 @@ func TestARunSendsAFileOfItsConversation(t *testing.T) {
 	)
 	f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil },
 		agent.Endpoint{BaseURL: "http://model.test"})
-	f.exec.builder.WithFileSends(FileSends{Store: f.store, SendsFiles: func(string) bool { return false }, Logger: quietLogger()})
+	f.exec.builder.WithFileSends(FileSends{Store: f.store, MaxFile: func(string) int64 { return 0 }, Logger: quietLogger()})
 
 	f.mustExecute(t)
 
@@ -2122,5 +2122,29 @@ func TestARunSendsAFileOfItsConversation(t *testing.T) {
 	f.mustScan(t, `SELECT count(*) FROM replies WHERE run_id = $1`, []any{f.run}, &replies)
 	if replies != 0 {
 		t.Errorf("%d replies queued for the dashboard", replies)
+	}
+}
+
+// The started event says which tools and skills the model finds by search
+// rather than is sent: every Discovery tool and skill past the SDK's line,
+// none under it.
+func TestTheStartedEventSaysWhatIsFoundBySearch(t *testing.T) {
+	t.Parallel()
+
+	big := agent.Tool{Name: "github__get_me", Description: strings.Repeat("x", 4*agent.DiscoverAbove), Schema: json.RawMessage(`{}`)}
+	small := agent.Tool{Name: "github__get_me", Description: "who I am", Schema: json.RawMessage(`{}`)}
+	spec := func(t agent.Tool) agent.Spec {
+		return agent.Spec{
+			Tools:     []agent.Tool{{Name: "graph"}},
+			Skills:    []agent.Skill{{Name: "pr-review"}},
+			Discovery: &agent.Discovery{Search: "graph", Tools: []agent.Tool{t}},
+		}
+	}
+	if got := startedOf("a", spec(big)); !slices.Equal(got.Found, []string{"github__get_me", "pr-review"}) ||
+		!slices.Equal(got.Tools, []string{"github__get_me", "graph"}) {
+		t.Errorf("large: tools %v, found %v", got.Tools, got.Found)
+	}
+	if got := startedOf("a", spec(small)); got.Found != nil {
+		t.Errorf("small: found %v, want none", got.Found)
 	}
 }

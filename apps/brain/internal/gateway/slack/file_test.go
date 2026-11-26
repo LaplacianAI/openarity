@@ -26,7 +26,7 @@ func uploader(t *testing.T) gateway.FileUploader {
 func fileOut(ref, caption string) gateway.Outbound {
 	return gateway.Outbound{
 		ID: "run-1:file:7", Session: gateway.Session{Ref: ref}, Kind: "file", Text: "report.pdf",
-		File: &gateway.OutFile{Name: "report.pdf", MediaType: "application/pdf", Caption: caption, Data: []byte("%PDF-1.7\n")},
+		File: &gateway.OutFile{Name: "report.pdf", MediaType: "application/pdf", Caption: caption, Size: 9},
 	}
 }
 
@@ -72,7 +72,8 @@ func TestAFileIsUploadedInThreeSteps(t *testing.T) {
 
 	bytesUp, final := step(t, out, uploadAnswer)
 	if bytesUp.URL != "https://files.slack.com/upload/v1/abcdefghi" || final ||
-		!bytes.Equal(bytesUp.Body, out.File.Data) || bytesUp.Header.Get("Content-Type") != "application/octet-stream" {
+		len(bytesUp.Body) != 0 || bytesUp.Stream == nil || bytesUp.Stream.Size != 9 || len(bytesUp.Stream.Tail) != 0 ||
+		bytesUp.Header.Get("Content-Type") != "application/octet-stream" {
 		t.Fatalf("step 2: %s %q, final %v", bytesUp.URL, bytesUp.Body, final)
 	}
 	if bytesUp.Header.Get("Authorization") != "" {
@@ -149,7 +150,7 @@ func TestAFourthStepIsRefused(t *testing.T) {
 // What cannot be uploaded builds nothing: no token, no file, nowhere to go.
 func TestAFileWithNothingToSendIsRefused(t *testing.T) {
 	empty := fileOut("C1", "")
-	empty.File.Data = nil
+	empty.File.Size = 0
 	nameless := fileOut(":1.2", "")
 	for name, c := range map[string]struct {
 		out   gateway.Outbound

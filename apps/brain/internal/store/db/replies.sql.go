@@ -148,6 +148,29 @@ func (q *Queries) CountRunFilesSent(ctx context.Context, runID uuid.UUID) (int64
 	return count, err
 }
 
+const extendReplyLease = `-- name: ExtendReplyLease :execrows
+UPDATE replies
+SET next_attempt_at = now() + make_interval(secs => $1::float8)
+WHERE id = $2 AND status = 'pending' AND attempts = $3
+`
+
+type ExtendReplyLeaseParams struct {
+	LeaseSeconds float64
+	ID           int64
+	Attempts     int32
+}
+
+// A file reply's lease, pushed out to what sending the file may take before
+// it is sent: a large one outlasts the claim's. Matched on attempts, so a
+// lease another sender took since is not extended; no row says so.
+func (q *Queries) ExtendReplyLease(ctx context.Context, arg ExtendReplyLeaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, extendReplyLease, arg.LeaseSeconds, arg.ID, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const fileReplyExists = `-- name: FileReplyExists :one
 SELECT EXISTS (
     SELECT 1 FROM replies

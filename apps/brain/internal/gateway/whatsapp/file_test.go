@@ -21,7 +21,7 @@ func fileOut(f *gateway.OutFile) gateway.Outbound {
 func TestAFileIsOnePartTheSocketReadsBack(t *testing.T) {
 	t.Parallel()
 
-	f := &gateway.OutFile{Name: "report.pdf", MediaType: "application/pdf", Caption: "Q3", Data: []byte("%PDF-1.7\n")}
+	f := &gateway.OutFile{Name: "report.pdf", MediaType: "application/pdf", Caption: "Q3", Size: 9}
 	reqs, err := whatsapp.New().(gateway.Replier).Reply(gateway.Channel{}, fileOut(f), nil, time.Time{}) //nolint:errcheck // a Replier
 	if err != nil || len(reqs) != 1 {
 		t.Fatalf("Reply = %d requests, %v", len(reqs), err)
@@ -34,31 +34,50 @@ func TestAFileIsOnePartTheSocketReadsBack(t *testing.T) {
 		t.Errorf("part %+v", p)
 	}
 	if p.File == nil || p.File.Name != "report.pdf" || p.File.MediaType != "application/pdf" ||
-		p.File.Caption != "Q3" || !bytes.Equal(p.File.Data, f.Data) {
+		p.File.Caption != "Q3" || p.File.Size != 9 {
 		t.Errorf("file %+v", p.File)
+	}
+	// The part names the file; its bytes are the request's stream.
+	if s := reqs[0].Stream; s == nil || s.Size != 9 || len(s.Tail) != 0 || bytes.Contains(reqs[0].Body, []byte("PDF")) {
+		t.Errorf("stream %+v, body %s", s, reqs[0].Body)
 	}
 }
 
-// A part is one thing: text, a poll or a file, and a file has bytes.
+// A part is one thing: text, a poll or a file, and a file has a size and
+// is the request's stream, of that size.
 func TestAPartIsExactlyOneOfTextAPollAndAFile(t *testing.T) {
 	t.Parallel()
 
-	for name, body := range map[string]string{
-		"text and a file": `{"id":"a","to":"b","text":"hi","file":{"name":"x","media_type":"text/plain","data":"eA=="}}`,
-		"a poll and a file": `{"id":"a","to":"b","poll":{"question":"q","options":["y","n"]},` +
-			`"file":{"name":"x","media_type":"text/plain","data":"eA=="}}`,
-		"an empty file": `{"id":"a","to":"b","file":{"name":"x","media_type":"text/plain"}}`,
+	file := &gateway.Stream{Size: 1}
+	for name, req := range map[string]gateway.OutboundRequest{
+		"text and a file": {Stream: file, Body: []byte(`{"id":"a","to":"b","text":"hi","file":{"name":"x","media_type":"text/plain","size":1}}`)},
+		"a poll and a file": {Stream: file, Body: []byte(`{"id":"a","to":"b","poll":{"question":"q","options":["y","n"]},` +
+			`"file":{"name":"x","media_type":"text/plain","size":1}}`)},
+		"an empty file":       {Stream: file, Body: []byte(`{"id":"a","to":"b","file":{"name":"x","media_type":"text/plain"}}`)},
+		"a file not streamed": {Body: []byte(`{"id":"a","to":"b","file":{"name":"x","media_type":"text/plain","size":1}}`)},
+		"a file streamed at another size": {
+			Stream: &gateway.Stream{Size: 2},
+			Body:   []byte(`{"id":"a","to":"b","file":{"name":"x","media_type":"text/plain","size":1}}`),
+		},
 	} {
-		if _, err := whatsapp.ReadPart(gateway.OutboundRequest{URL: whatsapp.SendURL, Body: []byte(body)}); err == nil {
+		req.URL = whatsapp.SendURL
+		if _, err := whatsapp.ReadPart(req); err == nil {
 			t.Errorf("%s was read as a part", name)
 		}
+	}
+	ok := gateway.OutboundRequest{
+		URL: whatsapp.SendURL, Stream: file,
+		Body: []byte(`{"id":"a","to":"b","file":{"name":"x","media_type":"text/plain","size":1}}`),
+	}
+	if _, err := whatsapp.ReadPart(ok); err != nil {
+		t.Errorf("a file part: %v", err)
 	}
 }
 
 func TestAFileReplyWithNoFileIsRefused(t *testing.T) {
 	t.Parallel()
 
-	for name, f := range map[string]*gateway.OutFile{"no file": nil, "no bytes": {Name: "e.txt", MediaType: "text/plain"}} {
+	for name, f := range map[string]*gateway.OutFile{"no file": nil, "no size": {Name: "e.txt", MediaType: "text/plain"}} {
 		if _, err := whatsapp.New().(gateway.Replier).Reply(gateway.Channel{}, fileOut(f), nil, time.Time{}); err == nil { //nolint:errcheck // a Replier
 			t.Errorf("%s built a request", name)
 		}

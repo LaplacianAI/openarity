@@ -93,3 +93,17 @@ func mustReply(t *testing.T, out gateway.Outbound) []gateway.OutboundRequest {
 	}
 	return reqs
 }
+
+// A custom channel takes files up to 25 MiB, whole: its reply is signed over
+// the file's bytes.
+func TestACustomChannelTakesWholeFilesUpTo25MiB(t *testing.T) {
+	t.Parallel()
+
+	reg, err := gateway.NewRegistry(custom.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.MaxFile("custom") != 25<<20 || !reg.WholeFiles("custom") {
+		t.Errorf("MaxFile = %d, whole %v", reg.MaxFile("custom"), reg.WholeFiles("custom"))
+	}
+}

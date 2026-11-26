@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"testing"
@@ -170,13 +171,18 @@ func (f *fakeClient) DecryptPollVote(_ context.Context, vote *events.Message) (*
 	return &waE2E.PollVoteMessage{SelectedOptions: hashes}, nil
 }
 
-// Upload answers as WhatsApp's media server does, naming the upload by
-// its length, so a test can see the message names what was uploaded.
-func (f *fakeClient) Upload(ctx context.Context, data []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+// UploadReader answers as WhatsApp's media server does, naming the upload
+// by the length it read, so a test can see the message names what was
+// uploaded.
+func (f *fakeClient) UploadReader(ctx context.Context, r io.Reader, _ io.ReadWriteSeeker, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.uploadErr != nil {
 		return whatsmeow.UploadResponse{}, f.uploadErr
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return whatsmeow.UploadResponse{}, fmt.Errorf("failed to encrypt file: %w", err)
 	}
 	f.uploads = append(f.uploads, data)
 	f.uploadDeadline, _ = ctx.Deadline()

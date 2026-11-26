@@ -537,9 +537,9 @@ file's name, and `file` carries the file itself, its bytes in base64:
 
 `media_type` is what the bytes are, as the brain sniffed them when the file was
 kept; `caption` is left out when the agent wrote none. A file sent to a
-channel is 25 MiB at most, so a reply is about 34 MB at most: read it before
-you time it out. A larger file, which `keep_file` keeps up to 100 MiB, is
-refused when `send_file` is called, and the agent is told it is in the
+`custom` channel is 25 MiB at most, so a reply is about 34 MB at most: read it
+before you time it out. A larger file, which `keep_file` keeps up to 100 MiB,
+is refused when `send_file` is called, and the agent is told it is in the
 conversation on the dashboard, which downloads any file it holds. Its
 `id` is `<run id>:file:<reply id>`, the same on every attempt, so drop a repeat
 by it, as every reply may arrive twice. A receiver written before this kind
@@ -551,7 +551,26 @@ a caption of 1024 characters at most, and a `custom` channel only when it has
 a reply URL. A file is tried twice, a minute apart, then given up, so it never
 holds the answer behind it for long. Telegram sends the file as a document and
 WhatsApp as a document message. Slack uploads the file into the thread with
-the caption as its comment, which needs the `files:write` scope. Neither
+the caption as its comment, which needs the `files:write` scope.
+
+Each channel takes files up to its own limit, and a larger one is refused when
+`send_file` is called, with the limit named:
+
+| Channel | Files up to |
+| --- | --- |
+| Slack | 100 MiB |
+| WhatsApp | 100 MiB |
+| Telegram | 50 MB, the most the Bot API takes from a bot |
+| custom | 25 MiB |
+
+A file is read from the store as it is sent, so a large one is not held in
+the brain's memory, but on a custom channel: it builds its message from the
+file's bytes, so it holds the whole file, up to 25 MiB, while it is sent. WhatsApp encrypts a file before it uploads it, into a
+temporary file the size of the file, so the WhatsApp role needs that much
+room in its temporary directory. A file whose upload fails part way is never
+shown in the chat: Telegram refuses a document cut short, Slack shares a file
+only once its upload completes, and WhatsApp sends the message only after the
+upload. Neither
 Telegram nor Slack deduplicates, so a file whose answer was lost on the way
 can arrive twice there. On the dashboard the file shows above the run's answer,
 and its bytes are `GET /teams/{id}/sessions/{sessionID}/attachments/{attachmentID}`.

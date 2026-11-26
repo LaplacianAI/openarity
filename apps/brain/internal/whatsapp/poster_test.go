@@ -1,7 +1,10 @@
 package whatsapp
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -26,16 +29,22 @@ func part(t *testing.T, p gwa.Part) gateway.OutboundRequest {
 	return reqs[0]
 }
 
-// filePart is a file reply's part, built by the adapter as the outbox does.
-func filePart(t *testing.T, to string, f *gateway.OutFile) gateway.OutboundRequest {
+// filePart is a file reply's part, built by the adapter as the outbox does,
+// its stream reading data as the outbox's reads the store.
+func filePart(t *testing.T, to string, f *gateway.OutFile, data []byte) gateway.OutboundRequest {
 	t.Helper()
+	if f.Size == 0 {
+		f.Size = int64(len(data))
+	}
 	reqs, err := gwa.New().(gateway.Replier).Reply(gateway.Channel{}, gateway.Outbound{ //nolint:errcheck // it is a Replier
 		ID: "run-1", Session: gateway.Session{Ref: to, Kind: gateway.SessionDirect}, Kind: "file", Text: f.Name, File: f,
 	}, nil, time.Time{})
 	if err != nil || len(reqs) != 1 {
 		t.Fatalf("Reply = %d requests, %v", len(reqs), err)
 	}
-	return reqs[0]
+	req := reqs[0]
+	req.Stream.Open = func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }
+	return req
 }
 
 func TestAPartIsTypedThenSentAndRecorded(t *testing.T) {
@@ -188,8 +197,8 @@ func TestAPollPartIsSentAsASingleChoicePoll(t *testing.T) {
 func TestAFilePartIsUploadedAndSentAsADocument(t *testing.T) {
 	f, ch, cli := connected(t)
 	req := filePart(t, priya.String(), &gateway.OutFile{
-		Name: "report.pdf", MediaType: "application/pdf", Caption: "The Q3 numbers", Data: []byte("%PDF-1.7\n"),
-	})
+		Name: "report.pdf", MediaType: "application/pdf", Caption: "The Q3 numbers",
+	}, []byte("%PDF-1.7\n"))
 	if err := f.a.Post(t.Context(), ch, req); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
@@ -210,7 +219,7 @@ func TestAFilePartIsUploadedAndSentAsADocument(t *testing.T) {
 func TestAFileWhoseUploadFailsSendsNothing(t *testing.T) {
 	f, ch, cli := connected(t)
 	cli.uploadErr = errors.New("media server unreachable")
-	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf", Data: []byte("x")})
+	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf"}, []byte("x"))
 	err := f.a.Post(t.Context(), ch, req)
 	if err == nil || errors.Is(err, gateway.ErrUnsendable) {
 		t.Fatalf("err = %v; want one the outbox retries", err)
@@ -227,7 +236,7 @@ func TestAFileWhoseUploadFailsSendsNothing(t *testing.T) {
 // that hangs would hold up every channel this process sends for.
 func TestAFileUploadHasADeadline(t *testing.T) {
 	f, ch, cli := connected(t)
-	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf", Data: []byte("x")})
+	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf"}, []byte("x"))
 	before := time.Now()
 	if err := f.a.Post(t.Context(), ch, req); err != nil {
 		t.Fatalf("Post: %v", err)
@@ -235,7 +244,44 @@ func TestAFileUploadHasADeadline(t *testing.T) {
 	if cli.uploadDeadline.IsZero() {
 		t.Fatal("the upload had no deadline")
 	}
-	if left := cli.uploadDeadline.Sub(before); left > gateway.PostTimeout(len(req.Body))+time.Second {
-		t.Errorf("deadline %v away, want at most %v", left, gateway.PostTimeout(len(req.Body)))
+	if left := cli.uploadDeadline.Sub(before); left > gateway.StreamTimeout(req.Length())+time.Second {
+		t.Errorf("deadline %v away, want at most %v", left, gateway.StreamTimeout(req.Length()))
+	}
+}
+
+// A large file's upload is given its size's time, past a post's minute.
+func TestALargeFileUploadIsGivenItsSizesTime(t *testing.T) {
+	f, ch, cli := connected(t)
+	req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.mp4", MediaType: "video/mp4"}, []byte("x"))
+	req.Stream.Size = 100 << 20
+	req.Body = bytes.Replace(req.Body, []byte(`"size":1`), []byte(`"size":104857600`), 1)
+	before := time.Now()
+	_ = f.a.Post(t.Context(), ch, req)
+	if left := cli.uploadDeadline.Sub(before); left < 5*time.Minute {
+		t.Errorf("a 100 MiB upload was given %v", left)
+	}
+}
+
+// A store that hands back less than the file, or a file not handed over,
+// sends nothing: the first is retried, the second never can be.
+func TestAFileNotWholeSendsNothing(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mangle func(*gateway.OutboundRequest)
+		final  bool
+	}{
+		"short": {func(r *gateway.OutboundRequest) {
+			r.Stream.Open = func(context.Context) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("%PDF")), nil }
+		}, false},
+		"not handed over": {func(r *gateway.OutboundRequest) { r.Stream.Open = nil }, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, ch, cli := connected(t)
+			req := filePart(t, priya.String(), &gateway.OutFile{Name: "a.pdf", MediaType: "application/pdf"}, []byte("%PDF-1.7\n"))
+			tc.mangle(&req)
+			err := f.a.Post(t.Context(), ch, req)
+			if err == nil || errors.Is(err, gateway.ErrUnsendable) != tc.final || len(cli.sent) != 0 {
+				t.Errorf("err = %v, sent %d; want it failed, final %v", err, len(cli.sent), tc.final)
+			}
+		})
 	}
 }

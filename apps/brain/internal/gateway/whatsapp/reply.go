@@ -49,7 +49,9 @@ type File struct {
 	Name      string `json:"name"`
 	MediaType string `json:"media_type"`
 	Caption   string `json:"caption,omitempty"`
-	Data      []byte `json:"data"`
+	// Size is the file's, whose bytes are the request's Stream: a part
+	// names the file, never holds it.
+	Size int64 `json:"size"`
 }
 
 // Poll is a single-choice poll: the question, and the options a vote is
@@ -161,8 +163,11 @@ func ReadPart(req gateway.OutboundRequest) (Part, error) {
 			kinds++
 		}
 	}
-	if p.ID == "" || p.To == "" || kinds != 1 || (p.File != nil && len(p.File.Data) == 0) {
+	if p.ID == "" || p.To == "" || kinds != 1 || (p.File != nil && p.File.Size <= 0) {
 		return Part{}, errors.New("whatsapp: a part with no id, address, or exactly one of text, a poll and a file")
+	}
+	if p.File != nil && (req.Stream == nil || req.Stream.Size != p.File.Size) {
+		return Part{}, errors.New("whatsapp: a file part that does not stream its file")
 	}
 	if p.Poll != nil && (p.Poll.Question == "" || len(p.Poll.Options) < 2) {
 		return Part{}, errors.New("whatsapp: a poll with no question or fewer than two options")

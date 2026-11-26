@@ -16,6 +16,10 @@ import (
 // three steps FileRequest builds. Reply builds none of them.
 func (provider) RepliesWithFiles() {}
 
+// MaxFile is what a conversation keeps, 100 MiB: Slack itself takes far
+// larger files.
+func (provider) MaxFile() int64 { return 100 << 20 }
+
 // uploadHost is where Slack takes a file's bytes. An upload_url anywhere else
 // is refused, so an answer that is not Slack's cannot send the file elsewhere.
 const uploadHost = "files.slack.com"
@@ -37,7 +41,7 @@ func (provider) FileRequest(
 	if token == "" {
 		return gateway.OutboundRequest{}, false, errors.New("slack: no bot token")
 	}
-	if out.File == nil || len(out.File.Data) == 0 {
+	if out.File == nil || out.File.Size <= 0 {
 		return gateway.OutboundRequest{}, false, errors.New("slack: the reply carries no file")
 	}
 	channel, thread, err := target(out.Session.Ref)
@@ -48,7 +52,7 @@ func (provider) FileRequest(
 	case 0:
 		return form(token, "files.getUploadURLExternal", url.Values{
 			"filename": {out.File.Name},
-			"length":   {strconv.Itoa(len(out.File.Data))},
+			"length":   {strconv.FormatInt(out.File.Size, 10)},
 		}), false, nil
 	case 1:
 		up, err := uploadOf(answers[0])
@@ -57,7 +61,7 @@ func (provider) FileRequest(
 		}
 		h := http.Header{}
 		h.Set("Content-Type", "application/octet-stream")
-		return gateway.OutboundRequest{URL: up.url, Header: h, Body: out.File.Data}, false, nil
+		return gateway.OutboundRequest{URL: up.url, Header: h, Stream: &gateway.Stream{Size: out.File.Size}}, false, nil
 	case 2:
 		up, err := uploadOf(answers[0])
 		if err != nil {
