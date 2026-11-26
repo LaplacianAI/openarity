@@ -446,6 +446,17 @@ func TestARunBegunAgainAfterItsMarkAddsNoSecond(t *testing.T) {
 		if _, _, err := f.exec.begin(t.Context(), row, msgs); err != nil {
 			t.Fatal(err)
 		}
+		// The worker stopped after the mark and before the place.
+		if _, err := f.raw.Exec(t.Context(), "UPDATE runs SET transcript_from = NULL WHERE id = $1", row.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs, err := f.sessions.Messages(t.Context(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.exec.begin(t.Context(), row, msgs); err != nil {
+		t.Fatal(err)
 	}
 	stored, err := f.sessions.Messages(t.Context(), session)
 	if err != nil {
