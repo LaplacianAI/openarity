@@ -15,6 +15,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -450,7 +451,9 @@ func view(r db.Run, delegates []string, rp *reply) run {
 		ID: r.ID, SessionID: r.SessionID, Agent: r.AgentName, Status: r.Status,
 		Input: r.Input, Output: r.Output, Error: r.Error,
 		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
-		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+		Spent:       harness.Spent(r.InputTokens, r.CachedInputTokens, r.OutputTokens),
+		TokenBudget: harness.BudgetOf(r.TokenBudget),
+		CreatedAt:   r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		ParentRunID: r.ParentRunID, Depth: r.Depth, Hub: r.Hub,
 		Builder: r.Builder, MessageID: r.MessageID, Delegates: delegates, Reply: rp,
 	}

@@ -9904,6 +9904,8 @@ components:
         - input
         - input_tokens
         - output_tokens
+        - spent
+        - token_budget
         - created_at
         - depth
         - hub
@@ -9993,6 +9995,20 @@ components:
         output_tokens:
           type: integer
           format: int64
+        spent:
+          type: integer
+          format: int64
+          description: |
+            What the run's tokens count against its budget: fresh input and
+            output in full, a cached input token as a tenth of one, as
+            providers bill it. So it is less than input plus output whenever
+            the provider's cache was read.
+          examples: [573529]
+        token_budget:
+          type: integer
+          format: int64
+          description: The budget the run started with, its agent's or the deployment's default
+          examples: [2000000]
         created_at:
           type: string
           format: date-time
