@@ -145,6 +145,70 @@ func (q *Queries) AdoptChild(ctx context.Context, arg AdoptChildParams) (Run, er
 	return i, err
 }
 
+const adoptOrphan = `-- name: AdoptOrphan :one
+UPDATE runs SET worker = $1::text, heartbeat_at = now()
+WHERE id = $2::uuid AND status = 'running' AND parent_run_id = $3::uuid
+  AND heartbeat_at < now() - make_interval(secs => $4::float8)
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since, cached_input_tokens
+`
+
+type AdoptOrphanParams struct {
+	Worker       string
+	ID           uuid.UUID
+	ParentID     uuid.UUID
+	StaleSeconds float64
+}
+
+// A child whose worker stopped, taken up by its resumed parent's worker. No
+// row: it beat again since it was listed, is no longer running, or is not
+// that parent's.
+func (q *Queries) AdoptOrphan(ctx context.Context, arg AdoptOrphanParams) (Run, error) {
+	row := q.db.QueryRow(ctx, adoptOrphan,
+		arg.Worker,
+		arg.ID,
+		arg.ParentID,
+		arg.StaleSeconds,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.SessionID,
+		&i.ParentRunID,
+		&i.RootRunID,
+		&i.ParentToolCall,
+		&i.Depth,
+		&i.AgentID,
+		&i.AgentName,
+		&i.UserID,
+		&i.Status,
+		&i.Input,
+		&i.Output,
+		&i.Error,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.Worker,
+		&i.HeartbeatAt,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.TokenBudget,
+		&i.Hub,
+		&i.MessageID,
+		&i.ReplyToChannel,
+		&i.Builder,
+		&i.Transcript,
+		&i.TranscriptFrom,
+		&i.Attempt,
+		&i.Unattended,
+		&i.WaitedSeconds,
+		&i.WaitingSince,
+		&i.CachedInputTokens,
+	)
+	return i, err
+}
+
 const builderCanRun = `-- name: BuilderCanRun :one
 SELECT EXISTS (
     SELECT 1 FROM team_settings s WHERE s.team_id = $1 AND s.model_name IS NOT NULL
@@ -818,6 +882,76 @@ func (q *Queries) ListMessagesSinceLastRun(ctx context.Context, arg ListMessages
 	return items, nil
 }
 
+const listOrphanedChildren = `-- name: ListOrphanedChildren :many
+SELECT id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since, cached_input_tokens FROM runs
+WHERE parent_run_id = $1::uuid AND status = 'running'
+  AND heartbeat_at < now() - make_interval(secs => $2::float8)
+ORDER BY created_at, id
+`
+
+type ListOrphanedChildrenParams struct {
+	ParentID     uuid.UUID
+	StaleSeconds float64
+}
+
+// A run's children whose worker stopped while they ran: running, and not
+// heartbeating for stale_seconds. Only a resumed parent asks, and it carries
+// them on.
+func (q *Queries) ListOrphanedChildren(ctx context.Context, arg ListOrphanedChildrenParams) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listOrphanedChildren, arg.ParentID, arg.StaleSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.SessionID,
+			&i.ParentRunID,
+			&i.RootRunID,
+			&i.ParentToolCall,
+			&i.Depth,
+			&i.AgentID,
+			&i.AgentName,
+			&i.UserID,
+			&i.Status,
+			&i.Input,
+			&i.Output,
+			&i.Error,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.Worker,
+			&i.HeartbeatAt,
+			&i.CancelRequestedAt,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.TokenBudget,
+			&i.Hub,
+			&i.MessageID,
+			&i.ReplyToChannel,
+			&i.Builder,
+			&i.Transcript,
+			&i.TranscriptFrom,
+			&i.Attempt,
+			&i.Unattended,
+			&i.WaitedSeconds,
+			&i.WaitingSince,
+			&i.CachedInputTokens,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunDelegates = `-- name: ListRunDelegates :many
 SELECT root_run_id, agent_name
 FROM runs
@@ -1234,11 +1368,11 @@ type ReapChildrenParams struct {
 	ParentID       uuid.UUID
 }
 
-// After a crash the resumed parent asks again rather than finding what it
-// asked before, so whatever was still running beneath it fails, at any depth.
-// A child waiting for a person stopped cleanly and is taken up again by the
-// resume, so it is left; a parent that ends takes its waiting children with
-// it (include_waiting).
+// After a crash the resumed parent carries on the children its worker left
+// (AdoptOrphan); whatever is still running beneath it then fails, at any
+// depth, and its model asks again. A child waiting for a person stopped
+// cleanly and is taken up again by the resume, so it is left; a parent that
+// ends takes its waiting children with it (include_waiting).
 func (q *Queries) ReapChildren(ctx context.Context, arg ReapChildrenParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, reapChildren, arg.Reason, arg.IncludeWaiting, arg.ParentID)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +35,11 @@ var ErrNoPlan = errors.New("the planning call did not submit a readable plan")
 // a caller that parks suspended runs must not park one that cannot go on.
 var ErrCannotWait = errors.New("a tool suspended the run, and a planned run cannot wait")
 
+// ErrToolMarkup is an answer that ends in a tool call written out as text:
+// the answer step has no tools, and a model that still wants one can write
+// its call as markup, which is no answer to send anyone.
+var ErrToolMarkup = errors.New("the answer was a tool call written as text, not an answer")
+
 var errNothingToPlan = errors.New("the planning call found nothing to plan")
 
 func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
@@ -49,7 +55,7 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 
 	result := agent.Result{Messages: slices.Clone(in.Messages)}
 	in.Emit(ctx, agent.StepEvent{Step: 1})
-	plan, call, resp, err := l.plan(ctx, in)
+	plan, call, resp, err := l.readPlan(ctx, in)
 	result.Steps = 1
 	// A plan the model wrote that cannot be read, is too long or was cut off
 	// is answered as no plan at all: what the person asked is still owed an
@@ -62,7 +68,7 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 		// Answered as after a plan, with no evidence: the planning turn's
 		// own words were never shown, so they are not kept as the answer.
 		in.Emit(ctx, agent.StepEvent{Step: 2})
-		answer, err := l.solve(ctx, in, slices.Clone(in.Messages))
+		answer, err := l.solve(ctx, in, slices.Clone(in.Messages), unplanned)
 		result.Steps = 2
 		result.Messages = append(slices.Clone(in.Messages), answer.msgs...)
 		result.Output = answer.text
@@ -92,7 +98,7 @@ func (l rewoo) Run(ctx context.Context, in agent.Input) (agent.Result, error) {
 	}
 
 	in.Emit(ctx, agent.StepEvent{Step: 2})
-	answer, err := l.solve(ctx, in, msgs)
+	answer, err := l.solve(ctx, in, msgs, solving)
 	result.Steps = 2
 	msgs = append(msgs, answer.msgs...)
 	result.Messages = msgs
@@ -108,6 +114,35 @@ type step struct {
 	Tool string          `json:"tool"`
 	Args json.RawMessage `json:"args"`
 	Why  string          `json:"why"`
+}
+
+// readPlan asks for the plan, and once more when it cannot be read: steps in
+// the wrong shape are a slip a model rarely makes twice. The refused call is
+// not sent back, as its arguments may not parse; the model is told what shape
+// the plan takes, not the parser's words.
+func (l rewoo) readPlan(ctx context.Context, in agent.Input) ([]step, agent.ToolCall, agent.Response, error) {
+	plan, call, resp, err := l.plan(ctx, in)
+	if !errors.Is(err, ErrNoPlan) {
+		return plan, call, resp, err
+	}
+	again := in
+	again.Messages = withNote(in.Messages, "Your plan could not be read. Call "+PlanToolName+
+		" again with the whole plan: steps is a list of objects, each with tool, args and why.")
+	return l.plan(ctx, again)
+}
+
+// withNote is msgs with text added for the model: to the last message when
+// that is the person's, so two user turns never follow each other, else as a
+// message of its own.
+func withNote(msgs []agent.Message, text string) []agent.Message {
+	out := slices.Clone(msgs)
+	if n := len(out); n > 0 && out[n-1].Role == agent.RoleUser && !out[n-1].Attached {
+		last := out[n-1]
+		last.Content = append(slices.Clone(last.Content), agent.Content{Type: agent.ContentText, Text: text})
+		out[n-1] = last
+		return out
+	}
+	return append(out, userText(text))
 }
 
 func (l rewoo) plan(ctx context.Context, in agent.Input) ([]step, agent.ToolCall, agent.Response, error) {
@@ -137,20 +172,44 @@ func (l rewoo) plan(ctx context.Context, in agent.Input) ([]step, agent.ToolCall
 	}
 
 	var submitted struct {
-		Steps []step `json:"steps"`
+		Steps json.RawMessage `json:"steps"`
 	}
 	if err := json.Unmarshal(call.Arguments, &submitted); err != nil {
 		return nil, call, resp, fmt.Errorf("%w: its arguments were not valid JSON: %w", ErrNoPlan, err)
 	}
-	if len(submitted.Steps) == 0 {
+	steps, err := parseSteps(submitted.Steps)
+	if err != nil {
+		return nil, call, resp, fmt.Errorf("%w: its steps are not a list of steps: %w", ErrNoPlan, err)
+	}
+	if len(steps) == 0 {
 		return nil, call, resp, errNothingToPlan
 	}
-	if n := len(submitted.Steps); n > in.Spec.MaxSteps {
+	if n := len(steps); n > in.Spec.MaxSteps {
 		return nil, call, resp, fmt.Errorf("%w: the plan asks for %d steps against a ceiling of %d",
 			agent.ErrMaxSteps, n, in.Spec.MaxSteps)
 	}
 
-	return submitted.Steps, call, resp, nil
+	return steps, call, resp, nil
+}
+
+// parseSteps reads a plan's steps: a list, or that list sent as a JSON
+// string, as some models send an array argument. Absent or null is none.
+func parseSteps(raw json.RawMessage) ([]step, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	if raw[0] == '"' {
+		var inner string
+		if err := json.Unmarshal(raw, &inner); err != nil {
+			return nil, err
+		}
+		raw = json.RawMessage(inner)
+	}
+	var steps []step
+	if err := json.Unmarshal(raw, &steps); err != nil {
+		return nil, err
+	}
+	return steps, nil
 }
 
 // stepFiles are the files a plan's steps attached, by step.
@@ -216,9 +275,9 @@ func record(b *strings.Builder, id, name string, args json.RawMessage, out strin
 	fmt.Fprintf(b, "%s = %s(%s)\n  %s\n", id, name, args, out)
 }
 
-func (l rewoo) solve(ctx context.Context, in agent.Input, msgs []agent.Message) (carried, error) {
+func (l rewoo) solve(ctx context.Context, in agent.Input, msgs []agent.Message, prompt agent.Content) (carried, error) {
 	ask := in
-	ask.Spec.System = append(slices.Clone(in.Spec.System), solving)
+	ask.Spec.System = append(slices.Clone(in.Spec.System), prompt)
 	ask.Spec.Tools = nil
 
 	resp, err := (rewoo{stream: l.stream}).call(ctx, ask, msgs)
@@ -230,7 +289,45 @@ func (l rewoo) solve(ctx context.Context, in agent.Input, msgs []agent.Message) 
 	if err != nil {
 		return c, fmt.Errorf("solving: %w", err)
 	}
+	if endsInToolCall(c.text) {
+		// Nothing carried: markup is no answer, so it is neither the output
+		// nor a turn the runner would save into the session.
+		return carried{}, fmt.Errorf("solving: %w", ErrToolMarkup)
+	}
 	return c, nil
+}
+
+// The tags of a tool call written as text, as Anthropic's models write one
+// (invoke, inside function_calls) and as Qwen's and Hermes-style models do
+// (tool_call). A close tag need not match its open one.
+var (
+	callOpen  = regexp.MustCompile(`<(?:antml:)?(?:invoke|tool_call)\b`)
+	callClose = regexp.MustCompile(`</(?:antml:)?(?:invoke|tool_call)>`)
+	callWrap  = regexp.MustCompile(`(?:\s*</(?:antml:)?function_calls>)+\z`)
+	paramOpen = regexp.MustCompile(`\A\s*<(?:antml:)?parameter\b`)
+)
+
+// endsInToolCall is whether an answer ends with a tool call written as text:
+// the answer step has no tools, so a call there is the model trying to make
+// one, which no person can use, whatever came before it. The last call is
+// whole, ending the text; cut off after its parameters began; or cut off in
+// its open tag. Prose that quotes a call and goes on is an answer.
+func endsInToolCall(text string) bool {
+	text = callWrap.ReplaceAllString(strings.TrimSpace(text), "")
+	opens := callOpen.FindAllStringIndex(text, -1)
+	if len(opens) == 0 {
+		return false
+	}
+	last := text[opens[len(opens)-1][0]:]
+	if closes := callClose.FindAllStringIndex(last, -1); len(closes) > 0 {
+		return closes[len(closes)-1][1] == len(last)
+	}
+	end := strings.IndexByte(last, '>')
+	if end < 0 {
+		return true
+	}
+	rest := last[end+1:]
+	return strings.TrimSpace(rest) == "" || paramOpen.MatchString(rest)
 }
 
 func (l rewoo) call(ctx context.Context, in agent.Input, msgs []agent.Message) (agent.Response, error) {
@@ -353,6 +450,13 @@ func catalogue(tools []agent.Tool, maxSteps int) agent.Content {
 	b.WriteString("Then call " + PlanToolName + " once with every step.\n")
 
 	return agent.Content{Type: agent.ContentText, Text: b.String()}
+}
+
+// unplanned is the answer step's prompt when no plan ran: nothing was
+// looked up, and the model must not answer as if it had been.
+var unplanned = agent.Content{
+	Type: agent.ContentText,
+	Text: "No tool ran, and none can run now. Answer from what you know; if the question needed something looked up, say plainly what you could not check. Do not write tool calls.",
 }
 
 var solving = agent.Content{
