@@ -220,6 +220,45 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     waiting for its secret is 404 where one to an active hook is 401, so a
     caller holding a hook id can tell the two apart; the id is 128 random
     bits.
+- **An agent proposes schedules and watchers; the person confirms them**
+  (design: schedules and watchers, D10). The `schedule` and `watch` tools act
+  as the person a run is for, on their own alone, and what they make starts
+  only once a later message of that person's, in the conversation it was
+  proposed in, confirms it.
+  - **Who holds them.** A top-level run a person is there for, of the hub or
+    of an agent granted `schedule`, while the team lets agents schedule and
+    the person holds `schedule:write`. Never a delegated run, the builder's,
+    or a run a schedule or watcher started; a run told it has none says why.
+    An agent's own improvement proposals cannot grant it, as a workspace;
+    a builder blueprint can, for a person to apply. A replay holds them as
+    stand-ins.
+  - **The rules live in `internal/triggers`, tools and all,** where the LLD
+    put the tools in the runtime: `triggers` sits above `internal/api`, so
+    the runtime takes them through a narrow interface (`Scheduling`) that
+    `cmd/brain` adapts, as it does the builder's workshop.
+  - **Not gated by the team's approvals.** A proposal already waits for the
+    person's yes; pause, resume, delete and run now act on their own, as the
+    dashboard does (*user*, 2026-11-27). Gating would ask on every list.
+  - **An agent's change to what one does waits for the same yes, beside it**
+    (*user*, 2026-11-27). A page an agent read could otherwise rewrite what
+    runs as the person. The schedule or watcher runs on as it was, the change
+    held in `pending` with the run and conversation that proposed it, until
+    a later message confirms it; unconfirmed within the hour, the sweep drops
+    it and nothing else. Back to `proposed`, as first asked, would stop it
+    firing meanwhile and have the sweep delete a working one. The maker's own
+    change replaces a waiting one. A proposal not yet confirmed is revised in
+    place, and the run that revised it may not confirm it.
+  - **It runs the agent talking, or one it may hand work to,** checked as
+    delegation is. The hub's run the hub, whichever agent the team made it.
+  - **Here is the chat it was asked in; on the dashboard, a conversation of
+    its own** (*user*, 2026-11-27). `me` is the person's direct messages on
+    the chat's channel.
+  - **No secret passes through a chat.** A webhook watcher an agent proposes
+    waits for its secret, and the tool gives a link to the dashboard,
+    `<PUBLIC_URL>/ui/schedules/watchers/<id>`, which part 7 builds. Making
+    the secret there is its confirmation.
+  - **What the tools say is a refusal said for the model,** as `Refused: …`,
+    and a failure stays an error.
 - **The worker deletes DBOS's record of finished background work after a
   week.** DBOS v1.2.0 never deletes a workflow row, and every tick of every
   sweep leaves one. `internal/retention`, a job of its own, lists the

@@ -81,6 +81,9 @@ type Builder struct {
 	// is given send_file. kickFile has a channel's file reply sent now.
 	sends    *FileSends
 	kickFile func(runID uuid.UUID, callID string)
+	// scheduling hands a top-level run the schedule and watch tools
+	// (scheduling.go); without it no run is given them.
+	scheduling Scheduling
 	// replay builds a past run again for a replay (replay.go): the tools a
 	// run of the agent would hold, those that reach live state as stand-ins.
 	replay bool
@@ -335,6 +338,14 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			built.reads[h.Name] = true
 			built.Spec.Tools = append(built.Spec.Tools, h)
 		}
+	}
+
+	// Not gated: what they make is a proposal the person confirms in their
+	// next message, and a change waits for the same yes; the rest acts on
+	// the person's own, as the dashboard does.
+	if err := b.schedulingFor(ctx, run, a, &built); err != nil {
+		built.Close()
+		return Built{}, err
 	}
 
 	if web {

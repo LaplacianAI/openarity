@@ -118,6 +118,16 @@ type Replayer struct {
 	runner   *agent.Runner
 	endpoint agent.Endpoint
 	now      func() time.Time
+	// scheduling names the schedule and watch tools a run held, for their
+	// stand-ins.
+	scheduling Scheduling
+}
+
+// WithScheduling has a replay hold the schedule and watch tools, as
+// stand-ins, where the run would.
+func (p *Replayer) WithScheduling(s Scheduling) *Replayer {
+	p.scheduling = s
+	return p
 }
 
 // NewReplayer replays with rules telling who each past run acted for and
@@ -149,7 +159,7 @@ func (p *Replayer) Replay(ctx context.Context, in ReplayInput) (Replayed, error)
 	b := &Builder{
 		store: in.Store, objects: in.Objects, rules: p.rules,
 		mcp: p.mcp, graph: p.graph, search: p.search, fetch: p.fetch,
-		connectTimeout: connectTimeout, replay: true,
+		connectTimeout: connectTimeout, replay: true, scheduling: p.scheduling,
 	}
 	// Built as the past run was, under an id of its own that names no row.
 	run.ID = uuid.New()

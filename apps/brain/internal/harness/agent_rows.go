@@ -30,7 +30,7 @@ func Columns(req Request) (db.CreateAgentParams, error) {
 		Pattern: req.Pattern, MaxSteps: req.MaxSteps, SteerContinuations: req.SteerContinuations,
 		Parser: req.Parser, TokenBudget: req.TokenBudget, Delegation: delegationOf(req),
 		Web: req.Web != nil && *req.Web, Browser: req.Browser != nil && *req.Browser,
-		Workspace: req.Workspace != nil && *req.Workspace,
+		Workspace: req.Workspace != nil && *req.Workspace, Schedule: req.Schedule != nil && *req.Schedule,
 	}
 
 	if req.OutputSchema != nil {
@@ -51,13 +51,13 @@ func Columns(req Request) (db.CreateAgentParams, error) {
 // RequestOf is the request Columns would turn into this row, grants aside:
 // what an agent is, said the way it is asked for.
 func RequestOf(row db.Agent) (Request, error) {
-	delegation, web, browser, workspace := row.Delegation, row.Web, row.Browser, row.Workspace
+	delegation, web, browser, workspace, schedule := row.Delegation, row.Web, row.Browser, row.Workspace, row.Schedule
 	req := Request{
 		Name: row.Name, Description: row.Description, Kind: Kind(row.Kind), Instructions: row.Instructions,
 		Model:   ModelRef{Name: row.ModelName, MaxTokens: row.MaxTokens, Temperature: row.Temperature},
 		Pattern: row.Pattern, MaxSteps: row.MaxSteps, SteerContinuations: row.SteerContinuations,
 		Parser: row.Parser, TokenBudget: row.TokenBudget, Delegation: &delegation, Web: &web,
-		Browser: &browser, Workspace: &workspace,
+		Browser: &browser, Workspace: &workspace, Schedule: &schedule,
 	}
 
 	if row.OutputSchema != nil {
@@ -84,7 +84,7 @@ func UpdateParams(id uuid.UUID, c db.CreateAgentParams) db.UpdateAgentParams {
 		OutputSchema: c.OutputSchema, Parser: c.Parser,
 		ParserModelName: c.ParserModelName, ParserMaxTokens: c.ParserMaxTokens, ParserTemperature: c.ParserTemperature,
 		TokenBudget: c.TokenBudget, Delegation: c.Delegation, Web: c.Web, Browser: c.Browser,
-		Workspace: c.Workspace,
+		Workspace: c.Workspace, Schedule: c.Schedule,
 	}
 }
 

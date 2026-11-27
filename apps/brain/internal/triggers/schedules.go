@@ -265,6 +265,8 @@ func (s *Service) UpdateSchedule(ctx context.Context, who Who, ref Ref, p Schedu
 			if err := ownsIt(who, *row); err != nil {
 				return err
 			}
+			// The maker's own change replaces an agent's waiting one.
+			dropPending(&row.Pending, &row.PendingRun, &row.PendingIn, &row.PendingAt)
 		}
 		if err := applyPatch(ctx, q, row, p, l, now); err != nil {
 			return err
@@ -422,8 +424,15 @@ func resumeRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Ti
 // a later message from the same person, in the conversation it was proposed
 // in, may: text the proposing run read cannot confirm what it proposed.
 func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) (ScheduleView, error) {
+	l, err := s.limits(ctx, who.Team)
+	if err != nil {
+		return ScheduleView{}, err
+	}
 	now := s.now()
 	id, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
+		if row.Status != Proposed && row.Pending != nil {
+			return confirmScheduleChange(ctx, q, who, origin, row, l, now)
+		}
 		if row.Status != Proposed {
 			return refuse(Conflict, "this schedule is not waiting to be confirmed; it is %s", row.Status)
 		}
@@ -797,6 +806,8 @@ func saveOf(r db.Schedule) db.SaveScheduleParams {
 		Kind: r.Kind, Rule: r.Rule, Anchor: r.Anchor, Timezone: r.Timezone, Status: r.Status,
 		PausedReason: r.PausedReason, DeletedAt: r.DeletedAt, NextFireAt: r.NextFireAt,
 		LastFiredAt: r.LastFiredAt, LastLocal: r.LastLocal, ConsecutiveFailures: r.ConsecutiveFailures,
+		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn,
+		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt,
 	}
 }
 

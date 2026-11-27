@@ -330,8 +330,12 @@ func (s *Service) UpdateWatcher(ctx context.Context, who Who, ref Ref, p Watcher
 	}
 	now := s.now()
 	id, err := s.changeWatcher(ctx, who, ref, func(q *db.Queries, row *db.Watcher) error {
-		if p.changesWhatItDoes() && !madeBy(who, row.CreatedBy) {
-			return refuse(Forbidden, "only the person who made this watcher may change what it does or check it now")
+		if p.changesWhatItDoes() {
+			if !madeBy(who, row.CreatedBy) {
+				return refuse(Forbidden, "only the person who made this watcher may change what it does or check it now")
+			}
+			// The maker's own change replaces an agent's waiting one.
+			dropPending(&row.Pending, &row.PendingRun, &row.PendingIn, &row.PendingAt)
 		}
 		if err := patchWatcher(ctx, q, row, p, l); err != nil {
 			return err
@@ -498,8 +502,15 @@ func (s *Service) CheckNow(ctx context.Context, who Who, ref Ref) (WatcherView, 
 // agent's tool, only a run started by a later message from the same person,
 // in the conversation it was proposed in, may.
 func (s *Service) ConfirmWatcher(ctx context.Context, who Who, origin Origin, ref Ref) (WatcherView, error) {
+	l, err := s.limits(ctx, who.Team)
+	if err != nil {
+		return WatcherView{}, err
+	}
 	now := s.now()
 	id, err := s.changeWatcher(ctx, who, ref, func(q *db.Queries, row *db.Watcher) error {
+		if row.Status != Proposed && row.Pending != nil {
+			return confirmWatcherChange(ctx, q, who, origin, row, l, now)
+		}
 		if row.Status != Proposed {
 			return refuse(Conflict, "this watcher is not waiting to be confirmed; it is %s", row.Status)
 		}
@@ -717,6 +728,8 @@ func saveWatcherOf(r db.Watcher) db.SaveWatcherParams {
 		TargetID: r.TargetID, Selector: r.Selector, EverySeconds: r.EverySeconds, CooldownSeconds: r.CooldownSeconds,
 		State: state, Status: r.Status, PausedReason: r.PausedReason, DeletedAt: r.DeletedAt,
 		NextCheckAt: r.NextCheckAt, LastRunAt: r.LastRunAt, ConsecutiveFailures: r.ConsecutiveFailures,
+		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn,
+		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt,
 	}
 }
 

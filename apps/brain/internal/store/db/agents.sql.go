@@ -119,12 +119,12 @@ INSERT INTO agents (
     team_id, name, description, kind, instructions,
     model_name, max_tokens, temperature, pattern, max_steps, steer_continuations,
     output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature,
-    token_budget, delegation, web, browser, workspace
+    token_budget, delegation, web, browser, workspace, schedule
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
     $12, $13, $14, $15, $16,
-    $17, $18, $19, $20, $21
+    $17, $18, $19, $20, $21, $22
 ) RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace, schedule
 `
 
@@ -150,6 +150,7 @@ type CreateAgentParams struct {
 	Web                bool
 	Browser            bool
 	Workspace          bool
+	Schedule           bool
 }
 
 func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent, error) {
@@ -175,6 +176,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.Web,
 		arg.Browser,
 		arg.Workspace,
+		arg.Schedule,
 	)
 	var i Agent
 	err := row.Scan(
@@ -731,8 +733,9 @@ UPDATE agents SET
     web                 = $17,
     browser             = $18,
     workspace           = $19,
+    schedule            = $20,
     updated_at          = now()
-WHERE id = $20
+WHERE id = $21
 RETURNING id, team_id, name, description, kind, instructions, model_name, max_tokens, temperature, pattern, max_steps, steer_continuations, output_schema, parser, parser_model_name, parser_max_tokens, parser_temperature, created_at, updated_at, token_budget, delegation, web, browser, workspace, schedule
 `
 
@@ -756,6 +759,7 @@ type UpdateAgentParams struct {
 	Web                bool
 	Browser            bool
 	Workspace          bool
+	Schedule           bool
 	ID                 uuid.UUID
 }
 
@@ -781,6 +785,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.Web,
 		arg.Browser,
 		arg.Workspace,
+		arg.Schedule,
 		arg.ID,
 	)
 	var i Agent

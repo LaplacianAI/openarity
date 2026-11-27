@@ -63,6 +63,12 @@ UPDATE watchers SET
     next_check_at    = sqlc.narg('next_check_at'),
     last_run_at      = sqlc.narg('last_run_at'),
     consecutive_failures = sqlc.arg('consecutive_failures'),
+    proposed_run  = sqlc.narg('proposed_run'),
+    proposed_in   = sqlc.narg('proposed_in'),
+    pending       = sqlc.narg('pending'),
+    pending_run   = sqlc.narg('pending_run'),
+    pending_in    = sqlc.narg('pending_in'),
+    pending_at    = sqlc.narg('pending_at'),
     updated_at       = now()
 WHERE id = sqlc.arg('id')
 RETURNING *;
@@ -287,6 +293,12 @@ WITH gone AS (
 )
 UPDATE sessions SET status = 'closed'
 WHERE watcher_id IN (SELECT id FROM gone);
+
+-- An agent's change nobody confirmed within the hour is dropped; the
+-- watcher runs on as it was.
+-- name: DropLapsedWatcherChanges :execrows
+UPDATE watchers SET pending = NULL, pending_run = NULL, pending_in = NULL, pending_at = NULL, updated_at = now()
+WHERE pending_at < sqlc.arg('before')::timestamptz;
 
 -- Each watcher keeps its newest checks; the rest go a batch at a time.
 -- name: PruneWatcherChecks :execrows

@@ -291,29 +291,30 @@ func (h *handler) checks(w http.ResponseWriter, r *http.Request) {
 }
 
 type watcher struct {
-	ID              uuid.UUID  `json:"id"`
-	Name            string     `json:"name"`
-	Objective       string     `json:"objective"`
-	Source          string     `json:"source"`
-	URL             *string    `json:"url,omitempty"`
-	Selector        *string    `json:"selector,omitempty"`
-	EverySeconds    *int32     `json:"every_seconds,omitempty"`
-	CooldownSeconds int32      `json:"cooldown_seconds"`
-	AgentID         *uuid.UUID `json:"agent_id,omitempty"`
-	Hub             bool       `json:"hub"`
-	Target          target     `json:"target"`
-	SessionID       uuid.UUID  `json:"session_id"`
-	Status          string     `json:"status"`
-	PausedReason    *string    `json:"paused_reason,omitempty"`
-	NextCheckAt     *time.Time `json:"next_check_at,omitempty"`
-	LastCheckAt     *time.Time `json:"last_check_at,omitempty"`
-	LastRunAt       *time.Time `json:"last_run_at,omitempty"`
-	LastOutcome     *string    `json:"last_outcome,omitempty"`
-	HookURL         *string    `json:"hook_url,omitempty"`
-	Secret          string     `json:"secret,omitempty"`
-	CreatedBy       *uuid.UUID `json:"created_by,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              uuid.UUID      `json:"id"`
+	Name            string         `json:"name"`
+	Objective       string         `json:"objective"`
+	Source          string         `json:"source"`
+	URL             *string        `json:"url,omitempty"`
+	Selector        *string        `json:"selector,omitempty"`
+	EverySeconds    *int32         `json:"every_seconds,omitempty"`
+	CooldownSeconds int32          `json:"cooldown_seconds"`
+	AgentID         *uuid.UUID     `json:"agent_id,omitempty"`
+	Hub             bool           `json:"hub"`
+	Target          target         `json:"target"`
+	SessionID       uuid.UUID      `json:"session_id"`
+	Status          string         `json:"status"`
+	PausedReason    *string        `json:"paused_reason,omitempty"`
+	NextCheckAt     *time.Time     `json:"next_check_at,omitempty"`
+	LastCheckAt     *time.Time     `json:"last_check_at,omitempty"`
+	LastRunAt       *time.Time     `json:"last_run_at,omitempty"`
+	LastOutcome     *string        `json:"last_outcome,omitempty"`
+	HookURL         *string        `json:"hook_url,omitempty"`
+	Secret          string         `json:"secret,omitempty"`
+	CreatedBy       *uuid.UUID     `json:"created_by,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	WaitingChange   *waitingChange `json:"waiting_change,omitempty"`
 }
 
 func (h *handler) watcherView(v triggers.WatcherView) watcher {
@@ -337,6 +338,7 @@ func (h *handler) watcherView(v triggers.WatcherView) watcher {
 		out.HookURL = ptr(h.hookBase + "/hooks/watchers/" + *v.HookID)
 	}
 	out.Secret = v.Secret
+	out.WaitingChange = waitingOf(v.WaitingChange())
 	return out
 }
 

@@ -1952,6 +1952,11 @@ type Agent struct {
 	ParserModel *ParserModel `json:"parser_model,omitempty" yaml:"parser_model,omitempty"`
 	Pattern     string       `json:"pattern" yaml:"pattern"`
 
+	// Schedule Whether the agent may propose schedules and watchers from a
+	// chat, each confirmed by the person. The team's hub may whatever
+	// this says.
+	Schedule bool `json:"schedule" yaml:"schedule"`
+
 	// Skills Ordered by id
 	Skills             []openapi_types.UUID `json:"skills" yaml:"skills"`
 	SteerContinuations int32                `json:"steer_continuations" yaml:"steer_continuations"`
@@ -2035,8 +2040,19 @@ type AgentRequest struct {
 	//
 	//
 	// Examples: react
-	Pattern string                `json:"pattern" yaml:"pattern"`
-	Skills  *[]openapi_types.UUID `json:"skills,omitempty" yaml:"skills,omitempty"`
+	Pattern string `json:"pattern" yaml:"pattern"`
+
+	// Schedule Gives the agent the schedule and watch tools in a chat: it may
+	// propose a schedule or a watcher that runs as the person, which
+	// starts only once their next message confirms it, and change,
+	// pause, resume, delete or run now their own. A change to what one
+	// does waits for their yes as a proposal does. It needs the team's
+	// setting that lets agents schedule, and a person who holds
+	// `schedule:write`. An agent's own improvement proposals cannot grant
+	// it; a builder blueprint can, for a person to apply. Left out, it is
+	// false, and a PUT that leaves it out takes the grant away.
+	Schedule *bool                 `json:"schedule,omitempty" yaml:"schedule,omitempty"`
+	Skills   *[]openapi_types.UUID `json:"skills,omitempty" yaml:"skills,omitempty"`
 
 	// SteerContinuations How many times a run may carry on for a message that arrived as it finished
 	SteerContinuations *int32 `json:"steer_continuations,omitempty" yaml:"steer_continuations,omitempty"`
@@ -2343,7 +2359,8 @@ type BlueprintAgent struct {
 	ParserModel *ParserModel `json:"parser_model,omitempty" yaml:"parser_model,omitempty"`
 
 	// Pattern Examples: react
-	Pattern string `json:"pattern" yaml:"pattern"`
+	Pattern  string `json:"pattern" yaml:"pattern"`
+	Schedule *bool  `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 
 	// Skills Skills by name, in this blueprint or already in the team
 	Skills             *[]string `json:"skills,omitempty" yaml:"skills,omitempty"`
@@ -3467,6 +3484,9 @@ type ListedAgent struct {
 	Name           string   `json:"name" yaml:"name"`
 	Pattern        string   `json:"pattern" yaml:"pattern"`
 
+	// Schedule Whether it may propose schedules and watchers by its own grant
+	Schedule bool `json:"schedule" yaml:"schedule"`
+
 	// SkillCount The skills it is granted
 	SkillCount int64              `json:"skill_count" yaml:"skill_count"`
 	TeamID     openapi_types.UUID `json:"team_id" yaml:"team_id"`
@@ -4493,6 +4513,12 @@ type Schedule struct {
 	Upcoming  []time.Time `json:"upcoming" yaml:"upcoming"`
 	UpdatedAt time.Time   `json:"updated_at" yaml:"updated_at"`
 
+	// WaitingChange A change an agent proposed from a chat to what a schedule or watcher
+	// does. It runs as it was until its maker confirms the change, which
+	// applies it; unconfirmed within the hour, it is dropped. The maker's
+	// own change replaces it.
+	WaitingChange *WaitingChange `json:"waiting_change,omitempty" yaml:"waiting_change,omitempty"`
+
 	// When When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
 	When ScheduleWhen `json:"when" yaml:"when"`
 }
@@ -5396,6 +5422,18 @@ type UserPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
+// WaitingChange A change an agent proposed from a chat to what a schedule or watcher
+// does. It runs as it was until its maker confirms the change, which
+// applies it; unconfirmed within the hour, it is dropped. The maker's
+// own change replaces it.
+type WaitingChange struct {
+	// Says What it changes, said for a person
+	//
+	// Examples: its objective, when it runs
+	Says  string    `json:"says" yaml:"says"`
+	Since time.Time `json:"since" yaml:"since"`
+}
+
 // Watcher defines model for Watcher.
 type Watcher struct {
 	AgentID         *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
@@ -5441,6 +5479,12 @@ type Watcher struct {
 
 	// URL The address it looks at, as it was normalised; absent once it is deleted.
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+
+	// WaitingChange A change an agent proposed from a chat to what a schedule or watcher
+	// does. It runs as it was until its maker confirms the change, which
+	// applies it; unconfirmed within the hour, it is dropped. The maker's
+	// own change replaces it.
+	WaitingChange *WaitingChange `json:"waiting_change,omitempty" yaml:"waiting_change,omitempty"`
 }
 
 // WatcherCheck defines model for WatcherCheck.
@@ -7785,10 +7829,12 @@ type ClientInterface interface {
 	// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
 	UpdateSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, body UpdateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmSchedule Confirm a schedule an agent proposed
+	// ConfirmSchedule Confirm a schedule an agent proposed, or its change
 	//
 	// Requires `schedule:write` in this team, and the caller to be the
-	// person it was proposed to. A proposal lapses after an hour.
+	// person it was proposed to. A proposal lapses after an hour. On one
+	// that already runs, it applies the agent's `waiting_change`, checked
+	// again as it is now; a change too lapses after an hour.
 	//
 	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
 	ConfirmSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8427,10 +8473,12 @@ type ClientInterface interface {
 	// Corresponds with GET /teams/{id}/watchers/{watcherID}/checks (the `ListWatcherChecks` operationId).
 	ListWatcherChecks(ctx context.Context, id TeamID, watcherID WatcherID, params *ListWatcherChecksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmWatcher Confirm a watcher an agent proposed
+	// ConfirmWatcher Confirm a watcher an agent proposed, or its change
 	//
 	// Requires `schedule:write` in this team, and the caller to be the person
 	// it was proposed to. It becomes active and looks now. A proposal lapses
+	// after an hour. On one that already runs, it applies the agent's
+	// `waiting_change`, checked again as it is now; a change too lapses
 	// after an hour.
 	//
 	// Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
@@ -11173,10 +11221,12 @@ func (c *Client) UpdateSchedule(ctx context.Context, id TeamID, scheduleID Sched
 	return c.Client.Do(req)
 }
 
-// ConfirmSchedule Confirm a schedule an agent proposed
+// ConfirmSchedule Confirm a schedule an agent proposed, or its change
 //
 // Requires `schedule:write` in this team, and the caller to be the
-// person it was proposed to. A proposal lapses after an hour.
+// person it was proposed to. A proposal lapses after an hour. On one
+// that already runs, it applies the agent's `waiting_change`, checked
+// again as it is now; a change too lapses after an hour.
 //
 // Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
 func (c *Client) ConfirmSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12195,10 +12245,12 @@ func (c *Client) ListWatcherChecks(ctx context.Context, id TeamID, watcherID Wat
 	return c.Client.Do(req)
 }
 
-// ConfirmWatcher Confirm a watcher an agent proposed
+// ConfirmWatcher Confirm a watcher an agent proposed, or its change
 //
 // Requires `schedule:write` in this team, and the caller to be the person
 // it was proposed to. It becomes active and looks now. A proposal lapses
+// after an hour. On one that already runs, it applies the agent's
+// `waiting_change`, checked again as it is now; a change too lapses
 // after an hour.
 //
 // Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
@@ -20466,10 +20518,12 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /teams/{id}/schedules/{scheduleID} (the `UpdateSchedule` operationId).
 	UpdateScheduleWithResponse(ctx context.Context, id TeamID, scheduleID ScheduleID, body UpdateScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateScheduleResponse, error)
 
-	// ConfirmScheduleWithResponse Confirm a schedule an agent proposed
+	// ConfirmScheduleWithResponse Confirm a schedule an agent proposed, or its change
 	//
 	// Requires `schedule:write` in this team, and the caller to be the
-	// person it was proposed to. A proposal lapses after an hour.
+	// person it was proposed to. A proposal lapses after an hour. On one
+	// that already runs, it applies the agent's `waiting_change`, checked
+	// again as it is now; a change too lapses after an hour.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21156,10 +21210,12 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /teams/{id}/watchers/{watcherID}/checks (the `ListWatcherChecks` operationId).
 	ListWatcherChecksWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, params *ListWatcherChecksParams, reqEditors ...RequestEditorFn) (*ListWatcherChecksResponse, error)
 
-	// ConfirmWatcherWithResponse Confirm a watcher an agent proposed
+	// ConfirmWatcherWithResponse Confirm a watcher an agent proposed, or its change
 	//
 	// Requires `schedule:write` in this team, and the caller to be the person
 	// it was proposed to. It becomes active and looks now. A proposal lapses
+	// after an hour. On one that already runs, it applies the agent's
+	// `waiting_change`, checked again as it is now; a change too lapses
 	// after an hour.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -29221,10 +29277,12 @@ func (c *ClientWithResponses) UpdateScheduleWithResponse(ctx context.Context, id
 	return ParseUpdateScheduleResponse(rsp)
 }
 
-// ConfirmScheduleWithResponse Confirm a schedule an agent proposed
+// ConfirmScheduleWithResponse Confirm a schedule an agent proposed, or its change
 //
 // Requires `schedule:write` in this team, and the caller to be the
-// person it was proposed to. A proposal lapses after an hour.
+// person it was proposed to. A proposal lapses after an hour. On one
+// that already runs, it applies the agent's `waiting_change`, checked
+// again as it is now; a change too lapses after an hour.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30139,10 +30197,12 @@ func (c *ClientWithResponses) ListWatcherChecksWithResponse(ctx context.Context,
 	return ParseListWatcherChecksResponse(rsp)
 }
 
-// ConfirmWatcherWithResponse Confirm a watcher an agent proposed
+// ConfirmWatcherWithResponse Confirm a watcher an agent proposed, or its change
 //
 // Requires `schedule:write` in this team, and the caller to be the person
 // it was proposed to. It becomes active and looks now. A proposal lapses
+// after an hour. On one that already runs, it applies the agent's
+// `waiting_change`, checked again as it is now; a change too lapses
 // after an hour.
 //
 // Returns a wrapper object for the known response body format(s).

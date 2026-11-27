@@ -538,3 +538,27 @@ func TestThePlacesToAnswerAndPickingOne(t *testing.T) {
 		t.Errorf("its own conversation's target = %+v", own.Target)
 	}
 }
+
+// An agent's change waiting on a schedule is shown with it, and its maker's
+// confirm applies it.
+func TestAWaitingChangeIsShownAndConfirmedByItsMaker(t *testing.T) {
+	w := newWorld(t)
+	s := w.make(t, "summary")
+	if s.WaitingChange != nil {
+		t.Fatalf("a new schedule waits on %+v", s.WaitingChange)
+	}
+	if _, err := w.raw.Exec(t.Context(), `UPDATE schedules SET pending = '{"Objective":"Summarise briefly."}',
+		pending_run = gen_random_uuid(), pending_in = $2, pending_at = now() WHERE id = $1`, s.ID, s.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	got := decode[schedule](t, w.serve(t, w.maker, "GET", "/schedules/"+s.ID.String(), nil))
+	if got.WaitingChange == nil || got.WaitingChange.Says != "its objective" || got.Objective != s.Objective {
+		t.Fatalf("read back %+v waiting %+v: want it as it was, the change shown", got.Objective, got.WaitingChange)
+	}
+	want(t, w.serve(t, w.other, "POST", "/schedules/"+s.ID.String()+"/confirm", nil), http.StatusNotFound, "no such schedule")
+	rec := w.serve(t, w.maker, "POST", "/schedules/"+s.ID.String()+"/confirm", nil)
+	want(t, rec, http.StatusOK, "")
+	if c := decode[schedule](t, rec); c.Objective != "Summarise briefly." || c.WaitingChange != nil || c.Status != "active" {
+		t.Errorf("confirmed %+v", c)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api/blueprints"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/config"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/discovery"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/mcpregistry"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/objects"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/runtime"
@@ -22,6 +23,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/websearch"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
@@ -97,9 +99,33 @@ func newRunJob(
 	}
 	executor := runtime.NewExecutor(dbStore, builder, d.runner, d.endpoint, postgres.New(dbStore.Pool()), logger).
 		WithStreaming(streamer)
+	// A run's schedule and watch tools keep the rules the routes keep; a
+	// schedule run now from a chat goes to the workers through this
+	// executor, and a direct conversation is opened on its platform as the
+	// routes open one.
+	builder.WithScheduling(scheduling{
+		service: triggers.NewService(dbStore, executor, logger).WithChats(
+			gateway.NewChats(secretStore, registry, gateway.HTTPPoster(replyClient(reachable(cfg.MCPPrivateNetworks))))),
+		dashboard: cfg.PublicURL,
+	})
 
 	return runtime.RunJob(executor, dbStore, logger), nil
 }
+
+// scheduling is the triggers' tools as the runtime takes them: the runtime
+// does not learn the rules' types.
+type scheduling struct {
+	service   *triggers.Service
+	dashboard string
+}
+
+func (s scheduling) Tools(ctx context.Context, r runtime.SchedulingRun) ([]agent.Tool, string, error) {
+	return s.service.Tools(ctx, triggers.ToolRun{
+		Team: r.Team, User: r.User, Run: r.Run, Session: r.Session, Self: r.Self, Agent: r.Agent, Dashboard: s.dashboard,
+	})
+}
+
+func (s scheduling) StandIns() []agent.Tool { return s.service.StandIns() }
 
 // workshop is the blueprints' Workshop as the runtime takes it: the runtime
 // does not learn the API's types.
