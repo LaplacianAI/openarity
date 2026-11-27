@@ -456,6 +456,24 @@ func (e ChannelPairingState) Valid() bool {
 	}
 }
 
+// Defines values for CreateWatcherRequestSource.
+const (
+	Feed    CreateWatcherRequestSource = "feed"
+	WebPage CreateWatcherRequestSource = "web_page"
+)
+
+// Valid indicates whether the value is a known member of the CreateWatcherRequestSource enum.
+func (e CreateWatcherRequestSource) Valid() bool {
+	switch e {
+	case Feed:
+		return true
+	case WebPage:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreatedChannelReplyMode.
 const (
 	CreatedChannelReplyModeEvents CreatedChannelReplyMode = "events"
@@ -1833,6 +1851,33 @@ func (e ListSchedulesParamsStatus) Valid() bool {
 	}
 }
 
+// Defines values for ListWatchersParamsStatus.
+const (
+	ListWatchersParamsStatusActive        ListWatchersParamsStatus = "active"
+	ListWatchersParamsStatusDeleted       ListWatchersParamsStatus = "deleted"
+	ListWatchersParamsStatusPaused        ListWatchersParamsStatus = "paused"
+	ListWatchersParamsStatusProposed      ListWatchersParamsStatus = "proposed"
+	ListWatchersParamsStatusWaitingSecret ListWatchersParamsStatus = "waiting_secret"
+)
+
+// Valid indicates whether the value is a known member of the ListWatchersParamsStatus enum.
+func (e ListWatchersParamsStatus) Valid() bool {
+	switch e {
+	case ListWatchersParamsStatusActive:
+		return true
+	case ListWatchersParamsStatusDeleted:
+		return true
+	case ListWatchersParamsStatusPaused:
+		return true
+	case ListWatchersParamsStatusProposed:
+		return true
+	case ListWatchersParamsStatusWaitingSecret:
+		return true
+	default:
+		return false
+	}
+}
+
 // AddMemberRequest Exactly one of `user_id` and `subject`. Neither is a 400, and so is
 // both — guessing which the caller meant is how somebody ends up in a
 // team they were never named for.
@@ -2794,6 +2839,36 @@ type CreateTeamRequest struct {
 	// only whitespace is a 400.
 	Name string `json:"name" yaml:"name"`
 }
+
+// CreateWatcherRequest defines model for CreateWatcherRequest.
+type CreateWatcherRequest struct {
+	// AgentID Absent is the hub.
+	AgentID *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
+
+	// CooldownSeconds How long after a run a change is held rather than run; an hour unless given.
+	CooldownSeconds *int64 `json:"cooldown_seconds,omitempty" yaml:"cooldown_seconds,omitempty"`
+
+	// EverySeconds How often to look, in whole minutes; at least the team's minimum interval.
+	EverySeconds int64  `json:"every_seconds" yaml:"every_seconds"`
+	Name         string `json:"name" yaml:"name"`
+	Objective    string `json:"objective" yaml:"objective"`
+
+	// Selector web_page only. A CSS selector; the text it matches is what is compared.
+	Selector *string                    `json:"selector,omitempty" yaml:"selector,omitempty"`
+	Source   CreateWatcherRequestSource `json:"source" yaml:"source"`
+
+	// Target A place as `listScheduleTargets` lists it, in its `target`, sent back
+	// as it is. It is checked again when the schedule is made: the caller
+	// must still be able to pick it, and a channel or a direct conversation
+	// is looked up on its platform.
+	Target *ScheduleTargetPick `json:"target,omitempty" yaml:"target,omitempty"`
+
+	// URL http or https, at most 2048 bytes, not a host written as a number.
+	URL string `json:"url" yaml:"url"`
+}
+
+// CreateWatcherRequestSource defines model for CreateWatcherRequest.Source.
+type CreateWatcherRequestSource string
 
 // CreatedChannel defines model for CreatedChannel.
 type CreatedChannel struct {
@@ -4620,20 +4695,24 @@ type ScheduledNews struct {
 	More bool `json:"more" yaml:"more"`
 }
 
-// ScheduledNewsItem defines model for ScheduledNewsItem.
+// ScheduledNewsItem A schedule's fire or a watcher's check; which one says. `fired_at` is when it happened.
 type ScheduledNewsItem struct {
-	FiredAt      time.Time           `json:"fired_at" yaml:"fired_at"`
-	Name         string              `json:"name" yaml:"name"`
-	Outcome      string              `json:"outcome" yaml:"outcome"`
-	RunID        *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
-	ScheduleID   openapi_types.UUID  `json:"schedule_id" yaml:"schedule_id"`
-	ScheduledFor time.Time           `json:"scheduled_for" yaml:"scheduled_for"`
+	FiredAt    time.Time           `json:"fired_at" yaml:"fired_at"`
+	Name       string              `json:"name" yaml:"name"`
+	Outcome    string              `json:"outcome" yaml:"outcome"`
+	RunID      *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+	ScheduleID *openapi_types.UUID `json:"schedule_id,omitempty" yaml:"schedule_id,omitempty"`
+
+	// ScheduledFor When the schedule was due; absent for a watcher.
+	ScheduledFor *time.Time          `json:"scheduled_for,omitempty" yaml:"scheduled_for,omitempty"`
 	SessionID    openapi_types.UUID  `json:"session_id" yaml:"session_id"`
+	WatcherID    *openapi_types.UUID `json:"watcher_id,omitempty" yaml:"watcher_id,omitempty"`
 }
 
-// ScheduledNewsSeenRequest defines model for ScheduledNewsSeenRequest.
+// ScheduledNewsSeenRequest Exactly one of `schedule_id` or `watcher_id`.
 type ScheduledNewsSeenRequest struct {
-	ScheduleID openapi_types.UUID `json:"schedule_id" yaml:"schedule_id"`
+	ScheduleID *openapi_types.UUID `json:"schedule_id,omitempty" yaml:"schedule_id,omitempty"`
+	WatcherID  *openapi_types.UUID `json:"watcher_id,omitempty" yaml:"watcher_id,omitempty"`
 }
 
 // SearchProvider `searxng` and `firecrawl-oss` are self-hosted and take a `url`;
@@ -5265,6 +5344,24 @@ type UpdateScheduleRequest struct {
 // UpdateScheduleRequestStatus Pause, or resume, it.
 type UpdateScheduleRequestStatus string
 
+// UpdateWatcherRequest defines model for UpdateWatcherRequest.
+type UpdateWatcherRequest struct {
+	AgentID         *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
+	CooldownSeconds *int64              `json:"cooldown_seconds,omitempty" yaml:"cooldown_seconds,omitempty"`
+	EverySeconds    *int64              `json:"every_seconds,omitempty" yaml:"every_seconds,omitempty"`
+
+	// Hub Back to the hub.
+	Hub       *bool   `json:"hub,omitempty" yaml:"hub,omitempty"`
+	Name      *string `json:"name,omitempty" yaml:"name,omitempty"`
+	Objective *string `json:"objective,omitempty" yaml:"objective,omitempty"`
+
+	// Selector An empty string clears it.
+	Selector *string `json:"selector,omitempty" yaml:"selector,omitempty"`
+
+	// Status `active` or `paused`.
+	Status *string `json:"status,omitempty" yaml:"status,omitempty"`
+}
+
 // User defines model for User.
 type User struct {
 	// Email Absent when the provider released none
@@ -5291,6 +5388,76 @@ type UserPage struct {
 	Items []User `json:"items" yaml:"items"`
 
 	// NextCursor Absent on the last page
+	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// Watcher defines model for Watcher.
+type Watcher struct {
+	AgentID         *openapi_types.UUID `json:"agent_id,omitempty" yaml:"agent_id,omitempty"`
+	CooldownSeconds int32               `json:"cooldown_seconds" yaml:"cooldown_seconds"`
+	CreatedAt       time.Time           `json:"created_at" yaml:"created_at"`
+	CreatedBy       *openapi_types.UUID `json:"created_by,omitempty" yaml:"created_by,omitempty"`
+	EverySeconds    *int32              `json:"every_seconds,omitempty" yaml:"every_seconds,omitempty"`
+	Hub             bool                `json:"hub" yaml:"hub"`
+	ID              openapi_types.UUID  `json:"id" yaml:"id"`
+	LastCheckAt     *time.Time          `json:"last_check_at,omitempty" yaml:"last_check_at,omitempty"`
+	LastOutcome     *string             `json:"last_outcome,omitempty" yaml:"last_outcome,omitempty"`
+	LastRunAt       *time.Time          `json:"last_run_at,omitempty" yaml:"last_run_at,omitempty"`
+	Name            string              `json:"name" yaml:"name"`
+	NextCheckAt     *time.Time          `json:"next_check_at,omitempty" yaml:"next_check_at,omitempty"`
+	Objective       string              `json:"objective" yaml:"objective"`
+
+	// PausedReason Why it is paused: one of `by_person`, `failing`,
+	// `maker_cannot_run`, `maker_gone` or `target_gone`, as for a
+	// schedule. `failing` is five failed runs in a row, or what
+	// it looks at failing for a day.
+	PausedReason *string `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
+
+	// Selector The CSS selector whose text a web_page watcher compares; absent is the page's whole text.
+	Selector  *string            `json:"selector,omitempty" yaml:"selector,omitempty"`
+	SessionID openapi_types.UUID `json:"session_id" yaml:"session_id"`
+
+	// Source One of `web_page`, `feed` or `webhook`.
+	Source string `json:"source" yaml:"source"`
+
+	// Status One of `proposed`, `waiting_secret`, `active`, `paused` or `deleted`.
+	Status    string         `json:"status" yaml:"status"`
+	Target    ScheduleTarget `json:"target" yaml:"target"`
+	UpdatedAt time.Time      `json:"updated_at" yaml:"updated_at"`
+
+	// URL The address it looks at, as it was normalised; absent once it is deleted.
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// WatcherCheck defines model for WatcherCheck.
+type WatcherCheck struct {
+	CheckedAt time.Time `json:"checked_at" yaml:"checked_at"`
+	Detail    *string   `json:"detail,omitempty" yaml:"detail,omitempty"`
+
+	// Outcome One of `unchanged`, `baseline`, `changed`, `held`, `error`,
+	// `delivered`, `duplicate`, `skipped_cap`, `skipped_maker`,
+	// `skipped_target`, `silent`, `answered`, `failed` or `cancelled`.
+	// `baseline` is a first look; `unchanged` nothing new; `changed` a
+	// run still going; `held` a change kept for later, within the
+	// cooldown or while its last run was working; `error` what it
+	// looks at could not be read, with why in `detail`; `answered`,
+	// `silent`, `failed` and `cancelled` how a run ended; `skipped_*`
+	// as for a schedule's fire, the change kept for later.
+	Outcome string              `json:"outcome" yaml:"outcome"`
+	RunID   *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+}
+
+// WatcherCheckPage defines model for WatcherCheckPage.
+type WatcherCheckPage struct {
+	Items      []WatcherCheck `json:"items" yaml:"items"`
+	NextCursor *string        `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// WatcherPage defines model for WatcherPage.
+type WatcherPage struct {
+	Items []Watcher `json:"items" yaml:"items"`
+
+	// NextCursor Absent on the last page.
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
@@ -5370,6 +5537,9 @@ type SkillID = openapi_types.UUID
 
 // TeamID defines model for TeamID.
 type TeamID = openapi_types.UUID
+
+// WatcherID defines model for WatcherID.
+type WatcherID = openapi_types.UUID
 
 // McpOAuthCallbackParams defines parameters for McpOAuthCallback.
 type McpOAuthCallbackParams struct {
@@ -5772,6 +5942,39 @@ type ListSkillsParams struct {
 	Q *Query `form:"q,omitempty" json:"q,omitempty" yaml:"q,omitempty"`
 }
 
+// ListWatchersParams defines parameters for ListWatchers.
+type ListWatchersParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+
+	// Status Only watchers in these states.
+	Status *[]ListWatchersParamsStatus `form:"status,omitempty" json:"status,omitempty" yaml:"status,omitempty"`
+
+	// All Everyone's, not only the caller's.
+	All *bool `form:"all,omitempty" json:"all,omitempty" yaml:"all,omitempty"`
+}
+
+// ListWatchersParamsStatus defines parameters for ListWatchers.
+type ListWatchersParamsStatus string
+
+// ListWatcherChecksParams defines parameters for ListWatcherChecks.
+type ListWatcherChecksParams struct {
+	// Limit Rows per page. A value above the maximum is clamped rather than
+	// refused; zero, a negative and anything unparseable are 400.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty" yaml:"limit,omitempty"`
+
+	// Cursor An opaque position, taken verbatim from the `next_cursor` of the
+	// previous page. It is not constructible by a client, and one that has
+	// been altered is a 400 rather than a silent restart.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty" yaml:"cursor,omitempty"`
+}
+
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Subject The identifier at the provider, matched exactly. An unknown one is
@@ -5892,6 +6095,12 @@ type ImportSkillJSONRequestBody = SkillImportRequest
 
 // ReplaceSkillMultipartRequestBody defines body for ReplaceSkill for multipart/form-data ContentType.
 type ReplaceSkillMultipartRequestBody = SkillUpload
+
+// CreateWatcherJSONRequestBody defines body for CreateWatcher for application/json ContentType.
+type CreateWatcherJSONRequestBody = CreateWatcherRequest
+
+// UpdateWatcherJSONRequestBody defines body for UpdateWatcher for application/json ContentType.
+type UpdateWatcherJSONRequestBody = UpdateWatcherRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -7408,15 +7617,16 @@ type ClientInterface interface {
 
 	// GetScheduledNews What the caller's schedules did that they have not seen
 	//
-	// Requires `schedule:read` in this team. Every fire that failed, was
-	// skipped or was missed, wherever the schedule answers, and every
-	// answer kept in a schedule's own conversation. A run with nothing to
-	// say tells nobody.
+	// Requires `schedule:read` in this team. Every fire or check that
+	// failed, was skipped or was missed, wherever the schedule or watcher
+	// answers, every page or feed a watcher could not read, and every
+	// answer kept in one's own conversation, newest first. A run with
+	// nothing to say tells nobody.
 	//
 	// Corresponds with GET /teams/{id}/scheduled/news (the `GetScheduledNews` operationId).
 	GetScheduledNews(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkScheduledNewsSeenWithBody Mark what one of the caller's schedules did as seen
+	// MarkScheduledNewsSeenWithBody Mark what one of the caller's schedules or watchers did as seen
 	//
 	// Requires `schedule:read` in this team.
 	//
@@ -7425,7 +7635,7 @@ type ClientInterface interface {
 	// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
 	MarkScheduledNewsSeenWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// MarkScheduledNewsSeen Mark what one of the caller's schedules did as seen
+	// MarkScheduledNewsSeen Mark what one of the caller's schedules or watchers did as seen
 	//
 	// Requires `schedule:read` in this team.
 	//
@@ -8072,6 +8282,139 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/summary (the `GetTeamSummary` operationId).
 	GetTeamSummary(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWatchers List watchers
+	//
+	// Requires `schedule:read` in this team. The caller's own, newest
+	// first; `all=true` lists everyone's and requires `schedule:manage`.
+	// Deleted watchers are listed only when `status=deleted` is asked for.
+	//
+	// Corresponds with GET /teams/{id}/watchers (the `ListWatchers` operationId).
+	ListWatchers(ctx context.Context, id TeamID, params *ListWatchersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateWatcherWithBody Make a watcher
+	//
+	// Requires `schedule:write` in this team. The watcher looks at a web page
+	// or a feed every `every_seconds`, held to the team's minimum interval,
+	// and runs in a conversation of its own as the caller when what it sees
+	// changes. Its first look is its baseline and starts nothing. Watchers of
+	// the same address share one fetch. A change within `cooldown_seconds` of
+	// its last run (an hour unless given) is held and given to the next run.
+	// The team's limits on schedules and watchers per person and per team
+	// apply, and a caller who may not start runs is refused with 403.
+	// `target` is where it answers, as for a schedule. A webhook watcher
+	// cannot be made yet.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+	CreateWatcherWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateWatcher Make a watcher
+	//
+	// Requires `schedule:write` in this team. The watcher looks at a web page
+	// or a feed every `every_seconds`, held to the team's minimum interval,
+	// and runs in a conversation of its own as the caller when what it sees
+	// changes. Its first look is its baseline and starts nothing. Watchers of
+	// the same address share one fetch. A change within `cooldown_seconds` of
+	// its last run (an hour unless given) is held and given to the next run.
+	// The team's limits on schedules and watchers per person and per team
+	// apply, and a caller who may not start runs is refused with 403.
+	// `target` is where it answers, as for a schedule. A webhook watcher
+	// cannot be made yet.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+	CreateWatcher(ctx context.Context, id TeamID, body CreateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteWatcher Delete a watcher
+	//
+	// Requires `schedule:write` in this team, and the watcher to be the
+	// caller's own or the caller to hold `schedule:manage` (404 otherwise).
+	// It looks no more, and its conversation is closed and kept, with its
+	// runs. A run already working finishes.
+	//
+	// Corresponds with DELETE /teams/{id}/watchers/{watcherID} (the `DeleteWatcher` operationId).
+	DeleteWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWatcher Read a watcher
+	//
+	// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+	//
+	// Corresponds with GET /teams/{id}/watchers/{watcherID} (the `GetWatcher` operationId).
+	GetWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateWatcherWithBody Change, pause or resume a watcher
+	//
+	// Requires `schedule:write` in this team. What it does (name, objective,
+	// selector, interval, cooldown, agent) is changed only by its maker, since
+	// it runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+	// watcher looks again now. A new selector makes its next look a new
+	// baseline. Everything named is changed together, or nothing is. The
+	// address and where it answers never change: delete it and make another.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+	UpdateWatcherWithBody(ctx context.Context, id TeamID, watcherID WatcherID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateWatcher Change, pause or resume a watcher
+	//
+	// Requires `schedule:write` in this team. What it does (name, objective,
+	// selector, interval, cooldown, agent) is changed only by its maker, since
+	// it runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+	// watcher looks again now. A new selector makes its next look a new
+	// baseline. Everything named is changed together, or nothing is. The
+	// address and where it answers never change: delete it and make another.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+	UpdateWatcher(ctx context.Context, id TeamID, watcherID WatcherID, body UpdateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWatcherChecks List what a watcher saw each time it looked
+	//
+	// Requires `schedule:read` in this team. The caller's own watcher, or
+	// anyone's with `schedule:manage` (404 otherwise). Newest first; each
+	// watcher keeps its newest 200.
+	//
+	// Corresponds with GET /teams/{id}/watchers/{watcherID}/checks (the `ListWatcherChecks` operationId).
+	ListWatcherChecks(ctx context.Context, id TeamID, watcherID WatcherID, params *ListWatcherChecksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmWatcher Confirm a watcher an agent proposed
+	//
+	// Requires `schedule:write` in this team, and the caller to be the person
+	// it was proposed to. It becomes active and looks now. A proposal lapses
+	// after an hour.
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
+	ConfirmWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckWatcherNow Have a watcher look now
+	//
+	// Requires `schedule:write` in this team, and the caller to be its maker
+	// (403 otherwise). An active watcher looks within the minute rather than
+	// at its next time; a change it finds runs as any would, past its
+	// cooldown.
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/run (the `CheckWatcherNow` operationId).
+	CheckWatcherNow(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TakeOverWatcher Take over a watcher whose maker left
+	//
+	// Requires `schedule:manage` in this team. Only a paused watcher whose
+	// maker left, or may no longer start runs or post where it answers, is
+	// taken over, whoever paused it. It stays paused until the caller resumes
+	// it, and runs as them from then, so a caller who may not start runs is
+	// refused with 403, as is one without `channel:write` for a watcher
+	// posting where a group reads it. One answering in its maker's direct
+	// messages or their own thread cannot be handed on: 409.
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/take-over (the `TakeOverWatcher` operationId).
+	TakeOverWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUsers Find a user
 	//
@@ -10509,10 +10852,11 @@ func (c *Client) ListScheduleTargets(ctx context.Context, id TeamID, params *Lis
 
 // GetScheduledNews What the caller's schedules did that they have not seen
 //
-// Requires `schedule:read` in this team. Every fire that failed, was
-// skipped or was missed, wherever the schedule answers, and every
-// answer kept in a schedule's own conversation. A run with nothing to
-// say tells nobody.
+// Requires `schedule:read` in this team. Every fire or check that
+// failed, was skipped or was missed, wherever the schedule or watcher
+// answers, every page or feed a watcher could not read, and every
+// answer kept in one's own conversation, newest first. A run with
+// nothing to say tells nobody.
 //
 // Corresponds with GET /teams/{id}/scheduled/news (the `GetScheduledNews` operationId).
 func (c *Client) GetScheduledNews(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10527,7 +10871,7 @@ func (c *Client) GetScheduledNews(ctx context.Context, id TeamID, reqEditors ...
 	return c.Client.Do(req)
 }
 
-// MarkScheduledNewsSeenWithBody Mark what one of the caller's schedules did as seen
+// MarkScheduledNewsSeenWithBody Mark what one of the caller's schedules or watchers did as seen
 //
 // Requires `schedule:read` in this team.
 //
@@ -10546,7 +10890,7 @@ func (c *Client) MarkScheduledNewsSeenWithBody(ctx context.Context, id TeamID, c
 	return c.Client.Do(req)
 }
 
-// MarkScheduledNewsSeen Mark what one of the caller's schedules did as seen
+// MarkScheduledNewsSeen Mark what one of the caller's schedules or watchers did as seen
 //
 // Requires `schedule:read` in this team.
 //
@@ -11584,6 +11928,249 @@ func (c *Client) SyncSkill(ctx context.Context, id TeamID, skillID SkillID, reqE
 // Corresponds with GET /teams/{id}/summary (the `GetTeamSummary` operationId).
 func (c *Client) GetTeamSummary(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTeamSummaryRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWatchers List watchers
+//
+// Requires `schedule:read` in this team. The caller's own, newest
+// first; `all=true` lists everyone's and requires `schedule:manage`.
+// Deleted watchers are listed only when `status=deleted` is asked for.
+//
+// Corresponds with GET /teams/{id}/watchers (the `ListWatchers` operationId).
+func (c *Client) ListWatchers(ctx context.Context, id TeamID, params *ListWatchersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWatchersRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateWatcherWithBody Make a watcher
+//
+// Requires `schedule:write` in this team. The watcher looks at a web page
+// or a feed every `every_seconds`, held to the team's minimum interval,
+// and runs in a conversation of its own as the caller when what it sees
+// changes. Its first look is its baseline and starts nothing. Watchers of
+// the same address share one fetch. A change within `cooldown_seconds` of
+// its last run (an hour unless given) is held and given to the next run.
+// The team's limits on schedules and watchers per person and per team
+// apply, and a caller who may not start runs is refused with 403.
+// `target` is where it answers, as for a schedule. A webhook watcher
+// cannot be made yet.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+func (c *Client) CreateWatcherWithBody(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWatcherRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateWatcher Make a watcher
+//
+// Requires `schedule:write` in this team. The watcher looks at a web page
+// or a feed every `every_seconds`, held to the team's minimum interval,
+// and runs in a conversation of its own as the caller when what it sees
+// changes. Its first look is its baseline and starts nothing. Watchers of
+// the same address share one fetch. A change within `cooldown_seconds` of
+// its last run (an hour unless given) is held and given to the next run.
+// The team's limits on schedules and watchers per person and per team
+// apply, and a caller who may not start runs is refused with 403.
+// `target` is where it answers, as for a schedule. A webhook watcher
+// cannot be made yet.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+func (c *Client) CreateWatcher(ctx context.Context, id TeamID, body CreateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWatcherRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteWatcher Delete a watcher
+//
+// Requires `schedule:write` in this team, and the watcher to be the
+// caller's own or the caller to hold `schedule:manage` (404 otherwise).
+// It looks no more, and its conversation is closed and kept, with its
+// runs. A run already working finishes.
+//
+// Corresponds with DELETE /teams/{id}/watchers/{watcherID} (the `DeleteWatcher` operationId).
+func (c *Client) DeleteWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteWatcherRequest(c.Server, id, watcherID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetWatcher Read a watcher
+//
+// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+//
+// Corresponds with GET /teams/{id}/watchers/{watcherID} (the `GetWatcher` operationId).
+func (c *Client) GetWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWatcherRequest(c.Server, id, watcherID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateWatcherWithBody Change, pause or resume a watcher
+//
+// Requires `schedule:write` in this team. What it does (name, objective,
+// selector, interval, cooldown, agent) is changed only by its maker, since
+// it runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+// watcher looks again now. A new selector makes its next look a new
+// baseline. Everything named is changed together, or nothing is. The
+// address and where it answers never change: delete it and make another.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+func (c *Client) UpdateWatcherWithBody(ctx context.Context, id TeamID, watcherID WatcherID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateWatcherRequestWithBody(c.Server, id, watcherID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateWatcher Change, pause or resume a watcher
+//
+// Requires `schedule:write` in this team. What it does (name, objective,
+// selector, interval, cooldown, agent) is changed only by its maker, since
+// it runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+// watcher looks again now. A new selector makes its next look a new
+// baseline. Everything named is changed together, or nothing is. The
+// address and where it answers never change: delete it and make another.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+func (c *Client) UpdateWatcher(ctx context.Context, id TeamID, watcherID WatcherID, body UpdateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateWatcherRequest(c.Server, id, watcherID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWatcherChecks List what a watcher saw each time it looked
+//
+// Requires `schedule:read` in this team. The caller's own watcher, or
+// anyone's with `schedule:manage` (404 otherwise). Newest first; each
+// watcher keeps its newest 200.
+//
+// Corresponds with GET /teams/{id}/watchers/{watcherID}/checks (the `ListWatcherChecks` operationId).
+func (c *Client) ListWatcherChecks(ctx context.Context, id TeamID, watcherID WatcherID, params *ListWatcherChecksParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWatcherChecksRequest(c.Server, id, watcherID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmWatcher Confirm a watcher an agent proposed
+//
+// Requires `schedule:write` in this team, and the caller to be the person
+// it was proposed to. It becomes active and looks now. A proposal lapses
+// after an hour.
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
+func (c *Client) ConfirmWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmWatcherRequest(c.Server, id, watcherID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckWatcherNow Have a watcher look now
+//
+// Requires `schedule:write` in this team, and the caller to be its maker
+// (403 otherwise). An active watcher looks within the minute rather than
+// at its next time; a change it finds runs as any would, past its
+// cooldown.
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/run (the `CheckWatcherNow` operationId).
+func (c *Client) CheckWatcherNow(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckWatcherNowRequest(c.Server, id, watcherID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TakeOverWatcher Take over a watcher whose maker left
+//
+// Requires `schedule:manage` in this team. Only a paused watcher whose
+// maker left, or may no longer start runs or post where it answers, is
+// taken over, whoever paused it. It stays paused until the caller resumes
+// it, and runs as them from then, so a caller who may not start runs is
+// refused with 403, as is one without `channel:write` for a watcher
+// posting where a group reads it. One answering in its maker's direct
+// messages or their own thread cannot be handed on: 409.
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/take-over (the `TakeOverWatcher` operationId).
+func (c *Client) TakeOverWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTakeOverWatcherRequest(c.Server, id, watcherID)
 	if err != nil {
 		return nil, err
 	}
@@ -17413,6 +18000,489 @@ func NewGetTeamSummaryRequest(server string, id TeamID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListWatchersRequest constructs an http.Request for the ListWatchers method
+func NewListWatchersRequest(server string, id TeamID, params *ListWatchersParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.All != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "all", *params.All, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateWatcherRequest calls the generic CreateWatcher builder with application/json body
+func NewCreateWatcherRequest(server string, id TeamID, body CreateWatcherJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateWatcherRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateWatcherRequestWithBody constructs an http.Request for the CreateWatcher method, with any body, and a specified content type
+func NewCreateWatcherRequestWithBody(server string, id TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteWatcherRequest constructs an http.Request for the DeleteWatcher method
+func NewDeleteWatcherRequest(server string, id TeamID, watcherID WatcherID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetWatcherRequest constructs an http.Request for the GetWatcher method
+func NewGetWatcherRequest(server string, id TeamID, watcherID WatcherID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateWatcherRequest calls the generic UpdateWatcher builder with application/json body
+func NewUpdateWatcherRequest(server string, id TeamID, watcherID WatcherID, body UpdateWatcherJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateWatcherRequestWithBody(server, id, watcherID, "application/json", bodyReader)
+}
+
+// NewUpdateWatcherRequestWithBody constructs an http.Request for the UpdateWatcher method, with any body, and a specified content type
+func NewUpdateWatcherRequestWithBody(server string, id TeamID, watcherID WatcherID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListWatcherChecksRequest constructs an http.Request for the ListWatcherChecks method
+func NewListWatcherChecksRequest(server string, id TeamID, watcherID WatcherID, params *ListWatcherChecksParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s/checks", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewConfirmWatcherRequest constructs an http.Request for the ConfirmWatcher method
+func NewConfirmWatcherRequest(server string, id TeamID, watcherID WatcherID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s/confirm", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCheckWatcherNowRequest constructs an http.Request for the CheckWatcherNow method
+func NewCheckWatcherNowRequest(server string, id TeamID, watcherID WatcherID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s/run", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewTakeOverWatcherRequest constructs an http.Request for the TakeOverWatcher method
+func NewTakeOverWatcherRequest(server string, id TeamID, watcherID WatcherID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s/take-over", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListUsersRequest constructs an http.Request for the ListUsers method
 func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request, error) {
 	var err error
@@ -19103,17 +20173,18 @@ type ClientWithResponsesInterface interface {
 
 	// GetScheduledNewsWithResponse What the caller's schedules did that they have not seen
 	//
-	// Requires `schedule:read` in this team. Every fire that failed, was
-	// skipped or was missed, wherever the schedule answers, and every
-	// answer kept in a schedule's own conversation. A run with nothing to
-	// say tells nobody.
+	// Requires `schedule:read` in this team. Every fire or check that
+	// failed, was skipped or was missed, wherever the schedule or watcher
+	// answers, every page or feed a watcher could not read, and every
+	// answer kept in one's own conversation, newest first. A run with
+	// nothing to say tells nobody.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /teams/{id}/scheduled/news (the `GetScheduledNews` operationId).
 	GetScheduledNewsWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetScheduledNewsResponse, error)
 
-	// MarkScheduledNewsSeenWithBodyWithResponse Mark what one of the caller's schedules did as seen
+	// MarkScheduledNewsSeenWithBodyWithResponse Mark what one of the caller's schedules or watchers did as seen
 	//
 	// Requires `schedule:read` in this team.
 	//
@@ -19122,7 +20193,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /teams/{id}/scheduled/news/seen (the `MarkScheduledNewsSeen` operationId).
 	MarkScheduledNewsSeenWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkScheduledNewsSeenResponse, error)
 
-	// MarkScheduledNewsSeenWithResponse Mark what one of the caller's schedules did as seen
+	// MarkScheduledNewsSeenWithResponse Mark what one of the caller's schedules or watchers did as seen
 	//
 	// Requires `schedule:read` in this team.
 	//
@@ -19815,6 +20886,153 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /teams/{id}/summary (the `GetTeamSummary` operationId).
 	GetTeamSummaryWithResponse(ctx context.Context, id TeamID, reqEditors ...RequestEditorFn) (*GetTeamSummaryResponse, error)
+
+	// ListWatchersWithResponse List watchers
+	//
+	// Requires `schedule:read` in this team. The caller's own, newest
+	// first; `all=true` lists everyone's and requires `schedule:manage`.
+	// Deleted watchers are listed only when `status=deleted` is asked for.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/watchers (the `ListWatchers` operationId).
+	ListWatchersWithResponse(ctx context.Context, id TeamID, params *ListWatchersParams, reqEditors ...RequestEditorFn) (*ListWatchersResponse, error)
+
+	// CreateWatcherWithBodyWithResponse Make a watcher
+	//
+	// Requires `schedule:write` in this team. The watcher looks at a web page
+	// or a feed every `every_seconds`, held to the team's minimum interval,
+	// and runs in a conversation of its own as the caller when what it sees
+	// changes. Its first look is its baseline and starts nothing. Watchers of
+	// the same address share one fetch. A change within `cooldown_seconds` of
+	// its last run (an hour unless given) is held and given to the next run.
+	// The team's limits on schedules and watchers per person and per team
+	// apply, and a caller who may not start runs is refused with 403.
+	// `target` is where it answers, as for a schedule. A webhook watcher
+	// cannot be made yet.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+	CreateWatcherWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWatcherResponse, error)
+
+	// CreateWatcherWithResponse Make a watcher
+	//
+	// Requires `schedule:write` in this team. The watcher looks at a web page
+	// or a feed every `every_seconds`, held to the team's minimum interval,
+	// and runs in a conversation of its own as the caller when what it sees
+	// changes. Its first look is its baseline and starts nothing. Watchers of
+	// the same address share one fetch. A change within `cooldown_seconds` of
+	// its last run (an hour unless given) is held and given to the next run.
+	// The team's limits on schedules and watchers per person and per team
+	// apply, and a caller who may not start runs is refused with 403.
+	// `target` is where it answers, as for a schedule. A webhook watcher
+	// cannot be made yet.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+	CreateWatcherWithResponse(ctx context.Context, id TeamID, body CreateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWatcherResponse, error)
+
+	// DeleteWatcherWithResponse Delete a watcher
+	//
+	// Requires `schedule:write` in this team, and the watcher to be the
+	// caller's own or the caller to hold `schedule:manage` (404 otherwise).
+	// It looks no more, and its conversation is closed and kept, with its
+	// runs. A run already working finishes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /teams/{id}/watchers/{watcherID} (the `DeleteWatcher` operationId).
+	DeleteWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*DeleteWatcherResponse, error)
+
+	// GetWatcherWithResponse Read a watcher
+	//
+	// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/watchers/{watcherID} (the `GetWatcher` operationId).
+	GetWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*GetWatcherResponse, error)
+
+	// UpdateWatcherWithBodyWithResponse Change, pause or resume a watcher
+	//
+	// Requires `schedule:write` in this team. What it does (name, objective,
+	// selector, interval, cooldown, agent) is changed only by its maker, since
+	// it runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+	// watcher looks again now. A new selector makes its next look a new
+	// baseline. Everything named is changed together, or nothing is. The
+	// address and where it answers never change: delete it and make another.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+	UpdateWatcherWithBodyWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateWatcherResponse, error)
+
+	// UpdateWatcherWithResponse Change, pause or resume a watcher
+	//
+	// Requires `schedule:write` in this team. What it does (name, objective,
+	// selector, interval, cooldown, agent) is changed only by its maker, since
+	// it runs as them; another caller is refused with 403. `status` pauses or
+	// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+	// watcher looks again now. A new selector makes its next look a new
+	// baseline. Everything named is changed together, or nothing is. The
+	// address and where it answers never change: delete it and make another.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+	UpdateWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, body UpdateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateWatcherResponse, error)
+
+	// ListWatcherChecksWithResponse List what a watcher saw each time it looked
+	//
+	// Requires `schedule:read` in this team. The caller's own watcher, or
+	// anyone's with `schedule:manage` (404 otherwise). Newest first; each
+	// watcher keeps its newest 200.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /teams/{id}/watchers/{watcherID}/checks (the `ListWatcherChecks` operationId).
+	ListWatcherChecksWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, params *ListWatcherChecksParams, reqEditors ...RequestEditorFn) (*ListWatcherChecksResponse, error)
+
+	// ConfirmWatcherWithResponse Confirm a watcher an agent proposed
+	//
+	// Requires `schedule:write` in this team, and the caller to be the person
+	// it was proposed to. It becomes active and looks now. A proposal lapses
+	// after an hour.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
+	ConfirmWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*ConfirmWatcherResponse, error)
+
+	// CheckWatcherNowWithResponse Have a watcher look now
+	//
+	// Requires `schedule:write` in this team, and the caller to be its maker
+	// (403 otherwise). An active watcher looks within the minute rather than
+	// at its next time; a change it finds runs as any would, past its
+	// cooldown.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/run (the `CheckWatcherNow` operationId).
+	CheckWatcherNowWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*CheckWatcherNowResponse, error)
+
+	// TakeOverWatcherWithResponse Take over a watcher whose maker left
+	//
+	// Requires `schedule:manage` in this team. Only a paused watcher whose
+	// maker left, or may no longer start runs or post where it answers, is
+	// taken over, whoever paused it. It stays paused until the caller resumes
+	// it, and runs as them from then, so a caller who may not start runs is
+	// refused with 403, as is one without `channel:write` for a watcher
+	// posting where a group reads it. One answering in its maker's direct
+	// messages or their own thread cannot be handed on: 409.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/take-over (the `TakeOverWatcher` operationId).
+	TakeOverWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*TakeOverWatcherResponse, error)
 
 	// ListUsersWithResponse Find a user
 	//
@@ -24874,6 +26092,431 @@ func (r GetTeamSummaryResponse) ContentType() string {
 	return ""
 }
 
+// ListWatchersResponse401Headers the declared response headers of an HTTP 401 response for ListWatchers
+type ListWatchersResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListWatchersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WatcherPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListWatchersResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWatchersResponse) GetJSON200() *WatcherPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWatchersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWatchersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWatchersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWatchersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateWatcherResponse401Headers the declared response headers of an HTTP 401 response for CreateWatcher
+type CreateWatcherResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CreateWatcherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Watcher
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CreateWatcherResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateWatcherResponse) GetJSON201() *Watcher {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateWatcherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateWatcherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateWatcherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateWatcherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteWatcherResponse401Headers the declared response headers of an HTTP 401 response for DeleteWatcher
+type DeleteWatcherResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type DeleteWatcherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteWatcherResponse401Headers
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteWatcherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteWatcherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteWatcherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteWatcherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetWatcherResponse401Headers the declared response headers of an HTTP 401 response for GetWatcher
+type GetWatcherResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetWatcherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Watcher
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetWatcherResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetWatcherResponse) GetJSON200() *Watcher {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r GetWatcherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWatcherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWatcherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetWatcherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UpdateWatcherResponse401Headers the declared response headers of an HTTP 401 response for UpdateWatcher
+type UpdateWatcherResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type UpdateWatcherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Watcher
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *UpdateWatcherResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateWatcherResponse) GetJSON200() *Watcher {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateWatcherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateWatcherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateWatcherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateWatcherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListWatcherChecksResponse401Headers the declared response headers of an HTTP 401 response for ListWatcherChecks
+type ListWatcherChecksResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ListWatcherChecksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WatcherCheckPage
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListWatcherChecksResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWatcherChecksResponse) GetJSON200() *WatcherCheckPage {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWatcherChecksResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWatcherChecksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWatcherChecksResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWatcherChecksResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ConfirmWatcherResponse401Headers the declared response headers of an HTTP 401 response for ConfirmWatcher
+type ConfirmWatcherResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type ConfirmWatcherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Watcher
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ConfirmWatcherResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConfirmWatcherResponse) GetJSON200() *Watcher {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r ConfirmWatcherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConfirmWatcherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConfirmWatcherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConfirmWatcherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CheckWatcherNowResponse401Headers the declared response headers of an HTTP 401 response for CheckWatcherNow
+type CheckWatcherNowResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type CheckWatcherNowResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Watcher
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *CheckWatcherNowResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CheckWatcherNowResponse) GetJSON200() *Watcher {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckWatcherNowResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckWatcherNowResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckWatcherNowResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckWatcherNowResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// TakeOverWatcherResponse401Headers the declared response headers of an HTTP 401 response for TakeOverWatcher
+type TakeOverWatcherResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type TakeOverWatcherResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Watcher
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *TakeOverWatcherResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TakeOverWatcherResponse) GetJSON200() *Watcher {
+	return r.JSON200
+}
+
+// GetBody returns the raw response body bytes
+func (r TakeOverWatcherResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TakeOverWatcherResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TakeOverWatcherResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TakeOverWatcherResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListUsersResponse401Headers the declared response headers of an HTTP 401 response for ListUsers
 type ListUsersResponse401Headers struct {
 	WWWAuthenticate *string
@@ -27088,10 +28731,11 @@ func (c *ClientWithResponses) ListScheduleTargetsWithResponse(ctx context.Contex
 
 // GetScheduledNewsWithResponse What the caller's schedules did that they have not seen
 //
-// Requires `schedule:read` in this team. Every fire that failed, was
-// skipped or was missed, wherever the schedule answers, and every
-// answer kept in a schedule's own conversation. A run with nothing to
-// say tells nobody.
+// Requires `schedule:read` in this team. Every fire or check that
+// failed, was skipped or was missed, wherever the schedule or watcher
+// answers, every page or feed a watcher could not read, and every
+// answer kept in one's own conversation, newest first. A run with
+// nothing to say tells nobody.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -27104,7 +28748,7 @@ func (c *ClientWithResponses) GetScheduledNewsWithResponse(ctx context.Context, 
 	return ParseGetScheduledNewsResponse(rsp)
 }
 
-// MarkScheduledNewsSeenWithBodyWithResponse Mark what one of the caller's schedules did as seen
+// MarkScheduledNewsSeenWithBodyWithResponse Mark what one of the caller's schedules or watchers did as seen
 //
 // Requires `schedule:read` in this team.
 //
@@ -27119,7 +28763,7 @@ func (c *ClientWithResponses) MarkScheduledNewsSeenWithBodyWithResponse(ctx cont
 	return ParseMarkScheduledNewsSeenResponse(rsp)
 }
 
-// MarkScheduledNewsSeenWithResponse Mark what one of the caller's schedules did as seen
+// MarkScheduledNewsSeenWithResponse Mark what one of the caller's schedules or watchers did as seen
 //
 // Requires `schedule:read` in this team.
 //
@@ -28051,6 +29695,219 @@ func (c *ClientWithResponses) GetTeamSummaryWithResponse(ctx context.Context, id
 		return nil, err
 	}
 	return ParseGetTeamSummaryResponse(rsp)
+}
+
+// ListWatchersWithResponse List watchers
+//
+// Requires `schedule:read` in this team. The caller's own, newest
+// first; `all=true` lists everyone's and requires `schedule:manage`.
+// Deleted watchers are listed only when `status=deleted` is asked for.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/watchers (the `ListWatchers` operationId).
+func (c *ClientWithResponses) ListWatchersWithResponse(ctx context.Context, id TeamID, params *ListWatchersParams, reqEditors ...RequestEditorFn) (*ListWatchersResponse, error) {
+	rsp, err := c.ListWatchers(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWatchersResponse(rsp)
+}
+
+// CreateWatcherWithBodyWithResponse Make a watcher
+//
+// Requires `schedule:write` in this team. The watcher looks at a web page
+// or a feed every `every_seconds`, held to the team's minimum interval,
+// and runs in a conversation of its own as the caller when what it sees
+// changes. Its first look is its baseline and starts nothing. Watchers of
+// the same address share one fetch. A change within `cooldown_seconds` of
+// its last run (an hour unless given) is held and given to the next run.
+// The team's limits on schedules and watchers per person and per team
+// apply, and a caller who may not start runs is refused with 403.
+// `target` is where it answers, as for a schedule. A webhook watcher
+// cannot be made yet.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+func (c *ClientWithResponses) CreateWatcherWithBodyWithResponse(ctx context.Context, id TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWatcherResponse, error) {
+	rsp, err := c.CreateWatcherWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateWatcherResponse(rsp)
+}
+
+// CreateWatcherWithResponse Make a watcher
+//
+// Requires `schedule:write` in this team. The watcher looks at a web page
+// or a feed every `every_seconds`, held to the team's minimum interval,
+// and runs in a conversation of its own as the caller when what it sees
+// changes. Its first look is its baseline and starts nothing. Watchers of
+// the same address share one fetch. A change within `cooldown_seconds` of
+// its last run (an hour unless given) is held and given to the next run.
+// The team's limits on schedules and watchers per person and per team
+// apply, and a caller who may not start runs is refused with 403.
+// `target` is where it answers, as for a schedule. A webhook watcher
+// cannot be made yet.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/watchers (the `CreateWatcher` operationId).
+func (c *ClientWithResponses) CreateWatcherWithResponse(ctx context.Context, id TeamID, body CreateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWatcherResponse, error) {
+	rsp, err := c.CreateWatcher(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateWatcherResponse(rsp)
+}
+
+// DeleteWatcherWithResponse Delete a watcher
+//
+// Requires `schedule:write` in this team, and the watcher to be the
+// caller's own or the caller to hold `schedule:manage` (404 otherwise).
+// It looks no more, and its conversation is closed and kept, with its
+// runs. A run already working finishes.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /teams/{id}/watchers/{watcherID} (the `DeleteWatcher` operationId).
+func (c *ClientWithResponses) DeleteWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*DeleteWatcherResponse, error) {
+	rsp, err := c.DeleteWatcher(ctx, id, watcherID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteWatcherResponse(rsp)
+}
+
+// GetWatcherWithResponse Read a watcher
+//
+// Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/watchers/{watcherID} (the `GetWatcher` operationId).
+func (c *ClientWithResponses) GetWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*GetWatcherResponse, error) {
+	rsp, err := c.GetWatcher(ctx, id, watcherID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWatcherResponse(rsp)
+}
+
+// UpdateWatcherWithBodyWithResponse Change, pause or resume a watcher
+//
+// Requires `schedule:write` in this team. What it does (name, objective,
+// selector, interval, cooldown, agent) is changed only by its maker, since
+// it runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+// watcher looks again now. A new selector makes its next look a new
+// baseline. Everything named is changed together, or nothing is. The
+// address and where it answers never change: delete it and make another.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+func (c *ClientWithResponses) UpdateWatcherWithBodyWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateWatcherResponse, error) {
+	rsp, err := c.UpdateWatcherWithBody(ctx, id, watcherID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateWatcherResponse(rsp)
+}
+
+// UpdateWatcherWithResponse Change, pause or resume a watcher
+//
+// Requires `schedule:write` in this team. What it does (name, objective,
+// selector, interval, cooldown, agent) is changed only by its maker, since
+// it runs as them; another caller is refused with 403. `status` pauses or
+// resumes it, by its maker or one who holds `schedule:manage`; a resumed
+// watcher looks again now. A new selector makes its next look a new
+// baseline. Everything named is changed together, or nothing is. The
+// address and where it answers never change: delete it and make another.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /teams/{id}/watchers/{watcherID} (the `UpdateWatcher` operationId).
+func (c *ClientWithResponses) UpdateWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, body UpdateWatcherJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateWatcherResponse, error) {
+	rsp, err := c.UpdateWatcher(ctx, id, watcherID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateWatcherResponse(rsp)
+}
+
+// ListWatcherChecksWithResponse List what a watcher saw each time it looked
+//
+// Requires `schedule:read` in this team. The caller's own watcher, or
+// anyone's with `schedule:manage` (404 otherwise). Newest first; each
+// watcher keeps its newest 200.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /teams/{id}/watchers/{watcherID}/checks (the `ListWatcherChecks` operationId).
+func (c *ClientWithResponses) ListWatcherChecksWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, params *ListWatcherChecksParams, reqEditors ...RequestEditorFn) (*ListWatcherChecksResponse, error) {
+	rsp, err := c.ListWatcherChecks(ctx, id, watcherID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWatcherChecksResponse(rsp)
+}
+
+// ConfirmWatcherWithResponse Confirm a watcher an agent proposed
+//
+// Requires `schedule:write` in this team, and the caller to be the person
+// it was proposed to. It becomes active and looks now. A proposal lapses
+// after an hour.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
+func (c *ClientWithResponses) ConfirmWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*ConfirmWatcherResponse, error) {
+	rsp, err := c.ConfirmWatcher(ctx, id, watcherID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmWatcherResponse(rsp)
+}
+
+// CheckWatcherNowWithResponse Have a watcher look now
+//
+// Requires `schedule:write` in this team, and the caller to be its maker
+// (403 otherwise). An active watcher looks within the minute rather than
+// at its next time; a change it finds runs as any would, past its
+// cooldown.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/run (the `CheckWatcherNow` operationId).
+func (c *ClientWithResponses) CheckWatcherNowWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*CheckWatcherNowResponse, error) {
+	rsp, err := c.CheckWatcherNow(ctx, id, watcherID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckWatcherNowResponse(rsp)
+}
+
+// TakeOverWatcherWithResponse Take over a watcher whose maker left
+//
+// Requires `schedule:manage` in this team. Only a paused watcher whose
+// maker left, or may no longer start runs or post where it answers, is
+// taken over, whoever paused it. It stays paused until the caller resumes
+// it, and runs as them from then, so a caller who may not start runs is
+// refused with 403, as is one without `channel:write` for a watcher
+// posting where a group reads it. One answering in its maker's direct
+// messages or their own thread cannot be handed on: 409.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/take-over (the `TakeOverWatcher` operationId).
+func (c *ClientWithResponses) TakeOverWatcherWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*TakeOverWatcherResponse, error) {
+	rsp, err := c.TakeOverWatcher(ctx, id, watcherID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTakeOverWatcherResponse(rsp)
 }
 
 // ListUsersWithResponse Find a user
@@ -32089,6 +33946,347 @@ func ParseGetTeamSummaryResponse(rsp *http.Response) (*GetTeamSummaryResponse, e
 	switch {
 	case rsp.StatusCode == 401:
 		var headers GetTeamSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListWatchersResponse parses an HTTP response from a ListWatchersWithResponse call
+func ParseListWatchersResponse(rsp *http.Response) (*ListWatchersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWatchersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WatcherPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListWatchersResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateWatcherResponse parses an HTTP response from a CreateWatcherWithResponse call
+func ParseCreateWatcherResponse(rsp *http.Response) (*CreateWatcherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateWatcherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Watcher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CreateWatcherResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteWatcherResponse parses an HTTP response from a DeleteWatcherWithResponse call
+func ParseDeleteWatcherResponse(rsp *http.Response) (*DeleteWatcherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteWatcherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteWatcherResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetWatcherResponse parses an HTTP response from a GetWatcherWithResponse call
+func ParseGetWatcherResponse(rsp *http.Response) (*GetWatcherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWatcherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Watcher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetWatcherResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateWatcherResponse parses an HTTP response from a UpdateWatcherWithResponse call
+func ParseUpdateWatcherResponse(rsp *http.Response) (*UpdateWatcherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateWatcherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Watcher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers UpdateWatcherResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListWatcherChecksResponse parses an HTTP response from a ListWatcherChecksWithResponse call
+func ParseListWatcherChecksResponse(rsp *http.Response) (*ListWatcherChecksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWatcherChecksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WatcherCheckPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListWatcherChecksResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseConfirmWatcherResponse parses an HTTP response from a ConfirmWatcherWithResponse call
+func ParseConfirmWatcherResponse(rsp *http.Response) (*ConfirmWatcherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConfirmWatcherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Watcher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ConfirmWatcherResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCheckWatcherNowResponse parses an HTTP response from a CheckWatcherNowWithResponse call
+func ParseCheckWatcherNowResponse(rsp *http.Response) (*CheckWatcherNowResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckWatcherNowResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Watcher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers CheckWatcherNowResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseTakeOverWatcherResponse parses an HTTP response from a TakeOverWatcherWithResponse call
+func ParseTakeOverWatcherResponse(rsp *http.Response) (*TakeOverWatcherResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TakeOverWatcherResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Watcher
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers TakeOverWatcherResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

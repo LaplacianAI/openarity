@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -55,7 +56,7 @@ func TestTheCronsParseAsDBOSReadsThem(t *testing.T) {
 // missed tick has no work the next does not do.
 func TestTheJobsSchedulesAreWhatTheyClaim(t *testing.T) {
 	t.Parallel()
-	j := NewJob(nil, nil, quiet())
+	j := NewJob(nil, nil, nil, quiet())
 	if j.Name() != "triggers" {
 		t.Errorf("Name = %q", j.Name())
 	}
@@ -78,7 +79,7 @@ func TestTheJobsSchedulesAreWhatTheyClaim(t *testing.T) {
 
 func TestAJobWithNoStoreOrNoWayToRunRefuses(t *testing.T) {
 	t.Parallel()
-	for _, j := range []*Job{NewJob(nil, func(dbos.Client, uuid.UUID) error { return nil }, quiet())} {
+	for _, j := range []*Job{NewJob(nil, func(dbos.Client, uuid.UUID) error { return nil }, http.DefaultClient, quiet())} {
 		if _, err := j.Register(nil); err == nil || !strings.Contains(err.Error(), "every fire would fail") {
 			t.Errorf("Register = %v", err)
 		}
@@ -121,7 +122,7 @@ func launch(t *testing.T) *launched {
 		t.Fatalf("dbos.NewContext: %v", err)
 	}
 	enqueued := &recorded{}
-	j := NewJob(w.store, func(_ dbos.Client, id uuid.UUID) error { return enqueued.Enqueue(t.Context(), id) }, quiet())
+	j := NewJob(w.store, func(_ dbos.Client, id uuid.UUID) error { return enqueued.Enqueue(t.Context(), id) }, http.DefaultClient, quiet())
 	j.now = func() time.Time { return w.clock }
 	if _, err := j.Register(d); err != nil {
 		t.Fatalf("Register: %v", err)

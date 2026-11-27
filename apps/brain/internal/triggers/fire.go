@@ -17,6 +17,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers/when"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
 )
 
 // The outcomes a fire is recorded with, beside when's.
@@ -259,59 +260,16 @@ func start(ctx context.Context, q *db.Queries, row db.Schedule, l Limits, slot w
 		return nil
 	}
 
-	if row.CreatedBy == nil {
-		return started{outcome: skippedMaker, pause: MakerGone}, record(skippedMaker)
-	}
-	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: runWrite})
-	if err != nil {
-		return started{}, fmt.Errorf("check the maker may start runs: %w", err)
-	}
-	if !may {
-		return started{outcome: skippedMaker, pause: MakerCannotRun}, record(skippedMaker)
-	}
-	session, err := q.GetTriggerSessionOfSchedule(ctx, &row.ID)
-	if err != nil {
-		return started{}, fmt.Errorf("read the schedule's conversation: %w", err)
-	}
-	if postsToGroup(row.Target, session.Kind) {
-		may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: channelWrite})
-		if err != nil {
-			return started{}, fmt.Errorf("check the maker may post in the channel: %w", err)
-		}
-		if !may {
-			return started{outcome: skippedMaker, pause: MakerCannotRun}, record(skippedMaker)
-		}
-	}
-
-	// An agent deleted leaves neither it nor the hub; one still there is held
-	// until the run names it.
-	if !row.Hub && row.AgentID == nil {
-		return started{outcome: skippedTarget, pause: TargetGone}, record(skippedTarget)
-	}
-	if !row.Hub {
-		if _, err := q.HoldAgent(ctx, db.HoldAgentParams{ID: *row.AgentID, TeamID: row.TeamID}); errors.Is(err, pgx.ErrNoRows) {
-			return started{outcome: skippedTarget, pause: TargetGone}, record(skippedTarget)
-		} else if err != nil {
-			return started{}, fmt.Errorf("hold the schedule's agent: %w", err)
-		}
-	}
-
-	if err := q.LockTeamTriggers(ctx, row.TeamID); err != nil {
-		return started{}, fmt.Errorf("lock the team's schedules: %w", err)
-	}
-	ran, err := q.CountTriggerRunsInHour(ctx, db.CountTriggerRunsInHourParams{TeamID: row.TeamID, Now: now})
-	if err != nil {
-		return started{}, fmt.Errorf("count the team's runs this hour: %w", err)
-	}
-	if int(ran) >= l.FiresPerHour {
-		return started{outcome: skippedCap}, record(skippedCap)
-	}
-
-	if _, err := q.ActiveSessionRun(ctx, session.ID); err == nil {
+	g, err := gateOf(ctx, q, scheduleOf(&row), l, now)
+	switch {
+	case err != nil:
+		return started{}, err
+	case g.busy:
 		return started{outcome: skippedBusy}, record(skippedBusy)
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return started{}, fmt.Errorf("check the schedule's last run: %w", err)
+	case g.outcome != "":
+		return started{outcome: g.outcome, pause: g.pause}, record(g.outcome)
 	}
+	session := g.session
 
 	fresh, err := q.InsertScheduleFire(ctx, db.InsertScheduleFireParams{
 		ScheduleID: row.ID, TeamID: row.TeamID, ScheduledFor: slot.ScheduledFor, FiredAt: now,
@@ -352,13 +310,7 @@ func Input(row db.Schedule, slot when.Slot) string {
 	case when.CatchUp:
 		b.WriteString(", running late: earlier times it was due were missed while the team was not running")
 	}
-	end := rand.Text()
 	fmt.Fprintf(&b, ".\nDo what the objective asks. If there is nothing worth telling the person, answer exactly %s and nothing else.\n\n", store.Silent)
-	fmt.Fprintf(&b, "<objective end=\"%s\">\n%s\n</objective end=\"%s\">", end, unclose(row.Objective), end)
+	b.WriteString(webfetch.Wrap("objective", nil, row.Objective, rand.Text()))
 	return b.String()
-}
-
-// unclose keeps an objective from ending its own wrapper early.
-func unclose(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "</objective", "&lt;/objective"), "<objective", "&lt;objective")
 }

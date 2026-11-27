@@ -117,7 +117,7 @@ func (s *Service) Preview(ctx context.Context, who Who, w When, zone string) ([]
 // it is active at once; proposed by an agent's tool, it waits for the
 // person's next message to confirm it (D10).
 func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in ScheduleInput) (ScheduleView, error) {
-	name, objective, err := named(in.Name, in.Objective)
+	name, objective, err := named("schedule", in.Name, in.Objective)
 	if err != nil {
 		return ScheduleView{}, err
 	}
@@ -295,7 +295,7 @@ func applyPatch(ctx context.Context, q *db.Queries, row *db.Schedule, p Schedule
 			objective = *p.Objective
 		}
 		var err error
-		if row.Name, row.Objective, err = named(name, objective); err != nil {
+		if row.Name, row.Objective, err = named("schedule", name, objective); err != nil {
 			return err
 		}
 	}
@@ -386,40 +386,6 @@ func mayMake(ctx context.Context, q *db.Queries, who Who, agent *uuid.UUID, l Li
 	return underLimits(ctx, q, who.Team, who.User, l)
 }
 
-// postsInGroup is whether a schedule's answers reach a group (postsToGroup),
-// reading its conversation when that depends on it. A schedule whose
-// conversation is gone is refused: it can answer nowhere.
-func postsInGroup(ctx context.Context, q *db.Queries, row *db.Schedule) (bool, error) {
-	switch row.Target {
-	case TargetChannel:
-		return true, nil
-	case TargetChat:
-		ss, err := q.GetTriggerSessionOfSchedule(ctx, &row.ID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, refuse(Conflict, "this schedule's conversation is gone; delete it and make another")
-		}
-		if err != nil {
-			return false, fmt.Errorf("read the schedule's conversation: %w", err)
-		}
-		return postsToGroup(row.Target, ss.Kind), nil
-	}
-	return false, nil
-}
-
-// makerMayPost is whether a schedule's maker may still post where it
-// answers: anywhere, unless a group reads it, which takes channel:write.
-func makerMayPost(ctx context.Context, q *db.Queries, row *db.Schedule) (bool, error) {
-	group, err := postsInGroup(ctx, q, row)
-	if err != nil || !group {
-		return !group, err
-	}
-	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: channelWrite})
-	if err != nil {
-		return false, fmt.Errorf("check the maker may post in the channel: %w", err)
-	}
-	return may, nil
-}
-
 func resumeRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Time) error {
 	if row.Status != Paused {
 		return refuse(Conflict, "only a paused schedule can be resumed; this one is %s", row.Status)
@@ -431,7 +397,7 @@ func resumeRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Ti
 		"the person who made this schedule may no longer start runs in this team; an admin can take it over first"); err != nil {
 		return err
 	}
-	if may, err := makerMayPost(ctx, q, row); err != nil {
+	if may, err := makerMayPost(ctx, q, scheduleOf(row)); err != nil {
 		return err
 	} else if !may {
 		return refuse(Conflict, "the person who made this schedule may no longer post where a group reads it "+
@@ -468,7 +434,7 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 			return refuse(Conflict, "the proposal waited more than an hour and lapsed; ask for it again")
 		}
 		if origin.viaTool() {
-			if err := laterMessage(ctx, q, row, origin); err != nil {
+			if err := laterMessage(ctx, q, proposalOf(row), origin); err != nil {
 				return err
 			}
 		}
@@ -489,20 +455,33 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 	return s.view(ctx, who, id)
 }
 
+// A proposal is what confirming one reads: which run proposed it, where, to
+// whom, and when.
+type proposal struct {
+	run, in, maker *uuid.UUID
+	at             time.Time
+	noun           string
+}
+
+func proposalOf(row *db.Schedule) proposal {
+	return proposal{run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: row.CreatedAt, noun: "schedule"}
+}
+
 // laterMessage holds a confirmation from a tool to the conversation and the
-// person the schedule was proposed to, and to a run a later message started.
-func laterMessage(ctx context.Context, q *db.Queries, row *db.Schedule, origin Origin) error {
-	if row.ProposedRun != nil && *row.ProposedRun == origin.Run {
-		return refuse(Conflict, "ask the person; a schedule is confirmed by their next message, not in the run that proposed it")
+// person a schedule or watcher was proposed to, and to a run a later message
+// started.
+func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origin) error {
+	if row.run != nil && *row.run == origin.Run {
+		return refuse(Conflict, "ask the person; a %s is confirmed by their next message, not in the run that proposed it", row.noun)
 	}
-	if row.ProposedIn == nil || *row.ProposedIn != origin.Session {
-		return refuse(Forbidden, "a schedule is confirmed in the conversation it was proposed in")
+	if row.in == nil || *row.in != origin.Session {
+		return refuse(Forbidden, "a %s is confirmed in the conversation it was proposed in", row.noun)
 	}
 	run, err := q.GetRun(ctx, origin.Run)
 	if err != nil {
 		return fmt.Errorf("read the confirming run: %w", err)
 	}
-	if run.UserID == nil || row.CreatedBy == nil || *run.UserID != *row.CreatedBy || run.MessageID == nil {
+	if run.UserID == nil || row.maker == nil || *run.UserID != *row.maker || run.MessageID == nil {
 		return refuse(Forbidden, "only a message from the person it was proposed to confirms it")
 	}
 	at, err := q.MessageReceivedAt(ctx, db.MessageReceivedAtParams{ID: *run.MessageID, SessionID: origin.Session})
@@ -512,7 +491,7 @@ func laterMessage(ctx context.Context, q *db.Queries, row *db.Schedule, origin O
 	if err != nil {
 		return fmt.Errorf("read the confirming message: %w", err)
 	}
-	if !at.After(row.CreatedAt) {
+	if !at.After(row.at) {
 		return refuse(Forbidden, "only a message sent after the proposal confirms it")
 	}
 	return nil
@@ -539,7 +518,7 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 		return ScheduleView{}, refuse(Forbidden, "taking over a schedule takes schedule:manage")
 	}
 	id, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
-		stuck, err := makerStuck(ctx, q, row)
+		stuck, err := makerStuck(ctx, q, scheduleOf(row))
 		if err != nil {
 			return err
 		}
@@ -547,7 +526,7 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			return refuse(Conflict, "only a paused schedule whose maker left, or may no longer run or post where it "+
 				"answers, can be taken over")
 		}
-		group, err := postsInGroup(ctx, q, row)
+		group, err := postsInGroup(ctx, q, scheduleOf(row))
 		if err != nil {
 			return err
 		}
@@ -576,34 +555,6 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 		return ScheduleView{}, err
 	}
 	return s.view(ctx, who, id)
-}
-
-// makerStuck is a paused schedule its maker cannot resume: they left, or may
-// no longer run or post where it answers. One a person paused counts too
-// once its maker lost what it needs, or nobody could ever resume it.
-func makerStuck(ctx context.Context, q *db.Queries, row *db.Schedule) (bool, error) {
-	if row.Status != Paused || row.PausedReason == nil {
-		return false, nil
-	}
-	switch *row.PausedReason {
-	case MakerGone, MakerCannotRun:
-		return true, nil
-	case ByPerson:
-	default:
-		return false, nil
-	}
-	if row.CreatedBy == nil {
-		return true, nil
-	}
-	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: row.TeamID, UserID: *row.CreatedBy, Action: runWrite})
-	if err != nil {
-		return false, fmt.Errorf("check the maker may start runs: %w", err)
-	}
-	if !may {
-		return true, nil
-	}
-	posts, err := makerMayPost(ctx, q, row)
-	return !posts, err
 }
 
 // RunNow fires a schedule once, now, as an extra time: under the same checks
@@ -801,15 +752,15 @@ func asInvalid(err error) error {
 	return &Error{Kind: Invalid, Msg: err.Error()}
 }
 
-func named(name, objective string) (string, string, error) {
+func named(noun, name, objective string) (string, string, error) {
 	name, objective = strings.TrimSpace(name), strings.TrimSpace(objective)
 	switch {
 	case name == "":
-		return "", "", refuse(Invalid, "a schedule needs a name")
+		return "", "", refuse(Invalid, "a %s needs a name", noun)
 	case utf8.RuneCountInString(name) > maxName:
 		return "", "", refuse(Invalid, "a name is at most %d characters", maxName)
 	case objective == "":
-		return "", "", refuse(Invalid, "a schedule needs an objective: what to do each time it runs")
+		return "", "", refuse(Invalid, "a %s needs an objective: what to do each time it runs", noun)
 	case utf8.RuneCountInString(objective) > maxObjective:
 		return "", "", refuse(Invalid, "an objective is at most %d characters", maxObjective)
 	case strings.ContainsRune(name+objective, 0):

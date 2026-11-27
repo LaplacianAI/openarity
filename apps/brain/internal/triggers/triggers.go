@@ -121,6 +121,12 @@ type Store interface {
 	ListTargetGroups(ctx context.Context, arg db.ListTargetGroupsParams) ([]db.ListTargetGroupsRow, error)
 	ListSenderChannels(ctx context.Context, arg db.ListSenderChannelsParams) ([]db.ListSenderChannelsRow, error)
 	ListChannelsOn(ctx context.Context, arg db.ListChannelsOnParams) ([]db.ListChannelsOnRow, error)
+	GetWatcherView(ctx context.Context, arg db.GetWatcherViewParams) (db.GetWatcherViewRow, error)
+	ListWatcherViews(ctx context.Context, arg db.ListWatcherViewsParams) ([]db.ListWatcherViewsRow, error)
+	ListWatcherChecks(ctx context.Context, arg db.ListWatcherChecksParams) ([]db.WatcherCheck, error)
+	ListWatcherNews(ctx context.Context, arg db.ListWatcherNewsParams) ([]db.ListWatcherNewsRow, error)
+	MarkWatcherSeen(ctx context.Context, arg db.MarkWatcherSeenParams) (int64, error)
+	WatcherIDByName(ctx context.Context, arg db.WatcherIDByNameParams) (uuid.UUID, error)
 }
 
 // Service applies the rules. now is the clock; tests set it.

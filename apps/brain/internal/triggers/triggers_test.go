@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -677,7 +678,7 @@ func TestAnUnconfirmedProposalLapsesAfterAnHour(t *testing.T) {
 	w := newWorld(t)
 	v, _ := w.proposal(t)
 	w.exec(t, `UPDATE schedules SET created_at = now() - interval '2 hours' WHERE id = $1`, v.ID)
-	j := NewJob(w.store, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	j := NewJob(w.store, nil, http.DefaultClient, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	j.now = time.Now
 	if err := j.sweepOnce(t.Context()); err != nil {
 		t.Fatal(err)
@@ -695,7 +696,7 @@ func TestEachScheduleKeepsItsNewestFires(t *testing.T) {
 	v := w.make(t, hourly("summary"))
 	w.exec(t, `INSERT INTO schedule_fires (schedule_id, team_id, scheduled_for, outcome)
 		SELECT $1, $2, now() - make_interval(hours => g), 'missed' FROM generate_series(1, 230) g`, v.ID, w.team)
-	j := NewJob(w.store, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	j := NewJob(w.store, nil, http.DefaultClient, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := j.sweepOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}

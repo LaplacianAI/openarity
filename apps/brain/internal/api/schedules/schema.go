@@ -195,11 +195,14 @@ type ranNow struct {
 	RunID uuid.UUID `json:"run_id"`
 }
 
+// newsItem is a schedule's fire or a watcher's check: which one says, and
+// fired_at is when it happened.
 type newsItem struct {
-	ScheduleID   uuid.UUID  `json:"schedule_id"`
+	ScheduleID   *uuid.UUID `json:"schedule_id,omitempty"`
+	WatcherID    *uuid.UUID `json:"watcher_id,omitempty"`
 	Name         string     `json:"name"`
 	SessionID    uuid.UUID  `json:"session_id"`
-	ScheduledFor time.Time  `json:"scheduled_for"`
+	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
 	FiredAt      time.Time  `json:"fired_at"`
 	Outcome      string     `json:"outcome"`
 	RunID        *uuid.UUID `json:"run_id,omitempty"`
@@ -213,7 +216,8 @@ type news struct {
 }
 
 type seenRequest struct {
-	ScheduleID uuid.UUID `json:"schedule_id"`
+	ScheduleID *uuid.UUID `json:"schedule_id"`
+	WatcherID  *uuid.UUID `json:"watcher_id"`
 }
 
 type settings struct {
