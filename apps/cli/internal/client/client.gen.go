@@ -2044,9 +2044,9 @@ type AgentRequest struct {
 
 	// Schedule Gives the agent the schedule and watch tools in a chat: it may
 	// propose a schedule or a watcher that runs as the person, which
-	// starts only once their next message confirms it, and change,
-	// pause, resume, delete or run now their own. A change to what one
-	// does waits for their yes as a proposal does. It needs the team's
+	// starts only once they reply with the code it gives them, and ask
+	// to change, resume, delete or run now one of their own, which waits
+	// for the same yes. Only a pause acts at once. It needs the team's
 	// setting that lets agents schedule, and a person who holds
 	// `schedule:write`. An agent's own improvement proposals cannot grant
 	// it; a builder blueprint can, for a person to apply. Left out, it is
@@ -4517,7 +4517,8 @@ type Schedule struct {
 	// what it does, or to delete, resume or run it now. It runs as it was
 	// until its maker confirms, which does what was asked; unconfirmed
 	// within the hour, the ask is dropped. The maker's own change, the
-	// agent's next ask and a take-over each replace it.
+	// agent's next ask, a take-over and a delete each drop it. The code
+	// the agent gave the maker to confirm it with is not shown.
 	WaitingChange *WaitingChange `json:"waiting_change,omitempty" yaml:"waiting_change,omitempty"`
 
 	// When When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
@@ -5427,7 +5428,8 @@ type UserPage struct {
 // what it does, or to delete, resume or run it now. It runs as it was
 // until its maker confirms, which does what was asked; unconfirmed
 // within the hour, the ask is dropped. The maker's own change, the
-// agent's next ask and a take-over each replace it.
+// agent's next ask, a take-over and a delete each drop it. The code
+// the agent gave the maker to confirm it with is not shown.
 type WaitingChange struct {
 	// Says What was asked, said for a person
 	//
@@ -5486,7 +5488,8 @@ type Watcher struct {
 	// what it does, or to delete, resume or run it now. It runs as it was
 	// until its maker confirms, which does what was asked; unconfirmed
 	// within the hour, the ask is dropped. The maker's own change, the
-	// agent's next ask and a take-over each replace it.
+	// agent's next ask, a take-over and a delete each drop it. The code
+	// the agent gave the maker to confirm it with is not shown.
 	WaitingChange *WaitingChange `json:"waiting_change,omitempty" yaml:"waiting_change,omitempty"`
 }
 

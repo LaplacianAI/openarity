@@ -228,4 +228,15 @@ func TestTheScheduleToolsReadTheRunsFlag(t *testing.T) {
 	if !read() {
 		t.Error("a call to graph is not seen by the schedule tools")
 	}
+
+	// A list, which the tools mark themselves, is seen too.
+	f.build(t)
+	r := s.asked[len(s.asked)-1]
+	if r.ReadOutside() {
+		t.Fatal("a new run has read")
+	}
+	r.NoteRead()
+	if !r.ReadOutside() {
+		t.Error("a list the tools noted is not seen by them")
+	}
 }

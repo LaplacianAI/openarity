@@ -26,8 +26,13 @@ func TestTheRuntimeNamesTheScheduleToolsAsTheRulesDo(t *testing.T) {
 	if !slices.Equal(names, []string{triggers.ScheduleToolName, triggers.WatchToolName}) {
 		t.Errorf("stand-ins %v", names)
 	}
-	if runtime.PlanToolName != "plan" {
-		t.Errorf("the runtime's plan tool is %q; the rules let \"plan\" come before a confirm", runtime.PlanToolName)
+	if runtime.PlanToolName != triggers.PlanToolName {
+		t.Errorf("the runtime's plan tool is %q; the rules let %q come before a confirm", runtime.PlanToolName, triggers.PlanToolName)
+	}
+	// A tool the runtime does not mark but the rules do not know reads
+	// nothing would let a read come before a confirm.
+	if !slices.Equal(slices.Sorted(slices.Values(runtime.ReadsNothing)), slices.Sorted(slices.Values(triggers.ReadsNothing))) {
+		t.Errorf("the runtime leaves %v unmarked, the rules %v", runtime.ReadsNothing, triggers.ReadsNothing)
 	}
 }
 

@@ -548,10 +548,15 @@ func TestAWaitingChangeIsShownAndConfirmedByItsMaker(t *testing.T) {
 		t.Fatalf("a new schedule waits on %+v", s.WaitingChange)
 	}
 	if _, err := w.raw.Exec(t.Context(), `UPDATE schedules SET pending = '{"action":"change","schedule":{"Objective":"Summarise briefly."}}',
-		pending_run = gen_random_uuid(), pending_in = $2, pending_at = now() WHERE id = $1`, s.ID, s.SessionID); err != nil {
+		pending_run = gen_random_uuid(), pending_in = $2, pending_at = now(), yes_code = '4821' WHERE id = $1`, s.ID, s.SessionID); err != nil {
 		t.Fatal(err)
 	}
-	got := decode[schedule](t, w.serve(t, w.maker, "GET", "/schedules/"+s.ID.String(), nil))
+	read := w.serve(t, w.maker, "GET", "/schedules/"+s.ID.String(), nil)
+	// The code is for the person to type in the chat; the dashboard confirms without it.
+	if strings.Contains(read.Body.String(), "4821") {
+		t.Errorf("the code reached the API: %s", read.Body)
+	}
+	got := decode[schedule](t, read)
 	if got.WaitingChange == nil || got.WaitingChange.Says != "to change its objective" || got.Objective != s.Objective {
 		t.Fatalf("read back %+v waiting %+v: want it as it was, the change shown", got.Objective, got.WaitingChange)
 	}

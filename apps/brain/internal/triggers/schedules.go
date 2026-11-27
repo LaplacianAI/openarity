@@ -115,7 +115,7 @@ func (s *Service) Preview(ctx context.Context, who Who, w When, zone string) ([]
 
 // CreateSchedule saves a new schedule and its conversation. Made by a person
 // it is active at once; proposed by an agent's tool, it waits for the
-// person's next message to confirm it (D10).
+// person's reply with its code (D10).
 func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in ScheduleInput) (ScheduleView, error) {
 	name, objective, err := named("schedule", in.Name, in.Objective)
 	if err != nil {
@@ -179,7 +179,7 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 		}
 		if origin.viaTool() {
 			row.Status, row.NextFireAt = Proposed, nil
-			row.ProposedRun, row.ProposedIn = &origin.Run, &origin.Session
+			row.ProposedRun, row.ProposedIn, row.YesCode = &origin.Run, &origin.Session, newYesCode()
 		}
 		if _, err := q.CreateSchedule(ctx, row); err != nil {
 			return nameTaken(err, name)
@@ -458,7 +458,7 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 		if !ok {
 			return refuse(Conflict, "the proposed time has passed; ask for a new one")
 		}
-		row.Status, row.NextFireAt = Active, &next
+		row.Status, row.NextFireAt, row.YesCode = Active, &next, nil
 		return nil
 	})
 	if err != nil {
@@ -471,15 +471,19 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 }
 
 // A proposal is what confirming one reads: which run proposed it, where, to
-// whom, and when.
+// whom, when, and the code a yes to it carries.
 type proposal struct {
 	run, in, maker *uuid.UUID
 	at             time.Time
+	code           *string
 	noun           string
 }
 
 func proposalOf(row *db.Schedule) proposal {
-	return proposal{run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: proposedAt(row.ProposedAt, row.CreatedAt), noun: "schedule"}
+	return proposal{
+		run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: proposedAt(row.ProposedAt, row.CreatedAt),
+		code: row.YesCode, noun: "schedule",
+	}
 }
 
 // proposedAt is when a proposal was last made or revised.
@@ -492,7 +496,8 @@ func proposedAt(at *time.Time, created time.Time) time.Time {
 
 // laterMessage holds a confirmation from a tool to the conversation and the
 // person a schedule or watcher was proposed to, and to a run a later message
-// started.
+// of theirs started: sent once the proposing run finished, and carrying the
+// proposal's code, which only the person's own reply can (changes.go).
 func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origin) error {
 	if row.run != nil && *row.run == origin.Run {
 		return refuse(Conflict, "ask the person; a %s is confirmed by their next message, not in the run that proposed it", row.noun)
@@ -507,13 +512,14 @@ func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origi
 	if run.UserID == nil || row.maker == nil || *run.UserID != *row.maker || run.MessageID == nil {
 		return refuse(Forbidden, "only a message from the person it was proposed to confirms it")
 	}
-	at, err := q.MessageReceivedAt(ctx, db.MessageReceivedAtParams{ID: *run.MessageID, SessionID: origin.Session})
+	msg, err := q.ConfirmingMessage(ctx, db.ConfirmingMessageParams{ID: *run.MessageID, SessionID: origin.Session})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return refuse(Forbidden, "only a message from the person it was proposed to confirms it")
 	}
 	if err != nil {
 		return fmt.Errorf("read the confirming message: %w", err)
 	}
+	at := msg.ReceivedAt
 	if !at.After(row.at) {
 		return refuse(Forbidden, "only a message sent after the proposal confirms it")
 	}
@@ -531,6 +537,10 @@ func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origi
 	}
 	if proposer.FinishedAt == nil || !at.After(*proposer.FinishedAt) {
 		return refuse(Forbidden, "only a message sent after the run that proposed it finished confirms it")
+	}
+	if row.code == nil || !carriesCode(msg.Text, *row.code) {
+		return refuse(Forbidden, "the person's message does not carry this %s's code, so it is not their yes to it; "+
+			"ask them to reply with the code this tool gave, and do not confirm until they do", row.noun)
 	}
 	return nil
 }
@@ -844,7 +854,7 @@ func saveOf(r db.Schedule) db.SaveScheduleParams {
 		PausedReason: r.PausedReason, DeletedAt: r.DeletedAt, NextFireAt: r.NextFireAt,
 		LastFiredAt: r.LastFiredAt, LastLocal: r.LastLocal, ConsecutiveFailures: r.ConsecutiveFailures,
 		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn, ProposedAt: r.ProposedAt,
-		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt,
+		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt, YesCode: r.YesCode,
 	}
 }
 

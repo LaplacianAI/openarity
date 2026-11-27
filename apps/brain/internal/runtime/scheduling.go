@@ -39,14 +39,18 @@ type SchedulingRun struct {
 	// Agent finds an agent the run may hand work to, by name.
 	Agent func(ctx context.Context, name string) (uuid.UUID, error)
 	// ReadOutside is whether the run has called a tool other than these
-	// two and plan since it was built: what such a tool returned may say
-	// to confirm, so a confirm must come first.
+	// two and plan since it was built, or been marked by NoteRead: what it
+	// read may say to confirm, so a confirm must come first.
 	ReadOutside func() bool
+	// NoteRead marks the run as having read, for a call of the two tools
+	// that does: a list.
+	NoteRead func()
 }
 
-// readsNothing are the tools a run may call before it confirms: their
-// answers are its own proposals and notes, not what someone else wrote.
-var readsNothing = append([]string{PlanToolName}, ScheduleToolNames...)
+// ReadsNothing are the tools whose call does not mark a run as having read:
+// their answers are its own proposals and notes, not what someone else
+// wrote. The rules hold the same list.
+var ReadsNothing = append([]string{PlanToolName}, ScheduleToolNames...)
 
 // WithScheduling gives a top-level run of the hub, or of an agent granted
 // it, the schedule and watch tools (D10).
@@ -75,6 +79,7 @@ func (b *Builder) schedulingFor(ctx context.Context, run db.Run, a db.Agent, bui
 		Team: run.TeamID, User: *run.UserID, Run: run.ID, Session: run.SessionID,
 		Agent:       func(ctx context.Context, name string) (uuid.UUID, error) { return b.schedulable(ctx, a, run, name) },
 		ReadOutside: read.Load,
+		NoteRead:    func() { read.Store(true) },
 	}
 	// The hub's schedule runs the hub, whichever agent the team made it.
 	if a.ID != uuid.Nil && !run.Hub {
@@ -103,7 +108,7 @@ func (built *Built) noteReads() {
 		return
 	}
 	for i, t := range built.Spec.Tools {
-		if !slices.Contains(readsNothing, t.Name) {
+		if !slices.Contains(ReadsNothing, t.Name) {
 			built.Spec.Tools[i] = marking(t, built.outside)
 		}
 	}

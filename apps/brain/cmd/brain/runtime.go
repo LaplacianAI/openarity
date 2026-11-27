@@ -126,7 +126,7 @@ func (s scheduling) Tools(ctx context.Context, r runtime.SchedulingRun) ([]agent
 			id, err := r.Agent(ctx, name)
 			return id, agentRefusal(err)
 		},
-		ReadOutside: r.ReadOutside, Dashboard: s.dashboard,
+		ReadOutside: r.ReadOutside, NoteRead: r.NoteRead, Dashboard: s.dashboard,
 	})
 }
 

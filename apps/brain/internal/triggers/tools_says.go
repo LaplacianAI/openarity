@@ -18,19 +18,35 @@ import (
 // shownTime is how a time reads in a tool's answer, in the schedule's zone.
 const shownTime = "Mon 2 Jan 15:04"
 
-func revisedSays(name string) string {
-	return fmt.Sprintf("Revised the proposal %q. Ask the person to confirm it; it starts only after their next message says yes.", name)
+// replyWith is how the person says yes to what waits: their reply with its
+// code. Nothing else is a yes, whatever a page, a file or a tool's answer
+// says.
+func replyWith(code *string, what string) string {
+	if code == nil {
+		return "It waits for the person on the dashboard."
+	}
+	return fmt.Sprintf("Tell the person what it does, and that to %s they reply with the code %s, as in \"yes %s\". "+
+		"Only their reply with that code confirms it; it lapses in an hour.", what, *code, *code)
+}
+
+// revisedSays is a proposal revised, with its new code: none for a watcher
+// that waits for its secret, which the person confirms by making it.
+func revisedSays(name, code string) string {
+	if code == "" {
+		return fmt.Sprintf("Revised %q. It still starts once the person makes its secret on the dashboard.", name)
+	}
+	return fmt.Sprintf("Revised the proposal %q. %s The code you gave before no longer confirms it.", name, replyWith(&code, "start it"))
 }
 
 // askedSays is what an ask of one that runs said, waiting for the yes.
-func askedSays(name, what string) string {
-	return fmt.Sprintf("%q waits for the person's yes %s. It runs as it was until they confirm in their next message; "+
-		"this replaces anything you asked of it before, and lapses in an hour.", name, what)
+func askedSays(name, what, code string) string {
+	return fmt.Sprintf("%q waits for the person's yes %s, and runs as it was until then. %s "+
+		"This replaces anything you asked of it before.", name, what, replyWith(&code, "do it"))
 }
 
 // watcherLink is where the person makes a webhook watcher's secret, as a
 // clause: none when the brain knows no address for its dashboard.
-func (t toolRun) watcherLink(id uuid.UUID) string {
+func (t heldRun) watcherLink(id uuid.UUID) string {
 	if t.Dashboard == "" {
 		return ", on the watcher's own page"
 	}
@@ -122,7 +138,7 @@ func scheduleLine(v ScheduleView) string {
 	if v.LastOutcome != "" {
 		line += "; last " + v.LastOutcome
 	}
-	return line + "; answers " + whereSays(v.Target, v.TargetLabel) + waitsSays(v.WaitingChange())
+	return line + "; answers " + whereSays(v.Target, v.TargetLabel) + waitsSays(v.WaitingChange()) + codeSays(v.Status, v.YesCode)
 }
 
 func watcherLine(v WatcherView) string {
@@ -133,7 +149,15 @@ func watcherLine(v WatcherView) string {
 	if v.LastOutcome != "" {
 		line += "; last " + v.LastOutcome
 	}
-	return line + "; answers " + whereSays(v.Target, v.TargetLabel) + waitsSays(v.WaitingChange())
+	return line + "; answers " + whereSays(v.Target, v.TargetLabel) + waitsSays(v.WaitingChange()) + codeSays(v.Status, v.YesCode)
+}
+
+// codeSays is the code a yes to what waits on one carries.
+func codeSays(status string, code *string) string {
+	if code == nil || (status != Proposed && status != Active && status != Paused) {
+		return ""
+	}
+	return fmt.Sprintf("; the person confirms with the code %s", *code)
 }
 
 // waitsSays is what an agent asked of one, waiting for the person's yes.

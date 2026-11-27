@@ -646,6 +646,7 @@ type Schedule struct {
 	PendingRun          *uuid.UUID
 	PendingIn           *uuid.UUID
 	PendingAt           *time.Time
+	YesCode             *string
 }
 
 type ScheduleFire struct {
@@ -835,6 +836,7 @@ type Watcher struct {
 	PendingRun          *uuid.UUID
 	PendingIn           *uuid.UUID
 	PendingAt           *time.Time
+	YesCode             *string
 }
 
 type WatcherCheck struct {

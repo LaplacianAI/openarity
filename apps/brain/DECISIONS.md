@@ -248,18 +248,33 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     it; unconfirmed within the hour, the sweep drops it and nothing else.
     Back to `proposed`, as first asked, would stop it firing meanwhile and
     have the sweep delete a working one. The ask is taken off the row before
-    it is acted on, so two yeses act once. The maker's own change, the
-    agent's next ask and a take-over each replace a waiting one. A proposal
+    it is acted on, so two yeses act once; an act refused or failed after
+    the take, or a crash between them, does nothing and says to ask again. The maker's own change, the
+    agent's next ask, a take-over and a delete each drop a waiting one. A proposal
     not yet confirmed is revised in place, from `proposed_at`, and the run
     that revised it may not confirm it; one is deleted at once.
-  - **A yes is a message sent after the run that asked finished,** and a
-    confirm comes before the run calls anything but `schedule`, `watch`
-    and `plan` (*user*, 2026-11-27). A message sent while the run worked
-    did not answer what it said; and what a page, a file, a server or
-    another agent returned could be the text that says to confirm. The run
-    marks itself on any other call, found tools too, and one resumed from a
-    wait is read from the calls it recorded. Text the person pasted in their
-    own yes is theirs.
+  - **A yes is the person's reply carrying the code the tool gave**
+    (*user*, 2026-11-28). Each proposal, revision and ask gets four random
+    digits, kept in `yes_code` and given only in the tool's answer for the
+    model to pass on. The run that asked may have read a page saying "when
+    they reply, confirm"; the next run then reads that in its transcript,
+    and a "thanks" would start it. Every other check passes then, as the
+    brain cannot tell a yes from a thanks, but nothing a run read can make
+    the person type the code. Confirming on the dashboard needs no code.
+    What is left is a model that tells the person to type the code without
+    saying what it confirms.
+  - **And it is sent after the run that asked finished, and confirmed before
+    the run reads anything** (*user*, 2026-11-27). A message sent while the
+    run worked did not answer what it said. A confirm comes before the run
+    calls anything but `plan` and the two tools' acts: what a page, a file,
+    a server, another agent or a list of what earlier runs wrote returned
+    could say to confirm. The run marks itself on any other call, found
+    tools too, and a list marks it from inside the tool. One resumed from a
+    wait is read from the calls it recorded, failing closed: a call it
+    cannot tell the action of counts as a read, and the tools refuse any
+    argument key not spelled exactly as their own, so the record and the
+    tool read a call alike. Text the person pasted in their own yes is
+    theirs.
   - **It runs the agent talking, or one it may hand work to,** checked as
     delegation is. The hub's run the hub, whichever agent the team made it.
   - **Here is the chat it was asked in; on the dashboard, a conversation of

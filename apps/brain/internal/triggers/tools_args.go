@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -31,10 +32,31 @@ type toolArgs struct {
 	Cooldown  string  `json:"cooldown"`
 }
 
+// toolArgKeys are the keys toolArgs takes, exactly as its tags spell them.
+var toolArgKeys = func() map[string]bool {
+	keys := map[string]bool{}
+	t := reflect.TypeFor[toolArgs]()
+	for i := range t.NumField() {
+		keys[t.Field(i).Tag.Get("json")] = true
+	}
+	return keys
+}()
+
 // parseToolArgs reads a call's arguments, refusing a field neither tool
-// takes rather than dropping it.
+// takes rather than dropping it. A key must be spelled exactly as the tool's
+// own: Go would read "Action" as action, where a recorded call is read in SQL,
+// which would not, and the two must agree on what a call did.
 func parseToolArgs(raw json.RawMessage) (toolArgs, error) {
 	var a toolArgs
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return a, refuse(Invalid, "the arguments are not this tool's: %s", err.Error())
+	}
+	for k := range keys {
+		if !toolArgKeys[k] {
+			return a, refuse(Invalid, "the arguments are not this tool's: no field %q", k)
+		}
+	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&a); err != nil {
@@ -57,7 +79,7 @@ func (a toolArgs) ref() (Ref, error) {
 
 // agentOf is the agent a new one runs: the one named, or the one talking.
 // The runtime says why a name may not be used; anything else is a failure.
-func (t toolRun) agentOf(ctx context.Context, name string) (*uuid.UUID, error) {
+func (t heldRun) agentOf(ctx context.Context, name string) (*uuid.UUID, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return t.Self, nil
@@ -74,7 +96,7 @@ func (t toolRun) agentOf(ctx context.Context, name string) (*uuid.UUID, error) {
 
 // agentPatch is the agent a change names, as a patch sets it: the hub when
 // the run's own is the hub.
-func (t toolRun) agentPatch(ctx context.Context, name string) (agentID *uuid.UUID, hub bool, err error) {
+func (t heldRun) agentPatch(ctx context.Context, name string) (agentID *uuid.UUID, hub bool, err error) {
 	if name == "" {
 		return nil, false, nil
 	}
@@ -86,7 +108,7 @@ func (t toolRun) agentPatch(ctx context.Context, name string) (agentID *uuid.UUI
 }
 
 // targetOf is where a new one answers.
-func (t toolRun) targetOf(name string) (Target, error) {
+func (t heldRun) targetOf(name string) (Target, error) {
 	switch name {
 	case "", "here":
 		return t.chat, nil
@@ -101,7 +123,7 @@ func (t toolRun) targetOf(name string) (Target, error) {
 
 // whenOf is the time the arguments ask for, nil when they name none. A local
 // time is read in zone, the team's when empty.
-func (s *Service) whenOf(ctx context.Context, t toolRun, a toolArgs, zone string) (*When, error) {
+func (s *Service) whenOf(ctx context.Context, t heldRun, a toolArgs, zone string) (*When, error) {
 	n := 0
 	for _, v := range []string{a.At, a.Every, a.Cron} {
 		if strings.TrimSpace(v) != "" {
@@ -184,7 +206,7 @@ func optDuration(v string) (*time.Duration, error) {
 
 // schedulePatchOf is the change an update asks of the schedule ref. A wall
 // time is read in the schedule's own zone, or the new one it names.
-func (s *Service) schedulePatchOf(ctx context.Context, t toolRun, ref Ref, a toolArgs) (SchedulePatch, error) {
+func (s *Service) schedulePatchOf(ctx context.Context, t heldRun, ref Ref, a toolArgs) (SchedulePatch, error) {
 	if a.Target != "" {
 		return SchedulePatch{}, refuse(Invalid, "where it answers cannot change; delete it and make another")
 	}
@@ -206,7 +228,7 @@ func (s *Service) schedulePatchOf(ctx context.Context, t toolRun, ref Ref, a too
 }
 
 // watcherPatchOf is the change an update asks of a watcher.
-func (t toolRun) watcherPatchOf(ctx context.Context, a toolArgs) (WatcherPatch, error) {
+func (t heldRun) watcherPatchOf(ctx context.Context, a toolArgs) (WatcherPatch, error) {
 	switch {
 	case a.Target != "":
 		return WatcherPatch{}, refuse(Invalid, "where it answers cannot change; delete it and make another")

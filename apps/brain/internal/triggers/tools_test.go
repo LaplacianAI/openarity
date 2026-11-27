@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,20 +39,37 @@ func (w *world) chat(t *testing.T) chat {
 	return c
 }
 
-// yes is a later message from the maker in c, and the run it started.
+// yes is a later message from the maker in c carrying every code waiting,
+// and the run it started.
 func (w *world) yes(t *testing.T, c chat) Origin {
+	t.Helper()
+	return w.say(t, c, "yes "+w.codes(t))
+}
+
+// say is a later message from the maker in c, once the runs before it
+// finished, and the run it started.
+func (w *world) say(t *testing.T, c chat, text string) Origin {
 	t.Helper()
 	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE session_id = $1 AND finished_at IS NULL`, c.session)
 	var msg uuid.UUID
 	w.scan(t, &msg, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at)
-		VALUES ($1, $2, $3, gen_random_uuid()::text, 'yes', now() + interval '1 day') RETURNING id`, c.channel, c.session, w.maker)
+		VALUES ($1, $2, $3, gen_random_uuid()::text, $4, now() + interval '1 day') RETURNING id`, c.channel, c.session, w.maker, text)
 	return Origin{Run: w.chatRun(t, c.session, msg), Session: c.session}
+}
+
+// codes are the yes codes waiting on the team's schedules and watchers.
+func (w *world) codes(t *testing.T) string {
+	t.Helper()
+	var codes string
+	w.scan(t, &codes, `SELECT coalesce(string_agg(yes_code, ' '), '') FROM (
+		SELECT yes_code FROM schedules WHERE team_id = $1 UNION ALL SELECT yes_code FROM watchers WHERE team_id = $1) c`, w.team)
+	return codes
 }
 
 // tools are the run's tools, as the maker's run of the hub holds them.
 func (w *world) tools(t *testing.T, o Origin) map[string]agent.Tool {
 	t.Helper()
-	tools, why, err := w.service.Tools(t.Context(), w.toolRun(o))
+	tools, why, err := w.service.Tools(t.Context(), w.runOf(o))
 	if err != nil || why != "" {
 		t.Fatalf("Tools = %q, %v", why, err)
 	}
@@ -62,7 +80,7 @@ func (w *world) tools(t *testing.T, o Origin) map[string]agent.Tool {
 	return out
 }
 
-func (w *world) toolRun(o Origin) ToolRun {
+func (w *world) runOf(o Origin) ToolRun {
 	return ToolRun{
 		Team: w.team, User: w.maker, Run: o.Run, Session: o.Session, Dashboard: "https://openarity.example",
 		Agent: func(context.Context, string) (uuid.UUID, error) { return uuid.Nil, errors.New("no such agent") },
@@ -100,7 +118,7 @@ func TestAToolProposesAndOnlyALaterMessageConfirms(t *testing.T) {
 	out := w.call(t, c.origin, ScheduleToolName, map[string]any{
 		"action": "create", "name": "summary", "objective": "Summarise what changed.", "every": "1d",
 	})
-	says(t, out, `Proposed "summary"`, "every 1d", "in UTC", "Ask the person to confirm")
+	says(t, out, `Proposed "summary"`, "every 1d", "in UTC", "reply with the code")
 	var status string
 	w.scan(t, &status, `SELECT status FROM schedules WHERE name = 'summary'`)
 	if status != Proposed {
@@ -124,7 +142,7 @@ func TestTheToolsAreWithheldWhereTheyMayNotBeUsed(t *testing.T) {
 	c := w.chat(t)
 	why := func() string {
 		t.Helper()
-		tools, why, err := w.service.Tools(t.Context(), w.toolRun(c.origin))
+		tools, why, err := w.service.Tools(t.Context(), w.runOf(c.origin))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,7 +170,7 @@ func TestTheToolsAreWithheldWhereTheyMayNotBeUsed(t *testing.T) {
 
 	// A run in a schedule's own conversation is one it started.
 	v := w.make(t, hourly("summary"))
-	_, got, err := w.service.Tools(t.Context(), w.toolRun(Origin{Run: c.origin.Run, Session: v.SessionID}))
+	_, got, err := w.service.Tools(t.Context(), w.runOf(Origin{Run: c.origin.Run, Session: v.SessionID}))
 	if err != nil || !strings.Contains(got, "a schedule or watcher started") {
 		t.Errorf("a fired run: %q, %v", got, err)
 	}
@@ -355,7 +373,7 @@ func TestAMessageBeforeTheProposingRunFinishedConfirmsNothing(t *testing.T) {
 	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "create", "name": "summary", "objective": "Summarise.", "every": "1h"})
 	var msg uuid.UUID
 	w.scan(t, &msg, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at)
-		VALUES ($1, $2, $3, 'early', 'yes', now() + interval '1 minute') RETURNING id`, c.channel, c.session, w.maker)
+		VALUES ($1, $2, $3, 'early', $4, now() + interval '1 minute') RETURNING id`, c.channel, c.session, w.maker, "yes "+w.codes(t))
 	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() + interval '2 minutes' WHERE id = $1`, c.origin.Run)
 	early := Origin{Run: w.chatRun(t, c.session, msg), Session: c.session}
 	says(t, w.call(t, early, ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}),
@@ -371,7 +389,7 @@ func TestARevisionNeedsAYesAfterIt(t *testing.T) {
 	// A message sent after the proposal, whose run waits.
 	var between uuid.UUID
 	w.scan(t, &between, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at)
-		VALUES ($1, $2, $3, 'between', 'hmm', now() + interval '1 minute') RETURNING id`, c.channel, c.session, w.maker)
+		VALUES ($1, $2, $3, 'between', $4, now() + interval '1 minute') RETURNING id`, c.channel, c.session, w.maker, "yes "+w.codes(t))
 	waiting := Origin{Run: w.chatRun(t, c.session, between), Session: c.session}
 	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, waiting.Run)
 	// Another later run revises it, an hour on.
@@ -402,18 +420,51 @@ func TestAConfirmComesBeforeAnyRead(t *testing.T) {
 		}
 		return out
 	}
-	read := w.toolRun(yes)
+	read := w.runOf(yes)
 	read.ReadOutside = func() bool { return true }
 	says(t, invoke(read), "Refused:", "a confirm comes before anything else")
 
 	w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, 1, 'tool_call', '{"name":"web_fetch"}')`, yes.Run)
-	says(t, invoke(w.toolRun(yes)), "Refused:", "a confirm comes before anything else")
+	says(t, invoke(w.runOf(yes)), "Refused:", "a confirm comes before anything else")
 
-	// Its own plan and a list are not reads.
+	// What a recorded call did is read as the tool reads it, and anything
+	// it cannot tell is a read: a list, a call with no name, arguments cut
+	// short or not JSON, or a key the tool would refuse.
+	for _, payload := range []string{
+		`{}`,
+		`{"name":null}`,
+		`{"name":"schedule","arguments":"{\"action\":\"list\"}"}`,
+		`{"name":"watch","arguments":"{\"Action\":\"create\"}"}`,
+		`{"name":"schedule","arguments":"{\"action\":\"create\"}","truncated":true}`,
+		`{"name":"schedule","arguments":"not json"}`,
+		`{"name":"schedule"}`,
+	} {
+		r := w.yes(t, c)
+		w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, 1, 'tool_call', $2::jsonb)`, r.Run, payload)
+		says(t, invoke(w.runOf(r)), "Refused:", "a confirm comes before anything else")
+	}
+
+	// A list in this build marks the run, as the runtime would.
+	listed := w.runOf(w.yes(t, c))
+	var marked atomic.Bool
+	listed.ReadOutside, listed.NoteRead = marked.Load, func() { marked.Store(true) }
+	tools, _, err := w.service.Tools(t.Context(), listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tools[0].Invoke(t.Context(), json.RawMessage(`{"action":"list"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := tools[0].Invoke(t.Context(), json.RawMessage(`{"action":"confirm","ref":"summary"}`)); !strings.Contains(out, "a confirm comes before anything else") {
+		t.Errorf("a confirm after a list said %q", out)
+	}
+
+	// Its own plan, and a create or update of the two tools, are not reads.
 	clean := w.yes(t, c)
 	w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, 1, 'tool_call', '{"name":"plan"}'),
-		($1, 2, 'tool_call', '{"name":"schedule"}')`, clean.Run)
-	says(t, invoke(w.toolRun(clean)), `Confirmed "summary"`)
+		($1, 2, 'tool_call', '{"name":"schedule","arguments":"{\"action\":\"update\",\"ref\":\"x\"}"}'),
+		($1, 3, 'tool_call', '{"name":"watch","arguments":"{\"action\":\"create\"}"}')`, clean.Run)
+	says(t, invoke(w.runOf(clean)), `Confirmed "summary"`)
 }
 
 // A delete, a resume and a run now of one that runs wait for the yes; a

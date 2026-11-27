@@ -83,7 +83,7 @@ type WatcherView struct {
 // CreateWatcher saves a new watcher and its conversation. A page or feed
 // has its first check due now: that check is its baseline, and starts
 // nothing (D12). Made by a person it is active at once; proposed by an
-// agent's tool, it waits for the person's next message to confirm it (D10).
+// agent's tool, it waits for the person's reply with its code (D10).
 // A webhook watcher made by a person is active with its secret, shown once;
 // proposed by a tool it waits for its maker to make the secret on the
 // dashboard, which is the confirmation, and no secret passes through a chat.
@@ -148,7 +148,11 @@ func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in 
 			row.Status, row.NextCheckAt = Proposed, nil
 			row.ProposedRun, row.ProposedIn = &origin.Run, &origin.Session
 			if in.Source == SourceWebhook {
+				// Making its secret on the dashboard confirms it, so it has
+				// no code.
 				row.Status = WaitingSecret
+			} else {
+				row.YesCode = newYesCode()
 			}
 		}
 		session, err := sessionAt(ctx, q, who, at, id)
@@ -526,12 +530,12 @@ func (s *Service) ConfirmWatcher(ctx context.Context, who Who, origin Origin, re
 		}
 		if origin.viaTool() {
 			if err := laterMessage(ctx, q, proposal{
-				run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: at, noun: "watcher",
+				run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: at, code: row.YesCode, noun: "watcher",
 			}, origin); err != nil {
 				return err
 			}
 		}
-		row.Status, row.NextCheckAt = Active, &now
+		row.Status, row.NextCheckAt, row.YesCode = Active, &now, nil
 		return checkSoon(ctx, q, row, now)
 	})
 	if err != nil {
@@ -543,6 +547,13 @@ func (s *Service) ConfirmWatcher(ctx context.Context, who Who, origin Origin, re
 	return s.watcherView(ctx, who, id)
 }
 
+// PauseWatcher stops a watcher looking until it is resumed, as Pause does a
+// schedule.
+func (s *Service) PauseWatcher(ctx context.Context, who Who, ref Ref) (WatcherView, error) {
+	paused := Paused
+	return s.UpdateWatcher(ctx, who, ref, WatcherPatch{Status: &paused})
+}
+
 // DeleteWatcher deletes a watcher as a schedule is: marked so, its
 // conversation closed and kept with its runs. It lets go of its address,
 // which the sweep deletes once nobody watches it. A webhook watcher drops
@@ -552,28 +563,45 @@ func (s *Service) DeleteWatcher(ctx context.Context, who Who, ref Ref) error {
 	now := s.now()
 	var hooked *db.Watcher
 	_, err := s.changeWatcher(ctx, who, ref, func(q *db.Queries, row *db.Watcher) error {
-		row.Status, row.PausedReason, row.NextCheckAt, row.DeletedAt = Deleted, nil, nil, &now
-		row.TargetID = nil
-		if err := q.CloseTriggerSession(ctx, db.CloseTriggerSessionParams{WatcherID: &row.ID}); err != nil {
-			return fmt.Errorf("close the watcher's conversation: %w", err)
-		}
-		if row.Source != SourceWebhook {
-			return nil
-		}
-		hooked = row
-		if err := q.LetGoOfHeldDeliveries(ctx, row.ID); err != nil {
-			return fmt.Errorf("drop what the watcher held: %w", err)
-		}
-		return nil
-	})
-	if err != nil || hooked == nil {
+		var err error
+		hooked, err = deleteWatcherRow(ctx, q, row, now)
 		return err
+	})
+	if err != nil {
+		return err
+	}
+	s.destroySecret(ctx, hooked)
+	return nil
+}
+
+// deleteWatcherRow marks a watcher deleted, drops what an agent asked of it
+// and closes its conversation. A webhook watcher lets go of what it held and
+// is returned, for its secret to be destroyed once this commits.
+func deleteWatcherRow(ctx context.Context, q *db.Queries, row *db.Watcher, now time.Time) (*db.Watcher, error) {
+	row.Status, row.PausedReason, row.NextCheckAt, row.DeletedAt = Deleted, nil, nil, &now
+	row.TargetID = nil
+	waitingOnWatcher(row).drop()
+	if err := q.CloseTriggerSession(ctx, db.CloseTriggerSessionParams{WatcherID: &row.ID}); err != nil {
+		return nil, fmt.Errorf("close the watcher's conversation: %w", err)
+	}
+	if row.Source != SourceWebhook {
+		return nil, nil
+	}
+	if err := q.LetGoOfHeldDeliveries(ctx, row.ID); err != nil {
+		return nil, fmt.Errorf("drop what the watcher held: %w", err)
+	}
+	return row, nil
+}
+
+// destroySecret destroys a deleted webhook watcher's secret, if there is one.
+func (s *Service) destroySecret(ctx context.Context, hooked *db.Watcher) {
+	if hooked == nil {
+		return
 	}
 	if err := s.secrets.Delete(ctx, secretPath(hooked)); err != nil && !errors.Is(err, secrets.ErrNotFound) {
 		s.logger.WarnContext(ctx, "A deleted webhook watcher's secret was not destroyed; its URL answers 404 all the same",
 			"watcher_id", hooked.ID, "error", err)
 	}
-	return nil
 }
 
 // TakeOverWatcher gives a paused watcher whose maker cannot resume it to the
@@ -738,7 +766,7 @@ func saveWatcherOf(r db.Watcher) db.SaveWatcherParams {
 		State: state, Status: r.Status, PausedReason: r.PausedReason, DeletedAt: r.DeletedAt,
 		NextCheckAt: r.NextCheckAt, LastRunAt: r.LastRunAt, ConsecutiveFailures: r.ConsecutiveFailures,
 		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn, ProposedAt: r.ProposedAt,
-		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt,
+		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt, YesCode: r.YesCode,
 	}
 }
 

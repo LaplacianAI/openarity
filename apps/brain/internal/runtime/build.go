@@ -344,9 +344,9 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		}
 	}
 
-	// Not gated: what they make is a proposal the person confirms in their
-	// next message, and a change waits for the same yes; the rest acts on
-	// the person's own, as the dashboard does.
+	// Not gated: what they make is a proposal the person confirms by
+	// replying with its code, and what they ask of one that runs waits for
+	// the same yes; only a pause acts at once.
 	if err := b.schedulingFor(ctx, run, a, &built); err != nil {
 		built.Close()
 		return Built{}, err

@@ -48,11 +48,22 @@ SELECT a.run_id,
 FROM approvals a
 WHERE a.id = ANY(sqlc.arg('ids')::uuid[]);
 
--- Whether a run called a tool not named: a run resumed from a wait has made
--- calls before, and a confirm may come only before any read.
+-- Whether a run called anything that could have read what someone else
+-- wrote, as a run resumed from a wait made calls before it: a confirm may come
+-- only before any read. Only a call to a tool named in quiet, or to one named
+-- in acts whose arguments name an action in actions, read nothing; anything
+-- else counts: a missing name, a list, arguments cut short or not JSON. The
+-- arguments are read as the tool reads them, which refuses any key not
+-- exactly its own.
 -- name: RunCalledOtherThan :one
 SELECT EXISTS (
     SELECT 1 FROM run_events
     WHERE run_id = sqlc.arg('run_id') AND kind = 'tool_call'
-      AND NOT (payload->>'name' = ANY(sqlc.arg('names')::text[]))
+      AND NOT (
+          coalesce(payload->>'name', '') = ANY(sqlc.arg('quiet')::text[])
+          OR (coalesce(payload->>'name', '') = ANY(sqlc.arg('acts')::text[])
+              AND coalesce(payload->>'truncated', 'false') = 'false'
+              AND coalesce(CASE WHEN pg_input_is_valid(coalesce(payload->>'arguments', ''), 'jsonb')
+                       THEN (payload->>'arguments')::jsonb->>'action' END, '') = ANY(sqlc.arg('actions')::text[]))
+      )
 )::bool AS called;

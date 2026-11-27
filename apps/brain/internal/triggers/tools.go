@@ -16,9 +16,10 @@ import (
 // is for, on their own schedules and watchers alone, and propose rather than
 // make: what an agent asks for starts only once a later message of that
 // person's confirms it, and what it asks of one that runs (a change, a
-// delete, a resume, a run now) waits for the same yes (changes.go). A
-// confirm comes before the run reads anything someone else wrote, so text it
-// read cannot be the yes. No webhook secret ever passes through them.
+// delete, a resume, a run now) waits for the same yes (changes.go). The yes
+// is the person's reply carrying the code the tool's answer gave, and a
+// confirm comes before the run reads anything someone else wrote, so text a
+// run read can be neither. No webhook secret ever passes through them.
 //
 // tools_schema.go is what the model is told, tools_args.go reads what it
 // sends, and tools_says.go is what it is answered.
@@ -32,12 +33,17 @@ const (
 	toolListed = 50
 	// dashboardProvider is the dashboard's own channel.
 	dashboardProvider = "dashboard"
-	// planToolName is the runtime's plan tool, which reads nothing.
-	planToolName = "plan"
+	// PlanToolName is the runtime's plan tool, which reads nothing.
+	PlanToolName = "plan"
 )
 
-// readsNothing are the tools a run may have called before it confirms.
-var readsNothing = []string{ScheduleToolName, WatchToolName, planToolName}
+// ReadsNothing are the tools whose call does not mark a run as having read:
+// the runtime marks every other. The two tools' list reads, and marks it
+// itself (ToolRun.NoteRead).
+var ReadsNothing = []string{ScheduleToolName, WatchToolName, PlanToolName}
+
+// quietActions are the actions of the two tools that read nothing.
+var quietActions = []string{"create", "update", "pause", askResume, askDelete, askRunNow, "confirm"}
 
 // ToolRun is a run that may hold the tools: who it acts for, where, and what
 // it may name.
@@ -49,16 +55,19 @@ type ToolRun struct {
 	// Agent is an agent the run may hand work to, found by its name. An
 	// *Error is said to the model; any other error is a failure.
 	Agent func(ctx context.Context, name string) (uuid.UUID, error)
-	// ReadOutside is whether the run has called a tool other than
-	// readsNothing since it was built. The calls it made before a wait are
-	// read from what it recorded.
+	// ReadOutside is whether the run has read anything since it was built:
+	// called a tool not in ReadsNothing, or a list. The calls it made before
+	// a wait are read from what it recorded.
 	ReadOutside func() bool
+	// NoteRead marks the run as having read, as a list does: it answers with
+	// what earlier runs wrote.
+	NoteRead func()
 	// Dashboard is the origin the dashboard is served from, for a link.
 	Dashboard string
 }
 
-// toolRun is a run the tools were built for, with what its checks found.
-type toolRun struct {
+// heldRun is a run the tools were built for, with what its checks found.
+type heldRun struct {
 	ToolRun
 	who Who
 	// chat is the run's conversation as a place to answer in, or zero on
@@ -69,7 +78,7 @@ type toolRun struct {
 	dashboard bool
 }
 
-func (t toolRun) origin() Origin { return Origin{Run: t.Run, Session: t.Session} }
+func (t heldRun) origin() Origin { return Origin{Run: t.Run, Session: t.Session} }
 
 // Tools are the schedule and watch tools for r, or why it has none: the team
 // may not let agents schedule, the person may not, or the run is one a
@@ -82,7 +91,7 @@ func (s *Service) Tools(ctx context.Context, r ToolRun) ([]agent.Tool, string, e
 	if !l.AgentsMaySchedule {
 		return nil, "the team's settings do not let agents schedule", nil
 	}
-	var t toolRun
+	var t heldRun
 	var why string
 	if err := s.store.InTx(ctx, func(q *db.Queries) error {
 		var err error
@@ -99,8 +108,8 @@ func (s *Service) Tools(ctx context.Context, r ToolRun) ([]agent.Tool, string, e
 
 // probeRun is what the tools need to know of r's person and conversation, or
 // why the run may not hold them.
-func probeRun(ctx context.Context, q *db.Queries, r ToolRun) (toolRun, string, error) {
-	t := toolRun{ToolRun: r, who: Who{Team: r.Team, User: r.User}, dashboard: true}
+func probeRun(ctx context.Context, q *db.Queries, r ToolRun) (heldRun, string, error) {
+	t := heldRun{ToolRun: r, who: Who{Team: r.Team, User: r.User}, dashboard: true}
 	may, err := q.MemberMay(ctx, db.MemberMayParams{TeamID: r.Team, UserID: r.User, Action: scheduleWrite})
 	if err != nil {
 		return t, "", fmt.Errorf("check the person may schedule: %w", err)
@@ -145,26 +154,39 @@ func (s *Service) StandIns() []agent.Tool {
 
 // ops are what one tool does for each action, over schedules or watchers.
 type ops struct {
-	create func(ctx context.Context, t toolRun, a toolArgs) (string, error)
-	list   func(ctx context.Context, t toolRun) (string, error)
-	// update holds a change, or revises a proposal, which revised says.
-	update func(ctx context.Context, t toolRun, ref Ref, a toolArgs) (name string, revised bool, change string, err error)
-	pause  func(ctx context.Context, t toolRun, ref Ref) (string, error)
-	// ask holds a delete, resume or run now; deleted is a proposal deleted
-	// at once.
-	ask     func(ctx context.Context, t toolRun, ref Ref, action string) (name string, deleted bool, err error)
-	confirm func(ctx context.Context, t toolRun, ref Ref) (string, error)
+	create func(ctx context.Context, t heldRun, a toolArgs) (string, error)
+	list   func(ctx context.Context, t heldRun) (string, error)
+	// update holds a change, or revises a proposal.
+	update  func(ctx context.Context, t heldRun, ref Ref, a toolArgs) (held, error)
+	pause   func(ctx context.Context, t heldRun, ref Ref) (string, error)
+	ask     func(ctx context.Context, t heldRun, ref Ref, action string) (held, error)
+	confirm func(ctx context.Context, t heldRun, ref Ref) (string, error)
 }
 
-func (s *Service) scheduleTool(t toolRun) agent.Tool {
+// held is what an update or an ask left waiting for the person's yes.
+type held struct {
+	name string
+	// code is the yes code, none when nothing waits.
+	code string
+	// revised is a proposal revised in place; deleted, one deleted at once.
+	revised, deleted bool
+	// change is what an update sets, said for a person.
+	change string
+}
+
+func heldOf(name string, code *string, revised, deleted bool, change string) held {
+	return held{name: name, code: deref(code), revised: revised, deleted: deleted, change: change}
+}
+
+func (s *Service) scheduleTool(t heldRun) agent.Tool {
 	return s.tool(t, ScheduleToolName, scheduleToolDescription, scheduleSchema, s.scheduleOps())
 }
 
-func (s *Service) watchTool(t toolRun) agent.Tool {
+func (s *Service) watchTool(t heldRun) agent.Tool {
 	return s.tool(t, WatchToolName, watchToolDescription, watchSchema, s.watcherOps())
 }
 
-func (s *Service) tool(t toolRun, name, description, schema string, o ops) agent.Tool {
+func (s *Service) tool(t heldRun, name, description, schema string, o ops) agent.Tool {
 	return agent.Tool{
 		Name: name, Description: description, Schema: json.RawMessage(schema),
 		Invoke: func(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -178,11 +200,14 @@ func (s *Service) tool(t toolRun, name, description, schema string, o ops) agent
 }
 
 // dispatch does the action a names.
-func (s *Service) dispatch(ctx context.Context, t toolRun, o ops, a toolArgs) (string, error) {
+func (s *Service) dispatch(ctx context.Context, t heldRun, o ops, a toolArgs) (string, error) {
 	switch a.Action {
 	case "create":
 		return o.create(ctx, t, a)
 	case "list":
+		if t.NoteRead != nil {
+			t.NoteRead()
+		}
 		return o.list(ctx, t)
 	}
 	ref, err := a.ref()
@@ -191,25 +216,25 @@ func (s *Service) dispatch(ctx context.Context, t toolRun, o ops, a toolArgs) (s
 	}
 	switch a.Action {
 	case "update":
-		name, revised, change, err := o.update(ctx, t, ref, a)
+		h, err := o.update(ctx, t, ref, a)
 		if err != nil {
 			return "", err
 		}
-		if revised {
-			return revisedSays(name), nil
+		if h.revised {
+			return revisedSays(h.name, h.code), nil
 		}
-		return askedSays(name, "to change "+change), nil
+		return askedSays(h.name, "to change "+h.change, h.code), nil
 	case "pause":
 		return o.pause(ctx, t, ref)
 	case askDelete, askResume, askRunNow:
-		name, deleted, err := o.ask(ctx, t, ref, a.Action)
+		h, err := o.ask(ctx, t, ref, a.Action)
 		if err != nil {
 			return "", err
 		}
-		if deleted {
-			return fmt.Sprintf("Deleted the proposal %q; it never ran.", name), nil
+		if h.deleted {
+			return fmt.Sprintf("Deleted the proposal %q; it never ran.", h.name), nil
 		}
-		return askedSays(name, ask{Action: a.Action}.says()), nil
+		return askedSays(h.name, ask{Action: a.Action}.says(), h.code), nil
 	case "confirm":
 		if err := s.confirmable(ctx, t); err != nil {
 			return "", err
@@ -220,13 +245,16 @@ func (s *Service) dispatch(ctx context.Context, t toolRun, o ops, a toolArgs) (s
 }
 
 // confirmable refuses a confirm in a run that has read what someone else
-// wrote: a page, a file, a server's answer or another agent's could be the
-// text that says to confirm (*user*, 2026-11-27).
-func (s *Service) confirmable(ctx context.Context, t toolRun) error {
+// wrote: a page, a file, a server's answer, another agent's or a list of what
+// earlier runs wrote could be the text that says to confirm (*user*,
+// 2026-11-27).
+func (s *Service) confirmable(ctx context.Context, t heldRun) error {
 	read := t.ReadOutside != nil && t.ReadOutside()
 	if !read {
 		var err error
-		if read, err = s.store.RunCalledOtherThan(ctx, db.RunCalledOtherThanParams{RunID: t.Run, Names: readsNothing}); err != nil {
+		if read, err = s.store.RunCalledOtherThan(ctx, db.RunCalledOtherThanParams{
+			RunID: t.Run, Quiet: []string{PlanToolName}, Acts: []string{ScheduleToolName, WatchToolName}, Actions: quietActions,
+		}); err != nil {
 			return fmt.Errorf("read what the run called: %w", err)
 		}
 	}
@@ -251,26 +279,26 @@ func (s *Service) scheduleOps() ops {
 	return ops{
 		create: s.toolCreateSchedule,
 		list:   s.toolListSchedules,
-		update: func(ctx context.Context, t toolRun, ref Ref, a toolArgs) (string, bool, string, error) {
+		update: func(ctx context.Context, t heldRun, ref Ref, a toolArgs) (held, error) {
 			p, err := s.schedulePatchOf(ctx, t, ref, a)
 			if err != nil {
-				return "", false, "", err
+				return held{}, err
 			}
 			v, err := s.ProposeScheduleChange(ctx, t.who, t.origin(), ref, p)
-			return v.Name, v.Status == Proposed, patchSays(p), err
+			return heldOf(v.Name, v.YesCode, v.Status == Proposed, false, patchSays(p)), err
 		},
-		pause: func(ctx context.Context, t toolRun, ref Ref) (string, error) {
+		pause: func(ctx context.Context, t heldRun, ref Ref) (string, error) {
 			v, err := s.Pause(ctx, t.who, ref)
 			if err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("Paused %q. It runs no more until it is resumed.", v.Name), nil
 		},
-		ask: func(ctx context.Context, t toolRun, ref Ref, action string) (string, bool, error) {
+		ask: func(ctx context.Context, t heldRun, ref Ref, action string) (held, error) {
 			v, err := s.ProposeScheduleAction(ctx, t.who, t.origin(), ref, action)
-			return v.Name, v.Status == Deleted, err
+			return heldOf(v.Name, v.YesCode, false, v.Status == Deleted, ""), err
 		},
-		confirm: func(ctx context.Context, t toolRun, ref Ref) (string, error) {
+		confirm: func(ctx context.Context, t heldRun, ref Ref) (string, error) {
 			v, err := s.Confirm(ctx, t.who, t.origin(), ref)
 			if err != nil {
 				return "", err
@@ -287,27 +315,26 @@ func (s *Service) watcherOps() ops {
 	return ops{
 		create: s.toolCreateWatcher,
 		list:   s.toolListWatchers,
-		update: func(ctx context.Context, t toolRun, ref Ref, a toolArgs) (string, bool, string, error) {
+		update: func(ctx context.Context, t heldRun, ref Ref, a toolArgs) (held, error) {
 			p, err := t.watcherPatchOf(ctx, a)
 			if err != nil {
-				return "", false, "", err
+				return held{}, err
 			}
 			v, err := s.ProposeWatcherChange(ctx, t.who, t.origin(), ref, p)
-			return v.Name, v.Status == Proposed || v.Status == WaitingSecret, watcherPatchSays(p), err
+			return heldOf(v.Name, v.YesCode, v.Status == Proposed || v.Status == WaitingSecret, false, watcherPatchSays(p)), err
 		},
-		pause: func(ctx context.Context, t toolRun, ref Ref) (string, error) {
-			paused := Paused
-			v, err := s.UpdateWatcher(ctx, t.who, ref, WatcherPatch{Status: &paused})
+		pause: func(ctx context.Context, t heldRun, ref Ref) (string, error) {
+			v, err := s.PauseWatcher(ctx, t.who, ref)
 			if err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("Paused %q. It looks no more until it is resumed.", v.Name), nil
 		},
-		ask: func(ctx context.Context, t toolRun, ref Ref, action string) (string, bool, error) {
+		ask: func(ctx context.Context, t heldRun, ref Ref, action string) (held, error) {
 			v, err := s.ProposeWatcherAction(ctx, t.who, t.origin(), ref, action)
-			return v.Name, v.Status == Deleted, err
+			return heldOf(v.Name, v.YesCode, false, v.Status == Deleted, ""), err
 		},
-		confirm: func(ctx context.Context, t toolRun, ref Ref) (string, error) {
+		confirm: func(ctx context.Context, t heldRun, ref Ref) (string, error) {
 			v, err := s.Watcher(ctx, t.who, ref)
 			if err != nil {
 				return "", err
@@ -327,7 +354,7 @@ func (s *Service) watcherOps() ops {
 	}
 }
 
-func (s *Service) toolCreateSchedule(ctx context.Context, t toolRun, a toolArgs) (string, error) {
+func (s *Service) toolCreateSchedule(ctx context.Context, t heldRun, a toolArgs) (string, error) {
 	zone := deref(a.Timezone)
 	w, err := s.whenOf(ctx, t, a, zone)
 	if err != nil {
@@ -350,11 +377,11 @@ func (s *Service) toolCreateSchedule(ctx context.Context, t toolRun, a toolArgs)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Proposed %q: %s. It answers %s. Ask the person to confirm; it starts only after their next message says yes, "+
-		"and the proposal lapses in an hour.", v.Name, upcomingSays(v), whereSays(v.Target, v.TargetLabel)), nil
+	return fmt.Sprintf("Proposed %q: %s. It answers %s. %s", v.Name, upcomingSays(v), whereSays(v.Target, v.TargetLabel),
+		replyWith(v.YesCode, "start it")), nil
 }
 
-func (s *Service) toolListSchedules(ctx context.Context, t toolRun) (string, error) {
+func (s *Service) toolListSchedules(ctx context.Context, t heldRun) (string, error) {
 	vs, err := s.ListSchedules(ctx, t.who, false, nil, nil, nil, toolListed)
 	if err != nil {
 		return "", err
@@ -369,14 +396,21 @@ func (s *Service) toolListSchedules(ctx context.Context, t toolRun) (string, err
 	return listSays(lines), nil
 }
 
-func (s *Service) toolCreateWatcher(ctx context.Context, t toolRun, a toolArgs) (string, error) {
+func (s *Service) toolCreateWatcher(ctx context.Context, t heldRun, a toolArgs) (string, error) {
 	in := WatcherInput{Name: deref(a.Name), Objective: deref(a.Objective), Source: a.Source, URL: a.URL, Selector: deref(a.Selector)}
-	every, err := optDuration(a.Every)
-	if err != nil {
-		return "", err
-	}
-	if every != nil {
-		in.Every = *every
+	var err error
+	switch {
+	case a.Every != "":
+		if in.Every, err = durationOf(a.Every); err != nil {
+			return "", err
+		}
+	case a.Source != SourceWebhook:
+		// A page or feed looks as often as the team allows, unless told.
+		l, err := s.limits(ctx, t.Team)
+		if err != nil {
+			return "", err
+		}
+		in.Every = l.MinInterval
 	}
 	if in.Cooldown, err = optDuration(a.Cooldown); err != nil {
 		return "", err
@@ -396,12 +430,11 @@ func (s *Service) toolCreateWatcher(ctx context.Context, t toolRun, a toolArgs) 
 			"and that they make the secret and copy its URL on the dashboard%s. Never ask them to paste the secret here.",
 			v.Name, t.watcherLink(v.ID)), nil
 	}
-	return fmt.Sprintf("Proposed %q: it %s, and answers %s. Its first look is its baseline and starts nothing. "+
-		"Ask the person to confirm; it starts only after their next message says yes, and the proposal lapses in an hour.",
-		v.Name, watcherSays(v), whereSays(v.Target, v.TargetLabel)), nil
+	return fmt.Sprintf("Proposed %q: it %s, and answers %s. Its first look is its baseline and starts nothing. %s",
+		v.Name, watcherSays(v), whereSays(v.Target, v.TargetLabel), replyWith(v.YesCode, "start it")), nil
 }
 
-func (s *Service) toolListWatchers(ctx context.Context, t toolRun) (string, error) {
+func (s *Service) toolListWatchers(ctx context.Context, t heldRun) (string, error) {
 	vs, err := s.ListWatchers(ctx, t.who, false, nil, nil, nil, toolListed)
 	if err != nil {
 		return "", err

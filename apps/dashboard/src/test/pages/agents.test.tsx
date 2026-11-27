@@ -517,9 +517,9 @@ describe("defining an agent", () => {
     });
     at("/ui/agents/new");
     await named();
-    await userEvent.click(
-      screen.getByRole("switch", { name: "Can propose schedules and watchers" }),
-    );
+    const grant = screen.getByRole("switch", { name: "Can propose schedules and watchers" });
+    expect(grant).not.toBeChecked();
+    await userEvent.click(grant);
     expect(await define(seen)).toMatchObject({ schedule: true });
   });
 
@@ -903,6 +903,15 @@ describe("editing an agent", () => {
     const body = await save(seen);
     expect(body).not.toHaveProperty("tool_notes");
     expect(body).toEqual({ ...definition, description: "Sorts issues and more" });
+  });
+
+  it("shows the schedule grant as it is, and sends it switched off", async () => {
+    const { seen } = editing({ ...current, schedule: true });
+    await opened();
+    const grant = screen.getByRole("switch", { name: "Can propose schedules and watchers" });
+    expect(grant).toBeChecked();
+    await userEvent.click(grant);
+    expect(await save(seen)).toMatchObject({ schedule: false });
   });
 
   it("draws no notes for an agent that has none", async () => {

@@ -4,13 +4,13 @@
 -- name: CreateWatcher :one
 INSERT INTO watchers (
     id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id,
-    every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, proposed_at, target, target_label
+    every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, proposed_at, yes_code, target, target_label
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'), sqlc.arg('hub'),
     sqlc.arg('name'), sqlc.arg('objective'), sqlc.arg('source'), sqlc.narg('target_id'), sqlc.narg('selector'),
     sqlc.narg('hook_id'), sqlc.narg('every_seconds'), sqlc.arg('cooldown_seconds'), sqlc.arg('status'),
     sqlc.narg('next_check_at'), sqlc.narg('proposed_run'), sqlc.narg('proposed_in'),
-    CASE WHEN sqlc.narg('proposed_in')::uuid IS NULL THEN NULL ELSE now() END,
+    CASE WHEN sqlc.narg('proposed_in')::uuid IS NULL THEN NULL ELSE now() END, sqlc.narg('yes_code'),
     sqlc.arg('target'), sqlc.arg('target_label')
 )
 RETURNING *;
@@ -71,6 +71,7 @@ UPDATE watchers SET
     pending_run   = sqlc.narg('pending_run'),
     pending_in    = sqlc.narg('pending_in'),
     pending_at    = sqlc.narg('pending_at'),
+    yes_code      = sqlc.narg('yes_code'),
     updated_at       = now()
 WHERE id = sqlc.arg('id')
 RETURNING *;
@@ -299,7 +300,7 @@ WHERE watcher_id IN (SELECT id FROM gone);
 -- An agent's change nobody confirmed within the hour is dropped; the
 -- watcher runs on as it was.
 -- name: DropLapsedWatcherChanges :execrows
-UPDATE watchers SET pending = NULL, pending_run = NULL, pending_in = NULL, pending_at = NULL, updated_at = now()
+UPDATE watchers SET pending = NULL, pending_run = NULL, pending_in = NULL, pending_at = NULL, yes_code = NULL, updated_at = now()
 WHERE pending_at < sqlc.arg('before')::timestamptz;
 
 -- Each watcher keeps its newest checks; the rest go a batch at a time.
