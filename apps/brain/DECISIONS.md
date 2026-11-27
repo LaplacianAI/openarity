@@ -469,20 +469,26 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   brain's.
 - **A resumed run carries on the children its worker left, and reaps the
   rest.** It replaces decision A, which reaped every running child and had
-  the model ask again: a deploy restarted a review's three delegates from
-  nothing, and #311's first review on staging ran 17 child runs in 57
-  minutes where one runs about 5 (about 11M tokens a week went to children
-  that failed or were cancelled). After its `resumed` event and its catch-up,
-  `carryOn` lists the running children that have not beaten for
-  `heartbeatLostAfter` (60 s; the parent itself is taken over only after
-  90 s, so a dead worker's children are always that old), takes up each whose
-  call in the last turn is open, concurrently as the turn ran them, and puts
-  its report, or its waiting report, in that call. A child resumes from its
-  own transcript like any run, so it carries on its own children. Then
-  `ReapChildren` fails what is still running, with `reapReason`: a child that
-  beats, which is another worker's, or one whose call is not open. The
-  catch-up comes first so a child carried on that parks is not taken up
-  again in the same resume.
+  the model ask again: a deploy restarted a review's delegates from nothing,
+  and #311's first review on staging ran 17 child runs in 57 minutes where
+  one runs about 5 (about 11M tokens a week went to children that failed or
+  were cancelled). After its `resumed` event and its catch-up, `carryOn`
+  lists the running children that have not beaten for `heartbeatLostAfter`
+  (60 s; the parent itself is taken over only after `staleAfter`, 90 s, so a
+  dead worker's children are past it by a beat, which a test holds), takes up
+  each whose call in the last turn closeCalls closed as ended, one child a
+  call, together as a pattern that runs a turn's calls together ran them, and
+  puts its report, or its waiting report, in that call. `AdoptOrphan` takes
+  only that parent's child, so a stray resume cannot take another tree's.
+  The reports are saved at once, as a child carried on to its end is never
+  listed again. A child resumes from its own transcript like any run, so it
+  carries on its own children. One that cannot be carried on costs the run
+  only its report: its call stays ended, unless the worker is stopping or the
+  store fails to hand it over, which fail the run, as asking again could
+  repeat what the child did. Then `ReapChildren` fails what is still
+  running, with `reapReason`: a child that beats, which is another worker's,
+  or one whose call is not open. The catch-up comes first so a child carried
+  on that parks is not taken up again in the same resume.
 - **Whatever ends a run ends what it left running.** `finish` reaps the
   run's running subtree once it has recorded the run, so a resume that fails
   before its own reap (its agent deleted, its clock spent) leaves no child

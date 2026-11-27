@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -203,8 +205,9 @@ func TestAGrandchildIsCarriedOnByItsCarriedOnParent(t *testing.T) {
 	}
 }
 
-// AdoptOrphan takes only a child that is running and stale: not one that
-// waits, not one that beats, not a run at the top.
+// AdoptOrphan takes only the parent's own child that is running and stale:
+// not one that waits, not one that beats, not a run at the top, not another
+// parent's.
 func TestAnOrphanIsAdoptedOnlyWhenItsWorkerIsGone(t *testing.T) {
 	f := newExecFixture(t, newScripted())
 	stale := f.orphan(t, f.run, f.agent, "call_1", 120)
@@ -220,13 +223,190 @@ func TestAnOrphanIsAdoptedOnlyWhenItsWorkerIsGone(t *testing.T) {
 	if len(listed) != 1 || listed[0].ID != stale.ID {
 		t.Errorf("listed %d orphans, want only the stale running child", len(listed))
 	}
-	for id, want := range map[uuid.UUID]bool{stale.ID: true, beating.ID: false, waiting.ID: false, f.run: false} {
-		got, err := f.store.AdoptOrphan(t.Context(), db.AdoptOrphanParams{ID: id, Worker: "w-new", StaleSeconds: 60})
+	other := f.orphan(t, stale.ID, f.agent, "call_4", 120) // another parent's
+	for id, want := range map[uuid.UUID]bool{stale.ID: true, beating.ID: false, waiting.ID: false, f.run: false, other.ID: false} {
+		got, err := f.store.AdoptOrphan(t.Context(), db.AdoptOrphanParams{ID: id, ParentID: f.run, Worker: "w-new", StaleSeconds: 60})
 		if (err == nil) != want {
 			t.Errorf("AdoptOrphan(%s) = %v, want taken %v", id, err, want)
 		}
 		if want && (got.Worker == nil || *got.Worker != "w-new" || got.Status != "running") {
 			t.Errorf("adopted %+v, want running under w-new", got)
 		}
+	}
+}
+
+// A real result in the last turn is never written over: only a call closed
+// as ended is open, and the turn's results end at the first message that is
+// not one.
+func TestOpenCallsAreTheEndedOnesOfTheLastTurn(t *testing.T) {
+	t.Parallel()
+
+	ended := func(id string) agent.Message {
+		return agent.Message{Role: agent.RoleTool, ToolCallID: id, Content: []agent.Content{{Type: agent.ContentText, Text: endedMidCall}}}
+	}
+	real := agent.Message{Role: agent.RoleTool, ToolCallID: "call_1", Content: []agent.Content{{Type: agent.ContentText, Text: "a real answer"}}}
+	files := agent.Message{Role: agent.RoleUser, Attached: true}
+	for name, c := range map[string]struct {
+		msgs []agent.Message
+		want map[string]int
+	}{
+		"one real, one ended":         {[]agent.Message{userSaid("go"), delegated("call_1", "call_2"), real, ended("call_2")}, map[string]int{"call_2": 3}},
+		"past a files message":        {[]agent.Message{userSaid("go"), delegated("call_2"), ended("call_2"), files}, map[string]int{"call_2": 2}},
+		"an earlier turn's":           {[]agent.Message{userSaid("go"), delegated("call_1"), ended("call_1"), userSaid("then")}, map[string]int{}},
+		"an ended call before a real": {[]agent.Message{delegated("call_1"), ended("call_1"), userSaid("later"), delegated("call_2"), real}, map[string]int{}},
+	} {
+		got := openCalls(c.msgs)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: open %v, want %v", name, got, c.want)
+			continue
+		}
+		for id, at := range c.want {
+			if got[id] != at {
+				t.Errorf("%s: %s at %d, want %d", name, id, got[id], at)
+			}
+		}
+	}
+}
+
+// A call id with a "#" of its own still finds its child: the run's id follows
+// the last.
+func TestTheStartingCallIsCutAtTheLastHash(t *testing.T) {
+	t.Parallel()
+
+	for stored, want := range map[string]string{
+		"call_1#9b2c": "call_1",
+		"#E1#9b2c":    "#E1",
+		"a#b#9b2c":    "a#b",
+		"call_legacy": "call_legacy",
+	} {
+		if got := startingCall(db.Run{ParentToolCall: &stored}); got != want {
+			t.Errorf("startingCall(%q) = %q, want %q", stored, got, want)
+		}
+	}
+	if got := startingCall(db.Run{}); got != "" {
+		t.Errorf("no parent call gave %q", got)
+	}
+}
+
+// failingGet is the store with one run's read failing, as a child that
+// could not be read back after it ran.
+type failingGet struct {
+	Store
+	id uuid.UUID
+}
+
+func (s failingGet) GetRun(ctx context.Context, id uuid.UUID) (db.Run, error) {
+	if id == s.id {
+		return db.Run{}, errors.New("connection reset")
+	}
+	return s.Store.GetRun(ctx, id)
+}
+
+// A child that cannot be carried on costs the run only its report: its call
+// stays ended and it is reaped, while its sibling's report is kept and the
+// run goes on.
+func TestAChildThatFailsToCarryOnLeavesItsSiblingsReport(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("a report", 1, 1), answer("a report", 1, 1), answer("carried on", 1, 1)))
+	f.resumes(t, []agent.Message{userSaid(runInput), delegated("call_1", "call_2")})
+	one := f.orphan(t, f.run, f.agent, "call_1", 120, userSaid("one"))
+	two := f.orphan(t, f.run, f.agent, "call_2", 120, userSaid("two"))
+	f.exec.store = failingGet{Store: f.exec.store, id: two.ID}
+
+	f.mustExecute(t)
+
+	wantStatus(t, f.row(t), "succeeded", "")
+	reqs := f.model.requests()
+	last := reqs[len(reqs)-1].Messages
+	if said := resultOf(last, "call_1"); !strings.Contains(said, `run="`+one.ID.String()+`"`) {
+		t.Errorf("call_1 reads %q; want its child's report", said)
+	}
+	if said := resultOf(last, "call_2"); said != endedMidCall {
+		t.Errorf("call_2 reads %q; want it still ended", said)
+	}
+}
+
+// failingReap is the store with the reap failing, as a run that stops
+// between carrying its children on and its next call.
+type failingReap struct {
+	Store
+	parent uuid.UUID
+}
+
+func (s failingReap) ReapChildren(ctx context.Context, arg db.ReapChildrenParams) ([]uuid.UUID, error) {
+	if arg.ParentID == s.parent {
+		return nil, errors.New("connection reset")
+	}
+	return s.Store.ReapChildren(ctx, arg)
+}
+
+// The reports are kept as soon as they are written: a run that stops before
+// its next call still finds them in its transcript, as its children, carried
+// on to their end, are never listed again.
+func TestACarriedOnReportIsKeptBeforeTheRunsNextCall(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("the child's report", 1, 1)))
+	f.resumes(t, []agent.Message{userSaid(runInput), delegated("call_1")})
+	child := f.orphan(t, f.run, f.agent, "call_1", 120, userSaid("find it"))
+	f.exec.store = failingReap{Store: f.exec.store, parent: f.run}
+
+	_ = f.execute(t, t.Context())
+
+	if n := len(f.model.requests()); n != 1 {
+		t.Fatalf("the model was asked %d times, want the child's alone", n)
+	}
+	stored, err := f.sessions.Messages(t.Context(), transcriptOf(f.row(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if said := resultOf(stored, "call_1"); !strings.Contains(said, `run="`+child.ID.String()+`"`) {
+		t.Errorf("the stored call_1 reads %q; want the child's report kept", said)
+	}
+}
+
+// lostGet is the store reading one run back as still running, as a child
+// another worker took while this one carried it on.
+type lostGet struct {
+	Store
+	id uuid.UUID
+}
+
+func (s lostGet) GetRun(ctx context.Context, id uuid.UUID) (db.Run, error) {
+	r, err := s.Store.GetRun(ctx, id)
+	if id == s.id {
+		r.Status = "running"
+	}
+	return r, err
+}
+
+// A child lost to another worker reports there, not here: its call stays
+// ended, never an empty report.
+func TestALostChildLeavesItsCallEnded(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("a report", 1, 1), answer("carried on", 1, 1)))
+	f.resumes(t, []agent.Message{userSaid(runInput), delegated("call_1")})
+	child := f.orphan(t, f.run, f.agent, "call_1", 120, userSaid("find it"))
+	f.exec.store = lostGet{Store: f.exec.store, id: child.ID}
+
+	f.mustExecute(t)
+
+	reqs := f.model.requests()
+	if said := resultOf(reqs[len(reqs)-1].Messages, "call_1"); said != endedMidCall {
+		t.Errorf("call_1 reads %q; want it still ended", said)
+	}
+}
+
+// A child that fails as it carries on reports its failure, which is its
+// call's result: the run reads what became of the work.
+func TestAChildThatFailsReportsItsFailure(t *testing.T) {
+	f := newExecFixture(t, newScripted(turn{err: errors.New("the model is down")}, answer("carried on", 1, 1)))
+	f.resumes(t, []agent.Message{userSaid(runInput), delegated("call_1")})
+	child := f.orphan(t, f.run, f.agent, "call_1", 120, userSaid("find it"))
+
+	f.mustExecute(t)
+
+	if got := f.get(t, child.ID); got.Status != "failed" {
+		t.Errorf("the child is %s, want failed", got.Status)
+	}
+	reqs := f.model.requests()
+	if said := resultOf(reqs[len(reqs)-1].Messages, "call_1"); !strings.Contains(said, `status="failed"`) {
+		t.Errorf("call_1 reads %q; want the child's failed report", said)
 	}
 }

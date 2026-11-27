@@ -67,7 +67,10 @@ func TestTheSweepSpecIsWhatItClaims(t *testing.T) {
 func TestTheSweepWaitsLongerThanAHeartbeatButNotLongerThanItsGiveUp(t *testing.T) {
 	t.Parallel()
 
-	if staleAfter < 4*heartbeatEvery || heartbeatLostAfter >= staleAfter {
+	// A resumed parent carries on the children not beaten for
+	// heartbeatLostAfter; it is resumed only after staleAfter, so its dead
+	// worker's children, which beat with it, are past that by a beat at least.
+	if staleAfter < 4*heartbeatEvery || staleAfter-heartbeatLostAfter <= heartbeatEvery {
 		t.Errorf("heartbeat %v, a worker gives up after %v, the sweep takes over after %v",
 			heartbeatEvery, heartbeatLostAfter, staleAfter)
 	}
