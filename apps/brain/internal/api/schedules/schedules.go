@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,14 +42,18 @@ type Store interface {
 }
 
 type handler struct {
-	logger  *slog.Logger
-	store   Store
-	authz   api.Authorizer
-	service *triggers.Service
+	logger   *slog.Logger
+	store    Store
+	authz    api.Authorizer
+	service  *triggers.Service
+	hookBase string
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, service *triggers.Service) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a, service: service}
+// New serves schedules and watchers. hookBase is the webhook listener's
+// public address a webhook watcher's URL is on; with none, its URL is not
+// shown.
+func New(logger *slog.Logger, s Store, a api.Authorizer, service *triggers.Service, hookBase string) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a, service: service, hookBase: strings.TrimSuffix(hookBase, "/")}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/schedules", h.list)
@@ -110,21 +115,49 @@ func scheduleRef(w http.ResponseWriter, r *http.Request) (triggers.Ref, bool) {
 
 // answer writes a refusal as the status it is, or a failure as a 500.
 func (h *handler) answer(w http.ResponseWriter, r *http.Request, msg string, err error) {
-	var status int
-	switch triggers.KindOf(err) {
-	case triggers.Invalid:
-		status = http.StatusBadRequest
-	case triggers.NotFound:
-		status = http.StatusNotFound
-	case triggers.Forbidden:
-		status = http.StatusForbidden
-	case triggers.Conflict, triggers.Limit:
-		status = http.StatusConflict
-	default:
+	status, ok := statusOf(triggers.KindOf(err))
+	if !ok {
 		api.Fail(w, h.logger, api.Caller(r), msg, err)
 		return
 	}
+	refused(w, status)
 	http.Error(w, err.Error(), status)
+}
+
+// statusOf is how a refusal is answered, or false for a failure.
+func statusOf(k triggers.Kind) (int, bool) {
+	switch k {
+	case triggers.Invalid:
+		return http.StatusBadRequest, true
+	case triggers.NotFound:
+		return http.StatusNotFound, true
+	case triggers.Forbidden:
+		return http.StatusForbidden, true
+	case triggers.Conflict, triggers.Limit:
+		return http.StatusConflict, true
+	case triggers.Unavailable:
+		return http.StatusServiceUnavailable, true
+	case triggers.Unauthorized:
+		return http.StatusUnauthorized, true
+	}
+	return 0, false
+}
+
+// refused sets what a refusal's status asks for: when to try again, for a
+// secret store that did not answer.
+func refused(w http.ResponseWriter, status int) {
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", "30")
+	}
+}
+
+// writeSecretive answers with what carries a secret, kept out of every cache
+// on the way.
+func (h *handler) writeSecretive(w http.ResponseWriter, status int, secret string, body any) {
+	if secret != "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	api.WriteJSON(w, h.logger, status, body)
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {

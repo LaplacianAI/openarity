@@ -145,9 +145,20 @@ say, six hours at most). An address that cannot be read is tried again after
 worker logs `A watched address could not be read` for each failure and `A
 watcher paused` when one stops.
 
+A webhook watcher is called at `/hooks/watchers/<hook>` on the webhook
+listener, so its URL is on `WEBHOOK_PUBLIC_URL`; with none set, the brain
+shows no URL. Its signing secret is kept in OpenBao at
+`teams/<team>/watchers/<id>`, a path `policy-brain.hcl` grants from this
+release: a server set up before it needs the policy written again (`make
+bao-policy`, which the staging deploy does by itself). A delivery that cannot
+start a run yet is held, and the same tick gives what is held to a run once
+the watcher's cooldown passes; the worker logs `Held deliveries were not
+released` when that fails.
+
 An hourly sweep, `openarity.triggers.sweep`, lapses proposals nobody confirmed,
 keeps each schedule's newest 200 fires and each watcher's newest 200 checks,
-and deletes the addresses no watcher watches any more.
+deletes the addresses no watcher watches any more, and forgets webhook
+deliveries a day old that are not held.
 
 A fire that fails with an error, rather than a refusal, waits a minute and is
 tried again for the time it was due, so one broken schedule never holds up

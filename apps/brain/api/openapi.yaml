@@ -3692,8 +3692,17 @@ paths:
         its last run (an hour unless given) is held and given to the next run.
         The team's limits on schedules and watchers per person and per team
         apply, and a caller who may not start runs is refused with 403.
-        `target` is where it answers, as for a schedule. A webhook watcher
-        cannot be made yet.
+        `target` is where it answers, as for a schedule.
+
+        A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+        runs when its `hook_url` is called with a delivery signed by its
+        secret, as GitHub signs (`X-Hub-Signature-256`, with
+        `X-GitHub-Delivery`) or as a custom channel's sender does
+        (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+        in this answer only, as `secret`; making a new one is
+        `POST …/secret`. A delivery sent twice starts nothing twice, and one
+        within the cooldown, while its last run works or over the team's
+        hourly cap is held for the next run.
       requestBody:
         required: true
         content:
@@ -3703,6 +3712,9 @@ paths:
       responses:
         "201":
           description: Made
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -3722,6 +3734,15 @@ paths:
               schema:
                 type: string
                 examples: ["you already have 5 schedules and watchers, which is this team's limit per person; delete one first"]
+        "503":
+          description: The secret store did not answer; a webhook watcher was not made
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/plain:
+              schema:
+                type: string
   /teams/{id}/watchers/{watcherID}:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -3853,7 +3874,7 @@ paths:
         Requires `schedule:write` in this team, and the caller to be its maker
         (403 otherwise). An active watcher looks within the minute rather than
         at its next time; a change it finds runs as any would, past its
-        cooldown.
+        cooldown. A webhook watcher has nothing to look at: 400.
       responses:
         "200":
           description: It will look now
@@ -3891,10 +3912,15 @@ paths:
         it, and runs as them from then, so a caller who may not start runs is
         refused with 403, as is one without `channel:write` for a watcher
         posting where a group reads it. One answering in its maker's direct
-        messages or their own thread cannot be handed on: 409.
+        messages or their own thread cannot be handed on: 409. A webhook
+        watcher gets a new secret, in this answer only as `secret`, so the
+        one its old maker held stops working.
       responses:
         "200":
           description: Taken over
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -3914,6 +3940,64 @@ paths:
               schema:
                 type: string
                 examples: ["this watcher answers in its maker's direct messages or their own thread, so it cannot be handed on; delete it and make another"]
+        "503":
+          description: The secret store did not answer; the watcher was not taken over, and its old secret still works
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/plain:
+              schema:
+                type: string
+  /teams/{id}/watchers/{watcherID}/secret:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/WatcherID"
+    post:
+      operationId: rollWatcherSecret
+      tags: [watchers]
+      summary: Make a webhook watcher's secret
+      description: |
+        Requires `schedule:write` in this team, and the caller to be its maker
+        (403 otherwise). A webhook watcher gets a new signing secret, shown in
+        this answer only, with the URL it signs for; the old one stops working
+        at once. One waiting for its secret, as an agent proposes one, becomes
+        active. A watcher that is not a webhook is 400; one that is neither
+        active, paused nor waiting for its secret (proposed, or deleted) is
+        409. Should the secret store not answer, the old secret still works.
+      responses:
+        "201":
+          description: Made
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatcherSecret"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It is proposed or deleted
+          content:
+            text/plain:
+              schema:
+                type: string
+        "503":
+          description: The secret store did not answer; the old secret still works
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/plain:
+              schema:
+                type: string
   /teams/{id}/watchers/{watcherID}/checks:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -4988,6 +5072,18 @@ components:
       schema:
         type: string
         format: uuid
+
+  headers:
+    RetryAfter:
+      description: Seconds to wait before trying again
+      schema:
+        type: integer
+        examples: [30]
+    NoStore:
+      description: "`no-store` when the answer carries a secret, so no cache on the way keeps it"
+      schema:
+        type: string
+        examples: ["no-store"]
 
   responses:
     Unauthenticated:
@@ -9477,6 +9573,17 @@ components:
           format: date-time
         last_outcome:
           type: string
+        hook_url:
+          type: string
+          description: |
+            A webhook watcher's URL, on the webhook listener's public
+            address; absent when the brain has none.
+        secret:
+          type: string
+          description: |
+            A webhook watcher's signing secret, only in the answer that made
+            it or took it over. It is not shown again; make a new one to
+            replace it.
         created_by:
           type: string
           format: uuid
@@ -9486,6 +9593,17 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    WatcherSecret:
+      type: object
+      required: [secret]
+      properties:
+        secret:
+          type: string
+          description: The new signing secret. It is not shown again.
+        url:
+          type: string
+          description: The URL it signs for; absent when the brain has no public webhook address.
 
     WatcherPage:
       type: object
@@ -9501,7 +9619,7 @@ components:
 
     CreateWatcherRequest:
       type: object
-      required: [name, objective, source, url, every_seconds]
+      required: [name, objective, source]
       properties:
         name:
           type: string
@@ -9511,11 +9629,13 @@ components:
           maxLength: 4000
         source:
           type: string
-          enum: [web_page, feed]
+          enum: [web_page, feed, webhook]
         url:
           type: string
           maxLength: 2048
-          description: http or https, at most 2048 bytes, not a host written as a number.
+          description: |
+            web_page and feed, which need it. http or https, at most 2048
+            bytes, not a host written as a number.
         selector:
           type: string
           maxLength: 512
@@ -9525,7 +9645,9 @@ components:
           format: int64
           minimum: 60
           maximum: 2678400
-          description: How often to look, in whole minutes; at least the team's minimum interval.
+          description: |
+            web_page and feed, which need it. How often to look, in whole
+            minutes; at least the team's minimum interval.
         cooldown_seconds:
           type: integer
           format: int64
@@ -9590,7 +9712,9 @@ components:
             cooldown or while its last run was working; `error` what it
             looks at could not be read, with why in `detail`; `answered`,
             `silent`, `failed` and `cancelled` how a run ended; `skipped_*`
-            as for a schedule's fire, the change kept for later.
+            as for a schedule's fire, the change kept for later. For a
+            webhook: `delivered` a delivery that started a run, `duplicate`
+            one already had, and `held` one kept for the next run.
         detail:
           type: string
         run_id:

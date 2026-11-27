@@ -161,8 +161,65 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     for ever.
   - **Run now, for a watcher, is look now.** A run with no change would have
     nothing to say; a look now finds the change, if there is one.
-  - **A webhook watcher cannot be made yet;** it comes with the webhook
-    listener.
+- **A webhook watcher runs when its URL is called** (design: schedules and
+  watchers, D16). The URL is `/hooks/watchers/<hook>` on the webhook listener
+  only, `<hook>` 22 random characters of base64url; it carries no token, so
+  the signature is all that admits a delivery.
+  - **Signed by GitHub or by us.** With `X-Hub-Signature-256` it is GitHub's
+    HMAC of the body, and `X-GitHub-Delivery` is required. Otherwise it is
+    the custom channel's signature, through `custom.Check`, which the channel
+    now uses too: a timestamp within five minutes and its HMAC.
+  - **What it answers says no more than it must.** 401 unsigned, 404 an
+    unknown hook or one waiting for its secret or deleted, 413 a body over
+    256 KiB, 503 the secret store not answering. Only a signed delivery
+    learns that a watcher is paused (409). Anything kept is 202, a refusal
+    for the team's cap or the maker's rights too.
+  - **A delivery sent twice starts nothing twice.** It is known by every key
+    it has, each remembered for a day, and one seen under any is a
+    duplicate: its delivery id (`X-GitHub-Delivery` or
+    `X-Openarity-Delivery`) and what was signed. The id is not signed, so on
+    its own a delivery caught on its way could be sent again under a new one.
+    What was signed is our timestamp and the body, so the same body signed
+    again later is a new delivery; for GitHub, which signs no time, it is the
+    body. An id or event that is not printable text is left out, and the
+    delivery is known by what was signed.
+  - **One that cannot start a run yet is held,** within the cooldown, while
+    the last run works or over the hourly cap. The next run is given what
+    fits in 256 KiB, oldest first; what does not stays held for the run
+    after, and the run is told how many wait. Only what fits is read. A
+    watcher holds at most 100, letting go of the oldest beyond them and
+    saying so on the check. The minute's tick releases them once the
+    cooldown passes, not the hourly sweep the LLD named: a delivery held
+    while a run worked would otherwise wait up to an hour. It reads every
+    watcher holding deliveries a page at a time, skipping a team once it is
+    at its cap, so the ones still held back first do not keep the rest
+    waiting. One that pauses the watcher (its maker may no longer run, its
+    agent is gone) is not held, as a resume drops what is held. A body's NUL
+    and invalid UTF-8, which a run's input cannot hold, are replaced.
+  - **A held delivery keeps its event** (`X-GitHub-Event`) in a column the
+    LLD's table lacked, so the run that takes it in later still says what it
+    was.
+  - **Its secret is `oawh_` and 32 random bytes,** at
+    `teams/<team>/watchers/<id>`, shown once when it is made. It is written in
+    the transaction that saves the watcher, so none is made without its
+    secret kept (the LLD deleted the row after a failed write; this is the
+    same end with nothing to clean up). Only its maker may make a new one,
+    which retires the old at once and makes one an agent proposed, waiting
+    for its secret, active. A new one is written before anything is saved,
+    so one not kept leaves the old one working. Taken over, it gets a new
+    secret too, shown once: the old maker's would otherwise sign what now
+    runs as the admin. Deleting it destroys the secret with every version.
+    An answer carrying a secret is `Cache-Control: no-store`. The brain's
+    OpenBao policy gains the path, with `update` for the new secret.
+  - **Its run asks as any run does:** a tool that needs approval waits for
+    the maker, as in a schedule's run.
+  - **Known gaps.** The hook is not rate limited, as no channel's hook is:
+    each request costs one read of the secret store before its signature is
+    checked. A GitHub delivery caught on its way can be sent again once its
+    day is past, as GitHub signs no time. An unsigned request to a hook
+    waiting for its secret is 404 where one to an active hook is 401, so a
+    caller holding a hook id can tell the two apart; the id is 128 random
+    bits.
 - **The worker deletes DBOS's record of finished background work after a
   week.** DBOS v1.2.0 never deletes a workflow row, and every tick of every
   sweep leaves one. `internal/retention`, a job of its own, lists the

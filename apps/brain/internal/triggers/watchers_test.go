@@ -453,8 +453,8 @@ func TestAWatcherIsCheckedWhenMade(t *testing.T) {
 		{func(in *WatcherInput) { in.Selector = "[[" }, "selector"},
 		{func(in *WatcherInput) { in.Every = 5 * time.Minute }, "minimum interval"},
 		{func(in *WatcherInput) { in.Every = 90 * time.Second }, "whole minutes"},
-		{func(in *WatcherInput) { in.Source = SourceWebhook }, "cannot be made yet"},
-		{func(in *WatcherInput) { in.Source = "email" }, "web_page or feed"},
+		{func(in *WatcherInput) { in.Source = SourceWebhook }, "takes no url"},
+		{func(in *WatcherInput) { in.Source = "email" }, "web_page, feed or webhook"},
 		{func(in *WatcherInput) { c := 8 * 24 * time.Hour; in.Cooldown = &c }, "cooldown"},
 		{func(in *WatcherInput) { in.Name = "" }, "a watcher needs a name"},
 	} {
