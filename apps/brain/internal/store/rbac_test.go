@@ -658,6 +658,7 @@ func TestTheRouteMappingIsWhatWeIntend(t *testing.T) {
 		"POST /teams/{id}/watchers/{watcherID}/confirm":      "team schedule:write",
 		"POST /teams/{id}/watchers/{watcherID}/run":          "team schedule:write",
 		"POST /teams/{id}/watchers/{watcherID}/take-over":    "team schedule:manage",
+		"POST /teams/{id}/watchers/{watcherID}/secret":       "team schedule:write",
 		"GET /teams/{id}/watchers/{watcherID}/checks":        "team schedule:read",
 		"GET /teams/{id}/scheduled/news":                     "team schedule:read",
 		"POST /teams/{id}/scheduled/news/seen":               "team schedule:read",

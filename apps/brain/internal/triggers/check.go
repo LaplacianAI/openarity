@@ -87,6 +87,7 @@ type CheckStore interface {
 	ActiveWatchersOfTarget(ctx context.Context, arg db.ActiveWatchersOfTargetParams) ([]db.ActiveWatchersOfTargetRow, error)
 	SetTargetNextCheck(ctx context.Context, id uuid.UUID) error
 	PauseFailingWatchers(ctx context.Context, targetID *uuid.UUID) ([]db.PauseFailingWatchersRow, error)
+	WatchersReadyToRelease(ctx context.Context, arg db.WatchersReadyToReleaseParams) ([]db.WatchersReadyToReleaseRow, error)
 }
 
 // A Checker fetches the pages and feeds that are due, once each however
@@ -98,13 +99,15 @@ type Checker struct {
 	logger *slog.Logger
 	now    func() time.Time
 	jitter func(time.Duration) time.Duration
+	// releasePage is how many watchers holding deliveries are read at once.
+	releasePage int32
 }
 
 // NewChecker fetches through client, which must refuse what a watcher may
 // not reach: the public-address-only dialer web fetch uses.
 func NewChecker(s CheckStore, runs Enqueuer, client *http.Client, logger *slog.Logger) *Checker {
 	return &Checker{
-		store: s, runs: runs, client: client, logger: logger, now: time.Now,
+		store: s, runs: runs, client: client, logger: logger, now: time.Now, releasePage: releaseBatch,
 		jitter: func(d time.Duration) time.Duration {
 			if d <= 0 {
 				return 0

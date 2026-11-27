@@ -97,7 +97,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, dbStore
 	// A provider's files are fetched with the reply client: the same public
 	// addresses only, and no redirect followed somewhere unchecked.
 	downloads := replyClient(reachable(cfg.MCPPrivateNetworks))
-	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, registry, attachments, enqueuer, notices, downloads)
+	webhookRouters := newWebhookRouters(logger, dbStore, secretStore, secretWriter, registry, attachments, enqueuer, notices, downloads)
 	// Every channel a provider is told where to post is pointed at itself
 	// again, with what the provider asks for today: a Telegram bot connected
 	// before approvals in the chat would never hear a tap on a prompt.
