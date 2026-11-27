@@ -10,7 +10,7 @@ them.
 | ------------------------ | ------------------------ | ---------------------- |
 | `patterns.ReAct()`       | `ReActStreaming()`       | one per step           |
 | `patterns.Plan()`        | `PlanStreaming()`        | one, then one per step |
-| `patterns.ReWOO()`       | `ReWOOStreaming()`       | two, always            |
+| `patterns.ReWOO()`       | `ReWOOStreaming()`       | two; three on a re-ask |
 | `patterns.Reflection(n)` | `ReflectionStreaming(n)` | one, then two per cycle |
 
 ## ReAct
@@ -41,7 +41,9 @@ refuses a planning call that tried to invoke a tool.
 
 Reasoning without observation. Every tool call is planned up front, they all
 run, and one final call answers from the evidence. Two model calls whatever the
-plan holds.
+plan holds, or three when an unreadable plan is asked for again; continuing a
+cut-off answer adds more. `Result.Steps` counts the phases, plan and answer,
+not the calls.
 
 Steps refer to earlier ones by position:
 
@@ -67,12 +69,18 @@ reference is refused by name rather than sent as literal text.
 
 A plan whose `steps` arrive as a JSON string holding the list, as some models
 send an array argument, is read as that list. One that still cannot be read is
-asked for once more, with why, a third model call. A plan that is never
+asked for once more, told the shape a plan takes. A plan that is never
 readable, too long or cut off is answered as no plan, as a greeting is: the
-answer step is told that no tool ran and that it should say what it could not
-check, never that the plan ran. An answer that is only tool calls written as
-text (`<invoke …>`, with no words of its own) fails the run with
-`patterns.ErrToolMarkup` instead of being returned.
+answer step is told that no tool ran and, if the question needed a lookup, to
+say what it could not check, never that the plan ran.
+
+The answer step has no tools, so an answer that ends in a tool call written as
+text (`<invoke …>`, `<tool_call>`, whole or cut off) is the model trying to
+make one. The run fails with `patterns.ErrToolMarkup`, and the text is kept out
+of `Result.Output` and the transcript. Both constructors have already sent it
+as `TextEvent`s by then and cannot take it back, so a consumer that renders or
+records deltas should drop what it showed when a run ends in `ErrToolMarkup`.
+Prose that quotes a call and goes on is an answer.
 
 A plan can only use tools it was sent. When the run's tools are too many to send
 (see [Tools found by search](tools-and-skills.md#tools-found-by-search)), ReWOO
@@ -197,8 +205,7 @@ Every shipped pattern treats a reply the model could not finish within
   `agent.ErrTruncated`, with everything it did say.
 
 A reflection critique is a single structured call, so a cut there still
-returns `agent.ErrTruncated` at once; a ReWOO plan cut off is answered as no
-plan, as above.
+returns `agent.ErrTruncated` at once.
 
 ## Writing your own
 

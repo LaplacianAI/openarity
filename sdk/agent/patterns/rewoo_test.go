@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,7 +36,8 @@ func TestReWOOAnswersItsOwnName(t *testing.T) {
 }
 
 // The whole claim of the pattern: two model calls however many tools run. A
-// third would mean an observation reached the model mid-plan.
+// third on a readable plan would mean an observation reached the model
+// mid-plan; only a re-ask of an unreadable plan costs one.
 func TestThreeToolsCostTwoModelCalls(t *testing.T) {
 	t.Parallel()
 
@@ -403,7 +405,7 @@ func TestAnUnusablePlanIsAnsweredWithoutOne(t *testing.T) {
 		plan     turn
 		maxSteps int
 		want     string
-		asks     int // planning calls: an unreadable plan is asked for again
+		asks     int // planning calls: an unreadable plan is asked for again; a plan too long or cut off is not
 	}{
 		"unreadable": {answered(calling(PlanToolName, `{"steps":`)), 8, ErrNoPlan.Error(), 2},
 		// Here MaxSteps caps tool calls rather than model turns, because the
@@ -418,11 +420,7 @@ func TestAnUnusablePlanIsAnsweredWithoutOne(t *testing.T) {
 			var ran bool
 			s := rewooSpec(tool("count", "3", nil, &ran))
 			s.MaxSteps = c.maxSteps
-			turns := []turn{c.plan}
-			for range max(c.asks, 1) - 1 {
-				turns = append(turns, c.plan)
-			}
-			model := &fakeModel{turns: append(turns, answered(text("the answer")))}
+			model := &fakeModel{turns: append(slices.Repeat([]turn{c.plan}, c.asks), answered(text("the answer")))}
 
 			result, skipped := rewooKept(t, s, model)
 			if result.Output != "the answer" || result.Steps != 2 {
@@ -435,7 +433,7 @@ func TestAnUnusablePlanIsAnsweredWithoutOne(t *testing.T) {
 				!strings.Contains(skipped[0].Reason, c.want) {
 				t.Errorf("skipped %+v, want the plan at step 1, saying %q", skipped, c.want)
 			}
-			if want := max(c.asks, 1) + 1; len(model.calls) != want || len(model.calls[want-1].Tools) != 0 {
+			if want := c.asks + 1; len(model.calls) != want || len(model.calls[want-1].Tools) != 0 {
 				t.Errorf("%d calls, the solver offered %d tools; want %d and none", len(model.calls), len(model.calls[len(model.calls)-1].Tools), want)
 			}
 		})
@@ -953,8 +951,17 @@ func TestAnUnreadablePlanIsAskedForAgain(t *testing.T) {
 	}
 	again := model.calls[1].Messages
 	last := again[len(again)-1]
-	if last.Role != agent.RoleUser || !strings.Contains(last.Text(), "Your plan could not be read") {
-		t.Errorf("the second planning call ends %+v; want it told why the plan was refused", last)
+	if len(again) != 1 || last.Role != agent.RoleUser || !strings.Contains(last.Text(), "go") ||
+		!strings.Contains(last.Text(), "Your plan could not be read") {
+		t.Errorf("the second planning call was sent %d messages ending %+v; want the person's, with the note added", len(again), last)
+	}
+	for _, leak := range []string{"json:", "patterns.step", "Go struct"} {
+		if strings.Contains(last.Text(), leak) {
+			t.Errorf("the note quotes the parser: %q", last.Text())
+		}
+	}
+	if strings.Contains(textOf(result.Messages), "could not be read") {
+		t.Errorf("the note was kept in the run's messages")
 	}
 	for _, m := range again {
 		if len(m.ToolCalls) > 0 {
@@ -984,22 +991,136 @@ func TestWithNoPlanTheAnswerIsToldNothingRan(t *testing.T) {
 	}
 }
 
-// An answer that is only tool calls written as text fails the run rather
-// than reach anyone; prose that quotes one is an answer.
-func TestAnAnswerOfOnlyToolMarkupFailsTheRun(t *testing.T) {
+// An answer that ends in a tool call written as text fails the run, after a
+// plan and with none, and leaves nothing of it in the output or the turns a
+// runner would save; prose that quotes a call and goes on is an answer.
+func TestAnAnswerEndingInAToolCallFailsTheRun(t *testing.T) {
 	t.Parallel()
 
-	markup := "\n<invoke name=\"Skill\">\n<parameter name=\"skill\">caveman</parameter>\n</invoke>\n<invoke name=\"Skill\">\n<parameter name=\"skill\">x</parameter>\n</invoke>"
-	for answer, fails := range map[string]bool{
-		markup: true,
-		"<function_calls>" + markup + "</function_calls>":                         true,
-		"It printed this:\n" + markup + "\nwhich is a tool call written as text.": false,
+	markup := "\n<invoke name=\"Skill\">\n<parameter name=\"skill\">caveman</parameter>\n</invoke>"
+	for name, c := range map[string]struct {
+		planned bool
+		answer  string
+		fails   bool
+	}{
+		"markup, no plan":               {false, markup, true},
+		"markup after a plan":           {true, markup, true},
+		"wrapped markup":                {false, "<function_calls>" + markup + "</function_calls>", true},
+		"words, then a call":            {false, "Let me load the skill first." + markup, true},
+		"a call quoted, then explained": {false, "It printed this:" + markup + "\nwhich is a tool call written as text.", false},
+		"a plain answer":                {true, "Hello.", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			plan := answered(text("nothing to plan"))
+			if c.planned {
+				plan = submitted(`[{"tool":"count","args":{},"why":"a"}]`)
+			}
+			model := &fakeModel{turns: []turn{plan, answered(text(c.answer))}}
+			result, err := ReWOO().Run(t.Context(), agent.Input{Spec: rewooSpec(tool("count", "3", nil, new(bool))), Messages: ask("go"), Model: model})
+			if got := errors.Is(err, ErrToolMarkup); got != c.fails {
+				t.Fatalf("err %v, want ErrToolMarkup %v", err, c.fails)
+			}
+			if !c.fails {
+				return
+			}
+			if result.Output != "" || strings.Contains(textOf(result.Messages), "<invoke") || result.Steps != 2 {
+				t.Errorf("output %q in %d steps, messages %q; want nothing of the markup kept", result.Output, result.Steps, textOf(result.Messages))
+			}
+		})
+	}
+}
+
+func TestEndsInToolCall(t *testing.T) {
+	t.Parallel()
+
+	for text, want := range map[string]bool{
+		"<invoke name=\"a\"><parameter name=\"p\">1</parameter></invoke>": true,
+		"<function_calls><invoke name=\"a\"></invoke></function_calls>":   true,
+		"<tool_call>{\"name\":\"a\"}</tool_call>":                         true,
+		"<invoke name=\"a\">x</tool_call>":                                true,
+		"<invoke name=\"a\">\n<parameter name=\"p\">cut off her":          true,
+		"<invoke name=\"a\">":                                             true,
+		"<invoke name=\"a":                                                true,
+		"<invoke name=\"a\"></invoke>\n<invoke name=\"b\">":               true,
+		"I will look it up.\n<invoke name=\"a\"></invoke>":                true,
+		"<invoke> is the tag. Use it.":                                    false,
+		"the <tool_call> element":                                         false,
+		"<invoke name=\"a\">x and words":                                  false,
+		"<invokes>x</invokes>":                                            false,
+		"<invoke name=\"a\"></invoke> is how a call looks.":               false,
+		"":       false,
 		"Hello.": false,
 	} {
-		model := &fakeModel{turns: []turn{answered(text("nothing to plan")), answered(text(answer))}}
-		_, err := ReWOO().Run(t.Context(), agent.Input{Spec: rewooSpec(tool("count", "3", nil, new(bool))), Messages: ask("go"), Model: model})
-		if got := errors.Is(err, ErrToolMarkup); got != fails {
-			t.Errorf("answer %.40q: err %v, want ErrToolMarkup %v", answer, err, fails)
+		if got := endsInToolCall(text); got != want {
+			t.Errorf("endsInToolCall(%q) = %v, want %v", text, got, want)
 		}
 	}
+}
+
+// A plan's steps: a list, the list as a string, or none.
+func TestParseSteps(t *testing.T) {
+	t.Parallel()
+
+	for raw, want := range map[string]int{
+		`[{"tool":"a","args":{},"why":"x"}]`:             1,
+		`"[{\"tool\":\"a\",\"args\":{},\"why\":\"x\"}]"`: 1,
+		`[]`:   0,
+		`"[]"`: 0,
+		`null`: 0,
+		``:     0,
+	} {
+		got, err := parseSteps(json.RawMessage(raw))
+		if err != nil || len(got) != want {
+			t.Errorf("parseSteps(%s) = %d steps, %v; want %d", raw, len(got), err, want)
+		}
+	}
+	for _, raw := range []string{`""`, `"not a list"`, `{"tool":"a"}`, `"\"[]\""`, `3`} {
+		if _, err := parseSteps(json.RawMessage(raw)); err == nil {
+			t.Errorf("parseSteps(%s) read a plan", raw)
+		}
+	}
+}
+
+// The second ask is the only one: one that fails outright is the run's
+// failure, one that plans nothing goes to the answer, and one too long is
+// answered as no plan.
+func TestTheSecondAskIsTheLast(t *testing.T) {
+	t.Parallel()
+
+	bad := submitted(`"not a list"`)
+	t.Run("it fails", func(t *testing.T) {
+		t.Parallel()
+		model := &fakeModel{turns: []turn{bad, {err: errors.New("gateway down")}}}
+		_, err := ReWOO().Run(t.Context(), agent.Input{Spec: rewooSpec(tool("count", "3", nil, new(bool))), Messages: ask("go"), Model: model})
+		if err == nil || !strings.Contains(err.Error(), "planning:") || len(model.calls) != 2 {
+			t.Errorf("err %v after %d calls; want the planning failure, no third ask", err, len(model.calls))
+		}
+	})
+	for name, second := range map[string]turn{
+		"it plans nothing": answered(text("Hi!")),
+		"it is too long":   submitted(`[{"tool":"count","args":{},"why":"a"},{"tool":"count","args":{},"why":"b"},{"tool":"count","args":{},"why":"c"}]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var ran bool
+			s := rewooSpec(tool("count", "3", nil, &ran))
+			s.MaxSteps = 2
+			model := &fakeModel{turns: []turn{bad, second, answered(text("Hello."))}}
+			result, _ := rewooKept(t, s, model)
+			if ran || result.Output != "Hello." || len(model.calls) != 3 || !strings.Contains(systemText(model.calls[2]), "No tool ran") {
+				t.Errorf("ran %v, output %q after %d calls; want the no-plan answer on the third", ran, result.Output, len(model.calls))
+			}
+		})
+	}
+}
+
+// textOf is every message's text, joined.
+func textOf(msgs []agent.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		b.WriteString(m.Text())
+		b.WriteString("\n")
+	}
+	return b.String()
 }

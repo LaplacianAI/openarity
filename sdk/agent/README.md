@@ -318,7 +318,8 @@ requests carried the schema, which is the whole difference between them.
 | `patterns.ReWOO()`      | `ReWOOStreaming()`      | plan every call up front, run them, then answer |
 | `patterns.Reflection(n)`| `ReflectionStreaming(n)`| answer, critique it, rewrite — up to n times    |
 
-ReWOO costs two model calls whatever the plan holds, and no tool's output can
+ReWOO costs two model calls whatever the plan holds (three when an unreadable
+plan is asked for again), and no tool's output can
 change what the agent set out to do. That only *saves* tokens on a dependent
 chain: a current model asks for independent calls together in one turn, so ReAct
 pays one call for all of them.
