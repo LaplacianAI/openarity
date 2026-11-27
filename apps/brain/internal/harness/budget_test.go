@@ -12,6 +12,8 @@ func TestSpentCountsACachedTokenAsATenth(t *testing.T) {
 		{100, 100, 0, 10},
 		{100, 9, 0, 91},
 		{0, 0, 0, 0},
+		{100, 150, 0, 10},
+		{100, -5, 0, 100},
 	} {
 		if got := Spent(c.in, c.cached, c.out); got != c.want {
 			t.Errorf("Spent(%d, %d, %d) = %d, want %d", c.in, c.cached, c.out, got, c.want)

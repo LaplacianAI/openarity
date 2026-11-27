@@ -196,9 +196,7 @@ func (l *softLines) stepped(step int) *wrapUpPayload {
 // it: a cached token a tenth. A provider counting more cached than it read,
 // or less than none, is held between none and what it read.
 func costOf(u agent.Usage) int64 {
-	in := int64(u.InputTokens)
-	cached := min(max(int64(u.CachedInputTokens), 0), in)
-	return harness.Spent(in, cached, 0)
+	return harness.Spent(int64(u.InputTokens), int64(u.CachedInputTokens), 0)
 }
 
 // reserve is what one more call is kept for its answer: twice the most the

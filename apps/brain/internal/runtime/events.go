@@ -303,8 +303,6 @@ func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker stri
 	return nil
 }
 
-func budgetOf(set *int64) int64 { return harness.BudgetOf(set) }
-
 func appendEvent(ctx context.Context, s EventStore, runID uuid.UUID, worker, kind string, payload any) error {
 	_, err := appendEventSeq(ctx, s, runID, worker, kind, payload)
 	return err

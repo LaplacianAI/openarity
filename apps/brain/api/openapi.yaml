@@ -10007,7 +10007,7 @@ components:
         token_budget:
           type: integer
           format: int64
-          description: The budget the run started with, its agent's or the deployment's default, 1,000,000
+          description: The budget the run started with, its agent's or the deployment's default
           examples: [2000000]
         created_at:
           type: string

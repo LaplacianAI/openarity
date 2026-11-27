@@ -30,7 +30,8 @@ export function budgetOf(run: Pick<Run, "spent" | "token_budget">): Budget | nul
 /** Tokens in short: 950, 574k, 2M, 1.85M. */
 export function shortTokens(n: number): string {
   if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  const k = Math.round(n / 1000);
+  if (k < 1000) return `${k}k`;
   const m = n / 1_000_000;
   return `${Number(m.toFixed(m < 10 ? 2 : 1))}M`;
 }

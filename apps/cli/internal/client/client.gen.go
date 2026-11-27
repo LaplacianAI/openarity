@@ -4203,7 +4203,7 @@ type Run struct {
 	// on when it is answered; the other three are final.
 	Status RunStatus `json:"status" yaml:"status"`
 
-	// TokenBudget The budget the run started with, its agent's or the deployment's default, 1,000,000
+	// TokenBudget The budget the run started with, its agent's or the deployment's default
 	//
 	// Examples: 2000000
 	TokenBudget int64 `json:"token_budget" yaml:"token_budget"`

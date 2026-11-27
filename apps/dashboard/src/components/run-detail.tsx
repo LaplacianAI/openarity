@@ -519,7 +519,7 @@ function BudgetFact({ run }: { run: Run }) {
             // biome-ignore lint/a11y/noNoninteractiveTabindex: the tooltip says how the budget counts, and a keyboard reader needs to reach it
             tabIndex={0}
             className={cn(
-              "inline-flex items-center gap-1 rounded-sm font-medium tabular-nums",
+              "inline-flex items-center gap-1 rounded-sm font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-ring",
               b.state === "near" && "text-waiting",
               b.state === "spent" && "text-failed",
             )}

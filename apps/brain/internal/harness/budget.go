@@ -10,8 +10,10 @@ const cachedShare = 10
 
 // Spent is what a run's tokens count against its budget: fresh input and
 // output in full, a cached input token as a tenth. The store's run_spent
-// counts the same; a test holds the two together.
+// counts the same; a test holds the two together. Cached is held within
+// input, as the store's runs_cached_within_input holds it.
 func Spent(input, cached, output int64) int64 {
+	cached = min(max(cached, 0), input)
 	return input - cached + cached/cachedShare + output
 }
 
