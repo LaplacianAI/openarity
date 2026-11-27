@@ -65,6 +65,15 @@ Steps refer to earlier ones by position:
 `#E1` is substituted with step one's output before step two runs. A forward
 reference is refused by name rather than sent as literal text.
 
+A plan whose `steps` arrive as a JSON string holding the list, as some models
+send an array argument, is read as that list. One that still cannot be read is
+asked for once more, with why, a third model call. A plan that is never
+readable, too long or cut off is answered as no plan, as a greeting is: the
+answer step is told that no tool ran and that it should say what it could not
+check, never that the plan ran. An answer that is only tool calls written as
+text (`<invoke …>`, with no words of its own) fails the run with
+`patterns.ErrToolMarkup` instead of being returned.
+
 A plan can only use tools it was sent. When the run's tools are too many to send
 (see [Tools found by search](tools-and-skills.md#tools-found-by-search)), ReWOO
 cannot search midway, so it plans with the tools `Discovery.Select` picks for
@@ -187,8 +196,9 @@ Every shipped pattern treats a reply the model could not finish within
 - Still cut off after three continuations, the run returns
   `agent.ErrTruncated`, with everything it did say.
 
-A ReWOO plan and a reflection critique are single structured calls, so a cut
-there still returns `agent.ErrTruncated` at once.
+A reflection critique is a single structured call, so a cut there still
+returns `agent.ErrTruncated` at once; a ReWOO plan cut off is answered as no
+plan, as above.
 
 ## Writing your own
 
