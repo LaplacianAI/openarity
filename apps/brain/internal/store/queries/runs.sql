@@ -202,11 +202,11 @@ SELECT count(*)::bigint AS runs,
 FROM runs r
 WHERE r.root_run_id = sqlc.arg('root_id')::uuid;
 
--- After a crash the resumed parent asks again rather than finding what it
--- asked before, so whatever was still running beneath it fails, at any depth.
--- A child waiting for a person stopped cleanly and is taken up again by the
--- resume, so it is left; a parent that ends takes its waiting children with
--- it (include_waiting).
+-- After a crash the resumed parent carries on the children its worker left
+-- (AdoptOrphan); whatever is still running beneath it then fails, at any
+-- depth, and its model asks again. A child waiting for a person stopped
+-- cleanly and is taken up again by the resume, so it is left; a parent that
+-- ends takes its waiting children with it (include_waiting).
 -- name: ReapChildren :many
 WITH RECURSIVE below AS (
     SELECT id FROM runs WHERE parent_run_id = sqlc.arg('parent_id')::uuid
@@ -367,6 +367,24 @@ UPDATE runs SET
     waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
     waiting_since  = NULL
 WHERE id = sqlc.arg('id')::uuid AND status = 'waiting' AND parent_run_id IS NOT NULL
+RETURNING *;
+
+-- A run's children whose worker stopped while they ran: running, and not
+-- heartbeating for stale_seconds. Only a resumed parent asks, and it carries
+-- them on.
+-- name: ListOrphanedChildren :many
+SELECT * FROM runs
+WHERE parent_run_id = sqlc.arg('parent_id')::uuid AND status = 'running'
+  AND heartbeat_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8)
+ORDER BY created_at, id;
+
+-- A child whose worker stopped, taken up by its resumed parent's worker. No
+-- row: it beat again since it was listed, is no longer running, or is not
+-- that parent's.
+-- name: AdoptOrphan :one
+UPDATE runs SET worker = sqlc.arg('worker')::text, heartbeat_at = now()
+WHERE id = sqlc.arg('id')::uuid AND status = 'running' AND parent_run_id = sqlc.arg('parent_id')::uuid
+  AND heartbeat_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8)
 RETURNING *;
 
 -- A run's children that wait for a person, in the order they were started.
