@@ -76,20 +76,33 @@ func roomShort(err error) string {
 // and the wait are told is the refusal in a few words: the provider's own
 // error can name its internal address, so it goes to the log alone. A wait
 // that cannot be kept, or that the run may not open (it no longer runs, or a
-// person or a cancel ended it), is the refusal, as it was before waits.
+// person or a cancel ended it), is the refusal, as it was before waits, in
+// the same few words.
 func (w *runWorkspace) wait(ctx context.Context, refused error) error {
 	short := roomShort(refused)
 	w.deps.Logger.InfoContext(ctx, "The sandbox had no room for a workspace call; the run waits",
 		"run", w.run, "err", refused)
 	if _, err := w.deps.Waits.WaitForRoom(context.WithoutCancel(ctx), w.run, short, roomRetryMin.Seconds()); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("the workspace could not be started: %w", refused)
+		said := "the workspace could not be started: " + short
+		if !errors.Is(err, pgx.ErrNoRows) {
+			said += " (and its wait for room was not kept)"
+			w.deps.Logger.WarnContext(ctx, "A wait for room was not kept", "run", w.run, "err", err)
 		}
-		return fmt.Errorf("the workspace could not be started: %w (and its wait for room was not kept: %w)", refused, err)
+		return &refusal{said: said, err: refused}
 	}
 	w.waiting = toModel(fmt.Sprintf(waitingForRoom, short))
 	return w.waiting
 }
+
+// refusal is a refusal in a few words that still is the provider's error to
+// errors.Is: the model reads only said.
+type refusal struct {
+	said string
+	err  error
+}
+
+func (r *refusal) Error() string { return r.said }
+func (r *refusal) Unwrap() error { return r.err }
 
 // roomWaitsEnded is what a resumed run is told of its waits that ended, and
 // the waits it told.

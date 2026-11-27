@@ -585,25 +585,33 @@ func TestWithNoWaitsAFullSandboxIsTheCallsError(t *testing.T) {
 // ended it) is told the refusal, as before waits.
 func TestAWaitTheRunMayNotOpenIsTheRefusal(t *testing.T) {
 	f, ws, waits := newWaitingFixture(t)
-	ws.ensureErr = sandbox.ErrFull
+	ws.ensureErr = fmt.Errorf("%w: http://10.0.0.5:7000", sandbox.ErrFull)
 	waits.err = pgx.ErrNoRows
 	_, err := invoke(t, f.build(t), BashToolName, `{"command":"ls"}`)
 	var said toModel
-	if err == nil || errors.As(err, &said) || !strings.Contains(err.Error(), sandbox.ErrFull.Error()) ||
-		strings.Contains(err.Error(), "no rows") {
+	if err == nil || errors.As(err, &said) || !errors.Is(err, sandbox.ErrFull) ||
+		!strings.Contains(err.Error(), "it is full") || strings.Contains(err.Error(), "no rows") {
 		t.Fatalf("Bash = %v, want the plain refusal", err)
+	}
+	if strings.Contains(err.Error(), "10.0.0.5") {
+		t.Errorf("Bash = %v: the model reads the provider's address", err)
 	}
 }
 
-// A wait that cannot be kept is the refusal, and the next call asks again.
+// A wait that cannot be kept is the refusal in a few words (why it was not
+// kept goes to the log), and the next call asks again.
 func TestAWaitNotKeptIsTheRefusal(t *testing.T) {
 	f, ws, waits := newWaitingFixture(t)
-	ws.ensureErr = sandbox.ErrFull
-	waits.err = errors.New("db down")
+	ws.ensureErr = fmt.Errorf("%w: http://10.0.0.5:7000", sandbox.ErrFull)
+	waits.err = errors.New("db down at 10.0.0.9")
 	got := f.build(t)
 	_, err := invoke(t, got, BashToolName, `{"command":"ls"}`)
-	if err == nil || !strings.Contains(err.Error(), sandbox.ErrFull.Error()) || !strings.Contains(err.Error(), "db down") {
-		t.Fatalf("Bash = %v, want the refusal and why it was not waited for", err)
+	if err == nil || !errors.Is(err, sandbox.ErrFull) || !strings.Contains(err.Error(), "it is full") ||
+		!strings.Contains(err.Error(), "was not kept") {
+		t.Fatalf("Bash = %v, want the refusal and that it was not waited for", err)
+	}
+	if strings.Contains(err.Error(), "10.0.0") {
+		t.Errorf("Bash = %v: the model reads an internal address", err)
 	}
 	ws.ensureErr = nil
 	ws.room.answer("/exec", 200, `{"stdout":"ok\n","stderr":"","exit_code":0}`)

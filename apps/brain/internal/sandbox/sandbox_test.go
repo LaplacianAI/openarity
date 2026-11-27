@@ -48,12 +48,14 @@ func TestUnansweredIsUnavailableUnlessTheCallerGaveUp(t *testing.T) {
 	if !errors.Is(err, sandbox.ErrUnavailable) || !errors.Is(err, dial) {
 		t.Fatalf("Unanswered = %v, want ErrUnavailable around the dial error", err)
 	}
-	for _, err := range []error{io.EOF, fmt.Errorf("read: %w", io.ErrUnexpectedEOF)} {
+	lookupTimedOut := &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "i/o timeout", Name: "sandboxd.internal", IsTimeout: true}}
+	for _, err := range []error{io.EOF, fmt.Errorf("read: %w", io.ErrUnexpectedEOF), lookupTimedOut} {
 		if !errors.Is(sandbox.Unanswered(t.Context(), err), sandbox.ErrUnavailable) {
 			t.Errorf("a connection closed before an answer (%v) is not unavailable", err)
 		}
 	}
-	for _, err := range []error{errors.New("x509: certificate signed by unknown authority"), errors.New(`unsupported protocol scheme ""`)} {
+	noHost := &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "sandboxd.internal", IsNotFound: true}}
+	for _, err := range []error{errors.New("x509: certificate signed by unknown authority"), errors.New(`unsupported protocol scheme ""`), noHost} {
 		if errors.Is(sandbox.Unanswered(t.Context(), err), sandbox.ErrUnavailable) {
 			t.Errorf("a setting to fix (%v) is waited for", err)
 		}

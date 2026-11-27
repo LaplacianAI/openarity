@@ -170,8 +170,8 @@ failing. Three refusals wait:
 - **Being prepared:** E2B's template for the team is still being built.
 - **Not answering:** the provider could not be reached, timed out, or a
   gateway in front of it said it was down, as during its own deploy. A
-  certificate it refuses or an address it cannot use is a setting to fix, and
-  stays the call's error.
+  certificate it refuses, an address it cannot use or a host name that does
+  not exist is a setting to fix, and stays the call's error.
 
 The call is not made. The agent says in a line that it is waiting, the person
 on a channel is sent that line, and the run parks holding no worker, as it

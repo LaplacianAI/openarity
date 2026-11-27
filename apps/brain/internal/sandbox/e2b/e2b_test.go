@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -283,6 +284,18 @@ func TestATransportErrorDoesNotLeakTheKey(t *testing.T) {
 	_, err := c.Create(t.Context(), sandbox.Spec{Image: "t"})
 	if err == nil || strings.Contains(err.Error(), apiKey) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A transport error with the key scrubbed out is still the error it was, so
+// a refused dial is still E2B not answering, and waits.
+func TestAScrubbedTransportErrorIsStillUnavailable(t *testing.T) {
+	c := New(apiKey, &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused, key " + apiKey)}
+	})})
+	_, err := c.Create(t.Context(), sandbox.Spec{Image: "t"})
+	if !errors.Is(err, sandbox.ErrUnavailable) || strings.Contains(err.Error(), apiKey) {
+		t.Fatalf("err = %v, want ErrUnavailable with the key scrubbed", err)
 	}
 }
 

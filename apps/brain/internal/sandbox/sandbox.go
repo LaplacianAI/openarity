@@ -185,6 +185,9 @@ func Unanswered(ctx context.Context, err error) error {
 }
 
 func noAnswer(err error) bool {
+	if dns, ok := errors.AsType[*net.DNSError](err); ok && dns.IsNotFound {
+		return false // a host that does not exist is configured wrong, not down
+	}
 	var op *net.OpError
 	var ne net.Error
 	return errors.As(err, &op) || (errors.As(err, &ne) && ne.Timeout()) ||

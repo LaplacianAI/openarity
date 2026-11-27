@@ -332,6 +332,9 @@ func (e *statusError) Is(target error) bool {
 	case sandbox.ErrNotFound:
 		return e.status == http.StatusNotFound
 	case sandbox.ErrUnavailable:
+		// Any 502/503/504 counts as Daytona not there. sandboxd waits only
+		// on an empty body because its own 503 names a cause (an image still
+		// pulling), which is no outage.
 		return sandbox.Down(e.status)
 	}
 	return false
