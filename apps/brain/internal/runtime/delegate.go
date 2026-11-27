@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -85,7 +86,7 @@ func DelegateTool(deps DelegateDeps, caller db.Agent, run db.Run, l Lineage) age
 				// A child starts from nothing on its own budget: what it
 				// spends is its own, and the parent pays only for reading
 				// its report.
-				Budget: budgetOf(target.TokenBudget),
+				Budget: harness.BudgetOf(target.TokenBudget),
 			})
 			if err != nil {
 				return "", err

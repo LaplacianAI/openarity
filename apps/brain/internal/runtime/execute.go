@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -419,7 +420,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	if e.streamer != nil && streamsText(row) {
 		runner, streams = e.streamer, true
 	}
-	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
+	lines := newSoftLines(harness.BudgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
 	lines.steps = built.Spec.MaxSteps
 	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, lines,
 		streams, e.teller(context.WithoutCancel(ctx), row), events, notes, stop)
