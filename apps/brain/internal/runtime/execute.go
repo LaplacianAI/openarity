@@ -42,6 +42,8 @@ type Store interface {
 	ListRunApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
 	AdoptChild(ctx context.Context, arg db.AdoptChildParams) (db.Run, error)
 	ListWaitingChildren(ctx context.Context, parentID uuid.UUID) ([]db.Run, error)
+	ListOrphanedChildren(ctx context.Context, arg db.ListOrphanedChildrenParams) ([]db.Run, error)
+	AdoptOrphan(ctx context.Context, arg db.AdoptOrphanParams) (db.Run, error)
 	ListUntoldApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
 	MarkApprovalsTold(ctx context.Context, ids []uuid.UUID) error
 	ClaimApprovalUse(ctx context.Context, id uuid.UUID) (db.Approval, error)
@@ -207,6 +209,12 @@ func (e *Executor) adopt(ctx context.Context, child db.Run, l Lineage) (db.Run, 
 	if err != nil {
 		return db.Run{}, fmt.Errorf("taking up %s's run %s: %w", child.AgentName, child.ID, err)
 	}
+	return e.takeUp(ctx, row, l)
+}
+
+// takeUp runs a child its parent's worker now holds to its end, or to its
+// wait, as one of the parent's own delegates.
+func (e *Executor) takeUp(ctx context.Context, row db.Run, l Lineage) (db.Run, error) {
 	if row.AgentID != nil {
 		l.Chain = append(slices.Clone(l.Chain), *row.AgentID)
 	}
@@ -360,19 +368,23 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 		return "", "", err
 	}
 	if resuming {
-		// What ran beneath the run when its worker stopped is cut off; what
-		// waits for a person is taken up below.
-		if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: row.ID, Reason: reapReason}); err != nil {
-			return "", "", fmt.Errorf("reaping what the run started before its worker stopped: %w", err)
-		}
 		if err = appendEvent(ctx, e.store, row.ID, l.Worker, "resumed", resumedPayload{Messages: len(msgs)}); err != nil {
 			return "", "", err
 		}
 		// While it waited: each child carries on, and each answer is acted
-		// on, then told to the model as its next message.
+		// on, then told to the model as its next message. First, so a child
+		// carried on below that waits is not taken up twice.
 		said, err := e.catchUp(ctx, row, built, l)
 		if err != nil {
 			return "", "", err
+		}
+		// What ran beneath the run when its worker stopped carries on, its
+		// report its call's result; what is left running is cut off.
+		if msgs, err = e.carryOn(ctx, row, msgs, l); err != nil {
+			return "", "", err
+		}
+		if _, err := e.store.ReapChildren(ctx, db.ReapChildrenParams{ParentID: row.ID, Reason: reapReason}); err != nil {
+			return "", "", fmt.Errorf("reaping what the run started before its worker stopped: %w", err)
 		}
 		if len(said) > 0 {
 			msgs = append(msgs, agent.Message{Role: agent.RoleUser, Content: said})

@@ -145,7 +145,7 @@ apps/brain/
     history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers
     compaction.go      when a run compacts, and the budget's soft lines (compact, then wrap up)
     gate.go            tool-call approvals: each MCP and built-in tool's verdict when the run is built; a call that asks makes nothing, and the model says so in its own words
-    answers.go         a resume's catch-up: waiting children carried on, each answer acted on (an approved call made then) and told to the model
+    answers.go         a resume's catch-up: waiting children carried on, each answer acted on (an approved call made then) and told to the model; children a stopped worker left carried on, each report its open call's result
     approvals.go       parking a waiting run, and answering a request: each one transaction, the session taken first
     decide.go          Decide: the one way a request is answered, from the API or the chat; who may answer
     park.go            a turn that ended waiting for a person, parked with what it said: a root queued again if its answer came first, a delegate left for its parent's resume
