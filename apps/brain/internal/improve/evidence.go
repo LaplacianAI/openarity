@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/workroom"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -32,8 +31,8 @@ type Reads interface {
 const (
 	before        = 6     // messages before the run, for context
 	after         = 2     // people's messages after it
-	argChars      = 300   // a tool call's arguments
-	resultChars   = 400   // a tool's result: its first and last half
+	argChars      = 300   // a tool call's arguments, and a skip's reason
+	resultChars   = 400   // a tool's result or error: its first and last 200
 	answerChars   = 6000  // the root run's answer
 	childChars    = 1500  // a delegate's input and answer, in a digest
 	eventsPerRun  = 2000  // the trace read of one run
@@ -79,9 +78,10 @@ type toolCallPayload struct {
 }
 
 type toolResultPayload struct {
-	Name   string `json:"name"`
-	Output string `json:"output"`
-	Error  string `json:"error"`
+	Name      string `json:"name"`
+	Output    string `json:"output"`
+	Error     string `json:"error"`
+	Truncated bool   `json:"truncated"` // the stored output lost its tail
 }
 
 type stepPayload struct {
@@ -241,49 +241,38 @@ func traceOf(ctx context.Context, r Reads, run db.ListTreeRunsRow) ([]string, he
 	return lines, h, nil
 }
 
-// resultLine is a tool's result as the trace reads it: both its ends, as
-// the error a long command ends with is in its last lines, and a command that
-// exited non-zero, or ran out of time, read as failed.
+// resultLine is one tool result as the trace reads it, by both its ends, as
+// a long command's error is in its last lines. A Bash command that ran out
+// of time, or exited non-zero, reads as such; one whose stored output was cut
+// before its end reads as cut, as its exit line went with the tail.
 func resultLine(p toolResultPayload) string {
 	if p.Error != "" {
-		return fmt.Sprintf("  %s failed: %s", p.Name, clip(p.Error, argChars))
+		return fmt.Sprintf("  %s failed: %s", p.Name, clipEnds(p.Error, resultChars))
 	}
+	shown := clipEnds(p.Output, resultChars)
 	if p.Name == bashTool {
-		if code, ok := bashExit(p.Output); ok {
-			return fmt.Sprintf("  %s failed (exit %d): %s", p.Name, code, ends(p.Output, resultChars))
-		}
-		if strings.HasPrefix(p.Output, bashTimedOut) {
-			return fmt.Sprintf("  %s timed out: %s", p.Name, ends(p.Output, resultChars))
+		switch code, exited := workroom.ExitOf(p.Output); {
+		case workroom.TimedOut(p.Output): // it also ends with an exit line
+			return fmt.Sprintf("  %s timed out: %s", p.Name, shown)
+		case p.Truncated: // a last line of a cut output is the command's own
+			return fmt.Sprintf("  %s returned (output cut): %s", p.Name, shown)
+		case exited:
+			return fmt.Sprintf("  %s failed (exit %d): %s", p.Name, code, shown)
 		}
 	}
-	return fmt.Sprintf("  %s returned: %s", p.Name, ends(p.Output, resultChars))
+	return fmt.Sprintf("  %s returned: %s", p.Name, shown)
 }
 
-// What the workspace's Bash writes for a command that did not end well:
-// runtime's execText writes both, and its tests pin them.
-const (
-	bashTool     = "Bash"
-	bashTimedOut = "The command ran out of time"
-)
+// bashTool is the runtime's workspace tool whose results carry workroom's
+// timeout note and exit line.
+const bashTool = "Bash"
 
-var bashExitLine = regexp.MustCompile(`(?:^|\n)exit code (-?\d+)$`)
-
-// bashExit is the exit code a Bash result ends with, when it ends with one.
-func bashExit(out string) (int, bool) {
-	m := bashExitLine.FindStringSubmatch(out)
-	if m == nil {
-		return 0, false
-	}
-	code, err := strconv.Atoi(m[1])
-	return code, err == nil
-}
-
-// ends is s whole when it fits in n characters, else its first and last
-// n/2, cut on rune boundaries.
-func ends(s string, n int) string {
+// clipEnds is s whole when it fits in n characters, else its first and last
+// n/2, cut on rune boundaries, either side of " … ".
+func clipEnds(s string, n int) string {
 	s = strings.TrimSpace(s)
 	r := []rune(s)
-	if len(r) <= n {
+	if len(r) <= n+3 {
 		return s
 	}
 	return string(r[:n/2]) + " … " + string(r[len(r)-n/2:])

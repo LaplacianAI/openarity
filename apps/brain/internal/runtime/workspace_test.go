@@ -442,3 +442,24 @@ func TestBashSaysAPipeHidesAFailure(t *testing.T) {
 		t.Errorf("Bash's description does not say how a pipe hides a failure: %q", desc)
 	}
 }
+
+// What execText writes is what workroom reads back, so the improver tells a
+// command that did not end well from the same text the model reads.
+func TestACommandsEndReadsBackFromItsText(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []int{0, 1, 2, 127, -1} {
+		for _, timedOut := range []bool{false, true} {
+			for _, out := range [][2]string{{"", ""}, {"out\n", ""}, {"out", "boom\n"}, {"", "boom"}} {
+				text := execText(execOf(out[0], out[1], code, timedOut))
+				got, ok := workroom.ExitOf(text)
+				if ok != (code != 0) || got != code && code != 0 {
+					t.Errorf("exit %d, timed out %v, %q: read back %d, %v", code, timedOut, text, got, ok)
+				}
+				if workroom.TimedOut(text) != timedOut {
+					t.Errorf("exit %d, timed out %v, %q: read back as timed out %v", code, timedOut, text, !timedOut)
+				}
+			}
+		}
+	}
+}

@@ -284,12 +284,12 @@ func (w *runWorkspace) tools() []agent.Tool {
 }
 
 // execText is a command's result as the model reads it. Its first line on a
-// timeout and its last line on a non-zero exit are also how the improver's
-// evidence tells a command that did not end well (improve.resultLine).
+// timeout and its last line on a non-zero exit are workroom's, which the
+// improver's evidence reads back to tell a command that did not end well.
 func execText(e workroom.Exec) string {
 	var b strings.Builder
 	if e.TimedOut {
-		b.WriteString("The command ran out of time and was stopped, with everything it started.\n")
+		b.WriteString(workroom.TimedOutNote + "\n")
 	}
 	b.WriteString(e.Stdout)
 	if e.Stderr != "" {
@@ -302,7 +302,7 @@ func execText(e workroom.Exec) string {
 		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "exit code %d", e.ExitCode)
+		b.WriteString(workroom.ExitLine(e.ExitCode))
 	}
 	if b.Len() == 0 {
 		return "(no output)"
