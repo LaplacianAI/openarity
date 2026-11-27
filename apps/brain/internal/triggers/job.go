@@ -60,10 +60,12 @@ type JobStore interface {
 	ExpireProposedWatchers(ctx context.Context, arg db.ExpireProposedWatchersParams) (int64, error)
 	PruneWatcherChecks(ctx context.Context, arg db.PruneWatcherChecksParams) (int64, error)
 	DeleteUnwatchedTargets(ctx context.Context) (int64, error)
+	ForgetOldDeliveries(ctx context.Context, before time.Time) (int64, error)
 }
 
-// A Job fires schedules and checks watched pages and feeds on a minute tick,
-// and lapses proposals and prunes history hourly. The record DBOS keeps of
+// A Job fires schedules, checks watched pages and feeds, and releases what
+// webhook watchers held on a minute tick, and lapses proposals and prunes
+// history hourly. The record DBOS keeps of
 // its batches is deleted by the retention job, told of them as FireWorkflow
 // and CheckWorkflow.
 type Job struct {
@@ -148,6 +150,11 @@ func (j *Job) tick(ctx dbos.Context, in dbos.ScheduledWorkflowInput) (string, er
 				return minute, fmt.Errorf("handing out check batch %d: %w", i, err)
 			}
 		}
+		// A webhook watcher's held deliveries start their run once its
+		// cooldown passes; one that fails waits for the next tick.
+		if _, err := j.checker.ReleaseHeld(sctx); err != nil {
+			j.logger.ErrorContext(sctx, "Held deliveries were not released; the next tick tries again", "error", err)
+		}
 		return minute, nil
 	})
 }
@@ -206,6 +213,9 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 	}))
 	if _, err := j.store.DeleteUnwatchedTargets(ctx); err != nil {
 		failed = append(failed, fmt.Errorf("deleting addresses nobody watches: %w", err))
+	}
+	if _, err := j.store.ForgetOldDeliveries(ctx, now.Add(-deliveryKept)); err != nil {
+		failed = append(failed, fmt.Errorf("forgetting deliveries older than a day: %w", err))
 	}
 	return errors.Join(failed...)
 }

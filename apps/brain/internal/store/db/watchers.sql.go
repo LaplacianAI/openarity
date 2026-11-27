@@ -195,13 +195,14 @@ func (q *Queries) CountWatcherRun(ctx context.Context, arg CountWatcherRunParams
 const createWatcher = `-- name: CreateWatcher :one
 
 INSERT INTO watchers (
-    id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector,
+    id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id,
     every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, target, target_label
 ) VALUES (
     $1, $2, $3::uuid, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13, $14,
-    $15, $16, $17, $18
+    $15, $16, $17, $18,
+    $19
 )
 RETURNING id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label
 `
@@ -217,6 +218,7 @@ type CreateWatcherParams struct {
 	Source          string
 	TargetID        *uuid.UUID
 	Selector        *string
+	HookID          *string
 	EverySeconds    *int32
 	CooldownSeconds int32
 	Status          string
@@ -241,6 +243,7 @@ func (q *Queries) CreateWatcher(ctx context.Context, arg CreateWatcherParams) (W
 		arg.Source,
 		arg.TargetID,
 		arg.Selector,
+		arg.HookID,
 		arg.EverySeconds,
 		arg.CooldownSeconds,
 		arg.Status,
@@ -331,6 +334,19 @@ type ExpireProposedWatchersParams struct {
 // target let go, its conversation closed and kept.
 func (q *Queries) ExpireProposedWatchers(ctx context.Context, arg ExpireProposedWatchersParams) (int64, error) {
 	result, err := q.db.Exec(ctx, expireProposedWatchers, arg.ProposedBefore, arg.WaitingBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const forgetOldDeliveries = `-- name: ForgetOldDeliveries :execrows
+DELETE FROM watcher_deliveries WHERE NOT held AND received_at < $1
+`
+
+// Deliveries remembered for their day and no longer held.
+func (q *Queries) ForgetOldDeliveries(ctx context.Context, before time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetOldDeliveries, before)
 	if err != nil {
 		return 0, err
 	}
@@ -461,6 +477,84 @@ func (q *Queries) GetWatcherView(ctx context.Context, arg GetWatcherViewParams) 
 	return i, err
 }
 
+const heldDeliveries = `-- name: HeldDeliveries :many
+SELECT h.key, h.received_at, h.body, h.event, h.total::bigint AS total
+FROM (
+    SELECT d.key, d.received_at, d.body, d.event,
+           sum(octet_length(d.body)) OVER w AS upto, row_number() OVER w AS n, count(*) OVER () AS total
+    FROM watcher_deliveries d
+    WHERE d.watcher_id = $1 AND d.held
+    WINDOW w AS (ORDER BY d.received_at, d.key)
+) h
+WHERE h.n = 1 OR h.upto <= $2::bigint
+ORDER BY h.received_at, h.key
+`
+
+type HeldDeliveriesParams struct {
+	WatcherID uuid.UUID
+	Budget    int64
+}
+
+type HeldDeliveriesRow struct {
+	Key        string
+	ReceivedAt time.Time
+	Body       []byte
+	Event      *string
+	Total      int64
+}
+
+// What a webhook watcher holds that one run can take in, oldest first: the
+// first always, then each while the bodies fit the budget. total is how many
+// it holds in all.
+func (q *Queries) HeldDeliveries(ctx context.Context, arg HeldDeliveriesParams) ([]HeldDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, heldDeliveries, arg.WatcherID, arg.Budget)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HeldDeliveriesRow
+	for rows.Next() {
+		var i HeldDeliveriesRow
+		if err := rows.Scan(
+			&i.Key,
+			&i.ReceivedAt,
+			&i.Body,
+			&i.Event,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const holdDelivery = `-- name: HoldDelivery :exec
+UPDATE watcher_deliveries SET held = true, body = $1, event = $2
+WHERE watcher_id = $3 AND key = $4
+`
+
+type HoldDeliveryParams struct {
+	Body      []byte
+	Event     *string
+	WatcherID uuid.UUID
+	Key       string
+}
+
+// A delivery kept for the next run that may start.
+func (q *Queries) HoldDelivery(ctx context.Context, arg HoldDeliveryParams) error {
+	_, err := q.db.Exec(ctx, holdDelivery,
+		arg.Body,
+		arg.Event,
+		arg.WatcherID,
+		arg.Key,
+	)
+	return err
+}
+
 const hostFreeAt = `-- name: HostFreeAt :one
 SELECT greatest(busy_until, backoff_until)::timestamptz FROM watch_hosts WHERE host = $1
 `
@@ -501,6 +595,33 @@ func (q *Queries) InsertWatcherCheck(ctx context.Context, arg InsertWatcherCheck
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const letGoOfHeldDeliveries = `-- name: LetGoOfHeldDeliveries :exec
+UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
+WHERE watcher_id = $1 AND held
+`
+
+// Every held delivery let go: dropped by a resume or a delete.
+func (q *Queries) LetGoOfHeldDeliveries(ctx context.Context, watcherID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, letGoOfHeldDeliveries, watcherID)
+	return err
+}
+
+const letGoOfTakenDeliveries = `-- name: LetGoOfTakenDeliveries :exec
+UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
+WHERE watcher_id = $1 AND held AND key = ANY($2::text[])
+`
+
+type LetGoOfTakenDeliveriesParams struct {
+	WatcherID uuid.UUID
+	Keys      []string
+}
+
+// Held deliveries a run took in, let go; each is still remembered for its day.
+func (q *Queries) LetGoOfTakenDeliveries(ctx context.Context, arg LetGoOfTakenDeliveriesParams) error {
+	_, err := q.db.Exec(ctx, letGoOfTakenDeliveries, arg.WatcherID, arg.Keys)
+	return err
 }
 
 const listWatcherChecks = `-- name: ListWatcherChecks :many
@@ -872,6 +993,28 @@ func (q *Queries) ReleaseHost(ctx context.Context, arg ReleaseHostParams) error 
 	return err
 }
 
+const rememberDelivery = `-- name: RememberDelivery :execrows
+INSERT INTO watcher_deliveries (watcher_id, key, received_at)
+VALUES ($1, $2, $3)
+ON CONFLICT (watcher_id, key) DO NOTHING
+`
+
+type RememberDeliveryParams struct {
+	WatcherID  uuid.UUID
+	Key        string
+	ReceivedAt time.Time
+}
+
+// A delivery remembered for a day, so one sent twice starts nothing twice.
+// No row is a delivery already had.
+func (q *Queries) RememberDelivery(ctx context.Context, arg RememberDeliveryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rememberDelivery, arg.WatcherID, arg.Key, arg.ReceivedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const renewHost = `-- name: RenewHost :execrows
 UPDATE watch_hosts SET busy_until = $1::timestamptz
 WHERE host = $2 AND busy_until = $3::timestamptz
@@ -1123,6 +1266,29 @@ func (q *Queries) TargetFetched(ctx context.Context, arg TargetFetchedParams) er
 	return err
 }
 
+const trimHeldDeliveries = `-- name: TrimHeldDeliveries :execrows
+UPDATE watcher_deliveries t SET held = false, body = NULL, event = NULL
+WHERE t.watcher_id = $1 AND t.held AND t.key IN (
+    SELECT d.key FROM watcher_deliveries d
+    WHERE d.watcher_id = t.watcher_id AND d.held
+    ORDER BY d.received_at DESC, d.key DESC
+    OFFSET $2::int)
+`
+
+type TrimHeldDeliveriesParams struct {
+	WatcherID uuid.UUID
+	Keep      int32
+}
+
+// A watcher holds at most keep deliveries: the oldest beyond them are let go.
+func (q *Queries) TrimHeldDeliveries(ctx context.Context, arg TrimHeldDeliveriesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, trimHeldDeliveries, arg.WatcherID, arg.Keep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertWatchTarget = `-- name: UpsertWatchTarget :one
 INSERT INTO watch_targets (id, kind, url, host, next_check_at)
 VALUES ($1, $2, $3, $4, $5)
@@ -1164,6 +1330,45 @@ func (q *Queries) UpsertWatchTarget(ctx context.Context, arg UpsertWatchTargetPa
 	return i, err
 }
 
+const watcherByHook = `-- name: WatcherByHook :one
+SELECT id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label FROM watchers WHERE hook_id = $1 AND status <> 'deleted'
+`
+
+// A webhook watcher by the id in its URL. A deleted one has no URL.
+func (q *Queries) WatcherByHook(ctx context.Context, hookID *string) (Watcher, error) {
+	row := q.db.QueryRow(ctx, watcherByHook, hookID)
+	var i Watcher
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.CreatedBy,
+		&i.AgentID,
+		&i.Hub,
+		&i.Name,
+		&i.Objective,
+		&i.Source,
+		&i.TargetID,
+		&i.Selector,
+		&i.HookID,
+		&i.EverySeconds,
+		&i.CooldownSeconds,
+		&i.State,
+		&i.Status,
+		&i.PausedReason,
+		&i.DeletedAt,
+		&i.NextCheckAt,
+		&i.LastRunAt,
+		&i.ConsecutiveFailures,
+		&i.ProposedRun,
+		&i.ProposedIn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Target,
+		&i.TargetLabel,
+	)
+	return i, err
+}
+
 const watcherIDByName = `-- name: WatcherIDByName :one
 SELECT id FROM watchers
 WHERE team_id = $1 AND created_by = $2::uuid
@@ -1182,4 +1387,46 @@ func (q *Queries) WatcherIDByName(ctx context.Context, arg WatcherIDByNameParams
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const watchersReadyToRelease = `-- name: WatchersReadyToRelease :many
+SELECT w.id, w.team_id FROM watchers w
+WHERE w.source = 'webhook' AND w.status = 'active' AND w.id > $1::uuid
+  AND (w.last_run_at IS NULL OR w.last_run_at + make_interval(secs => w.cooldown_seconds) <= $2::timestamptz)
+  AND EXISTS (SELECT 1 FROM watcher_deliveries d WHERE d.watcher_id = w.id AND d.held)
+ORDER BY w.id
+LIMIT $3
+`
+
+type WatchersReadyToReleaseParams struct {
+	After    uuid.UUID
+	Now      time.Time
+	PageSize int32
+}
+
+type WatchersReadyToReleaseRow struct {
+	ID     uuid.UUID
+	TeamID uuid.UUID
+}
+
+// Active webhook watchers holding deliveries whose cooldown has passed, a
+// page at a time after the last one seen.
+func (q *Queries) WatchersReadyToRelease(ctx context.Context, arg WatchersReadyToReleaseParams) ([]WatchersReadyToReleaseRow, error) {
+	rows, err := q.db.Query(ctx, watchersReadyToRelease, arg.After, arg.Now, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WatchersReadyToReleaseRow
+	for rows.Next() {
+		var i WatchersReadyToReleaseRow
+		if err := rows.Scan(&i.ID, &i.TeamID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

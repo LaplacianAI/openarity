@@ -34,7 +34,7 @@ func TestTheRegistryCarriesTheCompiledInAdapters(t *testing.T) {
 func TestTheGatewayIsMountedOnTheWebhookListener(t *testing.T) {
 	t.Parallel()
 
-	routers := newWebhookRouters(discardLogger(), nil, nil, testRegistry(t), nil, nil, nil, nil)
+	routers := newWebhookRouters(discardLogger(), nil, nil, nil, testRegistry(t), nil, nil, nil, nil)
 	if len(routers) == 0 {
 		t.Fatal("newWebhookRouters returned nothing")
 	}
@@ -48,9 +48,10 @@ func TestTheGatewayIsMountedOnTheWebhookListener(t *testing.T) {
 		served = append(served, p.Patterns()...)
 	}
 
-	want := "POST /hooks/custom/{channel_id}"
-	if !slices.Contains(served, want) {
-		t.Errorf("the webhook listener serves %v, want %s among them", served, want)
+	for _, want := range []string{"POST /hooks/custom/{channel_id}", "POST /hooks/watchers/{hookID}"} {
+		if !slices.Contains(served, want) {
+			t.Errorf("the webhook listener serves %v, want %s among them", served, want)
+		}
 	}
 }
 
@@ -58,7 +59,7 @@ func TestTheGatewayIsMountedOnTheWebhookListener(t *testing.T) {
 func TestEveryWebhookRouterIsPublic(t *testing.T) {
 	t.Parallel()
 
-	for _, r := range newWebhookRouters(discardLogger(), nil, nil, testRegistry(t), nil, nil, nil, nil) {
+	for _, r := range newWebhookRouters(discardLogger(), nil, nil, nil, testRegistry(t), nil, nil, nil, nil) {
 		if !r.Public() {
 			t.Errorf("%T is not public", r)
 		}

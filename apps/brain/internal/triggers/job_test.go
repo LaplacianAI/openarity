@@ -194,3 +194,32 @@ func TestOnlyTheDatabasesPassingTroubleGoesUncounted(t *testing.T) {
 		}
 	}
 }
+
+// The minute's tick gives a webhook watcher's held deliveries to a run once
+// its cooldown has passed.
+func TestATickReleasesWhatAWebhookWatcherHeld(t *testing.T) {
+	l := launch(t)
+	h := &hooking{watching: &watching{world: l.world}, vault: &vault{m: map[string]map[string]string{}}}
+	l.service.WithSecrets(h.vault)
+	v := h.hook(t, "releases", time.Hour)
+	if err := h.deliver(t, v, h.ours(v.Secret, "v1", "1")); err != nil {
+		t.Fatal(err)
+	}
+	run, _ := h.lastRun(t, v.ID)
+	l.finish(t, run, "succeeded", "noted")
+	l.clock = l.clock.Add(time.Minute)
+	if err := h.deliver(t, v, h.ours(v.Secret, "v2", "2")); err != nil {
+		t.Fatal(err)
+	}
+	l.clock = l.clock.Add(2 * time.Hour)
+	tick, err := dbos.RunWorkflow(l.d, l.job.tick, dbos.ScheduledWorkflowInput{ScheduledTime: l.clock})
+	if err != nil {
+		t.Fatalf("RunWorkflow(tick): %v", err)
+	}
+	if _, err := tick.GetResult(); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if l.enqueued.count() != 1 || l.count(t, `SELECT count(*) FROM runs WHERE session_id = $1`, v.SessionID) != 2 {
+		t.Errorf("enqueued %d by the tick, want the held delivery's run", l.enqueued.count())
+	}
+}

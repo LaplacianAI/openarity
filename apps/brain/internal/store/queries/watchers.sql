@@ -3,13 +3,14 @@
 
 -- name: CreateWatcher :one
 INSERT INTO watchers (
-    id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector,
+    id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id,
     every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, target, target_label
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'), sqlc.arg('hub'),
     sqlc.arg('name'), sqlc.arg('objective'), sqlc.arg('source'), sqlc.narg('target_id'), sqlc.narg('selector'),
-    sqlc.narg('every_seconds'), sqlc.arg('cooldown_seconds'), sqlc.arg('status'), sqlc.narg('next_check_at'),
-    sqlc.narg('proposed_run'), sqlc.narg('proposed_in'), sqlc.arg('target'), sqlc.arg('target_label')
+    sqlc.narg('hook_id'), sqlc.narg('every_seconds'), sqlc.arg('cooldown_seconds'), sqlc.arg('status'),
+    sqlc.narg('next_check_at'), sqlc.narg('proposed_run'), sqlc.narg('proposed_in'), sqlc.arg('target'),
+    sqlc.arg('target_label')
 )
 RETURNING *;
 
@@ -311,3 +312,67 @@ WHERE NOT EXISTS (SELECT 1 FROM watchers w WHERE w.target_id = t.id);
 UPDATE sessions SET user_id = sqlc.arg('user_id')::uuid
 WHERE watcher_id = sqlc.arg('watcher_id')::uuid AND kind = 'direct'
   AND channel_id = (SELECT id FROM channels WHERE team_id = sessions.team_id AND provider = 'dashboard');
+
+-- A webhook watcher by the id in its URL. A deleted one has no URL.
+-- name: WatcherByHook :one
+SELECT * FROM watchers WHERE hook_id = sqlc.arg('hook_id') AND status <> 'deleted';
+
+-- A delivery remembered for a day, so one sent twice starts nothing twice.
+-- No row is a delivery already had.
+-- name: RememberDelivery :execrows
+INSERT INTO watcher_deliveries (watcher_id, key, received_at)
+VALUES (sqlc.arg('watcher_id'), sqlc.arg('key'), sqlc.arg('received_at'))
+ON CONFLICT (watcher_id, key) DO NOTHING;
+
+-- A delivery kept for the next run that may start.
+-- name: HoldDelivery :exec
+UPDATE watcher_deliveries SET held = true, body = sqlc.arg('body'), event = sqlc.narg('event')
+WHERE watcher_id = sqlc.arg('watcher_id') AND key = sqlc.arg('key');
+
+-- What a webhook watcher holds that one run can take in, oldest first: the
+-- first always, then each while the bodies fit the budget. total is how many
+-- it holds in all.
+-- name: HeldDeliveries :many
+SELECT h.key, h.received_at, h.body, h.event, h.total::bigint AS total
+FROM (
+    SELECT d.key, d.received_at, d.body, d.event,
+           sum(octet_length(d.body)) OVER w AS upto, row_number() OVER w AS n, count(*) OVER () AS total
+    FROM watcher_deliveries d
+    WHERE d.watcher_id = sqlc.arg('watcher_id') AND d.held
+    WINDOW w AS (ORDER BY d.received_at, d.key)
+) h
+WHERE h.n = 1 OR h.upto <= sqlc.arg('budget')::bigint
+ORDER BY h.received_at, h.key;
+
+-- Held deliveries a run took in, let go; each is still remembered for its day.
+-- name: LetGoOfTakenDeliveries :exec
+UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
+WHERE watcher_id = sqlc.arg('watcher_id') AND held AND key = ANY(sqlc.arg('keys')::text[]);
+
+-- Every held delivery let go: dropped by a resume or a delete.
+-- name: LetGoOfHeldDeliveries :exec
+UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
+WHERE watcher_id = sqlc.arg('watcher_id') AND held;
+
+-- A watcher holds at most keep deliveries: the oldest beyond them are let go.
+-- name: TrimHeldDeliveries :execrows
+UPDATE watcher_deliveries t SET held = false, body = NULL, event = NULL
+WHERE t.watcher_id = sqlc.arg('watcher_id') AND t.held AND t.key IN (
+    SELECT d.key FROM watcher_deliveries d
+    WHERE d.watcher_id = t.watcher_id AND d.held
+    ORDER BY d.received_at DESC, d.key DESC
+    OFFSET sqlc.arg('keep')::int);
+
+-- Active webhook watchers holding deliveries whose cooldown has passed, a
+-- page at a time after the last one seen.
+-- name: WatchersReadyToRelease :many
+SELECT w.id, w.team_id FROM watchers w
+WHERE w.source = 'webhook' AND w.status = 'active' AND w.id > sqlc.arg('after')::uuid
+  AND (w.last_run_at IS NULL OR w.last_run_at + make_interval(secs => w.cooldown_seconds) <= sqlc.arg('now')::timestamptz)
+  AND EXISTS (SELECT 1 FROM watcher_deliveries d WHERE d.watcher_id = w.id AND d.held)
+ORDER BY w.id
+LIMIT sqlc.arg('page_size');
+
+-- Deliveries remembered for their day and no longer held.
+-- name: ForgetOldDeliveries :execrows
+DELETE FROM watcher_deliveries WHERE NOT held AND received_at < sqlc.arg('before');

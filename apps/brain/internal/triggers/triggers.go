@@ -59,6 +59,10 @@ const (
 	Limit
 	// Forbidden is one the caller may see but not change.
 	Forbidden
+	// Unauthorized is a webhook delivery whose signature does not match.
+	Unauthorized
+	// Unavailable is the secret store not answering: try again.
+	Unavailable
 )
 
 // An Error is a refusal said for a person: the routes pass it on as it is,
@@ -127,20 +131,22 @@ type Store interface {
 	ListWatcherNews(ctx context.Context, arg db.ListWatcherNewsParams) ([]db.ListWatcherNewsRow, error)
 	MarkWatcherSeen(ctx context.Context, arg db.MarkWatcherSeenParams) (int64, error)
 	WatcherIDByName(ctx context.Context, arg db.WatcherIDByNameParams) (uuid.UUID, error)
+	WatcherByHook(ctx context.Context, hookID *string) (db.Watcher, error)
 }
 
 // Service applies the rules. now is the clock; tests set it.
 type Service struct {
-	store  Store
-	runs   Enqueuer
-	chats  Chats
-	logger *slog.Logger
-	now    func() time.Time
+	store   Store
+	runs    Enqueuer
+	chats   Chats
+	secrets Secrets
+	logger  *slog.Logger
+	now     func() time.Time
 }
 
 // NewService is the rules over a store, handing the runs it starts to runs.
 func NewService(s Store, runs Enqueuer, logger *slog.Logger) *Service {
-	return &Service{store: s, runs: runs, chats: noChats{}, logger: logger, now: time.Now}
+	return &Service{store: s, runs: runs, chats: noChats{}, secrets: noSecrets{}, logger: logger, now: time.Now}
 }
 
 // WithChats lets schedules answer in chats, channels and direct

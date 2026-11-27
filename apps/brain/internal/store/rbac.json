@@ -758,6 +758,12 @@
       "permission": "schedule:manage"
     },
     {
+      "method": "POST",
+      "path": "/teams/{id}/watchers/{watcherID}/secret",
+      "scope": "team",
+      "permission": "schedule:write"
+    },
+    {
       "method": "GET",
       "path": "/teams/{id}/watchers/{watcherID}/checks",
       "scope": "team",

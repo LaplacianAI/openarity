@@ -859,6 +859,7 @@ type WatcherDelivery struct {
 	ReceivedAt time.Time
 	Body       []byte
 	Held       bool
+	Event      *string
 }
 
 type WhatsappAccount struct {
