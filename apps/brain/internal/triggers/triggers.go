@@ -132,6 +132,7 @@ type Store interface {
 	MarkWatcherSeen(ctx context.Context, arg db.MarkWatcherSeenParams) (int64, error)
 	WatcherIDByName(ctx context.Context, arg db.WatcherIDByNameParams) (uuid.UUID, error)
 	WatcherByHook(ctx context.Context, hookID *string) (db.Watcher, error)
+	RunCalledOtherThan(ctx context.Context, arg db.RunCalledOtherThanParams) (bool, error)
 }
 
 // Service applies the rules. now is the clock; tests set it.

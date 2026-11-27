@@ -236,18 +236,30 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     put the tools in the runtime: `triggers` sits above `internal/api`, so
     the runtime takes them through a narrow interface (`Scheduling`) that
     `cmd/brain` adapts, as it does the builder's workshop.
-  - **Not gated by the team's approvals.** A proposal already waits for the
-    person's yes; pause, resume, delete and run now act on their own, as the
-    dashboard does (*user*, 2026-11-27). Gating would ask on every list.
-  - **An agent's change to what one does waits for the same yes, beside it**
-    (*user*, 2026-11-27). A page an agent read could otherwise rewrite what
-    runs as the person. The schedule or watcher runs on as it was, the change
-    held in `pending` with the run and conversation that proposed it, until
-    a later message confirms it; unconfirmed within the hour, the sweep drops
-    it and nothing else. Back to `proposed`, as first asked, would stop it
-    firing meanwhile and have the sweep delete a working one. The maker's own
-    change replaces a waiting one. A proposal not yet confirmed is revised in
-    place, and the run that revised it may not confirm it.
+  - **Not gated by the team's approvals.** What they ask waits for the
+    person's yes instead (*user*, 2026-11-27); gating would ask on every list
+    as well.
+  - **What an agent asks of one that runs waits for the same yes, beside it**
+    (*user*, 2026-11-27): a change to what it does, a delete, a resume or a
+    run now. A page an agent read could otherwise rewrite, run or delete what
+    runs as the person. Only a pause acts at once: it only stops runs. The
+    schedule or watcher runs on as it was, the ask held in `pending` with
+    the run and conversation that made it, until a later message confirms
+    it; unconfirmed within the hour, the sweep drops it and nothing else.
+    Back to `proposed`, as first asked, would stop it firing meanwhile and
+    have the sweep delete a working one. The ask is taken off the row before
+    it is acted on, so two yeses act once. The maker's own change, the
+    agent's next ask and a take-over each replace a waiting one. A proposal
+    not yet confirmed is revised in place, from `proposed_at`, and the run
+    that revised it may not confirm it; one is deleted at once.
+  - **A yes is a message sent after the run that asked finished,** and a
+    confirm comes before the run calls anything but `schedule`, `watch`
+    and `plan` (*user*, 2026-11-27). A message sent while the run worked
+    did not answer what it said; and what a page, a file, a server or
+    another agent returned could be the text that says to confirm. The run
+    marks itself on any other call, found tools too, and one resumed from a
+    wait is read from the calls it recorded. Text the person pasted in their
+    own yes is theirs.
   - **It runs the agent talking, or one it may hand work to,** checked as
     delegation is. The hub's run the hub, whichever agent the team made it.
   - **Here is the chat it was asked in; on the dashboard, a conversation of
@@ -258,7 +270,11 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     `<PUBLIC_URL>/ui/schedules/watchers/<id>`, which part 7 builds. Making
     the secret there is its confirmation.
   - **What the tools say is a refusal said for the model,** as `Refused: …`,
-    and a failure stays an error.
+    and a failure stays an error. An agent the run may not name is a
+    refusal of the runtime's own type, which `cmd/brain` turns into one.
+  - **`pending_in` is set null if its conversation is deleted,** which
+    nothing in the brain does; the ask then cannot be confirmed from a chat
+    and lapses within the hour.
 - **The worker deletes DBOS's record of finished background work after a
   week.** DBOS v1.2.0 never deletes a workflow row, and every tick of every
   sweep leaves one. `internal/retention`, a job of its own, lists the

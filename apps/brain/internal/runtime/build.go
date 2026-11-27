@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -140,8 +141,11 @@ type Built struct {
 	Spec        agent.Spec
 	Agent       string
 	Unavailable []Unavailable
-	servers     *runServers
-	browser     *runBrowser
+	// outside is set once the run calls a tool that reads what someone
+	// else wrote, for a confirm to come before (scheduling.go).
+	outside *atomic.Bool
+	servers *runServers
+	browser *runBrowser
 	// answerable is every tool a person could be asked about, by the name a
 	// request records, as it is before the gate: what a resume makes once
 	// the call is approved.
@@ -441,6 +445,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			return Built{}, err
 		}
 	}
+	built.noteReads()
 	return built, nil
 }
 

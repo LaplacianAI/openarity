@@ -641,6 +641,7 @@ type Schedule struct {
 	UpdatedAt           time.Time
 	Target              string
 	TargetLabel         string
+	ProposedAt          *time.Time
 	Pending             []byte
 	PendingRun          *uuid.UUID
 	PendingIn           *uuid.UUID
@@ -829,6 +830,7 @@ type Watcher struct {
 	UpdatedAt           time.Time
 	Target              string
 	TargetLabel         string
+	ProposedAt          *time.Time
 	Pending             []byte
 	PendingRun          *uuid.UUID
 	PendingIn           *uuid.UUID

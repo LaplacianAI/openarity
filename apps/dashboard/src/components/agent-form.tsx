@@ -401,6 +401,15 @@ export function AgentForm({
         {noSandbox ? <NoSandbox /> : null}
       </Section>
 
+      <Section title="Schedules" about="Runs at a time or on a change, asked for in a chat.">
+        <SwitchField
+          label="Can propose schedules and watchers"
+          description="In a chat it can propose a schedule or a watcher that runs as the person it is talking to. Nothing starts, changes or is deleted until that person confirms it in their next message. The hub can either way, unless the team's settings say agents may not."
+          checked={draft.schedule}
+          onCheckedChange={(schedule) => set({ schedule })}
+        />
+      </Section>
+
       <Section
         title="Limits"
         about="How long one answer may be, and how many steps and tokens one run may take."

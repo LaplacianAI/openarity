@@ -50,7 +50,7 @@ oa runs start platform triage 'Sort the issues opened today.' --follow
 | `web`           | Gives it `web_search` and `web_fetch` — see [Web tools](web.md)  |
 | `browser`       | Lets it drive the team's browser — see [A browser](web.md#a-browser) |
 | `workspace`     | Gives it `Bash`, `Read`, `Write`, `Edit`, `Glob` and `Grep` in a sandbox room of the conversation's — see [Workspaces](workspaces.md) |
-| `schedule`      | Gives it `schedule` and `watch` in a chat: it proposes a schedule or a watcher that runs as the person, and it starts only once their next message confirms it. A change it makes to one waits for the same yes. The hub has them whatever this says; the team's settings can turn them off for every agent, and a person without `schedule:write` never has them |
+| `schedule`      | Gives it `schedule` and `watch` in a chat: it proposes a schedule or a watcher that runs as the person, answering in that chat or in their direct messages. Nothing it asks (a new one, a change, a delete, a resume or a run now) happens until the person's next message says yes, and an ask left unanswered lapses in an hour; only a pause acts at once. The hub has them whatever this says; the team's settings can turn them off for every agent, and a person without `schedule:write` never has them |
 
 A `rewoo` agent plans every call before making one, so it cannot search for
 tools midway. When its granted tools are too many to send, it plans with the

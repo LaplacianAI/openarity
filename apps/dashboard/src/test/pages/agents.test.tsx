@@ -158,6 +158,7 @@ const draft = {
   web: false,
   browser: false,
   workspace: false,
+  schedule: false,
 };
 
 describe("the draft as the API takes it", () => {
@@ -175,6 +176,7 @@ describe("the draft as the API takes it", () => {
       web: false,
       browser: false,
       workspace: false,
+      schedule: false,
     });
   });
 
@@ -265,6 +267,7 @@ describe("the PUT for an edit", () => {
       web: false,
       browser: false,
       workspace: false,
+      schedule: false,
     });
   });
 });
@@ -479,6 +482,7 @@ describe("defining an agent", () => {
       "Delegation",
       "The web",
       "Workspace",
+      "Schedules",
       "Limits",
     ]);
   });
@@ -499,6 +503,25 @@ describe("defining an agent", () => {
       },
     };
   }
+
+  it("keeps the schedule grant through an edit, and grants it when switched on", async () => {
+    expect(agentRequest(draftOf({ ...stored, schedule: true } as Agent))).toMatchObject({
+      schedule: true,
+    });
+    const seen = brain({
+      ...team(["agent:write"]),
+      ...registry,
+      "GET /teams/{id}/agents": { body: { items: [listed] } },
+      "POST /teams/{id}/agents": { status: 201, body: { ...stored, id: "a9", name: "reviewer" } },
+      "GET /teams/{id}/agents/{agentID}": { body: { ...stored, id: "a9", name: "reviewer" } },
+    });
+    at("/ui/agents/new");
+    await named();
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Can propose schedules and watchers" }),
+    );
+    expect(await define(seen)).toMatchObject({ schedule: true });
+  });
 
   it("grants the workspace when it is switched on", async () => {
     const seen = brain({
@@ -715,6 +738,7 @@ describe("editing an agent", () => {
     web: false,
     browser: false,
     workspace: false,
+    schedule: false,
   };
 
   function editing(

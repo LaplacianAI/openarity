@@ -121,11 +121,25 @@ type scheduling struct {
 
 func (s scheduling) Tools(ctx context.Context, r runtime.SchedulingRun) ([]agent.Tool, string, error) {
 	return s.service.Tools(ctx, triggers.ToolRun{
-		Team: r.Team, User: r.User, Run: r.Run, Session: r.Session, Self: r.Self, Agent: r.Agent, Dashboard: s.dashboard,
+		Team: r.Team, User: r.User, Run: r.Run, Session: r.Session, Self: r.Self,
+		Agent: func(ctx context.Context, name string) (uuid.UUID, error) {
+			id, err := r.Agent(ctx, name)
+			return id, agentRefusal(err)
+		},
+		ReadOutside: r.ReadOutside, Dashboard: s.dashboard,
 	})
 }
 
 func (s scheduling) StandIns() []agent.Tool { return s.service.StandIns() }
+
+// agentRefusal is an agent the run may not name said to the model, as the
+// rules' own refusals are; any other error stays a failure.
+func agentRefusal(err error) error {
+	if ns, ok := errors.AsType[*runtime.NotSchedulable](err); ok {
+		return &triggers.Error{Kind: triggers.Invalid, Msg: ns.Msg}
+	}
+	return err
+}
 
 // workshop is the blueprints' Workshop as the runtime takes it: the runtime
 // does not learn the API's types.

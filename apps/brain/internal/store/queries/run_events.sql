@@ -47,3 +47,12 @@ SELECT a.run_id,
                  THEN '{"superseded": true}'::jsonb ELSE '{}'::jsonb END
 FROM approvals a
 WHERE a.id = ANY(sqlc.arg('ids')::uuid[]);
+
+-- Whether a run called a tool not named: a run resumed from a wait has made
+-- calls before, and a confirm may come only before any read.
+-- name: RunCalledOtherThan :one
+SELECT EXISTS (
+    SELECT 1 FROM run_events
+    WHERE run_id = sqlc.arg('run_id') AND kind = 'tool_call'
+      AND NOT (payload->>'name' = ANY(sqlc.arg('names')::text[]))
+)::bool AS called;

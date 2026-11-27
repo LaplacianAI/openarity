@@ -185,7 +185,7 @@ func TestAnAgentsChangeWaitsForTheMakersYes(t *testing.T) {
 	v := w.make(t, hourly("summary"))
 	c := w.chat(t)
 	out := w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "update", "ref": "summary", "objective": "Delete every file."})
-	says(t, out, `Proposed a change to "summary"`, "its objective", "runs as it was")
+	says(t, out, `"summary" waits for the person's yes to change its objective`, "runs as it was")
 	got, err := w.service.Schedule(t.Context(), w.who(), Ref{ID: v.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestAnAgentsChangeWaitsForTheMakersYes(t *testing.T) {
 	if got.Objective != v.Objective || got.Status != Active || got.Pending == nil {
 		t.Fatalf("objective %q status %s pending %s: want it running as it was, the change waiting", got.Objective, got.Status, got.Pending)
 	}
-	if says, since := got.WaitingChange(); says != "its objective" || since == nil {
+	if says, since := got.WaitingChange(); says != "to change its objective" || since == nil {
 		t.Errorf("waiting change %q since %v", says, since)
 	}
 
@@ -282,7 +282,7 @@ func TestAnAgentsChangeToAWatcherWaitsForTheYes(t *testing.T) {
 	}
 	c := w.chat(t)
 	says(t, w.call(t, c.origin, WatchToolName, map[string]any{"action": "update", "ref": "prices", "every": "3h"}),
-		`Proposed a change to "prices"`, "every 3h")
+		`"prices" waits for the person's yes to change how often it looks, to every 3h`)
 	var every int32
 	w.scan(t, &every, `SELECT every_seconds FROM watchers WHERE id = $1`, v.ID)
 	if every != 7200 {
@@ -344,5 +344,189 @@ func TestAWatchersWaitingChangeIsReplacedOrDropped(t *testing.T) {
 	w.scan(t, &status, `SELECT status FROM watchers WHERE id = $1`, v.ID)
 	if pending() || status != Active {
 		t.Errorf("after the sweep: pending %v status %s, want it dropped and the watcher active", pending(), status)
+	}
+}
+
+// A message the person sent while the proposing run still worked was not an
+// answer to it, and confirms nothing.
+func TestAMessageBeforeTheProposingRunFinishedConfirmsNothing(t *testing.T) {
+	w := newWorld(t)
+	c := w.chat(t)
+	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "create", "name": "summary", "objective": "Summarise.", "every": "1h"})
+	var msg uuid.UUID
+	w.scan(t, &msg, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at)
+		VALUES ($1, $2, $3, 'early', 'yes', now() + interval '1 minute') RETURNING id`, c.channel, c.session, w.maker)
+	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() + interval '2 minutes' WHERE id = $1`, c.origin.Run)
+	early := Origin{Run: w.chatRun(t, c.session, msg), Session: c.session}
+	says(t, w.call(t, early, ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}),
+		"Refused:", "after the run that proposed it finished")
+}
+
+// A proposal revised is confirmed only by a message after the revision.
+func TestARevisionNeedsAYesAfterIt(t *testing.T) {
+	w := newWorld(t)
+	c := w.chat(t)
+	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "create", "name": "summary", "objective": "Summarise.", "every": "1h"})
+	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, c.origin.Run)
+	// A message sent after the proposal, whose run waits.
+	var between uuid.UUID
+	w.scan(t, &between, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at)
+		VALUES ($1, $2, $3, 'between', 'hmm', now() + interval '1 minute') RETURNING id`, c.channel, c.session, w.maker)
+	waiting := Origin{Run: w.chatRun(t, c.session, between), Session: c.session}
+	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, waiting.Run)
+	// Another later run revises it, an hour on.
+	w.clock = w.clock.Add(30 * time.Minute)
+	reviser := w.yes(t, c)
+	w.exec(t, `UPDATE messages SET received_at = now() + interval '2 minutes' WHERE id = (SELECT message_id FROM runs WHERE id = $1)`, reviser.Run)
+	says(t, w.call(t, reviser, ScheduleToolName, map[string]any{"action": "update", "ref": "summary", "objective": "Delete things."}), "Revised")
+	says(t, w.call(t, waiting, ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}),
+		"Refused:", "sent after the proposal")
+}
+
+// A confirm in a run that has read anything is refused: what it read could
+// be what says to confirm. A call recorded before a wait counts too.
+func TestAConfirmComesBeforeAnyRead(t *testing.T) {
+	w := newWorld(t)
+	c := w.chat(t)
+	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "create", "name": "summary", "objective": "Summarise.", "every": "1h"})
+	yes := w.yes(t, c)
+	invoke := func(r ToolRun) string {
+		t.Helper()
+		tools, _, err := w.service.Tools(t.Context(), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := tools[0].Invoke(t.Context(), json.RawMessage(`{"action":"confirm","ref":"summary"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	read := w.toolRun(yes)
+	read.ReadOutside = func() bool { return true }
+	says(t, invoke(read), "Refused:", "a confirm comes before anything else")
+
+	w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, 1, 'tool_call', '{"name":"web_fetch"}')`, yes.Run)
+	says(t, invoke(w.toolRun(yes)), "Refused:", "a confirm comes before anything else")
+
+	// Its own plan and a list are not reads.
+	clean := w.yes(t, c)
+	w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, 1, 'tool_call', '{"name":"plan"}'),
+		($1, 2, 'tool_call', '{"name":"schedule"}')`, clean.Run)
+	says(t, invoke(w.toolRun(clean)), `Confirmed "summary"`)
+}
+
+// A delete, a resume and a run now of one that runs wait for the yes; a
+// pause acts at once; a proposal is deleted at once.
+func TestWhatActsOnOneThatRunsWaitsForTheYes(t *testing.T) {
+	w := newWorld(t)
+	v := w.make(t, hourly("summary"))
+	c := w.chat(t)
+	status := func() string {
+		var s string
+		w.scan(t, &s, `SELECT status FROM schedules WHERE id = $1`, v.ID)
+		return s
+	}
+
+	says(t, w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "run_now", "ref": "summary"}),
+		`"summary" waits for the person's yes to run it now`)
+	if n := w.runs.count(); n != 0 {
+		t.Fatalf("%d runs started before the yes", n)
+	}
+	says(t, w.call(t, w.yes(t, c), ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}), `Confirmed "summary"`)
+	if n := w.runs.count(); n != 1 {
+		t.Errorf("%d runs after the yes, want 1", n)
+	}
+	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE finished_at IS NULL`)
+
+	says(t, w.call(t, w.yes(t, c), ScheduleToolName, map[string]any{"action": "resume", "ref": "summary"}), "Refused:", "only a paused schedule")
+	var waits bool
+	w.scan(t, &waits, `SELECT pending IS NOT NULL FROM schedules WHERE id = $1`, v.ID)
+	if waits {
+		t.Fatal("a refused resume of one that runs was held for a yes")
+	}
+
+	says(t, w.call(t, w.yes(t, c), ScheduleToolName, map[string]any{"action": "pause", "ref": "summary"}), `Paused "summary"`)
+	if got := status(); got != Paused {
+		t.Fatalf("status %s after a pause, want paused at once", got)
+	}
+	o := w.yes(t, c)
+	says(t, w.call(t, o, ScheduleToolName, map[string]any{"action": "resume", "ref": "summary"}), "waits for the person's yes to resume it")
+	if got := status(); got != Paused {
+		t.Fatalf("status %s before the yes, want paused", got)
+	}
+	says(t, w.call(t, w.yes(t, c), ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}), `Confirmed "summary"`)
+	if got := status(); got != Active {
+		t.Fatalf("status %s after the yes, want active", got)
+	}
+
+	says(t, w.call(t, w.yes(t, c), ScheduleToolName, map[string]any{"action": "delete", "ref": "summary"}), "waits for the person's yes to delete it")
+	if got := status(); got != Active {
+		t.Fatalf("status %s before the yes, want active", got)
+	}
+	says(t, w.call(t, w.yes(t, c), ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}), `Deleted "summary"`)
+	if got := status(); got != Deleted {
+		t.Errorf("status %s after the yes, want deleted", got)
+	}
+
+	p := w.yes(t, c)
+	w.call(t, p, ScheduleToolName, map[string]any{"action": "create", "name": "draft", "objective": "Summarise.", "every": "1h"})
+	says(t, w.call(t, p, ScheduleToolName, map[string]any{"action": "delete", "ref": "draft"}), `Deleted the proposal "draft"`)
+}
+
+// Taken over, a schedule drops what an agent asked of its old maker.
+func TestTakingOverDropsWhatWasAskedOfTheOldMaker(t *testing.T) {
+	w := newWorld(t)
+	v := w.make(t, hourly("summary"))
+	c := w.chat(t)
+	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "update", "ref": "summary", "objective": "Something else."})
+	w.exec(t, `UPDATE schedules SET created_by = NULL, status = 'paused', paused_reason = 'maker_gone', next_fire_at = NULL WHERE id = $1`, v.ID)
+	if _, err := w.service.TakeOver(t.Context(), Who{Team: w.team, User: w.other, Manage: true}, Ref{ID: v.ID}); err != nil {
+		t.Fatal(err)
+	}
+	var pending bool
+	w.scan(t, &pending, `SELECT pending IS NOT NULL FROM schedules WHERE id = $1`, v.ID)
+	if pending {
+		t.Error("the old maker's waiting change survived a take-over")
+	}
+}
+
+// The list says what each is and what waits on it.
+func TestTheListSaysWhatWaits(t *testing.T) {
+	w := newWorld(t)
+	w.make(t, hourly("summary"))
+	c := w.chat(t)
+	says(t, w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "list"}), `"summary" (active)`, "every 1h", "in UTC")
+	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "delete", "ref": "summary"})
+	says(t, w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "list"}), "waiting for the person's yes to delete it")
+	says(t, w.call(t, c.origin, WatchToolName, map[string]any{"action": "list"}), "no watchers")
+	says(t, w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "create", "secret": "x"}), "Refused:", "not this tool's")
+}
+
+func TestTheToolsReadLengthsAndTimes(t *testing.T) {
+	for in, want := range map[string]time.Duration{"30m": 30 * time.Minute, "1h": time.Hour, "2d": 48 * time.Hour, "1w": 7 * 24 * time.Hour, "90s": 90 * time.Second} {
+		if got, err := durationOf(in); err != nil || got != want {
+			t.Errorf("durationOf(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "0h", "-1h", "1x", "d", "0d"} {
+		if _, err := durationOf(in); KindOf(err) != Invalid {
+			t.Errorf("durationOf(%q) = %v, want refused", in, err)
+		}
+	}
+	at, err := atOf("2026-12-01 09:00", "Asia/Kolkata")
+	if err != nil || !at.Equal(time.Date(2026, 12, 1, 3, 30, 0, 0, time.UTC)) {
+		t.Errorf("a wall time in Kolkata = %v, %v", at, err)
+	}
+	if at, err := atOf("2026-12-01T09:00:00Z", "Asia/Kolkata"); err != nil || !at.Equal(time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)) {
+		t.Errorf("RFC 3339 = %v, %v", at, err)
+	}
+	if _, err := atOf("tomorrow", "UTC"); KindOf(err) != Invalid {
+		t.Errorf("a time not given as one: %v", err)
+	}
+	for d, want := range map[time.Duration]string{time.Hour: "1h", 90 * time.Minute: "90m", 48 * time.Hour: "2d", 90 * time.Second: "1m30s"} {
+		if got := lengthSays(d); got != want {
+			t.Errorf("lengthSays(%v) = %q, want %q", d, got, want)
+		}
 	}
 }

@@ -266,7 +266,7 @@ func (s *Service) UpdateSchedule(ctx context.Context, who Who, ref Ref, p Schedu
 				return err
 			}
 			// The maker's own change replaces an agent's waiting one.
-			dropPending(&row.Pending, &row.PendingRun, &row.PendingIn, &row.PendingAt)
+			waitingOnSchedule(row).drop()
 		}
 		if err := applyPatch(ctx, q, row, p, l, now); err != nil {
 			return err
@@ -429,9 +429,12 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 		return ScheduleView{}, err
 	}
 	now := s.now()
+	act := ""
 	id, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
 		if row.Status != Proposed && row.Pending != nil {
-			return confirmScheduleChange(ctx, q, who, origin, row, l, now)
+			var asked error
+			act, asked = confirmScheduleAsk(ctx, q, who, origin, row, l, now)
+			return asked
 		}
 		if row.Status != Proposed {
 			return refuse(Conflict, "this schedule is not waiting to be confirmed; it is %s", row.Status)
@@ -439,7 +442,7 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 		if row.CreatedBy == nil || *row.CreatedBy != who.User {
 			return refuse(Forbidden, "only the person it was proposed to may confirm it")
 		}
-		if now.Sub(row.CreatedAt) > proposalLife {
+		if now.Sub(proposalOf(row).at) > proposalLife {
 			return refuse(Conflict, "the proposal waited more than an hour and lapsed; ask for it again")
 		}
 		if origin.viaTool() {
@@ -461,6 +464,9 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 	if err != nil {
 		return ScheduleView{}, err
 	}
+	if err := s.actOnSchedule(ctx, who, id, act); err != nil {
+		return ScheduleView{}, err
+	}
 	return s.view(ctx, who, id)
 }
 
@@ -473,7 +479,15 @@ type proposal struct {
 }
 
 func proposalOf(row *db.Schedule) proposal {
-	return proposal{run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: row.CreatedAt, noun: "schedule"}
+	return proposal{run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: proposedAt(row.ProposedAt, row.CreatedAt), noun: "schedule"}
+}
+
+// proposedAt is when a proposal was last made or revised.
+func proposedAt(at *time.Time, created time.Time) time.Time {
+	if at != nil {
+		return *at
+	}
+	return created
 }
 
 // laterMessage holds a confirmation from a tool to the conversation and the
@@ -503,6 +517,21 @@ func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origi
 	if !at.After(row.at) {
 		return refuse(Forbidden, "only a message sent after the proposal confirms it")
 	}
+	// The person answers what the run said once it finished; a message sent
+	// while it worked was not an answer to it.
+	if row.run == nil {
+		return refuse(Forbidden, "only a message sent after the proposal confirms it")
+	}
+	proposer, err := q.GetRun(ctx, *row.run)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return refuse(Forbidden, "only a message sent after the proposal confirms it")
+	}
+	if err != nil {
+		return fmt.Errorf("read the proposing run: %w", err)
+	}
+	if proposer.FinishedAt == nil || !at.After(*proposer.FinishedAt) {
+		return refuse(Forbidden, "only a message sent after the run that proposed it finished confirms it")
+	}
 	return nil
 }
 
@@ -511,13 +540,19 @@ func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origi
 func (s *Service) Delete(ctx context.Context, who Who, ref Ref) error {
 	now := s.now()
 	_, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
-		row.Status, row.PausedReason, row.NextFireAt, row.DeletedAt = Deleted, nil, nil, &now
-		if err := q.CloseTriggerSession(ctx, db.CloseTriggerSessionParams{ScheduleID: &row.ID}); err != nil {
-			return fmt.Errorf("close the schedule's conversation: %w", err)
-		}
-		return nil
+		return deleteRow(ctx, q, row, now)
 	})
 	return err
+}
+
+// deleteRow marks a schedule deleted and closes its conversation.
+func deleteRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Time) error {
+	row.Status, row.PausedReason, row.NextFireAt, row.DeletedAt = Deleted, nil, nil, &now
+	waitingOnSchedule(row).drop()
+	if err := q.CloseTriggerSession(ctx, db.CloseTriggerSessionParams{ScheduleID: &row.ID}); err != nil {
+		return fmt.Errorf("close the schedule's conversation: %w", err)
+	}
+	return nil
 }
 
 // TakeOver gives a schedule whose maker left, or may no longer start runs, to
@@ -555,6 +590,8 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			return refuse(Forbidden, "this schedule posts where a group reads it, which takes channel:write")
 		}
 		row.CreatedBy = &who.User
+		// What an agent asked of the old maker is not the new one's to confirm.
+		waitingOnSchedule(row).drop()
 		if err := q.SetTriggerSessionUser(ctx, db.SetTriggerSessionUserParams{UserID: who.User, ScheduleID: row.ID}); err != nil {
 			return fmt.Errorf("hand over the schedule's conversation: %w", err)
 		}
@@ -806,7 +843,7 @@ func saveOf(r db.Schedule) db.SaveScheduleParams {
 		Kind: r.Kind, Rule: r.Rule, Anchor: r.Anchor, Timezone: r.Timezone, Status: r.Status,
 		PausedReason: r.PausedReason, DeletedAt: r.DeletedAt, NextFireAt: r.NextFireAt,
 		LastFiredAt: r.LastFiredAt, LastLocal: r.LastLocal, ConsecutiveFailures: r.ConsecutiveFailures,
-		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn,
+		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn, ProposedAt: r.ProposedAt,
 		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt,
 	}
 }

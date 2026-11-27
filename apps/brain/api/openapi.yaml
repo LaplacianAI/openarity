@@ -3505,7 +3505,8 @@ paths:
         Requires `schedule:write` in this team, and the caller to be the
         person it was proposed to. A proposal lapses after an hour. On one
         that already runs, it applies the agent's `waiting_change`, checked
-        again as it is now; a change too lapses after an hour.
+        again as it is now, or does the delete, resume or run now it asks; an
+        ask too lapses after an hour.
       responses:
         "200":
           description: Active
@@ -3842,8 +3843,8 @@ paths:
         Requires `schedule:write` in this team, and the caller to be the person
         it was proposed to. It becomes active and looks now. A proposal lapses
         after an hour. On one that already runs, it applies the agent's
-        `waiting_change`, checked again as it is now; a change too lapses
-        after an hour.
+        `waiting_change`, checked again as it is now, or does the delete,
+        resume or check now it asks; an ask too lapses after an hour.
       responses:
         "200":
           description: Confirmed
@@ -9630,15 +9631,16 @@ components:
       type: object
       required: [says, since]
       description: |
-        A change an agent proposed from a chat to what a schedule or watcher
-        does. It runs as it was until its maker confirms the change, which
-        applies it; unconfirmed within the hour, it is dropped. The maker's
-        own change replaces it.
+        What an agent asked of a schedule or watcher from a chat: a change to
+        what it does, or to delete, resume or run it now. It runs as it was
+        until its maker confirms, which does what was asked; unconfirmed
+        within the hour, the ask is dropped. The maker's own change, the
+        agent's next ask and a take-over each replace it.
       properties:
         says:
           type: string
-          description: What it changes, said for a person
-          examples: ["its objective, when it runs"]
+          description: What was asked, said for a person
+          examples: ["to change its objective, when it runs", "to delete it"]
         since:
           type: string
           format: date-time

@@ -335,7 +335,7 @@ func (s *Service) UpdateWatcher(ctx context.Context, who Who, ref Ref, p Watcher
 				return refuse(Forbidden, "only the person who made this watcher may change what it does or check it now")
 			}
 			// The maker's own change replaces an agent's waiting one.
-			dropPending(&row.Pending, &row.PendingRun, &row.PendingIn, &row.PendingAt)
+			waitingOnWatcher(row).drop()
 		}
 		if err := patchWatcher(ctx, q, row, p, l); err != nil {
 			return err
@@ -507,9 +507,12 @@ func (s *Service) ConfirmWatcher(ctx context.Context, who Who, origin Origin, re
 		return WatcherView{}, err
 	}
 	now := s.now()
+	act := ""
 	id, err := s.changeWatcher(ctx, who, ref, func(q *db.Queries, row *db.Watcher) error {
-		if row.Status != Proposed && row.Pending != nil {
-			return confirmWatcherChange(ctx, q, who, origin, row, l, now)
+		if row.Status != Proposed && row.Status != WaitingSecret && row.Pending != nil {
+			var asked error
+			act, asked = confirmWatcherAsk(ctx, q, who, origin, row, l, now)
+			return asked
 		}
 		if row.Status != Proposed {
 			return refuse(Conflict, "this watcher is not waiting to be confirmed; it is %s", row.Status)
@@ -517,12 +520,13 @@ func (s *Service) ConfirmWatcher(ctx context.Context, who Who, origin Origin, re
 		if !madeBy(who, row.CreatedBy) {
 			return refuse(Forbidden, "only the person it was proposed to may confirm it")
 		}
-		if now.Sub(row.CreatedAt) > proposalLife {
+		at := proposedAt(row.ProposedAt, row.CreatedAt)
+		if now.Sub(at) > proposalLife {
 			return refuse(Conflict, "the proposal waited more than an hour and lapsed; ask for it again")
 		}
 		if origin.viaTool() {
 			if err := laterMessage(ctx, q, proposal{
-				run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: row.CreatedAt, noun: "watcher",
+				run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: at, noun: "watcher",
 			}, origin); err != nil {
 				return err
 			}
@@ -531,6 +535,9 @@ func (s *Service) ConfirmWatcher(ctx context.Context, who Who, origin Origin, re
 		return checkSoon(ctx, q, row, now)
 	})
 	if err != nil {
+		return WatcherView{}, err
+	}
+	if err := s.actOnWatcher(ctx, who, id, act); err != nil {
 		return WatcherView{}, err
 	}
 	return s.watcherView(ctx, who, id)
@@ -604,6 +611,8 @@ func (s *Service) TakeOverWatcher(ctx context.Context, who Who, ref Ref) (Watche
 			return refuse(Forbidden, "this watcher posts where a group reads it, which takes channel:write")
 		}
 		row.CreatedBy = &who.User
+		// What an agent asked of the old maker is not the new one's to confirm.
+		waitingOnWatcher(row).drop()
 		if err := q.SetWatcherSessionUser(ctx, db.SetWatcherSessionUserParams{UserID: who.User, WatcherID: row.ID}); err != nil {
 			return fmt.Errorf("hand over the watcher's conversation: %w", err)
 		}
@@ -728,7 +737,7 @@ func saveWatcherOf(r db.Watcher) db.SaveWatcherParams {
 		TargetID: r.TargetID, Selector: r.Selector, EverySeconds: r.EverySeconds, CooldownSeconds: r.CooldownSeconds,
 		State: state, Status: r.Status, PausedReason: r.PausedReason, DeletedAt: r.DeletedAt,
 		NextCheckAt: r.NextCheckAt, LastRunAt: r.LastRunAt, ConsecutiveFailures: r.ConsecutiveFailures,
-		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn,
+		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn, ProposedAt: r.ProposedAt,
 		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt,
 	}
 }

@@ -3,12 +3,14 @@
 -- name: CreateSchedule :one
 INSERT INTO schedules (
     id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone,
-    status, next_fire_at, proposed_run, proposed_in, target, target_label
+    status, next_fire_at, proposed_run, proposed_in, proposed_at, target, target_label
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'), sqlc.arg('hub'),
     sqlc.arg('name'), sqlc.arg('objective'), sqlc.arg('kind'), sqlc.arg('rule'), sqlc.arg('anchor'),
     sqlc.arg('timezone'), sqlc.arg('status'), sqlc.narg('next_fire_at'),
-    sqlc.narg('proposed_run'), sqlc.narg('proposed_in'), sqlc.arg('target'), sqlc.arg('target_label')
+    sqlc.narg('proposed_run'), sqlc.narg('proposed_in'),
+    CASE WHEN sqlc.narg('proposed_in')::uuid IS NULL THEN NULL ELSE now() END,
+    sqlc.arg('target'), sqlc.arg('target_label')
 )
 RETURNING *;
 
@@ -80,6 +82,7 @@ UPDATE schedules SET
     consecutive_failures = sqlc.arg('consecutive_failures'),
     proposed_run  = sqlc.narg('proposed_run'),
     proposed_in   = sqlc.narg('proposed_in'),
+    proposed_at   = sqlc.narg('proposed_at'),
     pending       = sqlc.narg('pending'),
     pending_run   = sqlc.narg('pending_run'),
     pending_in    = sqlc.narg('pending_in'),
@@ -288,7 +291,7 @@ WHERE s.id = f.schedule_id AND f.schedule_id = sqlc.arg('schedule_id')
 -- name: ExpireProposedSchedules :execrows
 WITH gone AS (
     UPDATE schedules SET status = 'deleted', deleted_at = now(), updated_at = now()
-    WHERE status = 'proposed' AND created_at < sqlc.arg('before')
+    WHERE status = 'proposed' AND proposed_at < sqlc.arg('before')::timestamptz
     RETURNING id
 )
 UPDATE sessions SET status = 'closed'

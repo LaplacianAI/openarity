@@ -677,7 +677,7 @@ func TestAProposalWaitsAndOnlyALaterMessageConfirmsIt(t *testing.T) {
 func TestAnUnconfirmedProposalLapsesAfterAnHour(t *testing.T) {
 	w := newWorld(t)
 	v, _ := w.proposal(t)
-	w.exec(t, `UPDATE schedules SET created_at = now() - interval '2 hours' WHERE id = $1`, v.ID)
+	w.exec(t, `UPDATE schedules SET created_at = now() - interval '2 hours', proposed_at = now() - interval '2 hours' WHERE id = $1`, v.ID)
 	j := NewJob(w.store, nil, http.DefaultClient, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	j.now = time.Now
 	if err := j.sweepOnce(t.Context()); err != nil {

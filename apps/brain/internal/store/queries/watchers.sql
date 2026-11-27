@@ -4,13 +4,14 @@
 -- name: CreateWatcher :one
 INSERT INTO watchers (
     id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id,
-    every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, target, target_label
+    every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, proposed_at, target, target_label
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'), sqlc.arg('hub'),
     sqlc.arg('name'), sqlc.arg('objective'), sqlc.arg('source'), sqlc.narg('target_id'), sqlc.narg('selector'),
     sqlc.narg('hook_id'), sqlc.narg('every_seconds'), sqlc.arg('cooldown_seconds'), sqlc.arg('status'),
-    sqlc.narg('next_check_at'), sqlc.narg('proposed_run'), sqlc.narg('proposed_in'), sqlc.arg('target'),
-    sqlc.arg('target_label')
+    sqlc.narg('next_check_at'), sqlc.narg('proposed_run'), sqlc.narg('proposed_in'),
+    CASE WHEN sqlc.narg('proposed_in')::uuid IS NULL THEN NULL ELSE now() END,
+    sqlc.arg('target'), sqlc.arg('target_label')
 )
 RETURNING *;
 
@@ -65,6 +66,7 @@ UPDATE watchers SET
     consecutive_failures = sqlc.arg('consecutive_failures'),
     proposed_run  = sqlc.narg('proposed_run'),
     proposed_in   = sqlc.narg('proposed_in'),
+    proposed_at   = sqlc.narg('proposed_at'),
     pending       = sqlc.narg('pending'),
     pending_run   = sqlc.narg('pending_run'),
     pending_in    = sqlc.narg('pending_in'),
@@ -287,7 +289,7 @@ RETURNING id, team_id;
 WITH gone AS (
     UPDATE watchers SET status = 'deleted', deleted_at = now(), next_check_at = NULL,
         target_id = NULL, updated_at = now()
-    WHERE (status = 'proposed' AND created_at < sqlc.arg('proposed_before'))
+    WHERE (status = 'proposed' AND proposed_at < sqlc.arg('proposed_before')::timestamptz)
        OR (status = 'waiting_secret' AND created_at < sqlc.arg('waiting_before'))
     RETURNING id
 )

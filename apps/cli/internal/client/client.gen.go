@@ -4513,10 +4513,11 @@ type Schedule struct {
 	Upcoming  []time.Time `json:"upcoming" yaml:"upcoming"`
 	UpdatedAt time.Time   `json:"updated_at" yaml:"updated_at"`
 
-	// WaitingChange A change an agent proposed from a chat to what a schedule or watcher
-	// does. It runs as it was until its maker confirms the change, which
-	// applies it; unconfirmed within the hour, it is dropped. The maker's
-	// own change replaces it.
+	// WaitingChange What an agent asked of a schedule or watcher from a chat: a change to
+	// what it does, or to delete, resume or run it now. It runs as it was
+	// until its maker confirms, which does what was asked; unconfirmed
+	// within the hour, the ask is dropped. The maker's own change, the
+	// agent's next ask and a take-over each replace it.
 	WaitingChange *WaitingChange `json:"waiting_change,omitempty" yaml:"waiting_change,omitempty"`
 
 	// When When a schedule fires. Exactly one of `at`, `every_seconds` or `cron`, as `kind` says.
@@ -5422,14 +5423,15 @@ type UserPage struct {
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
 }
 
-// WaitingChange A change an agent proposed from a chat to what a schedule or watcher
-// does. It runs as it was until its maker confirms the change, which
-// applies it; unconfirmed within the hour, it is dropped. The maker's
-// own change replaces it.
+// WaitingChange What an agent asked of a schedule or watcher from a chat: a change to
+// what it does, or to delete, resume or run it now. It runs as it was
+// until its maker confirms, which does what was asked; unconfirmed
+// within the hour, the ask is dropped. The maker's own change, the
+// agent's next ask and a take-over each replace it.
 type WaitingChange struct {
-	// Says What it changes, said for a person
+	// Says What was asked, said for a person
 	//
-	// Examples: its objective, when it runs
+	// Examples: to change its objective, when it runs, to delete it
 	Says  string    `json:"says" yaml:"says"`
 	Since time.Time `json:"since" yaml:"since"`
 }
@@ -5480,10 +5482,11 @@ type Watcher struct {
 	// URL The address it looks at, as it was normalised; absent once it is deleted.
 	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 
-	// WaitingChange A change an agent proposed from a chat to what a schedule or watcher
-	// does. It runs as it was until its maker confirms the change, which
-	// applies it; unconfirmed within the hour, it is dropped. The maker's
-	// own change replaces it.
+	// WaitingChange What an agent asked of a schedule or watcher from a chat: a change to
+	// what it does, or to delete, resume or run it now. It runs as it was
+	// until its maker confirms, which does what was asked; unconfirmed
+	// within the hour, the ask is dropped. The maker's own change, the
+	// agent's next ask and a take-over each replace it.
 	WaitingChange *WaitingChange `json:"waiting_change,omitempty" yaml:"waiting_change,omitempty"`
 }
 
@@ -7834,7 +7837,8 @@ type ClientInterface interface {
 	// Requires `schedule:write` in this team, and the caller to be the
 	// person it was proposed to. A proposal lapses after an hour. On one
 	// that already runs, it applies the agent's `waiting_change`, checked
-	// again as it is now; a change too lapses after an hour.
+	// again as it is now, or does the delete, resume or run now it asks; an
+	// ask too lapses after an hour.
 	//
 	// Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
 	ConfirmSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8478,8 +8482,8 @@ type ClientInterface interface {
 	// Requires `schedule:write` in this team, and the caller to be the person
 	// it was proposed to. It becomes active and looks now. A proposal lapses
 	// after an hour. On one that already runs, it applies the agent's
-	// `waiting_change`, checked again as it is now; a change too lapses
-	// after an hour.
+	// `waiting_change`, checked again as it is now, or does the delete,
+	// resume or check now it asks; an ask too lapses after an hour.
 	//
 	// Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
 	ConfirmWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -11226,7 +11230,8 @@ func (c *Client) UpdateSchedule(ctx context.Context, id TeamID, scheduleID Sched
 // Requires `schedule:write` in this team, and the caller to be the
 // person it was proposed to. A proposal lapses after an hour. On one
 // that already runs, it applies the agent's `waiting_change`, checked
-// again as it is now; a change too lapses after an hour.
+// again as it is now, or does the delete, resume or run now it asks; an
+// ask too lapses after an hour.
 //
 // Corresponds with POST /teams/{id}/schedules/{scheduleID}/confirm (the `ConfirmSchedule` operationId).
 func (c *Client) ConfirmSchedule(ctx context.Context, id TeamID, scheduleID ScheduleID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12250,8 +12255,8 @@ func (c *Client) ListWatcherChecks(ctx context.Context, id TeamID, watcherID Wat
 // Requires `schedule:write` in this team, and the caller to be the person
 // it was proposed to. It becomes active and looks now. A proposal lapses
 // after an hour. On one that already runs, it applies the agent's
-// `waiting_change`, checked again as it is now; a change too lapses
-// after an hour.
+// `waiting_change`, checked again as it is now, or does the delete,
+// resume or check now it asks; an ask too lapses after an hour.
 //
 // Corresponds with POST /teams/{id}/watchers/{watcherID}/confirm (the `ConfirmWatcher` operationId).
 func (c *Client) ConfirmWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -20523,7 +20528,8 @@ type ClientWithResponsesInterface interface {
 	// Requires `schedule:write` in this team, and the caller to be the
 	// person it was proposed to. A proposal lapses after an hour. On one
 	// that already runs, it applies the agent's `waiting_change`, checked
-	// again as it is now; a change too lapses after an hour.
+	// again as it is now, or does the delete, resume or run now it asks; an
+	// ask too lapses after an hour.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21215,8 +21221,8 @@ type ClientWithResponsesInterface interface {
 	// Requires `schedule:write` in this team, and the caller to be the person
 	// it was proposed to. It becomes active and looks now. A proposal lapses
 	// after an hour. On one that already runs, it applies the agent's
-	// `waiting_change`, checked again as it is now; a change too lapses
-	// after an hour.
+	// `waiting_change`, checked again as it is now, or does the delete,
+	// resume or check now it asks; an ask too lapses after an hour.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -29282,7 +29288,8 @@ func (c *ClientWithResponses) UpdateScheduleWithResponse(ctx context.Context, id
 // Requires `schedule:write` in this team, and the caller to be the
 // person it was proposed to. A proposal lapses after an hour. On one
 // that already runs, it applies the agent's `waiting_change`, checked
-// again as it is now; a change too lapses after an hour.
+// again as it is now, or does the delete, resume or run now it asks; an
+// ask too lapses after an hour.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30202,8 +30209,8 @@ func (c *ClientWithResponses) ListWatcherChecksWithResponse(ctx context.Context,
 // Requires `schedule:write` in this team, and the caller to be the person
 // it was proposed to. It becomes active and looks now. A proposal lapses
 // after an hour. On one that already runs, it applies the agent's
-// `waiting_change`, checked again as it is now; a change too lapses
-// after an hour.
+// `waiting_change`, checked again as it is now, or does the delete,
+// resume or check now it asks; an ask too lapses after an hour.
 //
 // Returns a wrapper object for the known response body format(s).
 //

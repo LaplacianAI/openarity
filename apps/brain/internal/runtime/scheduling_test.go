@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -149,6 +150,9 @@ func TestAReplayHoldsTheScheduleToolsAsStandIns(t *testing.T) {
 // agent is refused.
 func TestAScheduleNamesOnlyAnAgentTheRunMayHandWorkTo(t *testing.T) {
 	f, _ := newSchedulingFixture()
+	if id, err := f.builder.schedulable(t.Context(), f.agent, f.run, strings.ToUpper(f.agent.Name)); err != nil || id != f.agent.ID {
+		t.Errorf("naming itself where it hands no work = %s, %v", id, err)
+	}
 	ds, _ := f.withTeam(1)
 	other := db.Agent{ID: uuid.New(), TeamID: f.run.TeamID, Name: "billing"}
 	ds.agents = append(ds.agents, other)
@@ -167,5 +171,61 @@ func TestAScheduleNamesOnlyAnAgentTheRunMayHandWorkTo(t *testing.T) {
 	}
 	if _, err := f.builder.schedulable(t.Context(), f.agent, f.run, "nobody"); err == nil || !strings.Contains(err.Error(), "no agent") {
 		t.Errorf("an agent not in the team: %v", err)
+	}
+}
+
+// Calling any tool but the two and plan marks the run as having read, found
+// tools too; the schedule tools are told so.
+func TestACallMarksTheRunAsHavingRead(t *testing.T) {
+	tool := func(name string) agent.Tool {
+		return agent.Tool{Name: name, Invoke: func(context.Context, json.RawMessage) (string, error) { return "", nil }}
+	}
+	found := agent.Tool{Name: "github__search", Result: func(context.Context, json.RawMessage) (agent.ToolResult, error) {
+		return agent.ToolResult{}, nil
+	}}
+	built := Built{outside: &atomic.Bool{}}
+	built.Spec.Tools = []agent.Tool{tool("schedule"), tool("watch"), tool(PlanToolName), tool("web_fetch")}
+	built.Spec.Discovery = &agent.Discovery{Tools: []agent.Tool{found}}
+	built.noteReads()
+
+	call := func(tl agent.Tool) {
+		t.Helper()
+		if _, _, err := tl.Call(t.Context(), json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tl := range built.Spec.Tools[:3] {
+		call(tl)
+	}
+	if built.outside.Load() {
+		t.Fatal("the schedule tools or plan marked the run as having read")
+	}
+	call(built.Spec.Tools[3])
+	if !built.outside.Load() {
+		t.Error("web_fetch did not mark the run")
+	}
+	built.outside.Store(false)
+	call(built.Spec.Discovery.Tools[0])
+	if !built.outside.Load() {
+		t.Error("a found tool did not mark the run")
+	}
+}
+
+// What the schedule tools are told is the flag a build of the run sets.
+func TestTheScheduleToolsReadTheRunsFlag(t *testing.T) {
+	f, s := newSchedulingFixture()
+	f.asOrchestrator()
+	built := f.build(t)
+	read := s.asked[0].ReadOutside
+	if read() {
+		t.Fatal("a new run has read")
+	}
+	for _, tl := range built.Spec.Tools {
+		if tl.Name == GraphToolName {
+			_, _, _ = tl.Call(t.Context(), json.RawMessage(`{"query":"x"}`))
+		}
+	}
+	if !read() {
+		t.Error("a call to graph is not seen by the schedule tools")
 	}
 }
