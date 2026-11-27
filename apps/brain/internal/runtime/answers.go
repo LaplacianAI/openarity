@@ -152,9 +152,9 @@ func startingCall(child db.Run) string {
 
 // catchUp is what happened while a run waited, for its model to read before
 // anything else: each child that waited carries on, to its report or to
-// waiting again; and each of the run's own requests that was answered is
-// acted on, an approved call made then, with exactly the arguments that were
-// approved. Empty when nothing happened, as on a resume after a crash.
+// waiting again; each of the run's own requests that was answered is acted
+// on, an approved call made then, with exactly the arguments that were
+// approved; and each of its waits for sandbox room that ended is told. Empty when nothing happened, as on a resume after a crash.
 func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Lineage) ([]agent.Content, error) {
 	var (
 		parts []string
@@ -197,6 +197,17 @@ func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Linea
 	if len(ids) > 0 {
 		if err := e.store.MarkApprovalsTold(context.WithoutCancel(ctx), ids); err != nil {
 			return nil, fmt.Errorf("recording that run %s was told its answers: %w", row.ID, err)
+		}
+	}
+
+	ended, waits, err := e.roomWaitsEnded(ctx, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	parts = append(parts, ended...)
+	if len(waits) > 0 {
+		if err := e.store.MarkRoomWaitsTold(context.WithoutCancel(ctx), waits); err != nil {
+			return nil, fmt.Errorf("recording that run %s was told how its waits for room ended: %w", row.ID, err)
 		}
 	}
 

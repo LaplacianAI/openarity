@@ -237,3 +237,18 @@ SELECT a.team_id, a.object_key, a.filename, a.media_type, a.size_bytes
 FROM replies r
 JOIN attachments a ON a.id = r.attachment_id AND a.session_id = r.session_id
 WHERE r.id = sqlc.arg('id');
+
+-- What a top-level run said as it parked to wait for sandbox room, sent as a
+-- step is but whatever the channel's reply mode: nobody is asked anything,
+-- and without it the person hears nothing until the run carries on. Named by
+-- its waiting event, so a park retried is sent once.
+-- name: InsertWaitingReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
+SELECT r.team_id, r.id, r.session_id, s.channel_id, 'event', sqlc.arg('text')::text, sqlc.arg('event_seq')::integer
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = sqlc.arg('run_id')::uuid
+  AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING;

@@ -35,6 +35,8 @@ type SweepStore interface {
 	ListUnstartedRuns(ctx context.Context, olderThanSeconds float64) ([]db.ListUnstartedRunsRow, error)
 	TakeOverStaleRuns(ctx context.Context, staleSeconds float64) ([]uuid.UUID, error)
 	ListDueApprovals(ctx context.Context, batch int32) ([]db.ListDueApprovalsRow, error)
+	ListDueRoomWaits(ctx context.Context, arg db.ListDueRoomWaitsParams) ([]db.ListDueRoomWaitsRow, error)
+	PushRoomWait(ctx context.Context, arg db.PushRoomWaitParams) (int64, error)
 	TxStore
 }
 
@@ -133,9 +135,10 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 		j.logger.WarnContext(ctx, "Took over runs whose worker stopped heartbeating", "runs", len(taken))
 	}
 
-	// Expired first: a run its expiry queues again is enqueued here, and
-	// one whose enqueue fails is found below on a later sweep.
+	// Expired and woken first: a run either queues again is enqueued here,
+	// and one whose enqueue fails is found below on a later sweep.
 	failed := j.expire(ctx)
+	failed = append(failed, j.wakeRoomWaits(ctx)...)
 
 	queued, err := j.store.ListUnstartedRuns(ctx, unstartedAfter.Seconds())
 	if err != nil {

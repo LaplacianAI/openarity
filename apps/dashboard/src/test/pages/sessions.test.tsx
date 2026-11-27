@@ -1197,6 +1197,24 @@ describe("a run's trace", () => {
     expect(stream?.headers.get("Accept")).toBe("text/event-stream");
   });
 
+  it("says a run waits for room in the sandbox, not for a person", async () => {
+    const wire =
+      frame(1, "step", { step: 1 }) +
+      frame(2, "waiting", { reason: "sandbox", said: "Waiting for the sandbox." }) +
+      END;
+    listed({
+      [RUNS]: {
+        body: { items: [run("r1", "helper", "waiting", { output: "Waiting for the sandbox." })] },
+      },
+      [EVENTS]: () => ({ stream: chunks(wire) }),
+    });
+
+    await open("?tab=runs");
+    const detail = pane();
+    expect(await within(detail).findByText("Waiting for room in the sandbox")).toBeVisible();
+    expect(within(detail).queryByText(/Waiting for a person/)).toBeNull();
+  });
+
   it("says when a run compacted, was asked to wrap up and skipped a review, and labels what a stopped run kept", async () => {
     const wire =
       frame(1, "step", { step: 1 }) +

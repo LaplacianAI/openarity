@@ -483,6 +483,36 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 	return i, err
 }
 
+const insertWaitingReply = `-- name: InsertWaitingReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
+SELECT r.team_id, r.id, r.session_id, s.channel_id, 'event', $1::text, $2::integer
+FROM runs r
+JOIN sessions s ON s.id = r.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = $3::uuid
+  AND r.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
+`
+
+type InsertWaitingReplyParams struct {
+	Text     string
+	EventSeq int32
+	RunID    uuid.UUID
+}
+
+// What a top-level run said as it parked to wait for sandbox room, sent as a
+// step is but whatever the channel's reply mode: nobody is asked anything,
+// and without it the person hears nothing until the run carries on. Named by
+// its waiting event, so a park retried is sent once.
+func (q *Queries) InsertWaitingReply(ctx context.Context, arg InsertWaitingReplyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertWaitingReply, arg.Text, arg.EventSeq, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listRunReplies = `-- name: ListRunReplies :many
 SELECT run_id, kind, status, attempts, last_error, sent_at, next_attempt_at
 FROM replies

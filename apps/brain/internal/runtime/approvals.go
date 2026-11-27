@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,8 +42,9 @@ type TxStore interface {
 //
 // A top-level run that now waits asks its conversation in the same
 // transaction: asked is the waiting event's seq when a prompt was queued,
-// which names it to the reply sender, and 0 when none was.
-func parkAndAsk(ctx context.Context, s TxStore, runID uuid.UUID, worker string, child bool, said *string, payload []byte) (parked bool, again *Resumed, asked int32, err error) {
+// which names it to the reply sender, and 0 when none was. One that waits
+// for nobody, only for sandbox room, tells its conversation what it said.
+func parkAndAsk(ctx context.Context, s TxStore, runID uuid.UUID, worker string, child bool, said *string, waitsFor string, payload []byte) (parked bool, again *Resumed, asked int32, err error) {
 	err = s.InTx(ctx, func(q *db.Queries) error {
 		if _, err := q.LockRunSession(ctx, runID); err != nil {
 			return fmt.Errorf("lock the session of run %s: %w", runID, err)
@@ -57,9 +59,9 @@ func parkAndAsk(ctx context.Context, s TxStore, runID uuid.UUID, worker string, 
 		}
 		var n int64
 		if child {
-			n, err = q.ParkChild(ctx, db.ParkChildParams{ID: runID, Worker: worker, Said: said})
+			n, err = q.ParkChild(ctx, db.ParkChildParams{ID: runID, Worker: worker, Said: said, WaitingFor: waitsFor})
 		} else {
-			n, err = q.ParkRun(ctx, db.ParkRunParams{ID: runID, Worker: worker, Said: said})
+			n, err = q.ParkRun(ctx, db.ParkRunParams{ID: runID, Worker: worker, Said: said, WaitingFor: waitsFor})
 		}
 		if err != nil || n == 0 {
 			return err
@@ -99,8 +101,12 @@ func ask(ctx context.Context, q *db.Queries, runID uuid.UUID, seq int32, said st
 	if err != nil {
 		return false, fmt.Errorf("list what run %s asks: %w", runID, err)
 	}
-	// Never empty: a run that has just parked goes back to the queue, and
-	// asks nothing, exactly when nothing of its tree is pending.
+	// Empty only when what the tree waits for is sandbox room: a run that has
+	// just parked goes back to the queue when nothing of its tree is pending
+	// and no room is still waited for.
+	if len(pending) == 0 {
+		return tellWaiting(ctx, q, runID, seq, said)
+	}
 	maySelf := map[uuid.UUID]bool{}
 	reqs := make([]approval.PromptRequest, len(pending))
 	for i, a := range pending {
@@ -135,6 +141,19 @@ func ask(ctx context.Context, q *db.Queries, runID uuid.UUID, seq int32, said st
 	})
 	if err != nil {
 		return false, fmt.Errorf("ask run %s's conversation: %w", runID, err)
+	}
+	return n > 0, nil
+}
+
+// tellWaiting sends a run's conversation what it said as it parked to wait
+// for sandbox room, or, when it said nothing, that it waits.
+func tellWaiting(ctx context.Context, q *db.Queries, runID uuid.UUID, seq int32, said string) (bool, error) {
+	if strings.TrimSpace(said) == "" {
+		said = waitingQuietly
+	}
+	n, err := q.InsertWaitingReply(ctx, db.InsertWaitingReplyParams{RunID: runID, EventSeq: seq, Text: said})
+	if err != nil {
+		return false, fmt.Errorf("tell run %s's conversation it waits: %w", runID, err)
 	}
 	return n > 0, nil
 }

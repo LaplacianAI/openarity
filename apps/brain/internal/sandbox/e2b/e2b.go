@@ -261,7 +261,7 @@ func (c *Client) api(ctx context.Context, method, path string, body []byte, out 
 	}
 	resp, err := c.http.Do(req) //nolint:gosec // G704: as above
 	if err != nil {
-		return 0, fmt.Errorf("e2b: %s %s: %w", method, path, scrubErr(err, secrets))
+		return 0, sandbox.Unanswered(ctx, fmt.Errorf("e2b: %s %s: %w", method, path, scrubErr(err, secrets)))
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -291,8 +291,11 @@ func statusError(method, path string, status int, raw []byte, secrets []string) 
 	if msg != "" {
 		text += ": " + msg
 	}
-	if status == http.StatusNotFound {
+	switch {
+	case status == http.StatusNotFound:
 		return fmt.Errorf("%w (%s)", sandbox.ErrNotFound, text)
+	case sandbox.Down(status):
+		return fmt.Errorf("%w (%s)", sandbox.ErrUnavailable, text)
 	}
 	return errors.New(text)
 }

@@ -104,13 +104,14 @@ func runCommandsInRooms(d *discovery.Discoverer, cfg *config.Config, logger *slo
 // newWorkspaces is sessions' workspaces in the keeper's rooms, called as a
 // command server's room is: at an address MCP_PRIVATE_NETWORKS may allow,
 // for sandboxd, and nowhere else private. With no keeper there are none.
-func newWorkspaces(k *keeper.Keeper, cfg *config.Config) *runtime.WorkspaceDeps {
+func newWorkspaces(k *keeper.Keeper, cfg *config.Config, waits runtime.RoomWaits) *runtime.WorkspaceDeps {
 	if k == nil {
 		return nil
 	}
 	return &runtime.WorkspaceDeps{
 		Rooms:  workroom.New(k),
 		Client: discovery.RoomClient(discovery.Policy{Allow: reachable(cfg.MCPPrivateNetworks)}),
+		Waits:  waits,
 	}
 }
 

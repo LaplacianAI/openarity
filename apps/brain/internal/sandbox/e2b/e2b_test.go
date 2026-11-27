@@ -726,3 +726,22 @@ func TestAResumeE2BLimitsIsErrFullAndAGoneOneErrNotFound(t *testing.T) {
 		}
 	}
 }
+
+// E2B's control plane down behind its gateway is unavailable.
+func TestAnE2BThatIsDownIsUnavailable(t *testing.T) {
+	for _, status := range []int{502, 503, 504} {
+		f := &fake{api: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, status, map[string]any{"message": "upstream"})
+		}}
+		_, err := newClient(f).Create(t.Context(), sandbox.Spec{Image: templateID})
+		if !errors.Is(err, sandbox.ErrUnavailable) {
+			t.Errorf("%d: err = %v, want ErrUnavailable", status, err)
+		}
+	}
+	f := &fake{api: func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 500, map[string]any{"message": "bug"})
+	}}
+	if _, err := newClient(f).Create(t.Context(), sandbox.Spec{Image: templateID}); sandbox.Waitable(err) {
+		t.Errorf("a 500 is waited for: %v", err)
+	}
+}

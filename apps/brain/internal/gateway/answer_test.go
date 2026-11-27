@@ -351,6 +351,35 @@ func TestWritingToARunThatWaitsOnYouGivesUpYourRequest(t *testing.T) {
 	}
 }
 
+// Writing to a run that waits only for sandbox room ends the wait, whoever
+// writes, and the run is queued again to read what they wrote.
+func TestWritingToARunThatWaitsForRoomEndsTheWait(t *testing.T) {
+	t.Parallel()
+
+	a := newAnswering()
+	if err := a.deliver(t, delivery("m-1", "build the report")); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	waiting := a.store.created[0].ID
+	a.store.roomWaits = 1
+	a.store.requeued = &db.RequeueAnsweredRow{ID: waiting, Attempt: 1}
+
+	other := delivery("m-2", "never mind, skip the build")
+	other.UserID = uuid.New()
+	if err := a.deliver(t, other); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if want := []db.RequeueAnsweredRow{{ID: waiting, Attempt: 1}}; !slices.Equal(a.runs.resumed, want) {
+		t.Errorf("resumed %v, want %v", a.runs.resumed, want)
+	}
+	if got := a.store.roomEnded; len(got) != 1 || got[0].RootRunID != waiting || got[0].Ended != "superseded" {
+		t.Errorf("waits ended %+v, want the run's, superseded", got)
+	}
+	if len(a.store.decided) != 0 {
+		t.Errorf("decided %v with no request asked", a.store.decided)
+	}
+}
+
 // A steer names its sender by ref when the provider gave no display name.
 func TestASteerFallsBackToTheSendersRef(t *testing.T) {
 	t.Parallel()

@@ -213,6 +213,7 @@ func inputOf(m Delivery) string {
 // and the run queued again.
 type Superseding interface {
 	SupersedeApprovals(ctx context.Context, arg db.SupersedeApprovalsParams) ([]db.Approval, error)
+	EndTreeRoomWaits(ctx context.Context, arg db.EndTreeRoomWaitsParams) (int64, error)
 	AppendDecidedEvents(ctx context.Context, ids []uuid.UUID) error
 	RequeueAnswered(ctx context.Context, id uuid.UUID) (db.RequeueAnsweredRow, error)
 }
@@ -222,22 +223,30 @@ type Superseding interface {
 // in the run's tree made for them ends, answered by them, and the run is
 // queued again, once nothing else waits, to read what they wrote. Without
 // this, their words would be read only after the call they were asked about
-// was made. Other people's requests stand. The caller holds the session,
-// and hands the run returned to the workers once it commits.
+// was made. Other people's requests stand. What the tree waits for in the
+// sandbox ends too, whoever wrote: the run reads what they wrote now rather
+// than once there is room. The caller holds the session, and hands the run
+// returned to the workers once it commits.
 func Supersede(ctx context.Context, q Superseding, runID, userID uuid.UUID, via string) (*db.RequeueAnsweredRow, error) {
 	ended, err := q.SupersedeApprovals(ctx, db.SupersedeApprovalsParams{RootRunID: runID, UserID: userID, Via: via})
 	if err != nil {
 		return nil, fmt.Errorf("give up what run %s asked %s: %w", runID, userID, err)
 	}
-	if len(ended) == 0 {
+	waits, err := q.EndTreeRoomWaits(ctx, db.EndTreeRoomWaitsParams{RootRunID: runID, Ended: "superseded"})
+	if err != nil {
+		return nil, fmt.Errorf("give up what run %s waits for in the sandbox: %w", runID, err)
+	}
+	if len(ended) == 0 && waits == 0 {
 		return nil, nil
 	}
-	ids := make([]uuid.UUID, len(ended))
-	for i, a := range ended {
-		ids[i] = a.ID
-	}
-	if err := q.AppendDecidedEvents(ctx, ids); err != nil {
-		return nil, fmt.Errorf("record what run %s no longer asks: %w", runID, err)
+	if len(ended) > 0 {
+		ids := make([]uuid.UUID, len(ended))
+		for i, a := range ended {
+			ids[i] = a.ID
+		}
+		if err := q.AppendDecidedEvents(ctx, ids); err != nil {
+			return nil, fmt.Errorf("record what run %s no longer asks: %w", runID, err)
+		}
 	}
 	row, err := q.RequeueAnswered(ctx, runID)
 	if errors.Is(err, pgx.ErrNoRows) {

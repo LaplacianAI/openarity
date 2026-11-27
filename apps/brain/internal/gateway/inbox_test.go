@@ -24,8 +24,12 @@ type inboxStore struct {
 	// asking is what the active run waits for people to approve; requeued is
 	// what queuing it again returns once nothing is left pending, nil for a
 	// run that is not waiting.
-	asking     []db.Approval
-	requeued   *db.RequeueAnsweredRow
+	asking   []db.Approval
+	requeued *db.RequeueAnsweredRow
+	// roomWaits is how many waits for sandbox room the active run's tree
+	// has open; roomEnded, each EndTreeRoomWaits asked.
+	roomWaits  int64
+	roomEnded  []db.EndTreeRoomWaitsParams
 	superseded []db.SupersedeApprovalsParams
 	decided    []uuid.UUID
 
@@ -119,6 +123,13 @@ func (f *inboxStore) ActiveSessionRun(_ context.Context, sessionID uuid.UUID) (u
 func (f *inboxStore) AddSteer(_ context.Context, arg db.AddSteerParams) error {
 	f.steers[arg.RunID] = append(slices.Clone(f.steers[arg.RunID]), arg.Text)
 	return nil
+}
+
+func (f *inboxStore) EndTreeRoomWaits(_ context.Context, arg db.EndTreeRoomWaitsParams) (int64, error) {
+	f.roomEnded = append(f.roomEnded, arg)
+	n := f.roomWaits
+	f.roomWaits = 0
+	return n, nil
 }
 
 func (f *inboxStore) SupersedeApprovals(_ context.Context, arg db.SupersedeApprovalsParams) ([]db.Approval, error) {

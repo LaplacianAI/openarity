@@ -47,7 +47,9 @@ type Store interface {
 	ListUntoldApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
 	MarkApprovalsTold(ctx context.Context, ids []uuid.UUID) error
 	ClaimApprovalUse(ctx context.Context, id uuid.UUID) (db.Approval, error)
-	RunAwaits(ctx context.Context, id uuid.UUID) (bool, error)
+	RunAwaits(ctx context.Context, id uuid.UUID) (db.RunAwaitsRow, error)
+	ListUntoldRoomWaits(ctx context.Context, runID uuid.UUID) ([]db.RoomWait, error)
+	MarkRoomWaitsTold(ctx context.Context, ids []uuid.UUID) error
 }
 
 const (
@@ -289,8 +291,12 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		if err != nil {
 			return fmt.Errorf("reading whether run %s waits: %w", row.ID, err)
 		}
-		if awaits {
-			return e.park(ctx, row, l, output)
+		if awaits.Awaits {
+			waitsFor := waitsForRoom
+			if awaits.Person {
+				waitsFor = waitsForPerson
+			}
+			return e.park(ctx, row, l, output, waitsFor)
 		}
 	}
 	if status == "failed" {
@@ -625,7 +631,7 @@ func runOf(r db.ClaimRunRow) db.Run {
 		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,
 		Transcript: r.Transcript, TranscriptFrom: r.TranscriptFrom,
 		Attempt: r.Attempt, Unattended: r.Unattended, WaitedSeconds: r.WaitedSeconds,
-		WaitingSince: r.WaitingSince,
+		WaitingSince: r.WaitingSince, WaitingFor: r.WaitingFor,
 	}
 }
 

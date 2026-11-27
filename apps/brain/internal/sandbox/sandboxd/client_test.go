@@ -340,3 +340,29 @@ func TestCreateSendsAWorkspacesSize(t *testing.T) {
 		t.Fatalf("body = %s", got)
 	}
 }
+
+// A gateway in front of sandboxd that says it is not there, or a sandboxd
+// that does not answer at all, is unavailable: waiting can end it. A 503
+// sandboxd says why itself is not.
+func TestASandboxdThatIsNotThereIsUnavailable(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
+		s := newServer(t, status, ``)
+		_, err := sandboxd.New(s.URL, "tok", s.Client()).Create(t.Context(), sandbox.Spec{Image: "x"})
+		if !errors.Is(err, sandbox.ErrUnavailable) {
+			t.Errorf("%d with no body: err = %v, want ErrUnavailable", status, err)
+		}
+	}
+	s := newServer(t, http.StatusServiceUnavailable, `{"error":"pulling the image failed"}`)
+	_, err := sandboxd.New(s.URL, "tok", s.Client()).Create(t.Context(), sandbox.Spec{Image: "x"})
+	if sandbox.Waitable(err) {
+		t.Errorf("an image sandboxd cannot pull is waited for: %v", err)
+	}
+
+	gone := newServer(t, http.StatusOK, `{}`)
+	gone.Close()
+	_, err = sandboxd.New(gone.URL, "tok", gone.Client()).Create(t.Context(), sandbox.Spec{Image: "x"})
+	if !errors.Is(err, sandbox.ErrUnavailable) {
+		t.Errorf("no answer: err = %v, want ErrUnavailable", err)
+	}
+}

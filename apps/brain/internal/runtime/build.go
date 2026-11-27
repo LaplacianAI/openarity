@@ -379,7 +379,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		// The workspace has moved on since: the replay's are stand-ins.
 		built.Spec.Tools = append(built.Spec.Tools, (&runWorkspace{}).tools()...)
 	case work:
-		ws = &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID}
+		ws = &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID, run: run.ID, root: run.RootRunID}
 		for _, t := range ws.tools() {
 			built.answerable[t.Name] = t
 			gated, refused := gates.gate(t, target{name: t.Name, class: workspaceClass(t.Name)})

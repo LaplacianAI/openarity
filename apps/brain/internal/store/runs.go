@@ -159,9 +159,13 @@ func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.Fin
 }
 
 // endApprovals cancels what a run tree that has ended still asks, and says so
-// on each asking run, so a channel can take its prompt down. The caller
-// holds the tree's session.
+// on each asking run, so a channel can take its prompt down, and ends what it
+// still waits for in the sandbox, so the sweep makes no room for it. The
+// caller holds the tree's session.
 func endApprovals(ctx context.Context, q *db.Queries, root uuid.UUID) error {
+	if _, err := q.EndTreeRoomWaits(ctx, db.EndTreeRoomWaitsParams{RootRunID: root, Ended: "cancelled"}); err != nil {
+		return fmt.Errorf("end what run %s waits for in the sandbox: %w", root, err)
+	}
 	ended, err := q.CancelRunApprovals(ctx, root)
 	if err != nil {
 		return fmt.Errorf("cancel what run %s still asks: %w", root, err)

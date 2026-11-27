@@ -148,7 +148,8 @@ apps/brain/
     answers.go         a resume's catch-up: waiting children carried on, each answer acted on (an approved call made then) and told to the model; children a stopped worker left carried on, each report its open call's result
     approvals.go       parking a waiting run, and answering a request: each one transaction, the session taken first
     decide.go          Decide: the one way a request is answered, from the API or the chat; who may answer
-    park.go            a turn that ended waiting for a person, parked with what it said: a root queued again if its answer came first, a delegate left for its parent's resume
+    park.go            a turn that ended waiting for a person or for sandbox room, parked with what it said: a root queued again if its answer came first, a delegate left for its parent's resume
+    roomwait.go        a workspace call the sandbox had no room for: the run's wait kept, the sweep making the room and queuing the root, or giving up after an hour
     delegate.go        delegate(agent, objective, output, boundaries): the checks, then a child run; one that waits reported as waiting
     events.go          what a run does, as run_events, within its token budget; its text and reasoning, gathered
     execute.go         one run: claim, heartbeat, run to the end, finish

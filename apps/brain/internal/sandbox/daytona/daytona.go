@@ -328,7 +328,13 @@ func (e *statusError) Error() string {
 }
 
 func (e *statusError) Is(target error) bool {
-	return target == sandbox.ErrNotFound && e.status == http.StatusNotFound
+	switch target {
+	case sandbox.ErrNotFound:
+		return e.status == http.StatusNotFound
+	case sandbox.ErrUnavailable:
+		return sandbox.Down(e.status)
+	}
+	return false
 }
 
 func isStatus(err error, status int) bool {
@@ -358,7 +364,7 @@ func (c *Client) do(ctx context.Context, method, target string, in, out any, sec
 	}
 	resp, err := c.http.Do(req) //nolint:gosec // see above
 	if err != nil {
-		return fmt.Errorf("daytona: %s %s: %w", method, req.URL.Path, c.scrub(unwrapURL(err), secrets))
+		return sandbox.Unanswered(ctx, fmt.Errorf("daytona: %s %s: %w", method, req.URL.Path, c.scrub(unwrapURL(err), secrets)))
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))

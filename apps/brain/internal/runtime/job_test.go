@@ -456,6 +456,12 @@ func (*sweepRows) ListDueApprovals(context.Context, int32) ([]db.ListDueApproval
 	return nil, nil
 }
 
+func (*sweepRows) ListDueRoomWaits(context.Context, db.ListDueRoomWaitsParams) ([]db.ListDueRoomWaitsRow, error) {
+	return nil, nil
+}
+
+func (*sweepRows) PushRoomWait(context.Context, db.PushRoomWaitParams) (int64, error) { return 0, nil }
+
 func (*sweepRows) InTx(context.Context, func(*db.Queries) error) error {
 	return errors.New("the sweep has nothing to expire here")
 }

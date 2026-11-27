@@ -47,6 +47,9 @@ type WorkspaceDeps struct {
 	// Client calls the room; its policy decides which addresses a room may
 	// be at, as for a command MCP server's.
 	Client *http.Client
+	// Waits keeps a run's wait for room when the sandbox has none
+	// (roomwait.go). Without it a refusal is the call's error.
+	Waits RoomWaits
 }
 
 // WithWorkspaces lets runs of agents granted the workspace have one. Without
@@ -71,12 +74,16 @@ func workspaceClass(name string) approval.Class {
 type runWorkspace struct {
 	deps          WorkspaceDeps
 	team, session uuid.UUID
+	run, root     uuid.UUID
 
 	mu     sync.Mutex
 	client *workroom.Client
+	// waiting is what every call reads once the run waits for room.
+	waiting error
 }
 
-// open is the workspace's client, ensuring its room on the first call.
+// open is the workspace's client, ensuring its room on the first call. A
+// room the sandbox has no room for makes the run wait for it.
 func (w *runWorkspace) open(ctx context.Context) (*workroom.Client, error) {
 	w.mu.Lock()
 	if c := w.client; c != nil {
@@ -89,9 +96,15 @@ func (w *runWorkspace) open(ctx context.Context) (*workroom.Client, error) {
 		return c, nil
 	}
 	defer w.mu.Unlock()
+	if w.waiting != nil {
+		return nil, w.waiting
+	}
 	ep, err := w.deps.Rooms.Ensure(ctx, w.team, w.session)
 	if errors.Is(err, sandbox.ErrReplaced) {
 		return nil, err
+	}
+	if sandbox.Waitable(err) && w.deps.Waits != nil {
+		return nil, w.wait(ctx, err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("the workspace could not be started: %w", err)

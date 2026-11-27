@@ -10,6 +10,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 )
 
@@ -151,7 +152,35 @@ var (
 	ErrPreparing = errors.New("the team's sandbox is still being prepared, which takes a few minutes " +
 		"the first time, after an upgrade and after its size changes. Nothing ran. Tell the person it " +
 		"is being prepared and will be ready in a few minutes, rather than calling again now")
+	// ErrUnavailable is a provider that did not answer: unreachable, or a
+	// gateway in front of it saying it is down, as during its deploy.
+	// Nothing was made; a later call may be.
+	ErrUnavailable = errors.New("the team's sandbox provider did not answer. Nothing ran; try again in a few minutes")
 )
+
+// Waitable is a refusal that waiting can end: the provider has no room now,
+// is still preparing what rooms start from, or did not answer. Nothing ran
+// for it, so the same call can be made again once there is room.
+func Waitable(err error) bool {
+	return errors.Is(err, ErrFull) || errors.Is(err, ErrPreparing) || errors.Is(err, ErrUnavailable)
+}
+
+// Unanswered is a request to a provider that got no answer, as
+// ErrUnavailable; one whose context ended is the caller giving up, and stays
+// as it is.
+func Unanswered(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrUnavailable, err)
+}
+
+// Down is a status a gateway in front of a provider answers with when the
+// provider is not there behind it.
+func Down(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable ||
+		status == http.StatusGatewayTimeout
+}
 
 // A Build is one build of an E2B team's room template, as E2B names it.
 type Build struct {
