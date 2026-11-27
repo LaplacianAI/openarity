@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/workroom"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -30,7 +31,8 @@ type Reads interface {
 const (
 	before        = 6     // messages before the run, for context
 	after         = 2     // people's messages after it
-	argChars      = 300   // a tool call's arguments, and its result
+	argChars      = 300   // a tool call's arguments, and a skip's reason
+	resultChars   = 400   // a tool's result or error: its first and last 200
 	answerChars   = 6000  // the root run's answer
 	childChars    = 1500  // a delegate's input and answer, in a digest
 	eventsPerRun  = 2000  // the trace read of one run
@@ -76,9 +78,10 @@ type toolCallPayload struct {
 }
 
 type toolResultPayload struct {
-	Name   string `json:"name"`
-	Output string `json:"output"`
-	Error  string `json:"error"`
+	Name      string `json:"name"`
+	Output    string `json:"output"`
+	Error     string `json:"error"`
+	Truncated bool   `json:"truncated"` // the stored output lost its tail
 }
 
 type stepPayload struct {
@@ -211,11 +214,7 @@ func traceOf(ctx context.Context, r Reads, run db.ListTreeRunsRow) ([]string, he
 		case "tool_result":
 			var p toolResultPayload
 			if json.Unmarshal(e.Payload, &p) == nil {
-				if p.Error != "" {
-					lines = append(lines, fmt.Sprintf("  %s failed: %s", p.Name, clip(p.Error, argChars)))
-				} else {
-					lines = append(lines, fmt.Sprintf("  %s returned: %s", p.Name, clip(p.Output, argChars)))
-				}
+				lines = append(lines, resultLine(p))
 			}
 		case "tool_unavailable", "skipped":
 			var p namedReason
@@ -240,6 +239,43 @@ func traceOf(ctx context.Context, r Reads, run db.ListTreeRunsRow) ([]string, he
 		lines = append(lines, fmt.Sprintf("[%s ended: %s]", who, end))
 	}
 	return lines, h, nil
+}
+
+// resultLine is one tool result as the trace reads it, by both its ends, as
+// a long command's error is in its last lines. A Bash command that ran out
+// of time, or exited non-zero, reads as such; one whose stored output was cut
+// before its end reads as cut, as its exit line went with the tail.
+func resultLine(p toolResultPayload) string {
+	if p.Error != "" {
+		return fmt.Sprintf("  %s failed: %s", p.Name, clipEnds(p.Error, resultChars))
+	}
+	shown := clipEnds(p.Output, resultChars)
+	if p.Name == bashTool {
+		switch code, exited := workroom.ExitOf(p.Output); {
+		case workroom.TimedOut(p.Output): // it also ends with an exit line
+			return fmt.Sprintf("  %s timed out: %s", p.Name, shown)
+		case p.Truncated: // a last line of a cut output is the command's own
+			return fmt.Sprintf("  %s returned (output cut): %s", p.Name, shown)
+		case exited:
+			return fmt.Sprintf("  %s failed (exit %d): %s", p.Name, code, shown)
+		}
+	}
+	return fmt.Sprintf("  %s returned: %s", p.Name, shown)
+}
+
+// bashTool is the runtime's workspace tool whose results carry workroom's
+// timeout note and exit line.
+const bashTool = "Bash"
+
+// clipEnds is s whole when it fits in n characters, else its first and last
+// n/2, cut on rune boundaries, either side of " … ".
+func clipEnds(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n+3 {
+		return s
+	}
+	return string(r[:n/2]) + " … " + string(r[len(r)-n/2:])
 }
 
 func firstOf(a, b string) string {

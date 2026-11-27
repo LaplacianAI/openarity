@@ -426,3 +426,40 @@ func TestARuleAllowingBashLetsItRunUnasked(t *testing.T) {
 		t.Errorf("Bash with a rule allowing it: %v, want allow", got.Verdict)
 	}
 }
+
+// The model is told how a pipe hides a failure, so it keeps the status when
+// it filters a command's output.
+func TestBashSaysAPipeHidesAFailure(t *testing.T) {
+	t.Parallel()
+
+	var desc string
+	for _, tl := range (&runWorkspace{}).tools() {
+		if tl.Name == BashToolName {
+			desc = tl.Description
+		}
+	}
+	if !strings.Contains(desc, "set -o pipefail") || !strings.Contains(desc, "PIPESTATUS") {
+		t.Errorf("Bash's description does not say how a pipe hides a failure: %q", desc)
+	}
+}
+
+// What execText writes is what workroom reads back, so the improver tells a
+// command that did not end well from the same text the model reads.
+func TestACommandsEndReadsBackFromItsText(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []int{0, 1, 2, 127, -1} {
+		for _, timedOut := range []bool{false, true} {
+			for _, out := range [][2]string{{"", ""}, {"out\n", ""}, {"out", "boom\n"}, {"", "boom"}} {
+				text := execText(execOf(out[0], out[1], code, timedOut))
+				got, ok := workroom.ExitOf(text)
+				if ok != (code != 0) || got != code && code != 0 {
+					t.Errorf("exit %d, timed out %v, %q: read back %d, %v", code, timedOut, text, got, ok)
+				}
+				if workroom.TimedOut(text) != timedOut {
+					t.Errorf("exit %d, timed out %v, %q: read back as timed out %v", code, timedOut, text, !timedOut)
+				}
+			}
+		}
+	}
+}

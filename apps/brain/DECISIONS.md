@@ -1589,6 +1589,23 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   job, imports them without importing a route (#277). Before, the improver
   reached the rules through three handler packages, so a handler change
   could break a job that serves no request.
+- **The judge and the improver read a tool's result by both its ends.** A
+  run's evidence shows each result, and each tool error, as its first and
+  last 200 characters (`resultChars`), since a long command's error is in
+  its last lines. A Bash result reads by how the command ended: `Bash timed
+  out` when it begins with workroom's `TimedOutNote` (it also ends with an
+  exit line, so this is read first); `Bash returned (output cut)` when the
+  stored output lost its tail (`truncated`, past the 64 KiB an event keeps),
+  as its exit line went with it; `Bash failed (exit N)` when its whole last
+  line is workroom's `ExitLine`. The runtime writes both markers and the
+  improver reads them through `workroom`, and a test reads back every exit
+  and timeout `execText` writes, so neither side can change them alone. A
+  command whose own last line is exactly `exit code N` reads as failed; that
+  is accepted. A pipe still hides a failure, as its status is its last
+  command's: Bash's description says to use `set -o pipefail` or
+  `${PIPESTATUS[0]}` when the status matters. It is not turned on for every
+  command, as `grep` finding nothing and `head` closing a pipe early would
+  read as failures.
 - **A blueprint writes through the domain packages' own code, in one
   transaction.** `internal/api/blueprints` turns each item into the request
   its own API takes and runs `harness.Validate`, `mcpservers.Parse` and
