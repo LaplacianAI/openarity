@@ -3712,6 +3712,9 @@ paths:
       responses:
         "201":
           description: Made
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -3733,6 +3736,9 @@ paths:
                 examples: ["you already have 5 schedules and watchers, which is this team's limit per person; delete one first"]
         "503":
           description: The secret store did not answer; a webhook watcher was not made
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             text/plain:
               schema:
@@ -3912,6 +3918,9 @@ paths:
       responses:
         "200":
           description: Taken over
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -3931,6 +3940,15 @@ paths:
               schema:
                 type: string
                 examples: ["this watcher answers in its maker's direct messages or their own thread, so it cannot be handed on; delete it and make another"]
+        "503":
+          description: The secret store did not answer; the watcher was not taken over, and its old secret still works
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/plain:
+              schema:
+                type: string
   /teams/{id}/watchers/{watcherID}/secret:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -3950,6 +3968,9 @@ paths:
       responses:
         "201":
           description: Made
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -3970,6 +3991,9 @@ paths:
                 type: string
         "503":
           description: The secret store did not answer; the old secret still works
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             text/plain:
               schema:
@@ -5048,6 +5072,18 @@ components:
       schema:
         type: string
         format: uuid
+
+  headers:
+    RetryAfter:
+      description: Seconds to wait before trying again
+      schema:
+        type: integer
+        examples: [30]
+    NoStore:
+      description: "`no-store` when the answer carries a secret, so no cache on the way keeps it"
+      schema:
+        type: string
+        examples: ["no-store"]
 
   responses:
     Unauthenticated:

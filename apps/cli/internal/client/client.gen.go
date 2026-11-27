@@ -26317,9 +26317,19 @@ func (r ListWatchersResponse) ContentType() string {
 	return ""
 }
 
+// CreateWatcherResponse201Headers the declared response headers of an HTTP 201 response for CreateWatcher
+type CreateWatcherResponse201Headers struct {
+	CacheControl *string
+}
+
 // CreateWatcherResponse401Headers the declared response headers of an HTTP 401 response for CreateWatcher
 type CreateWatcherResponse401Headers struct {
 	WWWAuthenticate *string
+}
+
+// CreateWatcherResponse503Headers the declared response headers of an HTTP 503 response for CreateWatcher
+type CreateWatcherResponse503Headers struct {
+	RetryAfter *int
 }
 
 type CreateWatcherResponse struct {
@@ -26327,8 +26337,12 @@ type CreateWatcherResponse struct {
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *Watcher
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *CreateWatcherResponse201Headers
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *CreateWatcherResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *CreateWatcherResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -26646,9 +26660,19 @@ func (r CheckWatcherNowResponse) ContentType() string {
 	return ""
 }
 
+// RollWatcherSecretResponse201Headers the declared response headers of an HTTP 201 response for RollWatcherSecret
+type RollWatcherSecretResponse201Headers struct {
+	CacheControl *string
+}
+
 // RollWatcherSecretResponse401Headers the declared response headers of an HTTP 401 response for RollWatcherSecret
 type RollWatcherSecretResponse401Headers struct {
 	WWWAuthenticate *string
+}
+
+// RollWatcherSecretResponse503Headers the declared response headers of an HTTP 503 response for RollWatcherSecret
+type RollWatcherSecretResponse503Headers struct {
+	RetryAfter *int
 }
 
 type RollWatcherSecretResponse struct {
@@ -26656,8 +26680,12 @@ type RollWatcherSecretResponse struct {
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *WatcherSecret
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *RollWatcherSecretResponse201Headers
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *RollWatcherSecretResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RollWatcherSecretResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -26694,9 +26722,19 @@ func (r RollWatcherSecretResponse) ContentType() string {
 	return ""
 }
 
+// TakeOverWatcherResponse200Headers the declared response headers of an HTTP 200 response for TakeOverWatcher
+type TakeOverWatcherResponse200Headers struct {
+	CacheControl *string
+}
+
 // TakeOverWatcherResponse401Headers the declared response headers of an HTTP 401 response for TakeOverWatcher
 type TakeOverWatcherResponse401Headers struct {
 	WWWAuthenticate *string
+}
+
+// TakeOverWatcherResponse503Headers the declared response headers of an HTTP 503 response for TakeOverWatcher
+type TakeOverWatcherResponse503Headers struct {
+	RetryAfter *int
 }
 
 type TakeOverWatcherResponse struct {
@@ -26704,8 +26742,12 @@ type TakeOverWatcherResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *Watcher
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *TakeOverWatcherResponse200Headers
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *TakeOverWatcherResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *TakeOverWatcherResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -34288,6 +34330,16 @@ func ParseCreateWatcherResponse(rsp *http.Response) (*CreateWatcherResponse, err
 	}
 
 	switch {
+	case rsp.StatusCode == 201:
+		var headers CreateWatcherResponse201Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers201 = &headers
 	case rsp.StatusCode == 401:
 		var headers CreateWatcherResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
@@ -34298,6 +34350,16 @@ func ParseCreateWatcherResponse(rsp *http.Response) (*CreateWatcherResponse, err
 			headers.WWWAuthenticate = &value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers CreateWatcherResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -34551,6 +34613,16 @@ func ParseRollWatcherSecretResponse(rsp *http.Response) (*RollWatcherSecretRespo
 	}
 
 	switch {
+	case rsp.StatusCode == 201:
+		var headers RollWatcherSecretResponse201Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers201 = &headers
 	case rsp.StatusCode == 401:
 		var headers RollWatcherSecretResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
@@ -34561,6 +34633,16 @@ func ParseRollWatcherSecretResponse(rsp *http.Response) (*RollWatcherSecretRespo
 			headers.WWWAuthenticate = &value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers RollWatcherSecretResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -34590,6 +34672,16 @@ func ParseTakeOverWatcherResponse(rsp *http.Response) (*TakeOverWatcherResponse,
 	}
 
 	switch {
+	case rsp.StatusCode == 200:
+		var headers TakeOverWatcherResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	case rsp.StatusCode == 401:
 		var headers TakeOverWatcherResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
@@ -34600,6 +34692,16 @@ func ParseTakeOverWatcherResponse(rsp *http.Response) (*TakeOverWatcherResponse,
 			headers.WWWAuthenticate = &value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers TakeOverWatcherResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

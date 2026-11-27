@@ -26,9 +26,7 @@ func TestAWebhookWatcherThroughItsRoutes(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body)
 	}
-	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
-		t.Errorf("the answer with the secret is cached as %q, want no-store", cc)
-	}
+	noStore(t, "create", rec)
 	v := decode[watcher](t, rec)
 	if !strings.HasPrefix(v.Secret, "oawh_") || v.HookURL == nil ||
 		!strings.HasPrefix(*v.HookURL, "https://hooks.example/hooks/watchers/") || v.URL != nil || v.EverySeconds != nil {
@@ -44,12 +42,54 @@ func TestAWebhookWatcherThroughItsRoutes(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("roll = %d %s", rec.Code, rec.Body)
 	}
+	noStore(t, "roll", rec)
 	rolled := decode[hookSecret](t, rec)
 	if rolled.Secret == "" || rolled.Secret == v.Secret || rolled.URL == nil || *rolled.URL != *v.HookURL {
 		t.Errorf("rolled = %+v, want a new secret for the same URL", rolled)
 	}
+	w.vault.down = true
+	rec = w.serve(t, w.maker, "POST", path+"/secret", nil)
+	want(t, rec, http.StatusServiceUnavailable, "secret store")
+	if ra := rec.Header().Get("Retry-After"); ra != "30" {
+		t.Errorf("a store that did not answer says retry after %q, want 30", ra)
+	}
+	w.vault.down = false
 	page := decode[watcher](t, w.serve(t, w.maker, "POST", "/watchers", pageWatcher("price")))
 	want(t, w.serve(t, w.maker, "POST", "/watchers/"+page.ID.String()+"/secret", nil), http.StatusBadRequest, "only a webhook")
+}
+
+// noStore fails unless an answer carrying a secret is kept out of caches.
+func noStore(t *testing.T, what string, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("the %s answer with the secret is cached as %q, want no-store", what, cc)
+	}
+}
+
+// Taken over, a webhook watcher's new secret is in the answer, kept out of
+// caches as the one it was made with.
+func TestATakenOverWebhookWatcherAnswersItsNewSecret(t *testing.T) {
+	w := newWorld(t)
+	v := decode[watcher](t, w.serve(t, w.maker, "POST", "/watchers", webhookWatcher("releases")))
+	if _, err := w.raw.Exec(t.Context(), `UPDATE watchers SET created_by = NULL, status = 'paused', paused_reason = 'maker_gone' WHERE id = $1`, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.holds[manageEveryones] = true
+	w.vault.down = true
+	rec := w.serve(t, w.other, "POST", "/watchers/"+v.ID.String()+"/take-over", nil)
+	want(t, rec, http.StatusServiceUnavailable, "secret store")
+	if ra := rec.Header().Get("Retry-After"); ra != "30" {
+		t.Errorf("a store that did not answer says retry after %q, want 30", ra)
+	}
+	w.vault.down = false
+	rec = w.serve(t, w.other, "POST", "/watchers/"+v.ID.String()+"/take-over", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("take-over = %d %s", rec.Code, rec.Body)
+	}
+	noStore(t, "take-over", rec)
+	if got := decode[watcher](t, rec); got.Secret == "" || got.Secret == v.Secret {
+		t.Errorf("taken over with secret %q, want a new one", got.Secret)
+	}
 }
 
 // The hook answers 202 once a signed delivery is kept, and says no more than

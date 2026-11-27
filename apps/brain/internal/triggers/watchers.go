@@ -599,8 +599,10 @@ func (s *Service) TakeOverWatcher(ctx context.Context, who Who, ref Ref) (Watche
 		if row.Source != SourceWebhook {
 			return nil
 		}
-		// Last, so nothing after it can fail: should the commit, the old
-		// maker's secret has stopped working all the same.
+		// Before the watcher is saved, so a failure leaves the safe side:
+		// should the save or the commit fail, the old maker's secret has
+		// stopped working all the same, and the new one is never shown, so
+		// the admin makes another with a roll.
 		secret = newSecret()
 		return s.putSecret(ctx, row, secret)
 	})

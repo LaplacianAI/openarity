@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -41,8 +42,9 @@ type world struct {
 
 // vault is the secret store, in memory.
 type vault struct {
-	mu sync.Mutex
-	m  map[string]map[string]string
+	mu   sync.Mutex
+	m    map[string]map[string]string
+	down bool // a store that does not answer a write
 }
 
 func (v *vault) Get(_ context.Context, path, key string) (string, error) {
@@ -58,6 +60,9 @@ func (v *vault) Get(_ context.Context, path, key string) (string, error) {
 func (v *vault) PutAll(_ context.Context, path string, values map[string]string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.down {
+		return errors.New("the store is down")
+	}
 	v.m[path] = values
 	return nil
 }
