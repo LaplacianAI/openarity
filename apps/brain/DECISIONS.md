@@ -524,12 +524,28 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   `running` and returns no answer, so the parent is resumed elsewhere rather
   than told its child failed. `ours()` is the list of causes that are the
   brain's.
-- **A resumed run reaps the subtree it left running** (decision A). Before
-  its `resumed` event, `ReapChildren` fails every running run beneath it with
-  `reapReason`. The resumed model has the transcript up to the turn that
-  delegated, so it asks again, and a child can only be rejoined once runs can
-  be resumed by id (runtime slice 8). The cost is the reaped child's spend.
-  Leaving it running would charge for two answers to one question.
+- **A resumed run carries on the children its worker left, and reaps the
+  rest.** It replaces decision A, which reaped every running child and had
+  the model ask again: a deploy restarted a review's delegates from nothing,
+  and #311's first review on staging ran 17 child runs in 57 minutes where
+  one runs about 5 (about 11M tokens a week went to children that failed or
+  were cancelled). After its `resumed` event and its catch-up, `carryOn`
+  lists the running children that have not beaten for `heartbeatLostAfter`
+  (60 s; the parent itself is taken over only after `staleAfter`, 90 s, so a
+  dead worker's children are past it by a beat, which a test holds), takes up
+  each whose call in the last turn closeCalls closed as ended, one child a
+  call, together as a pattern that runs a turn's calls together ran them, and
+  puts its report, or its waiting report, in that call. `AdoptOrphan` takes
+  only that parent's child, so a stray resume cannot take another tree's.
+  The reports are saved at once, as a child carried on to its end is never
+  listed again. A child resumes from its own transcript like any run, so it
+  carries on its own children. One that cannot be carried on costs the run
+  only its report: its call stays ended, unless the worker is stopping or the
+  store fails to hand it over, which fail the run, as asking again could
+  repeat what the child did. Then `ReapChildren` fails what is still
+  running, with `reapReason`: a child that beats, which is another worker's,
+  or one whose call is not open. The catch-up comes first so a child carried
+  on that parks is not taken up again in the same resume.
 - **Whatever ends a run ends what it left running.** `finish` reaps the
   run's running subtree once it has recorded the run, so a resume that fails
   before its own reap (its agent deleted, its clock spent) leaves no child
@@ -1630,6 +1646,23 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   job, imports them without importing a route (#277). Before, the improver
   reached the rules through three handler packages, so a handler change
   could break a job that serves no request.
+- **The judge and the improver read a tool's result by both its ends.** A
+  run's evidence shows each result, and each tool error, as its first and
+  last 200 characters (`resultChars`), since a long command's error is in
+  its last lines. A Bash result reads by how the command ended: `Bash timed
+  out` when it begins with workroom's `TimedOutNote` (it also ends with an
+  exit line, so this is read first); `Bash returned (output cut)` when the
+  stored output lost its tail (`truncated`, past the 64 KiB an event keeps),
+  as its exit line went with it; `Bash failed (exit N)` when its whole last
+  line is workroom's `ExitLine`. The runtime writes both markers and the
+  improver reads them through `workroom`, and a test reads back every exit
+  and timeout `execText` writes, so neither side can change them alone. A
+  command whose own last line is exactly `exit code N` reads as failed; that
+  is accepted. A pipe still hides a failure, as its status is its last
+  command's: Bash's description says to use `set -o pipefail` or
+  `${PIPESTATUS[0]}` when the status matters. It is not turned on for every
+  command, as `grep` finding nothing and `head` closing a pipe early would
+  read as failures.
 - **A blueprint writes through the domain packages' own code, in one
   transaction.** `internal/api/blueprints` turns each item into the request
   its own API takes and runs `harness.Validate`, `mcpservers.Parse` and

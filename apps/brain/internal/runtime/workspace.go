@@ -151,7 +151,9 @@ func (w *runWorkspace) tools() []agent.Tool {
 				"Every agent working on this conversation shares it, and its files stay while it is in use; an idle " +
 				"one is cleared. Each call starts in " + workroom.Dir + " in a fresh shell: cd and exported variables " +
 				"do not carry over, and anything left running in the background is stopped when the command ends. " +
-				"stdout and stderr are each cut to their first and last 128 KB.",
+				"stdout and stderr are each cut to their first and last 128 KB. A pipe reports only its last " +
+				"command's exit, so cmd | grep ... | head reports success when cmd failed; use set -o pipefail " +
+				"or ${PIPESTATUS[0]} when cmd's status matters.",
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
 				`"command":{"type":"string","description":"The command, run with bash -c"},` +
 				`"timeout_seconds":{"type":"integer","minimum":1,"maximum":270,"description":"Stop it after this long; 120 if left out"}},` +
@@ -281,10 +283,13 @@ func (w *runWorkspace) tools() []agent.Tool {
 	}
 }
 
+// execText is a command's result as the model reads it. Its first line on a
+// timeout and its last line on a non-zero exit are workroom's, which the
+// improver's evidence reads back to tell a command that did not end well.
 func execText(e workroom.Exec) string {
 	var b strings.Builder
 	if e.TimedOut {
-		b.WriteString("The command ran out of time and was stopped, with everything it started.\n")
+		b.WriteString(workroom.TimedOutNote + "\n")
 	}
 	b.WriteString(e.Stdout)
 	if e.Stderr != "" {
@@ -297,7 +302,7 @@ func execText(e workroom.Exec) string {
 		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "exit code %d", e.ExitCode)
+		b.WriteString(workroom.ExitLine(e.ExitCode))
 	}
 	if b.Len() == 0 {
 		return "(no output)"
