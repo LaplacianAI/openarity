@@ -478,21 +478,36 @@ func (q *Queries) GetWatcherView(ctx context.Context, arg GetWatcherViewParams) 
 }
 
 const heldDeliveries = `-- name: HeldDeliveries :many
-SELECT key, received_at, body, event FROM watcher_deliveries
-WHERE watcher_id = $1 AND held
-ORDER BY received_at, key
+SELECT h.key, h.received_at, h.body, h.event, h.total::bigint AS total
+FROM (
+    SELECT d.key, d.received_at, d.body, d.event,
+           sum(octet_length(d.body)) OVER w AS upto, row_number() OVER w AS n, count(*) OVER () AS total
+    FROM watcher_deliveries d
+    WHERE d.watcher_id = $1 AND d.held
+    WINDOW w AS (ORDER BY d.received_at, d.key)
+) h
+WHERE h.n = 1 OR h.upto <= $2::bigint
+ORDER BY h.received_at, h.key
 `
+
+type HeldDeliveriesParams struct {
+	WatcherID uuid.UUID
+	Budget    int64
+}
 
 type HeldDeliveriesRow struct {
 	Key        string
 	ReceivedAt time.Time
 	Body       []byte
 	Event      *string
+	Total      int64
 }
 
-// What a webhook watcher holds, oldest first.
-func (q *Queries) HeldDeliveries(ctx context.Context, watcherID uuid.UUID) ([]HeldDeliveriesRow, error) {
-	rows, err := q.db.Query(ctx, heldDeliveries, watcherID)
+// What a webhook watcher holds that one run can take in, oldest first: the
+// first always, then each while the bodies fit the budget. total is how many
+// it holds in all.
+func (q *Queries) HeldDeliveries(ctx context.Context, arg HeldDeliveriesParams) ([]HeldDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, heldDeliveries, arg.WatcherID, arg.Budget)
 	if err != nil {
 		return nil, err
 	}
@@ -505,6 +520,7 @@ func (q *Queries) HeldDeliveries(ctx context.Context, watcherID uuid.UUID) ([]He
 			&i.ReceivedAt,
 			&i.Body,
 			&i.Event,
+			&i.Total,
 		); err != nil {
 			return nil, err
 		}
@@ -586,10 +602,25 @@ UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
 WHERE watcher_id = $1 AND held
 `
 
-// Held deliveries let go: taken in by a run, or dropped by a resume or a
-// delete. Each is still remembered for its day.
+// Every held delivery let go: dropped by a resume or a delete.
 func (q *Queries) LetGoOfHeldDeliveries(ctx context.Context, watcherID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, letGoOfHeldDeliveries, watcherID)
+	return err
+}
+
+const letGoOfTakenDeliveries = `-- name: LetGoOfTakenDeliveries :exec
+UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
+WHERE watcher_id = $1 AND held AND key = ANY($2::text[])
+`
+
+type LetGoOfTakenDeliveriesParams struct {
+	WatcherID uuid.UUID
+	Keys      []string
+}
+
+// Held deliveries a run took in, let go; each is still remembered for its day.
+func (q *Queries) LetGoOfTakenDeliveries(ctx context.Context, arg LetGoOfTakenDeliveriesParams) error {
+	_, err := q.db.Exec(ctx, letGoOfTakenDeliveries, arg.WatcherID, arg.Keys)
 	return err
 }
 
@@ -1235,6 +1266,29 @@ func (q *Queries) TargetFetched(ctx context.Context, arg TargetFetchedParams) er
 	return err
 }
 
+const trimHeldDeliveries = `-- name: TrimHeldDeliveries :execrows
+UPDATE watcher_deliveries t SET held = false, body = NULL, event = NULL
+WHERE t.watcher_id = $1 AND t.held AND t.key IN (
+    SELECT d.key FROM watcher_deliveries d
+    WHERE d.watcher_id = t.watcher_id AND d.held
+    ORDER BY d.received_at DESC, d.key DESC
+    OFFSET $2::int)
+`
+
+type TrimHeldDeliveriesParams struct {
+	WatcherID uuid.UUID
+	Keep      int32
+}
+
+// A watcher holds at most keep deliveries: the oldest beyond them are let go.
+func (q *Queries) TrimHeldDeliveries(ctx context.Context, arg TrimHeldDeliveriesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, trimHeldDeliveries, arg.WatcherID, arg.Keep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertWatchTarget = `-- name: UpsertWatchTarget :one
 INSERT INTO watch_targets (id, kind, url, host, next_check_at)
 VALUES ($1, $2, $3, $4, $5)
@@ -1337,14 +1391,15 @@ func (q *Queries) WatcherIDByName(ctx context.Context, arg WatcherIDByNameParams
 
 const watchersReadyToRelease = `-- name: WatchersReadyToRelease :many
 SELECT w.id, w.team_id FROM watchers w
-WHERE w.source = 'webhook' AND w.status = 'active'
-  AND (w.last_run_at IS NULL OR w.last_run_at + make_interval(secs => w.cooldown_seconds) <= $1::timestamptz)
+WHERE w.source = 'webhook' AND w.status = 'active' AND w.id > $1::uuid
+  AND (w.last_run_at IS NULL OR w.last_run_at + make_interval(secs => w.cooldown_seconds) <= $2::timestamptz)
   AND EXISTS (SELECT 1 FROM watcher_deliveries d WHERE d.watcher_id = w.id AND d.held)
 ORDER BY w.id
-LIMIT $2
+LIMIT $3
 `
 
 type WatchersReadyToReleaseParams struct {
+	After    uuid.UUID
 	Now      time.Time
 	PageSize int32
 }
@@ -1354,9 +1409,10 @@ type WatchersReadyToReleaseRow struct {
 	TeamID uuid.UUID
 }
 
-// Active webhook watchers holding deliveries whose cooldown has passed.
+// Active webhook watchers holding deliveries whose cooldown has passed, a
+// page at a time after the last one seen.
 func (q *Queries) WatchersReadyToRelease(ctx context.Context, arg WatchersReadyToReleaseParams) ([]WatchersReadyToReleaseRow, error) {
-	rows, err := q.db.Query(ctx, watchersReadyToRelease, arg.Now, arg.PageSize)
+	rows, err := q.db.Query(ctx, watchersReadyToRelease, arg.After, arg.Now, arg.PageSize)
 	if err != nil {
 		return nil, err
 	}

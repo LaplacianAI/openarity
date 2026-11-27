@@ -12,9 +12,10 @@ import (
 )
 
 // NewHooks is the webhook watchers' URL, on the webhook listener only: it
-// carries no token, so the signature is all that admits a delivery (§7). It
-// answers 202 once the delivery is kept, whatever became of it, so a caller
-// learns nothing of the team's limits.
+// carries no token, so the signature is all that admits a delivery (§7). A
+// signed delivery to an active watcher is answered 202 once it is kept,
+// whether it started a run, was held or met the team's limits, so a caller
+// learns nothing of them.
 func NewHooks(logger *slog.Logger, service *triggers.Service) *api.Router {
 	r := api.NewPublicRouter("/hooks/watchers")
 	r.Post("/{hookID}", func(w http.ResponseWriter, r *http.Request) {
@@ -32,27 +33,16 @@ func NewHooks(logger *slog.Logger, service *triggers.Service) *api.Router {
 		err = service.Deliver(r.Context(), r.PathValue("hookID"), triggers.Delivery{
 			Header: r.Header, Body: body, ReceivedAt: received,
 		})
-		var status int
-		switch triggers.KindOf(err) {
-		case 0:
-			if err == nil {
-				w.WriteHeader(http.StatusAccepted)
-				return
-			}
-			logger.ErrorContext(r.Context(), "A webhook delivery was not kept", "error", err)
-			http.Error(w, "try again", http.StatusInternalServerError)
+		if err == nil {
+			w.WriteHeader(http.StatusAccepted)
 			return
-		case triggers.NotFound:
-			status = http.StatusNotFound
-		case triggers.Conflict:
-			status = http.StatusConflict
-		case triggers.Unauthorized:
-			status = http.StatusUnauthorized
-		case triggers.Unavailable:
-			status = http.StatusServiceUnavailable
-		case triggers.Invalid, triggers.Limit, triggers.Forbidden:
-			status = http.StatusBadRequest
 		}
+		status, ok := statusOf(triggers.KindOf(err))
+		if !ok {
+			logger.ErrorContext(r.Context(), "A webhook delivery was not kept", "error", err)
+			status = http.StatusInternalServerError
+		}
+		refused(w, status)
 		http.Error(w, http.StatusText(status), status)
 	})
 	return r

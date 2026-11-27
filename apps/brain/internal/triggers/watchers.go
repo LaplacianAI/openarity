@@ -96,11 +96,11 @@ func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in 
 	if err != nil {
 		return WatcherView{}, err
 	}
-	var poll poll
+	var how poll
 	if in.Source == SourceWebhook {
-		poll.cooldown, err = hooked(in)
+		how.cooldown, err = hooked(in)
 	} else {
-		poll, err = polled(in, l)
+		how, err = polled(in, l)
 	}
 	if err != nil {
 		return WatcherView{}, err
@@ -117,33 +117,38 @@ func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in 
 
 	now := s.now()
 	id := uuid.New()
-	hook, secret := newHook()
+	var hook, secret string
+	if in.Source == SourceWebhook {
+		hook = newHookID()
+		if !origin.viaTool() {
+			secret = newSecret()
+		}
+	}
 	err = s.store.InTx(ctx, func(q *db.Queries) error {
 		if err := mayMake(ctx, q, who, in.AgentID, l); err != nil {
 			return err
 		}
 		row := db.CreateWatcherParams{
 			ID: id, TeamID: who.Team, CreatedBy: who.User, AgentID: in.AgentID, Hub: in.AgentID == nil,
-			Name: name, Objective: objective, Source: in.Source, Selector: poll.selector,
-			CooldownSeconds: seconds(poll.cooldown), Status: Active, Target: TargetOwn,
+			Name: name, Objective: objective, Source: in.Source, Selector: how.selector,
+			CooldownSeconds: seconds(how.cooldown), Status: Active, Target: TargetOwn,
 		}
 		if in.Source == SourceWebhook {
 			row.HookID = &hook
 		} else {
-			secret = ""
 			target, err := q.UpsertWatchTarget(ctx, db.UpsertWatchTargetParams{
-				ID: uuid.New(), Kind: in.Source, Url: poll.url, Host: poll.host, NextCheckAt: now,
+				ID: uuid.New(), Kind: in.Source, Url: how.url, Host: how.host, NextCheckAt: now,
 			})
 			if err != nil {
 				return fmt.Errorf("save the address it watches: %w", err)
 			}
-			row.TargetID, row.EverySeconds, row.NextCheckAt = &target.ID, ptr(seconds(poll.every)), &now
+			row.TargetID, row.EverySeconds, row.NextCheckAt = &target.ID, ptr(seconds(how.every)), &now
 		}
 		if origin.viaTool() {
 			row.Status, row.NextCheckAt = Proposed, nil
 			row.ProposedRun, row.ProposedIn = &origin.Run, &origin.Session
 			if in.Source == SourceWebhook {
-				row.Status, secret = WaitingSecret, ""
+				row.Status = WaitingSecret
 			}
 		}
 		session, err := sessionAt(ctx, q, who, at, id)
@@ -163,14 +168,20 @@ func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in 
 		if secret == "" {
 			return nil
 		}
+		// Written in the transaction that saves the row, so none is made
+		// without its secret kept; one written for a row that then fails to
+		// commit is at a path nothing reads.
 		return s.putSecret(ctx, &db.Watcher{ID: id, TeamID: who.Team}, secret)
 	})
 	if err != nil {
 		return WatcherView{}, err
 	}
 	v, err := s.watcherView(ctx, who, id)
+	if err != nil {
+		return WatcherView{}, err
+	}
 	v.Secret = secret
-	return v, err
+	return v, nil
 }
 
 // sessionAt is the trigger session a schedule or watcher is made with: where
@@ -548,11 +559,14 @@ func (s *Service) DeleteWatcher(ctx context.Context, who Who, ref Ref) error {
 }
 
 // TakeOverWatcher gives a paused watcher whose maker cannot resume it to the
-// admin asking, as with a schedule. It stays paused until they resume it.
+// admin asking, as with a schedule. It stays paused until they resume it. A
+// webhook watcher gets a new secret, shown once: the one its old maker held
+// would otherwise sign what now runs as the admin.
 func (s *Service) TakeOverWatcher(ctx context.Context, who Who, ref Ref) (WatcherView, error) {
 	if !who.Manage {
 		return WatcherView{}, refuse(Forbidden, "taking over a watcher takes schedule:manage")
 	}
+	var secret string
 	id, err := s.changeWatcher(ctx, who, ref, func(q *db.Queries, row *db.Watcher) error {
 		t := watcherOf(row)
 		stuck, err := makerStuck(ctx, q, t)
@@ -582,12 +596,23 @@ func (s *Service) TakeOverWatcher(ctx context.Context, who Who, ref Ref) (Watche
 		if err := q.SetWatcherSessionUser(ctx, db.SetWatcherSessionUserParams{UserID: who.User, WatcherID: row.ID}); err != nil {
 			return fmt.Errorf("hand over the watcher's conversation: %w", err)
 		}
-		return nil
+		if row.Source != SourceWebhook {
+			return nil
+		}
+		// Last, so nothing after it can fail: should the commit, the old
+		// maker's secret has stopped working all the same.
+		secret = newSecret()
+		return s.putSecret(ctx, row, secret)
 	})
 	if err != nil {
 		return WatcherView{}, err
 	}
-	return s.watcherView(ctx, who, id)
+	v, err := s.watcherView(ctx, who, id)
+	if err != nil {
+		return WatcherView{}, err
+	}
+	v.Secret = secret
+	return v, nil
 }
 
 // WatcherNews is what the caller has not yet seen of their own watchers.

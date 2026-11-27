@@ -329,22 +329,45 @@ ON CONFLICT (watcher_id, key) DO NOTHING;
 UPDATE watcher_deliveries SET held = true, body = sqlc.arg('body'), event = sqlc.narg('event')
 WHERE watcher_id = sqlc.arg('watcher_id') AND key = sqlc.arg('key');
 
--- What a webhook watcher holds, oldest first.
+-- What a webhook watcher holds that one run can take in, oldest first: the
+-- first always, then each while the bodies fit the budget. total is how many
+-- it holds in all.
 -- name: HeldDeliveries :many
-SELECT key, received_at, body, event FROM watcher_deliveries
-WHERE watcher_id = sqlc.arg('watcher_id') AND held
-ORDER BY received_at, key;
+SELECT h.key, h.received_at, h.body, h.event, h.total::bigint AS total
+FROM (
+    SELECT d.key, d.received_at, d.body, d.event,
+           sum(octet_length(d.body)) OVER w AS upto, row_number() OVER w AS n, count(*) OVER () AS total
+    FROM watcher_deliveries d
+    WHERE d.watcher_id = sqlc.arg('watcher_id') AND d.held
+    WINDOW w AS (ORDER BY d.received_at, d.key)
+) h
+WHERE h.n = 1 OR h.upto <= sqlc.arg('budget')::bigint
+ORDER BY h.received_at, h.key;
 
--- Held deliveries let go: taken in by a run, or dropped by a resume or a
--- delete. Each is still remembered for its day.
+-- Held deliveries a run took in, let go; each is still remembered for its day.
+-- name: LetGoOfTakenDeliveries :exec
+UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
+WHERE watcher_id = sqlc.arg('watcher_id') AND held AND key = ANY(sqlc.arg('keys')::text[]);
+
+-- Every held delivery let go: dropped by a resume or a delete.
 -- name: LetGoOfHeldDeliveries :exec
 UPDATE watcher_deliveries SET held = false, body = NULL, event = NULL
 WHERE watcher_id = sqlc.arg('watcher_id') AND held;
 
--- Active webhook watchers holding deliveries whose cooldown has passed.
+-- A watcher holds at most keep deliveries: the oldest beyond them are let go.
+-- name: TrimHeldDeliveries :execrows
+UPDATE watcher_deliveries t SET held = false, body = NULL, event = NULL
+WHERE t.watcher_id = sqlc.arg('watcher_id') AND t.held AND t.key IN (
+    SELECT d.key FROM watcher_deliveries d
+    WHERE d.watcher_id = t.watcher_id AND d.held
+    ORDER BY d.received_at DESC, d.key DESC
+    OFFSET sqlc.arg('keep')::int);
+
+-- Active webhook watchers holding deliveries whose cooldown has passed, a
+-- page at a time after the last one seen.
 -- name: WatchersReadyToRelease :many
 SELECT w.id, w.team_id FROM watchers w
-WHERE w.source = 'webhook' AND w.status = 'active'
+WHERE w.source = 'webhook' AND w.status = 'active' AND w.id > sqlc.arg('after')::uuid
   AND (w.last_run_at IS NULL OR w.last_run_at + make_interval(secs => w.cooldown_seconds) <= sqlc.arg('now')::timestamptz)
   AND EXISTS (SELECT 1 FROM watcher_deliveries d WHERE d.watcher_id = w.id AND d.held)
 ORDER BY w.id

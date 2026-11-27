@@ -50,7 +50,7 @@ func (h *handler) rollSecret(w http.ResponseWriter, r *http.Request) {
 		h.answer(w, r, "failed to make the watcher's secret", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusCreated, hookSecret{Secret: v.Secret, URL: h.watcherView(v).HookURL})
+	h.writeSecretive(w, http.StatusCreated, v.Secret, hookSecret{Secret: v.Secret, URL: h.watcherView(v).HookURL})
 }
 
 func watcherRef(w http.ResponseWriter, r *http.Request) (triggers.Ref, bool) {
@@ -155,7 +155,7 @@ func (h *handler) createWatcher(w http.ResponseWriter, r *http.Request) {
 		h.answer(w, r, "failed to make the watcher", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusCreated, h.watcherView(v))
+	h.writeSecretive(w, http.StatusCreated, v.Secret, h.watcherView(v))
 }
 
 func (h *handler) getWatcher(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +233,7 @@ func (h *handler) oneWatcher(w http.ResponseWriter, r *http.Request, msg string,
 		h.answer(w, r, msg, err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, h.watcherView(v))
+	h.writeSecretive(w, http.StatusOK, v.Secret, h.watcherView(v))
 }
 
 func (h *handler) deleteWatcher(w http.ResponseWriter, r *http.Request) {

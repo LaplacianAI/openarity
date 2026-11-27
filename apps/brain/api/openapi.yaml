@@ -3906,7 +3906,9 @@ paths:
         it, and runs as them from then, so a caller who may not start runs is
         refused with 403, as is one without `channel:write` for a watcher
         posting where a group reads it. One answering in its maker's direct
-        messages or their own thread cannot be handed on: 409.
+        messages or their own thread cannot be handed on: 409. A webhook
+        watcher gets a new secret, in this answer only as `secret`, so the
+        one its old maker held stops working.
       responses:
         "200":
           description: Taken over
@@ -3942,7 +3944,9 @@ paths:
         (403 otherwise). A webhook watcher gets a new signing secret, shown in
         this answer only, with the URL it signs for; the old one stops working
         at once. One waiting for its secret, as an agent proposes one, becomes
-        active. A watcher that is not a webhook is 400; a deleted one 409.
+        active. A watcher that is not a webhook is 400; one that is neither
+        active, paused nor waiting for its secret (proposed, or deleted) is
+        409. Should the secret store not answer, the old secret still works.
       responses:
         "201":
           description: Made
@@ -3959,7 +3963,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: It is deleted
+          description: It is proposed or deleted
           content:
             text/plain:
               schema:
@@ -9542,7 +9546,8 @@ components:
           type: string
           description: |
             A webhook watcher's signing secret, only in the answer that made
-            it. It is not shown again; make a new one to replace it.
+            it or took it over. It is not shown again; make a new one to
+            replace it.
         created_by:
           type: string
           format: uuid

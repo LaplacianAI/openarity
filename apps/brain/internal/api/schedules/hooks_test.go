@@ -26,6 +26,9 @@ func TestAWebhookWatcherThroughItsRoutes(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body)
 	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("the answer with the secret is cached as %q, want no-store", cc)
+	}
 	v := decode[watcher](t, rec)
 	if !strings.HasPrefix(v.Secret, "oawh_") || v.HookURL == nil ||
 		!strings.HasPrefix(*v.HookURL, "https://hooks.example/hooks/watchers/") || v.URL != nil || v.EverySeconds != nil {
@@ -88,7 +91,13 @@ func TestTheHookAnswersADelivery(t *testing.T) {
 	if got := post(hook, v.Secret, bytes.Repeat([]byte("a"), 257<<10)); got != http.StatusRequestEntityTooLarge {
 		t.Errorf("257 KiB = %d, want 413", got)
 	}
+	if got := post(hook, v.Secret, bytes.Repeat([]byte("b"), 256<<10)); got != http.StatusAccepted {
+		t.Errorf("exactly 256 KiB = %d, want 202", got)
+	}
 	w.serve(t, w.maker, "PATCH", "/watchers/"+v.ID.String(), map[string]any{"status": "paused"})
+	if got := post(hook, "", []byte("y")); got != http.StatusUnauthorized {
+		t.Errorf("unsigned to a paused hook = %d, want 401, saying nothing of it", got)
+	}
 	if got := post(hook, v.Secret, []byte("y")); got != http.StatusConflict {
 		t.Errorf("paused = %d, want 409", got)
 	}

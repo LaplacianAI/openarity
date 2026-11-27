@@ -5423,7 +5423,8 @@ type Watcher struct {
 	PausedReason *string `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
 
 	// Secret A webhook watcher's signing secret, only in the answer that made
-	// it. It is not shown again; make a new one to replace it.
+	// it or took it over. It is not shown again; make a new one to
+	// replace it.
 	Secret *string `json:"secret,omitempty" yaml:"secret,omitempty"`
 
 	// Selector The CSS selector whose text a web_page watcher compares; absent is the page's whole text.
@@ -8451,7 +8452,9 @@ type ClientInterface interface {
 	// (403 otherwise). A webhook watcher gets a new signing secret, shown in
 	// this answer only, with the URL it signs for; the old one stops working
 	// at once. One waiting for its secret, as an agent proposes one, becomes
-	// active. A watcher that is not a webhook is 400; a deleted one 409.
+	// active. A watcher that is not a webhook is 400; one that is neither
+	// active, paused nor waiting for its secret (proposed, or deleted) is
+	// 409. Should the secret store not answer, the old secret still works.
 	//
 	// Corresponds with POST /teams/{id}/watchers/{watcherID}/secret (the `RollWatcherSecret` operationId).
 	RollWatcherSecret(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8464,7 +8467,9 @@ type ClientInterface interface {
 	// it, and runs as them from then, so a caller who may not start runs is
 	// refused with 403, as is one without `channel:write` for a watcher
 	// posting where a group reads it. One answering in its maker's direct
-	// messages or their own thread cannot be handed on: 409.
+	// messages or their own thread cannot be handed on: 409. A webhook
+	// watcher gets a new secret, in this answer only as `secret`, so the
+	// one its old maker held stops working.
 	//
 	// Corresponds with POST /teams/{id}/watchers/{watcherID}/take-over (the `TakeOverWatcher` operationId).
 	TakeOverWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -12235,7 +12240,9 @@ func (c *Client) CheckWatcherNow(ctx context.Context, id TeamID, watcherID Watch
 // (403 otherwise). A webhook watcher gets a new signing secret, shown in
 // this answer only, with the URL it signs for; the old one stops working
 // at once. One waiting for its secret, as an agent proposes one, becomes
-// active. A watcher that is not a webhook is 400; a deleted one 409.
+// active. A watcher that is not a webhook is 400; one that is neither
+// active, paused nor waiting for its secret (proposed, or deleted) is
+// 409. Should the secret store not answer, the old secret still works.
 //
 // Corresponds with POST /teams/{id}/watchers/{watcherID}/secret (the `RollWatcherSecret` operationId).
 func (c *Client) RollWatcherSecret(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12258,7 +12265,9 @@ func (c *Client) RollWatcherSecret(ctx context.Context, id TeamID, watcherID Wat
 // it, and runs as them from then, so a caller who may not start runs is
 // refused with 403, as is one without `channel:write` for a watcher
 // posting where a group reads it. One answering in its maker's direct
-// messages or their own thread cannot be handed on: 409.
+// messages or their own thread cannot be handed on: 409. A webhook
+// watcher gets a new secret, in this answer only as `secret`, so the
+// one its old maker held stops working.
 //
 // Corresponds with POST /teams/{id}/watchers/{watcherID}/take-over (the `TakeOverWatcher` operationId).
 func (c *Client) TakeOverWatcher(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -21176,7 +21185,9 @@ type ClientWithResponsesInterface interface {
 	// (403 otherwise). A webhook watcher gets a new signing secret, shown in
 	// this answer only, with the URL it signs for; the old one stops working
 	// at once. One waiting for its secret, as an agent proposes one, becomes
-	// active. A watcher that is not a webhook is 400; a deleted one 409.
+	// active. A watcher that is not a webhook is 400; one that is neither
+	// active, paused nor waiting for its secret (proposed, or deleted) is
+	// 409. Should the secret store not answer, the old secret still works.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21191,7 +21202,9 @@ type ClientWithResponsesInterface interface {
 	// it, and runs as them from then, so a caller who may not start runs is
 	// refused with 403, as is one without `channel:write` for a watcher
 	// posting where a group reads it. One answering in its maker's direct
-	// messages or their own thread cannot be handed on: 409.
+	// messages or their own thread cannot be handed on: 409. A webhook
+	// watcher gets a new secret, in this answer only as `secret`, so the
+	// one its old maker held stops working.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -30125,7 +30138,9 @@ func (c *ClientWithResponses) CheckWatcherNowWithResponse(ctx context.Context, i
 // (403 otherwise). A webhook watcher gets a new signing secret, shown in
 // this answer only, with the URL it signs for; the old one stops working
 // at once. One waiting for its secret, as an agent proposes one, becomes
-// active. A watcher that is not a webhook is 400; a deleted one 409.
+// active. A watcher that is not a webhook is 400; one that is neither
+// active, paused nor waiting for its secret (proposed, or deleted) is
+// 409. Should the secret store not answer, the old secret still works.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30146,7 +30161,9 @@ func (c *ClientWithResponses) RollWatcherSecretWithResponse(ctx context.Context,
 // it, and runs as them from then, so a caller who may not start runs is
 // refused with 403, as is one without `channel:write` for a watcher
 // posting where a group reads it. One answering in its maker's direct
-// messages or their own thread cannot be handed on: 409.
+// messages or their own thread cannot be handed on: 409. A webhook
+// watcher gets a new secret, in this answer only as `secret`, so the
+// one its old maker held stops working.
 //
 // Returns a wrapper object for the known response body format(s).
 //
