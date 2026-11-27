@@ -416,6 +416,65 @@ func TestGetShowsTheRun(t *testing.T) {
 	}
 }
 
+// The budget row says what the run spent of its budget as the budget counts
+// it, and how near the line it is; a brain that sends no budget gets no row.
+func TestGetShowsWhatTheRunSpentOfItsBudget(t *testing.T) {
+	for _, c := range []struct {
+		name, extra, want string
+		not               []string
+	}{
+		{"well within", `,"spent":573529,"token_budget":2000000`, "573529 of 2000000 (29%)", []string{"nearly spent", ", spent"}},
+		{"nearly spent", `,"spent":1854210,"token_budget":2000000`, "1854210 of 2000000 (93%), nearly spent", nil},
+		{"short of it, never 100", `,"spent":1995000,"token_budget":2000000`, "(99%), nearly spent", nil},
+		{"spent", `,"spent":2020000,"token_budget":2000000`, "2020000 of 2000000 (101%), spent", []string{"nearly"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: runJSON(runID, "succeeded", c.extra)}))
+			out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+			if err != nil {
+				t.Fatalf("runs get: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, "budget") || !strings.Contains(out, c.want) || !strings.Contains(out, "a cached input token counts a tenth") {
+				t.Errorf("the budget row is missing %q:\n%s", c.want, out)
+			}
+			for _, n := range c.not {
+				if strings.Contains(out, n) {
+					t.Errorf("the budget row says %q:\n%s", n, out)
+				}
+			}
+		})
+	}
+}
+
+func TestGetWithNoBudgetShowsNoBudgetRow(t *testing.T) {
+	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: finishedRun}))
+	out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID)
+	if err != nil {
+		t.Fatalf("runs get: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "budget") {
+		t.Errorf("a run with no budget has a budget row:\n%s", out)
+	}
+}
+
+func TestGetAsJSONCarriesTheBudget(t *testing.T) {
+	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{
+		Status: http.StatusOK,
+		Body:   runJSON(runID, "succeeded", `,"spent":573529,"token_budget":2000000`),
+	}))
+	out, err := clitest.Execute(t, commands, "runs", "get", "platform", runID, "-o", "json")
+	if err != nil {
+		t.Fatalf("runs get: %v\n%s", err, out)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if got["spent"] != float64(573529) || got["token_budget"] != float64(2000000) {
+		t.Errorf("spent %v, token_budget %v", got["spent"], got["token_budget"])
+	}
+}
+
 func TestGetShowsWhyARunFailed(t *testing.T) {
 	clitest.Routes(t, with("GET /teams/{id}/runs/{runID}", clitest.Reply{Status: http.StatusOK, Body: failedRun}))
 

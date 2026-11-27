@@ -26,6 +26,10 @@ type run struct {
 
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
+	// Spent is what the tokens count against TokenBudget: a cached input
+	// token as a tenth of one, as providers bill it.
+	Spent       int64 `json:"spent"`
+	TokenBudget int64 `json:"token_budget"`
 
 	CreatedAt  time.Time  `json:"created_at"`
 	StartedAt  *time.Time `json:"started_at"`

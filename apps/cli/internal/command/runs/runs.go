@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,6 +57,8 @@ type runView struct {
 	Error        *string    `json:"error" yaml:"error"`
 	InputTokens  int64      `json:"input_tokens" yaml:"input_tokens"`
 	OutputTokens int64      `json:"output_tokens" yaml:"output_tokens"`
+	Spent        int64      `json:"spent" yaml:"spent"`
+	TokenBudget  int64      `json:"token_budget" yaml:"token_budget"`
 	CreatedAt    time.Time  `json:"created_at" yaml:"created_at"`
 	StartedAt    *time.Time `json:"started_at" yaml:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at" yaml:"finished_at"`
@@ -73,7 +76,7 @@ func viewOf(r *client.Run) runView {
 	v := runView{
 		ID: r.ID.String(), SessionID: r.SessionID.String(), Agent: r.Agent, Status: string(r.Status),
 		Input: r.Input, Output: r.Output, Error: r.Error,
-		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
+		InputTokens: r.InputTokens, OutputTokens: r.OutputTokens, Spent: r.Spent, TokenBudget: r.TokenBudget,
 		CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Depth: r.Depth,
 		Hub: r.Hub, Outcome: r.Outcome, MyFeedback: r.MyFeedback,
 	}
@@ -418,6 +421,10 @@ func printRun(opts *cli.Options, r *client.Run, did, teamRef string) error {
 			}
 			table.Row("tokens",
 				strconv.FormatInt(view.InputTokens, 10)+" in, "+strconv.FormatInt(view.OutputTokens, 10)+" out", "")
+			if view.TokenBudget > 0 {
+				table.Row("budget", budgetCell(opts, view.Spent, view.TokenBudget),
+					opts.Styles.Muted.Render("a cached input token counts a tenth"))
+			}
 			table.Row("created", view.CreatedAt.Format(stampLayout), "")
 			if view.StartedAt != nil {
 				table.Row("started", view.StartedAt.Format(stampLayout), "")
@@ -506,3 +513,25 @@ func status(opts *cli.Options, s string) string {
 
 // ReadInput is an input argument, or stdin for -, refused when empty.
 func ReadInput(in io.Reader, arg string) (string, error) { return readInput(in, arg) }
+
+// nearShare is the share of a budget from which it reads as nearly spent.
+const nearShare = 0.9
+
+// budgetCell is what a run spent of its budget, as the budget counts it:
+// Warn from nine tenths, Err once spent.
+func budgetCell(opts *cli.Options, spent, budget int64) string {
+	share := float64(max(spent, 0)) / float64(budget)
+	percent := int64(math.Round(share * 100))
+	if share < 1 {
+		percent = min(percent, 99)
+	}
+	cell := strconv.FormatInt(spent, 10) + " of " + strconv.FormatInt(budget, 10) +
+		" (" + strconv.FormatInt(percent, 10) + "%)"
+	switch {
+	case share >= 1:
+		return opts.Styles.Err.Render(cell + ", spent")
+	case share >= nearShare:
+		return opts.Styles.Warn.Render(cell + ", nearly spent")
+	}
+	return cell
+}

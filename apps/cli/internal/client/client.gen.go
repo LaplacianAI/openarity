@@ -4186,6 +4186,15 @@ type Run struct {
 	Reply     Reply              `json:"reply" yaml:"reply"`
 	SessionID openapi_types.UUID `json:"session_id" yaml:"session_id"`
 
+	// Spent What the run's tokens count against its budget: fresh input and
+	// output in full, a cached input token as a tenth of one, as
+	// providers bill it. So it is less than input plus output whenever
+	// the provider's cache was read.
+	//
+	//
+	// Examples: 573529
+	Spent int64 `json:"spent" yaml:"spent"`
+
 	// StartedAt When a worker first took it, null while queued
 	StartedAt *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
 
@@ -4193,6 +4202,11 @@ type Run struct {
 	// run that stopped for a person's answer, holding nothing, and carries
 	// on when it is answered; the other three are final.
 	Status RunStatus `json:"status" yaml:"status"`
+
+	// TokenBudget The budget the run started with, its agent's or the deployment's default, 1,000,000
+	//
+	// Examples: 2000000
+	TokenBudget int64 `json:"token_budget" yaml:"token_budget"`
 }
 
 // RunCounts Top-level runs created in the last 24 hours, on the brain's clock, by

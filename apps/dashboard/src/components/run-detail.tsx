@@ -32,6 +32,8 @@ import { OutcomeLine } from "@/components/run-outcome";
 import { isLive, LiveBadge, StatusPill as RunStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { budgetOf, shortTokens } from "@/lib/budget";
 import { fileSize } from "@/lib/format";
 import { explainRunError } from "@/lib/run-error";
 import {
@@ -321,6 +323,7 @@ export function RunView({
               <Meta label="Model">{reading ? "…" : trace.started?.model || "—"}</Meta>
               <Meta label="Steps">{reading ? "…" : steps}</Meta>
               <Meta label="Tokens">{spent.toLocaleString("en-US")}</Meta>
+              <BudgetFact run={run} />
               <Meta label="Duration">{took === null ? "—" : duration(took)}</Meta>
               <Meta label="Run">
                 <CopyId value={run.id} label="run id" />
@@ -494,6 +497,45 @@ function Meta({ label, children }: { label: string; children: ReactNode }) {
     <div className="flex items-center gap-1">
       <dt>{label}</dt>
       <dd className="font-medium text-foreground tabular-nums">{children}</dd>
+    </div>
+  );
+}
+
+/**
+ * What the run spent of its budget, counted as providers bill, which is why
+ * it is less than Tokens whenever the cache was read. Near the line it says
+ * so in Ochre, past it in Brick, each with its icon and word.
+ */
+function BudgetFact({ run }: { run: Run }) {
+  const b = budgetOf(run);
+  if (!b) return null;
+  const words = `${shortTokens(b.spent)} of ${shortTokens(b.budget)} · ${b.percent}%`;
+  return (
+    <div className="flex items-center gap-1" data-budget={b.state}>
+      <dt>Budget</dt>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <dd
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: the tooltip says how the budget counts, and a keyboard reader needs to reach it
+            tabIndex={0}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-sm font-medium tabular-nums",
+              b.state === "near" && "text-waiting",
+              b.state === "spent" && "text-failed",
+            )}
+          >
+            {b.state === "near" ? <AlertTriangle aria-hidden className="size-3.5" /> : null}
+            {b.state === "spent" ? <XCircle aria-hidden className="size-3.5" /> : null}
+            <span className={b.state === "ok" ? "text-foreground" : undefined}>{words}</span>
+            {b.state === "near" ? <span>nearly spent</span> : null}
+            {b.state === "spent" ? <span>spent</span> : null}
+          </dd>
+        </TooltipTrigger>
+        <TooltipContent>
+          {b.spent.toLocaleString("en-US")} of {b.budget.toLocaleString("en-US")} tokens, counted as
+          providers bill: a cached input token is a tenth of one.
+        </TooltipContent>
+      </Tooltip>
     </div>
   );
 }

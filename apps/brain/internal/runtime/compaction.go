@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -191,16 +192,13 @@ func (l *softLines) stepped(step int) *wrapUpPayload {
 	return &wrapUpPayload{Reason: "steps"}
 }
 
-// cacheShare is the part of a fresh token a cached one counts for: a tenth,
-// as providers bill it. run_spent in the store counts a run's budget the same
-// way; the two must agree.
-const cacheShare = 10
-
-// costOf is what a call's input cost the budget: a cached token a tenth.
+// costOf is what a call's input cost the budget, as harness.Spent counts
+// it: a cached token a tenth. A provider counting more cached than it read,
+// or less than none, is held between none and what it read.
 func costOf(u agent.Usage) int64 {
 	in := int64(u.InputTokens)
 	cached := min(max(int64(u.CachedInputTokens), 0), in)
-	return in - cached + cached/cacheShare
+	return harness.Spent(in, cached, 0)
 }
 
 // reserve is what one more call is kept for its answer: twice the most the
