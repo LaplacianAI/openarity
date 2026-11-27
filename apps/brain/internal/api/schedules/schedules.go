@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,14 +42,18 @@ type Store interface {
 }
 
 type handler struct {
-	logger  *slog.Logger
-	store   Store
-	authz   api.Authorizer
-	service *triggers.Service
+	logger   *slog.Logger
+	store    Store
+	authz    api.Authorizer
+	service  *triggers.Service
+	hookBase string
 }
 
-func New(logger *slog.Logger, s Store, a api.Authorizer, service *triggers.Service) *api.Router {
-	h := &handler{logger: logger, store: s, authz: a, service: service}
+// New serves schedules and watchers. hookBase is the webhook listener's
+// public address a webhook watcher's URL is on; with none, its URL is not
+// shown.
+func New(logger *slog.Logger, s Store, a api.Authorizer, service *triggers.Service, hookBase string) *api.Router {
+	h := &handler{logger: logger, store: s, authz: a, service: service, hookBase: strings.TrimSuffix(hookBase, "/")}
 
 	r := api.NewRouter("/teams")
 	r.Get("/{id}/schedules", h.list)
@@ -120,6 +125,10 @@ func (h *handler) answer(w http.ResponseWriter, r *http.Request, msg string, err
 		status = http.StatusForbidden
 	case triggers.Conflict, triggers.Limit:
 		status = http.StatusConflict
+	case triggers.Unavailable:
+		status = http.StatusServiceUnavailable
+	case triggers.Unauthorized:
+		status = http.StatusUnauthorized
 	default:
 		api.Fail(w, h.logger, api.Caller(r), msg, err)
 		return

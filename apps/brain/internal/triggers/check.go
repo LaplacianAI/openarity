@@ -87,6 +87,7 @@ type CheckStore interface {
 	ActiveWatchersOfTarget(ctx context.Context, arg db.ActiveWatchersOfTargetParams) ([]db.ActiveWatchersOfTargetRow, error)
 	SetTargetNextCheck(ctx context.Context, id uuid.UUID) error
 	PauseFailingWatchers(ctx context.Context, targetID *uuid.UUID) ([]db.PauseFailingWatchersRow, error)
+	WatchersReadyToRelease(ctx context.Context, arg db.WatchersReadyToReleaseParams) ([]db.WatchersReadyToReleaseRow, error)
 }
 
 // A Checker fetches the pages and feeds that are due, once each however

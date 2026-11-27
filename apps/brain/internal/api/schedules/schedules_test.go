@@ -20,6 +20,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/storetest"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers"
@@ -35,6 +36,42 @@ type world struct {
 	other uuid.UUID
 	holds map[authz.Action]bool
 	runs  *queue
+	vault *vault
+}
+
+// vault is the secret store, in memory.
+type vault struct {
+	mu sync.Mutex
+	m  map[string]map[string]string
+}
+
+func (v *vault) Get(_ context.Context, path, key string) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	vals, ok := v.m[path]
+	if !ok {
+		return "", secrets.ErrNotFound
+	}
+	return vals[key], nil
+}
+
+func (v *vault) PutAll(_ context.Context, path string, values map[string]string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.m[path] = values
+	return nil
+}
+
+func (v *vault) Delete(_ context.Context, path string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.m, path)
+	return nil
+}
+
+// service is the rules as both listeners use them, over the same secrets.
+func (w *world) service(logger *slog.Logger) *triggers.Service {
+	return triggers.NewService(w.store, w.runs, logger).WithSecrets(w.vault)
 }
 
 type queue struct {
@@ -70,7 +107,7 @@ func newWorld(t *testing.T) *world {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(func() { _ = raw.Close(context.WithoutCancel(t.Context())) })
-	w := &world{store: s, raw: raw, holds: map[authz.Action]bool{}, runs: &queue{}}
+	w := &world{store: s, raw: raw, holds: map[authz.Action]bool{}, runs: &queue{}, vault: &vault{m: map[string]map[string]string{}}}
 	for _, q := range []struct {
 		dst *uuid.UUID
 		sql string
@@ -125,6 +162,7 @@ var routes = []struct{ method, path string }{
 	{"POST", "/teams/{id}/watchers/{watcherID}/run"},
 	{"POST", "/teams/{id}/watchers/{watcherID}/take-over"},
 	{"GET", "/teams/{id}/watchers/{watcherID}/checks"},
+	{"POST", "/teams/{id}/watchers/{watcherID}/secret"},
 	{"GET", "/teams/{id}/scheduled/news"},
 	{"POST", "/teams/{id}/scheduled/news/seen"},
 	{"GET", "/teams/{id}/schedule-targets"},
@@ -159,7 +197,7 @@ func (w *world) serve(t *testing.T, user uuid.UUID, method, path string, body an
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
 	az := &fakeAuthz{holds: w.holds}
-	New(logger, w.store, az, triggers.NewService(w.store, w.runs, logger)).Register(mux, api.NewGuard(rs, az, liveTeams{}, logger))
+	New(logger, w.store, az, w.service(logger), "https://hooks.example").Register(mux, api.NewGuard(rs, az, liveTeams{}, logger))
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
 		ID: user, Issuer: "dev", Subject: "someone",
 		Teams: []auth.Membership{{TeamID: w.team, Name: "ops", Role: "member"}},

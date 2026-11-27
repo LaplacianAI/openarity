@@ -472,6 +472,33 @@ func TestTheShippedPolicyServesBrowserKeys(t *testing.T) {
 	}
 }
 
+// A webhook watcher's secret is written, written again when it is rolled,
+// read on each delivery and destroyed with the watcher; nothing below it is
+// the brain's.
+func TestTheShippedPolicyServesAWatchersSecret(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, _, _ := brainStore(t)
+	path := secrets.Path(uuid.New(), secrets.KindWatcher, uuid.New())
+	for _, v := range []string{"oawh_first", "oawh_rolled"} {
+		if err := writer.PutAll(t.Context(), path, map[string]string{"signing_secret": v}); err != nil {
+			t.Fatalf("writing the watcher's secret %s: %v", v, err)
+		}
+		if got, err := reader.Get(t.Context(), path, "signing_secret"); err != nil || got != v {
+			t.Fatalf("reading the watcher's secret = %q, %v; want %q", got, err, v)
+		}
+	}
+	if err := writer.Delete(t.Context(), path); err != nil {
+		t.Fatalf("destroying a deleted watcher's secret: %v", err)
+	}
+	if _, err := reader.Get(t.Context(), path, "signing_secret"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Errorf("after delete, err = %v, want secrets.ErrNotFound", err)
+	}
+	if err := writer.Put(t.Context(), path+"/extra", "v", "x"); err == nil {
+		t.Errorf("wrote %s/extra, below a watcher's secret", path)
+	}
+}
+
 // The two sandbox rules are one segment each: nothing deeper under a team's
 // sandbox is the brain's to write.
 func TestTheSandboxRulesCannotBeWalkedOutOf(t *testing.T) {
@@ -589,6 +616,8 @@ func TestTheShippedPolicyIsWhereTheDeploymentExpectsIt(t *testing.T) {
 		`path "secret/metadata/teams/+/sandbox/rooms/+"`,
 		`path "secret/data/teams/+/browser/+"`,
 		`path "secret/metadata/teams/+/browser/+"`,
+		`path "secret/data/teams/+/watchers/+"`,
+		`path "secret/metadata/teams/+/watchers/+"`,
 	} {
 		if !strings.Contains(hcl, want) {
 			t.Errorf("policy-brain.hcl no longer contains %s — the tests above are\n"+

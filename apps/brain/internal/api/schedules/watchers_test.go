@@ -66,7 +66,7 @@ func TestAWatcherIsRefusedForWhatItMayNotBe(t *testing.T) {
 		{func(b map[string]any) { b["url"] = "file:///etc/passwd" }, "http or https"},
 		{func(b map[string]any) { b["every_seconds"] = int64(1) << 40 }, "every_seconds is out of range"},
 		{func(b map[string]any) { b["cooldown_seconds"] = -1 }, "cooldown_seconds is out of range"},
-		{func(b map[string]any) { b["source"] = "webhook" }, "cannot be made yet"},
+		{func(b map[string]any) { b["source"] = "webhook" }, "takes no url"},
 		{func(b map[string]any) { b["selector"] = "[[" }, "selector"},
 	} {
 		body := pageWatcher("w")

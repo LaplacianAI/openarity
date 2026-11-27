@@ -26,6 +26,31 @@ func (h *handler) registerWatchers(r *api.Router) {
 	r.Post("/{id}/watchers/{watcherID}/run", h.checkWatcher)
 	r.Post("/{id}/watchers/{watcherID}/take-over", h.takeOverWatcher)
 	r.Get("/{id}/watchers/{watcherID}/checks", h.checks)
+	r.Post("/{id}/watchers/{watcherID}/secret", h.rollSecret)
+}
+
+// hookSecret is a webhook watcher's new secret and the URL it signs for,
+// shown this once.
+type hookSecret struct {
+	Secret string  `json:"secret"`
+	URL    *string `json:"url,omitempty"`
+}
+
+func (h *handler) rollSecret(w http.ResponseWriter, r *http.Request) {
+	who, ok := h.begin(w, r)
+	if !ok {
+		return
+	}
+	ref, ok := watcherRef(w, r)
+	if !ok {
+		return
+	}
+	v, err := h.service.RollSecret(r.Context(), who, ref)
+	if err != nil {
+		h.answer(w, r, "failed to make the watcher's secret", err)
+		return
+	}
+	api.WriteJSON(w, h.logger, http.StatusCreated, hookSecret{Secret: v.Secret, URL: h.watcherView(v).HookURL})
 }
 
 func watcherRef(w http.ResponseWriter, r *http.Request) (triggers.Ref, bool) {
@@ -69,7 +94,7 @@ func (h *handler) listWatchers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page, err := api.MapPage(rows, limit,
-		func(v triggers.WatcherView) any { return listCursor{CreatedAt: v.CreatedAt, ID: v.ID} }, watcherView)
+		func(v triggers.WatcherView) any { return listCursor{CreatedAt: v.CreatedAt, ID: v.ID} }, h.watcherView)
 	if err != nil {
 		api.Fail(w, h.logger, api.Caller(r), "failed to page the watchers", err)
 		return
@@ -130,7 +155,7 @@ func (h *handler) createWatcher(w http.ResponseWriter, r *http.Request) {
 		h.answer(w, r, "failed to make the watcher", err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusCreated, watcherView(v))
+	api.WriteJSON(w, h.logger, http.StatusCreated, h.watcherView(v))
 }
 
 func (h *handler) getWatcher(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +233,7 @@ func (h *handler) oneWatcher(w http.ResponseWriter, r *http.Request, msg string,
 		h.answer(w, r, msg, err)
 		return
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, watcherView(v))
+	api.WriteJSON(w, h.logger, http.StatusOK, h.watcherView(v))
 }
 
 func (h *handler) deleteWatcher(w http.ResponseWriter, r *http.Request) {
@@ -284,12 +309,14 @@ type watcher struct {
 	LastCheckAt     *time.Time `json:"last_check_at,omitempty"`
 	LastRunAt       *time.Time `json:"last_run_at,omitempty"`
 	LastOutcome     *string    `json:"last_outcome,omitempty"`
+	HookURL         *string    `json:"hook_url,omitempty"`
+	Secret          string     `json:"secret,omitempty"`
 	CreatedBy       *uuid.UUID `json:"created_by,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
-func watcherView(v triggers.WatcherView) watcher {
+func (h *handler) watcherView(v triggers.WatcherView) watcher {
 	out := watcher{
 		ID: v.ID, Name: v.Name, Objective: v.Objective, Source: v.Source, Selector: v.Selector,
 		EverySeconds: v.EverySeconds, CooldownSeconds: v.CooldownSeconds, AgentID: v.AgentID, Hub: v.Hub,
@@ -306,6 +333,10 @@ func watcherView(v triggers.WatcherView) watcher {
 	if v.LastOutcome != "" {
 		out.LastOutcome = &v.LastOutcome
 	}
+	if v.HookID != nil && h.hookBase != "" {
+		out.HookURL = ptr(h.hookBase + "/hooks/watchers/" + *v.HookID)
+	}
+	out.Secret = v.Secret
 	return out
 }
 

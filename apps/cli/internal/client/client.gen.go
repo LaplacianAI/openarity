@@ -460,6 +460,7 @@ func (e ChannelPairingState) Valid() bool {
 const (
 	Feed    CreateWatcherRequestSource = "feed"
 	WebPage CreateWatcherRequestSource = "web_page"
+	Webhook CreateWatcherRequestSource = "webhook"
 )
 
 // Valid indicates whether the value is a known member of the CreateWatcherRequestSource enum.
@@ -468,6 +469,8 @@ func (e CreateWatcherRequestSource) Valid() bool {
 	case Feed:
 		return true
 	case WebPage:
+		return true
+	case Webhook:
 		return true
 	default:
 		return false
@@ -2848,8 +2851,9 @@ type CreateWatcherRequest struct {
 	// CooldownSeconds How long after a run a change is held rather than run; an hour unless given.
 	CooldownSeconds *int64 `json:"cooldown_seconds,omitempty" yaml:"cooldown_seconds,omitempty"`
 
-	// EverySeconds How often to look, in whole minutes; at least the team's minimum interval.
-	EverySeconds int64  `json:"every_seconds" yaml:"every_seconds"`
+	// EverySeconds web_page and feed, which need it. How often to look, in whole
+	// minutes; at least the team's minimum interval.
+	EverySeconds *int64 `json:"every_seconds,omitempty" yaml:"every_seconds,omitempty"`
 	Name         string `json:"name" yaml:"name"`
 	Objective    string `json:"objective" yaml:"objective"`
 
@@ -2863,8 +2867,9 @@ type CreateWatcherRequest struct {
 	// is looked up on its platform.
 	Target *ScheduleTargetPick `json:"target,omitempty" yaml:"target,omitempty"`
 
-	// URL http or https, at most 2048 bytes, not a host written as a number.
-	URL string `json:"url" yaml:"url"`
+	// URL web_page and feed, which need it. http or https, at most 2048
+	// bytes, not a host written as a number.
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 
 // CreateWatcherRequestSource defines model for CreateWatcherRequest.Source.
@@ -5398,20 +5403,28 @@ type Watcher struct {
 	CreatedAt       time.Time           `json:"created_at" yaml:"created_at"`
 	CreatedBy       *openapi_types.UUID `json:"created_by,omitempty" yaml:"created_by,omitempty"`
 	EverySeconds    *int32              `json:"every_seconds,omitempty" yaml:"every_seconds,omitempty"`
-	Hub             bool                `json:"hub" yaml:"hub"`
-	ID              openapi_types.UUID  `json:"id" yaml:"id"`
-	LastCheckAt     *time.Time          `json:"last_check_at,omitempty" yaml:"last_check_at,omitempty"`
-	LastOutcome     *string             `json:"last_outcome,omitempty" yaml:"last_outcome,omitempty"`
-	LastRunAt       *time.Time          `json:"last_run_at,omitempty" yaml:"last_run_at,omitempty"`
-	Name            string              `json:"name" yaml:"name"`
-	NextCheckAt     *time.Time          `json:"next_check_at,omitempty" yaml:"next_check_at,omitempty"`
-	Objective       string              `json:"objective" yaml:"objective"`
+
+	// HookURL A webhook watcher's URL, on the webhook listener's public
+	// address; absent when the brain has none.
+	HookURL     *string            `json:"hook_url,omitempty" yaml:"hook_url,omitempty"`
+	Hub         bool               `json:"hub" yaml:"hub"`
+	ID          openapi_types.UUID `json:"id" yaml:"id"`
+	LastCheckAt *time.Time         `json:"last_check_at,omitempty" yaml:"last_check_at,omitempty"`
+	LastOutcome *string            `json:"last_outcome,omitempty" yaml:"last_outcome,omitempty"`
+	LastRunAt   *time.Time         `json:"last_run_at,omitempty" yaml:"last_run_at,omitempty"`
+	Name        string             `json:"name" yaml:"name"`
+	NextCheckAt *time.Time         `json:"next_check_at,omitempty" yaml:"next_check_at,omitempty"`
+	Objective   string             `json:"objective" yaml:"objective"`
 
 	// PausedReason Why it is paused: one of `by_person`, `failing`,
 	// `maker_cannot_run`, `maker_gone` or `target_gone`, as for a
 	// schedule. `failing` is five failed runs in a row, or what
 	// it looks at failing for a day.
 	PausedReason *string `json:"paused_reason,omitempty" yaml:"paused_reason,omitempty"`
+
+	// Secret A webhook watcher's signing secret, only in the answer that made
+	// it. It is not shown again; make a new one to replace it.
+	Secret *string `json:"secret,omitempty" yaml:"secret,omitempty"`
 
 	// Selector The CSS selector whose text a web_page watcher compares; absent is the page's whole text.
 	Selector  *string            `json:"selector,omitempty" yaml:"selector,omitempty"`
@@ -5442,7 +5455,9 @@ type WatcherCheck struct {
 	// cooldown or while its last run was working; `error` what it
 	// looks at could not be read, with why in `detail`; `answered`,
 	// `silent`, `failed` and `cancelled` how a run ended; `skipped_*`
-	// as for a schedule's fire, the change kept for later.
+	// as for a schedule's fire, the change kept for later. For a
+	// webhook: `delivered` a delivery that started a run, `duplicate`
+	// one already had, and `held` one kept for the next run.
 	Outcome string              `json:"outcome" yaml:"outcome"`
 	RunID   *openapi_types.UUID `json:"run_id,omitempty" yaml:"run_id,omitempty"`
 }
@@ -5459,6 +5474,15 @@ type WatcherPage struct {
 
 	// NextCursor Absent on the last page.
 	NextCursor *string `json:"next_cursor,omitempty" yaml:"next_cursor,omitempty"`
+}
+
+// WatcherSecret defines model for WatcherSecret.
+type WatcherSecret struct {
+	// Secret The new signing secret. It is not shown again.
+	Secret string `json:"secret" yaml:"secret"`
+
+	// URL The URL it signs for; absent when the brain has no public webhook address.
+	URL *string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 
 // Whoami defines model for Whoami.
@@ -8302,8 +8326,17 @@ type ClientInterface interface {
 	// its last run (an hour unless given) is held and given to the next run.
 	// The team's limits on schedules and watchers per person and per team
 	// apply, and a caller who may not start runs is refused with 403.
-	// `target` is where it answers, as for a schedule. A webhook watcher
-	// cannot be made yet.
+	// `target` is where it answers, as for a schedule.
+	//
+	// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+	// runs when its `hook_url` is called with a delivery signed by its
+	// secret, as GitHub signs (`X-Hub-Signature-256`, with
+	// `X-GitHub-Delivery`) or as a custom channel's sender does
+	// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+	// in this answer only, as `secret`; making a new one is
+	// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+	// within the cooldown, while its last run works or over the team's
+	// hourly cap is held for the next run.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -8320,8 +8353,17 @@ type ClientInterface interface {
 	// its last run (an hour unless given) is held and given to the next run.
 	// The team's limits on schedules and watchers per person and per team
 	// apply, and a caller who may not start runs is refused with 403.
-	// `target` is where it answers, as for a schedule. A webhook watcher
-	// cannot be made yet.
+	// `target` is where it answers, as for a schedule.
+	//
+	// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+	// runs when its `hook_url` is called with a delivery signed by its
+	// secret, as GitHub signs (`X-Hub-Signature-256`, with
+	// `X-GitHub-Delivery`) or as a custom channel's sender does
+	// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+	// in this answer only, as `secret`; making a new one is
+	// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+	// within the cooldown, while its last run works or over the team's
+	// hourly cap is held for the next run.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -8398,10 +8440,21 @@ type ClientInterface interface {
 	// Requires `schedule:write` in this team, and the caller to be its maker
 	// (403 otherwise). An active watcher looks within the minute rather than
 	// at its next time; a change it finds runs as any would, past its
-	// cooldown.
+	// cooldown. A webhook watcher has nothing to look at: 400.
 	//
 	// Corresponds with POST /teams/{id}/watchers/{watcherID}/run (the `CheckWatcherNow` operationId).
 	CheckWatcherNow(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RollWatcherSecret Make a webhook watcher's secret
+	//
+	// Requires `schedule:write` in this team, and the caller to be its maker
+	// (403 otherwise). A webhook watcher gets a new signing secret, shown in
+	// this answer only, with the URL it signs for; the old one stops working
+	// at once. One waiting for its secret, as an agent proposes one, becomes
+	// active. A watcher that is not a webhook is 400; a deleted one 409.
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/secret (the `RollWatcherSecret` operationId).
+	RollWatcherSecret(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TakeOverWatcher Take over a watcher whose maker left
 	//
@@ -11967,8 +12020,17 @@ func (c *Client) ListWatchers(ctx context.Context, id TeamID, params *ListWatche
 // its last run (an hour unless given) is held and given to the next run.
 // The team's limits on schedules and watchers per person and per team
 // apply, and a caller who may not start runs is refused with 403.
-// `target` is where it answers, as for a schedule. A webhook watcher
-// cannot be made yet.
+// `target` is where it answers, as for a schedule.
+//
+// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+// runs when its `hook_url` is called with a delivery signed by its
+// secret, as GitHub signs (`X-Hub-Signature-256`, with
+// `X-GitHub-Delivery`) or as a custom channel's sender does
+// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+// in this answer only, as `secret`; making a new one is
+// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+// within the cooldown, while its last run works or over the team's
+// hourly cap is held for the next run.
 //
 // Takes any type of body and a specified content type.
 //
@@ -11995,8 +12057,17 @@ func (c *Client) CreateWatcherWithBody(ctx context.Context, id TeamID, contentTy
 // its last run (an hour unless given) is held and given to the next run.
 // The team's limits on schedules and watchers per person and per team
 // apply, and a caller who may not start runs is refused with 403.
-// `target` is where it answers, as for a schedule. A webhook watcher
-// cannot be made yet.
+// `target` is where it answers, as for a schedule.
+//
+// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+// runs when its `hook_url` is called with a delivery signed by its
+// secret, as GitHub signs (`X-Hub-Signature-256`, with
+// `X-GitHub-Delivery`) or as a custom channel's sender does
+// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+// in this answer only, as `secret`; making a new one is
+// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+// within the cooldown, while its last run works or over the team's
+// hourly cap is held for the next run.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12143,11 +12214,32 @@ func (c *Client) ConfirmWatcher(ctx context.Context, id TeamID, watcherID Watche
 // Requires `schedule:write` in this team, and the caller to be its maker
 // (403 otherwise). An active watcher looks within the minute rather than
 // at its next time; a change it finds runs as any would, past its
-// cooldown.
+// cooldown. A webhook watcher has nothing to look at: 400.
 //
 // Corresponds with POST /teams/{id}/watchers/{watcherID}/run (the `CheckWatcherNow` operationId).
 func (c *Client) CheckWatcherNow(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckWatcherNowRequest(c.Server, id, watcherID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RollWatcherSecret Make a webhook watcher's secret
+//
+// Requires `schedule:write` in this team, and the caller to be its maker
+// (403 otherwise). A webhook watcher gets a new signing secret, shown in
+// this answer only, with the URL it signs for; the old one stops working
+// at once. One waiting for its secret, as an agent proposes one, becomes
+// active. A watcher that is not a webhook is 400; a deleted one 409.
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/secret (the `RollWatcherSecret` operationId).
+func (c *Client) RollWatcherSecret(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRollWatcherSecretRequest(c.Server, id, watcherID)
 	if err != nil {
 		return nil, err
 	}
@@ -18442,6 +18534,47 @@ func NewCheckWatcherNowRequest(server string, id TeamID, watcherID WatcherID) (*
 	return req, nil
 }
 
+// NewRollWatcherSecretRequest constructs an http.Request for the RollWatcherSecret method
+func NewRollWatcherSecretRequest(server string, id TeamID, watcherID WatcherID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "watcherID", watcherID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/teams/%s/watchers/%s/secret", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewTakeOverWatcherRequest constructs an http.Request for the TakeOverWatcher method
 func NewTakeOverWatcherRequest(server string, id TeamID, watcherID WatcherID) (*http.Request, error) {
 	var err error
@@ -20908,8 +21041,17 @@ type ClientWithResponsesInterface interface {
 	// its last run (an hour unless given) is held and given to the next run.
 	// The team's limits on schedules and watchers per person and per team
 	// apply, and a caller who may not start runs is refused with 403.
-	// `target` is where it answers, as for a schedule. A webhook watcher
-	// cannot be made yet.
+	// `target` is where it answers, as for a schedule.
+	//
+	// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+	// runs when its `hook_url` is called with a delivery signed by its
+	// secret, as GitHub signs (`X-Hub-Signature-256`, with
+	// `X-GitHub-Delivery`) or as a custom channel's sender does
+	// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+	// in this answer only, as `secret`; making a new one is
+	// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+	// within the cooldown, while its last run works or over the team's
+	// hourly cap is held for the next run.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20926,8 +21068,17 @@ type ClientWithResponsesInterface interface {
 	// its last run (an hour unless given) is held and given to the next run.
 	// The team's limits on schedules and watchers per person and per team
 	// apply, and a caller who may not start runs is refused with 403.
-	// `target` is where it answers, as for a schedule. A webhook watcher
-	// cannot be made yet.
+	// `target` is where it answers, as for a schedule.
+	//
+	// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+	// runs when its `hook_url` is called with a delivery signed by its
+	// secret, as GitHub signs (`X-Hub-Signature-256`, with
+	// `X-GitHub-Delivery`) or as a custom channel's sender does
+	// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+	// in this answer only, as `secret`; making a new one is
+	// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+	// within the cooldown, while its last run works or over the team's
+	// hourly cap is held for the next run.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21012,12 +21163,25 @@ type ClientWithResponsesInterface interface {
 	// Requires `schedule:write` in this team, and the caller to be its maker
 	// (403 otherwise). An active watcher looks within the minute rather than
 	// at its next time; a change it finds runs as any would, past its
-	// cooldown.
+	// cooldown. A webhook watcher has nothing to look at: 400.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /teams/{id}/watchers/{watcherID}/run (the `CheckWatcherNow` operationId).
 	CheckWatcherNowWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*CheckWatcherNowResponse, error)
+
+	// RollWatcherSecretWithResponse Make a webhook watcher's secret
+	//
+	// Requires `schedule:write` in this team, and the caller to be its maker
+	// (403 otherwise). A webhook watcher gets a new signing secret, shown in
+	// this answer only, with the URL it signs for; the old one stops working
+	// at once. One waiting for its secret, as an agent proposes one, becomes
+	// active. A watcher that is not a webhook is 400; a deleted one 409.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /teams/{id}/watchers/{watcherID}/secret (the `RollWatcherSecret` operationId).
+	RollWatcherSecretWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*RollWatcherSecretResponse, error)
 
 	// TakeOverWatcherWithResponse Take over a watcher whose maker left
 	//
@@ -26469,6 +26633,54 @@ func (r CheckWatcherNowResponse) ContentType() string {
 	return ""
 }
 
+// RollWatcherSecretResponse401Headers the declared response headers of an HTTP 401 response for RollWatcherSecret
+type RollWatcherSecretResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type RollWatcherSecretResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *WatcherSecret
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RollWatcherSecretResponse401Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RollWatcherSecretResponse) GetJSON201() *WatcherSecret {
+	return r.JSON201
+}
+
+// GetBody returns the raw response body bytes
+func (r RollWatcherSecretResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RollWatcherSecretResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RollWatcherSecretResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RollWatcherSecretResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // TakeOverWatcherResponse401Headers the declared response headers of an HTTP 401 response for TakeOverWatcher
 type TakeOverWatcherResponse401Headers struct {
 	WWWAuthenticate *string
@@ -29724,8 +29936,17 @@ func (c *ClientWithResponses) ListWatchersWithResponse(ctx context.Context, id T
 // its last run (an hour unless given) is held and given to the next run.
 // The team's limits on schedules and watchers per person and per team
 // apply, and a caller who may not start runs is refused with 403.
-// `target` is where it answers, as for a schedule. A webhook watcher
-// cannot be made yet.
+// `target` is where it answers, as for a schedule.
+//
+// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+// runs when its `hook_url` is called with a delivery signed by its
+// secret, as GitHub signs (`X-Hub-Signature-256`, with
+// `X-GitHub-Delivery`) or as a custom channel's sender does
+// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+// in this answer only, as `secret`; making a new one is
+// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+// within the cooldown, while its last run works or over the team's
+// hourly cap is held for the next run.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29748,8 +29969,17 @@ func (c *ClientWithResponses) CreateWatcherWithBodyWithResponse(ctx context.Cont
 // its last run (an hour unless given) is held and given to the next run.
 // The team's limits on schedules and watchers per person and per team
 // apply, and a caller who may not start runs is refused with 403.
-// `target` is where it answers, as for a schedule. A webhook watcher
-// cannot be made yet.
+// `target` is where it answers, as for a schedule.
+//
+// A `webhook` watcher has no `url`, `selector` or `every_seconds`: it
+// runs when its `hook_url` is called with a delivery signed by its
+// secret, as GitHub signs (`X-Hub-Signature-256`, with
+// `X-GitHub-Delivery`) or as a custom channel's sender does
+// (`X-Openarity-Timestamp` and `X-Openarity-Signature`). The secret is
+// in this answer only, as `secret`; making a new one is
+// `POST …/secret`. A delivery sent twice starts nothing twice, and one
+// within the cooldown, while its last run works or over the team's
+// hourly cap is held for the next run.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29876,7 +30106,7 @@ func (c *ClientWithResponses) ConfirmWatcherWithResponse(ctx context.Context, id
 // Requires `schedule:write` in this team, and the caller to be its maker
 // (403 otherwise). An active watcher looks within the minute rather than
 // at its next time; a change it finds runs as any would, past its
-// cooldown.
+// cooldown. A webhook watcher has nothing to look at: 400.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29887,6 +30117,25 @@ func (c *ClientWithResponses) CheckWatcherNowWithResponse(ctx context.Context, i
 		return nil, err
 	}
 	return ParseCheckWatcherNowResponse(rsp)
+}
+
+// RollWatcherSecretWithResponse Make a webhook watcher's secret
+//
+// Requires `schedule:write` in this team, and the caller to be its maker
+// (403 otherwise). A webhook watcher gets a new signing secret, shown in
+// this answer only, with the URL it signs for; the old one stops working
+// at once. One waiting for its secret, as an agent proposes one, becomes
+// active. A watcher that is not a webhook is 400; a deleted one 409.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /teams/{id}/watchers/{watcherID}/secret (the `RollWatcherSecret` operationId).
+func (c *ClientWithResponses) RollWatcherSecretWithResponse(ctx context.Context, id TeamID, watcherID WatcherID, reqEditors ...RequestEditorFn) (*RollWatcherSecretResponse, error) {
+	rsp, err := c.RollWatcherSecret(ctx, id, watcherID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRollWatcherSecretResponse(rsp)
 }
 
 // TakeOverWatcherWithResponse Take over a watcher whose maker left
@@ -34248,6 +34497,45 @@ func ParseCheckWatcherNowResponse(rsp *http.Response) (*CheckWatcherNowResponse,
 	switch {
 	case rsp.StatusCode == 401:
 		var headers CheckWatcherNowResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRollWatcherSecretResponse parses an HTTP response from a RollWatcherSecretWithResponse call
+func ParseRollWatcherSecretResponse(rsp *http.Response) (*RollWatcherSecretResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RollWatcherSecretResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest WatcherSecret
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RollWatcherSecretResponse401Headers
 		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

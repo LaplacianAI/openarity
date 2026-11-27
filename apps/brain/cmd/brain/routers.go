@@ -88,7 +88,8 @@ func newRouters(
 		schedules.New(logger, dbStore, authorizer, triggers.NewService(dbStore, starter, logger).WithChats(
 			// A schedule's place is looked up on its platform with the
 			// channel's own credentials, through the same reach as replies.
-			gateway.NewChats(secretStore, registry, gateway.HTTPPoster(replyClient(reachable(cfg.MCPPrivateNetworks)))))),
+			gateway.NewChats(secretStore, registry, gateway.HTTPPoster(replyClient(reachable(cfg.MCPPrivateNetworks))))).
+			WithSecrets(channelSecrets{secretStore, secretWriter}), cfg.WebhookPublicURL),
 		improvements.New(logger, dbStore, authorizer, proposals.NewDecider(dbStore, attachments, runtime.Loops())),
 		teamgraph.New(logger, graphs),
 		teamsummary.New(logger, dbStore, authorizer),
@@ -112,6 +113,7 @@ func newWebhookRouters(
 	logger *slog.Logger,
 	dbStore *store.Store,
 	secretStore secrets.Store,
+	secretWriter secrets.Writer,
 	registry gateway.Registry,
 	attachments gateway.Objects,
 	runs gateway.Enqueuer,
@@ -129,6 +131,10 @@ func newWebhookRouters(
 
 	return []server.Router{
 		gateway.New(logger, dbStore, secretStore, registry, sink, ingest, notices),
+		// A webhook watcher's delivery is checked against its secret here and
+		// started as any watcher's run is.
+		schedules.NewHooks(logger, triggers.NewService(dbStore, runs, logger).
+			WithSecrets(channelSecrets{secretStore, secretWriter})),
 	}
 }
 

@@ -210,6 +210,18 @@ path "secret/metadata/teams/+/browser/+" {
   capabilities = ["delete"]
 }
 
+# A webhook watcher's signing secret lives at teams/<team_id>/watchers/<id>.
+# Like a channel's it is written when the watcher is made, written again in
+# place when its maker rolls it (the old one stops working at once), read on
+# each delivery, and destroyed with every version when the watcher is deleted.
+path "secret/data/teams/+/watchers/+" {
+  capabilities = ["read", "create", "update"]
+}
+
+path "secret/metadata/teams/+/watchers/+" {
+  capabilities = ["delete"]
+}
+
 path "secret/data/teams/+/sandbox/rooms/+" {
   capabilities = ["read", "create"]
 }

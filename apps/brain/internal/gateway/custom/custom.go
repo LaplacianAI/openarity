@@ -81,8 +81,13 @@ func (provider) Verify(req gateway.WebhookRequest, creds gateway.Credentials) er
 	if secret == "" {
 		return errors.New("custom: no signing secret")
 	}
+	return Check(secret, req.Header.Get(HeaderTimestamp), req.Header.Get(HeaderSignature), req.Body, req.ReceivedAt)
+}
 
-	timestamp := req.Header.Get(HeaderTimestamp)
+// Check is what a delivery signed by us must pass: a timestamp within five
+// minutes of now, and the signature Sign gives for it and the body. A custom
+// channel's webhook and a webhook watcher are both held to it.
+func Check(secret, timestamp, signature string, body []byte, now time.Time) error {
 	if timestamp == "" {
 		return errors.New("custom: no " + HeaderTimestamp)
 	}
@@ -90,12 +95,10 @@ func (provider) Verify(req gateway.WebhookRequest, creds gateway.Credentials) er
 	if err != nil {
 		return fmt.Errorf("custom: unreadable %s", HeaderTimestamp)
 	}
-	if drift := req.ReceivedAt.Sub(time.Unix(at, 0)); drift > freshness || drift < -freshness {
+	if drift := now.Sub(time.Unix(at, 0)); drift > freshness || drift < -freshness {
 		return errors.New("custom: stale delivery")
 	}
-
-	want := Sign(secret, timestamp, req.Body)
-	if !hmac.Equal([]byte(req.Header.Get(HeaderSignature)), []byte(want)) {
+	if !hmac.Equal([]byte(signature), []byte(Sign(secret, timestamp, body))) {
 		return errors.New("custom: bad signature")
 	}
 	return nil

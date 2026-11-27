@@ -12,12 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/gateway"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers/watch"
 )
 
-// The sources a watcher polls. A webhook watcher is a source of its own,
-// made only once the webhook listener takes its deliveries.
+// The sources a watcher watches: a page and a feed are polled; a webhook is
+// called.
 const (
 	SourceWebPage = watch.WebPage
 	SourceFeed    = watch.Feed
@@ -67,7 +68,8 @@ func (p WatcherPatch) changesWhatItDoes() bool {
 		p.Selector != nil || p.AgentID != nil || p.Hub
 }
 
-// A WatcherView is a watcher as it is shown.
+// A WatcherView is a watcher as it is shown. Secret is a webhook watcher's,
+// only in the answer that made or rolled it.
 type WatcherView struct {
 	db.Watcher
 	SessionID        uuid.UUID
@@ -75,12 +77,16 @@ type WatcherView struct {
 	URL              string
 	LastOutcome      string
 	LastCheckedAt    *time.Time
+	Secret           string
 }
 
-// CreateWatcher saves a new watcher and its conversation, and has its first
-// check due now: that check is its baseline, and starts nothing (D12). Made
-// by a person it is active at once; proposed by an agent's tool, it waits
-// for the person's next message to confirm it (D10).
+// CreateWatcher saves a new watcher and its conversation. A page or feed
+// has its first check due now: that check is its baseline, and starts
+// nothing (D12). Made by a person it is active at once; proposed by an
+// agent's tool, it waits for the person's next message to confirm it (D10).
+// A webhook watcher made by a person is active with its secret, shown once;
+// proposed by a tool it waits for its maker to make the secret on the
+// dashboard, which is the confirmation, and no secret passes through a chat.
 func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in WatcherInput) (WatcherView, error) {
 	name, objective, err := named("watcher", in.Name, in.Objective)
 	if err != nil {
@@ -90,7 +96,12 @@ func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in 
 	if err != nil {
 		return WatcherView{}, err
 	}
-	poll, err := polled(in, l)
+	var poll poll
+	if in.Source == SourceWebhook {
+		poll.cooldown, err = hooked(in)
+	} else {
+		poll, err = polled(in, l)
+	}
 	if err != nil {
 		return WatcherView{}, err
 	}
@@ -106,25 +117,34 @@ func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in 
 
 	now := s.now()
 	id := uuid.New()
+	hook, secret := newHook()
 	err = s.store.InTx(ctx, func(q *db.Queries) error {
 		if err := mayMake(ctx, q, who, in.AgentID, l); err != nil {
 			return err
 		}
-		target, err := q.UpsertWatchTarget(ctx, db.UpsertWatchTargetParams{
-			ID: uuid.New(), Kind: in.Source, Url: poll.url, Host: poll.host, NextCheckAt: now,
-		})
-		if err != nil {
-			return fmt.Errorf("save the address it watches: %w", err)
-		}
 		row := db.CreateWatcherParams{
 			ID: id, TeamID: who.Team, CreatedBy: who.User, AgentID: in.AgentID, Hub: in.AgentID == nil,
-			Name: name, Objective: objective, Source: in.Source, TargetID: &target.ID, Selector: poll.selector,
-			EverySeconds: ptr(seconds(poll.every)), CooldownSeconds: seconds(poll.cooldown),
-			Status: Active, NextCheckAt: &now, Target: TargetOwn,
+			Name: name, Objective: objective, Source: in.Source, Selector: poll.selector,
+			CooldownSeconds: seconds(poll.cooldown), Status: Active, Target: TargetOwn,
+		}
+		if in.Source == SourceWebhook {
+			row.HookID = &hook
+		} else {
+			secret = ""
+			target, err := q.UpsertWatchTarget(ctx, db.UpsertWatchTargetParams{
+				ID: uuid.New(), Kind: in.Source, Url: poll.url, Host: poll.host, NextCheckAt: now,
+			})
+			if err != nil {
+				return fmt.Errorf("save the address it watches: %w", err)
+			}
+			row.TargetID, row.EverySeconds, row.NextCheckAt = &target.ID, ptr(seconds(poll.every)), &now
 		}
 		if origin.viaTool() {
 			row.Status, row.NextCheckAt = Proposed, nil
 			row.ProposedRun, row.ProposedIn = &origin.Run, &origin.Session
+			if in.Source == SourceWebhook {
+				row.Status, secret = WaitingSecret, ""
+			}
 		}
 		session, err := sessionAt(ctx, q, who, at, id)
 		if err != nil {
@@ -140,12 +160,17 @@ func (s *Service) CreateWatcher(ctx context.Context, who Who, origin Origin, in 
 		if _, err := q.CreateTriggerSession(ctx, session); err != nil {
 			return fmt.Errorf("start the watcher's conversation: %w", err)
 		}
-		return nil
+		if secret == "" {
+			return nil
+		}
+		return s.putSecret(ctx, &db.Watcher{ID: id, TeamID: who.Team}, secret)
 	})
 	if err != nil {
 		return WatcherView{}, err
 	}
-	return s.watcherView(ctx, who, id)
+	v, err := s.watcherView(ctx, who, id)
+	v.Secret = secret
+	return v, err
 }
 
 // sessionAt is the trigger session a schedule or watcher is made with: where
@@ -176,10 +201,8 @@ type poll struct {
 func polled(in WatcherInput, l Limits) (poll, error) {
 	switch in.Source {
 	case SourceWebPage, SourceFeed:
-	case SourceWebhook:
-		return poll{}, refuse(Invalid, "a webhook watcher cannot be made yet; watch a web_page or a feed")
 	default:
-		return poll{}, refuse(Invalid, "a watcher's source is web_page or feed")
+		return poll{}, refuse(Invalid, "a watcher's source is web_page, feed or webhook")
 	}
 	u, host, err := watch.Normalize(in.URL)
 	if err != nil {
@@ -341,6 +364,9 @@ func patchWatcher(ctx context.Context, q *db.Queries, row *db.Watcher, p Watcher
 		row.AgentID, row.Hub = p.AgentID, false
 	}
 	if p.Every != nil {
+		if row.Source == SourceWebhook {
+			return refuse(Invalid, "a webhook watcher has no every: it runs when its URL is called")
+		}
 		every, err := everyOf(*p.Every, l)
 		if err != nil {
 			return err
@@ -404,6 +430,15 @@ func resumeWatcher(ctx context.Context, q *db.Queries, row *db.Watcher, now time
 		return refuse(Conflict, "the agent this watcher ran was deleted; choose another, or the hub, first")
 	}
 	row.Status, row.PausedReason, row.NextCheckAt, row.ConsecutiveFailures = Active, nil, &now, 0
+	if row.Source == SourceWebhook {
+		// What it held while paused is dropped: it starts again from what
+		// is delivered next (§3.4).
+		row.NextCheckAt = nil
+		if err := q.LetGoOfHeldDeliveries(ctx, row.ID); err != nil {
+			return fmt.Errorf("drop what the watcher held: %w", err)
+		}
+		return nil
+	}
 	// Others' fetches may have moved the target's validators past a change
 	// it never saw while paused: its next look reads the address whole.
 	if row.TargetID != nil {
@@ -435,6 +470,9 @@ func (s *Service) CheckNow(ctx context.Context, who Who, ref Ref) (WatcherView, 
 		}
 		if row.Status != Active {
 			return refuse(Conflict, "only an active watcher can be checked; this one is %s", row.Status)
+		}
+		if row.Source == SourceWebhook {
+			return refuse(Invalid, "a webhook watcher runs when its URL is called; there is nothing for it to look at")
 		}
 		row.NextCheckAt = &now
 		return checkSoon(ctx, q, row, now)
@@ -478,18 +516,35 @@ func (s *Service) ConfirmWatcher(ctx context.Context, who Who, origin Origin, re
 
 // DeleteWatcher deletes a watcher as a schedule is: marked so, its
 // conversation closed and kept with its runs. It lets go of its address,
-// which the sweep deletes once nobody watches it.
+// which the sweep deletes once nobody watches it. A webhook watcher drops
+// what it held, and its secret is destroyed, so its URL answers 404 from
+// then on whatever the secret store says.
 func (s *Service) DeleteWatcher(ctx context.Context, who Who, ref Ref) error {
 	now := s.now()
+	var hooked *db.Watcher
 	_, err := s.changeWatcher(ctx, who, ref, func(q *db.Queries, row *db.Watcher) error {
 		row.Status, row.PausedReason, row.NextCheckAt, row.DeletedAt = Deleted, nil, nil, &now
 		row.TargetID = nil
 		if err := q.CloseTriggerSession(ctx, db.CloseTriggerSessionParams{WatcherID: &row.ID}); err != nil {
 			return fmt.Errorf("close the watcher's conversation: %w", err)
 		}
+		if row.Source != SourceWebhook {
+			return nil
+		}
+		hooked = row
+		if err := q.LetGoOfHeldDeliveries(ctx, row.ID); err != nil {
+			return fmt.Errorf("drop what the watcher held: %w", err)
+		}
 		return nil
 	})
-	return err
+	if err != nil || hooked == nil {
+		return err
+	}
+	if err := s.secrets.Delete(ctx, secretPath(hooked)); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+		s.logger.WarnContext(ctx, "A deleted webhook watcher's secret was not destroyed; its URL answers 404 all the same",
+			"watcher_id", hooked.ID, "error", err)
+	}
+	return nil
 }
 
 // TakeOverWatcher gives a paused watcher whose maker cannot resume it to the
