@@ -392,12 +392,22 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   `running` and returns no answer, so the parent is resumed elsewhere rather
   than told its child failed. `ours()` is the list of causes that are the
   brain's.
-- **A resumed run reaps the subtree it left running** (decision A). Before
-  its `resumed` event, `ReapChildren` fails every running run beneath it with
-  `reapReason`. The resumed model has the transcript up to the turn that
-  delegated, so it asks again, and a child can only be rejoined once runs can
-  be resumed by id (runtime slice 8). The cost is the reaped child's spend.
-  Leaving it running would charge for two answers to one question.
+- **A resumed run carries on the children its worker left, and reaps the
+  rest.** It replaces decision A, which reaped every running child and had
+  the model ask again: a deploy restarted a review's three delegates from
+  nothing, and #311's first review on staging ran 17 child runs in 57
+  minutes where one runs about 5 (about 11M tokens a week went to children
+  that failed or were cancelled). After its `resumed` event and its catch-up,
+  `carryOn` lists the running children that have not beaten for
+  `heartbeatLostAfter` (60 s; the parent itself is taken over only after
+  90 s, so a dead worker's children are always that old), takes up each whose
+  call in the last turn is open, concurrently as the turn ran them, and puts
+  its report, or its waiting report, in that call. A child resumes from its
+  own transcript like any run, so it carries on its own children. Then
+  `ReapChildren` fails what is still running, with `reapReason`: a child that
+  beats, which is another worker's, or one whose call is not open. The
+  catch-up comes first so a child carried on that parks is not taken up
+  again in the same resume.
 - **Whatever ends a run ends what it left running.** `finish` reaps the
   run's running subtree once it has recorded the run, so a resume that fails
   before its own reap (its agent deleted, its clock spent) leaves no child

@@ -1399,9 +1399,10 @@ func TestALostParentLeavesItsChildUnfinished(t *testing.T) {
 	}
 }
 
-// Under decision A a resumed parent asks again rather than finding what it
-// asked before, so whatever was still running beneath it fails, at any depth;
-// what had finished is left as it was.
+// A child that still beats, as one just started does, is another worker's: a
+// resumed parent reaps it, at any depth, and its model asks again; what had
+// finished is left as it was. One its worker left is carried on instead
+// (answers_test.go).
 func TestAResumedParentReapsItsChildren(t *testing.T) {
 	f := newExecFixture(t, newScripted(answer("carried on", 1, 1)))
 	start := func(parent uuid.UUID, call string) db.Run {

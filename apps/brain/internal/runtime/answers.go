@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
@@ -18,6 +19,81 @@ import (
 // maxAnswered caps what one approved call's result adds to the model's next
 // message, as a report is capped.
 const maxAnswered = 32 << 10
+
+// carryOn takes up each child that was running when the run's worker
+// stopped, as the run resumes: its worker is gone, so it has not beaten for
+// lostAfter, and its call in the run's last turn was closed as ended. Each
+// carries on from its own transcript, concurrently as the turn ran them, and
+// its report is that call's result, so the run's model reads what it asked
+// for rather than asking again. A child that beat since, or whose call is not
+// open, is left to the reap.
+func (e *Executor) carryOn(ctx context.Context, row db.Run, msgs []agent.Message, l Lineage) ([]agent.Message, error) {
+	orphans, err := e.store.ListOrphanedChildren(ctx, db.ListOrphanedChildrenParams{
+		ParentID: row.ID, StaleSeconds: e.lostAfter.Seconds(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading which of run %s's delegates its worker left: %w", row.ID, err)
+	}
+	open := openCalls(msgs)
+	var g errgroup.Group
+	for _, c := range orphans {
+		at, ok := open[startingCall(c)]
+		if !ok {
+			continue
+		}
+		g.Go(func() error {
+			taken, err := e.store.AdoptOrphan(ctx, db.AdoptOrphanParams{ID: c.ID, Worker: l.Worker, StaleSeconds: e.lostAfter.Seconds()})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("taking up %s's run %s: %w", c.AgentName, c.ID, err)
+			}
+			got, err := e.takeUp(ctx, taken, l)
+			if err != nil {
+				return err
+			}
+			said := report(got, reportEnd())
+			if got.Status == "waiting" {
+				said = waitingReport(got)
+			}
+			// Each goroutine writes only its own call's message.
+			msgs[at].Content = []agent.Content{{Type: agent.ContentText, Text: said}}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
+// openCalls are the results of the transcript's last turn, by call id, at
+// their index: a child still running is one whose call closeCalls closed
+// as ended, as it had not returned.
+func openCalls(msgs []agent.Message) map[string]int {
+	out := map[string]int{}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == agent.RoleAssistant && len(m.ToolCalls) > 0 {
+			break
+		}
+		if m.Role == agent.RoleTool {
+			out[m.ToolCallID] = i
+		}
+	}
+	return out
+}
+
+// startingCall is the id of the call that started a child: its parent_tool_call is
+// that id, then "#" and its own.
+func startingCall(child db.Run) string {
+	if child.ParentToolCall == nil {
+		return ""
+	}
+	call, _, _ := strings.Cut(*child.ParentToolCall, "#")
+	return call
+}
 
 // catchUp is what happened while a run waited, for its model to read before
 // anything else: each child that waited carries on, to its report or to

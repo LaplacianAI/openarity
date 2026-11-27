@@ -369,6 +369,23 @@ UPDATE runs SET
 WHERE id = sqlc.arg('id')::uuid AND status = 'waiting' AND parent_run_id IS NOT NULL
 RETURNING *;
 
+-- A run's children whose worker stopped while they ran: running, and not
+-- heartbeating for stale_seconds. Only a resumed parent asks, and it carries
+-- them on.
+-- name: ListOrphanedChildren :many
+SELECT * FROM runs
+WHERE parent_run_id = sqlc.arg('parent_id')::uuid AND status = 'running'
+  AND heartbeat_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8)
+ORDER BY created_at, id;
+
+-- A child whose worker stopped, taken up by its resumed parent's worker. No
+-- row: it beat again since it was listed, or is no longer running.
+-- name: AdoptOrphan :one
+UPDATE runs SET worker = sqlc.arg('worker')::text, heartbeat_at = now()
+WHERE id = sqlc.arg('id')::uuid AND status = 'running' AND parent_run_id IS NOT NULL
+  AND heartbeat_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8)
+RETURNING *;
+
 -- A run's children that wait for a person, in the order they were started.
 -- name: ListWaitingChildren :many
 SELECT * FROM runs
