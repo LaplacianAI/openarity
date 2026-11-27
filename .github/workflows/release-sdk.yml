@@ -66,8 +66,15 @@ jobs:
             echo "::error::ci on ${GITHUB_SHA:0:12} is '$conclusion', not success; tag a commit CI passed on"; exit 1
           fi
 
+      # A re-run finds the release its first attempt made, and goes on to the
+      # proxy, the step a re-run is for.
       - name: Publish the release
-        run: gh release create "$TAG" --verify-tag --title "$MODULE $VERSION" --notes-file notes.md
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::$TAG is already released; leaving it as it is"
+          else
+            gh release create "$TAG" --verify-tag --title "$MODULE $VERSION" --notes-file notes.md
+          fi
 
       # The proxy fetches a version the first time anyone asks for it; asking
       # here means the first person to `go get` it does not wait, and
