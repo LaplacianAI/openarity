@@ -1,22 +1,45 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
-func openWait(t *testing.T, s *Store, f runFixture, run, root uuid.UUID, reason string) db.RoomWait {
+func openWait(t *testing.T, s *Store, _ runFixture, run, _ uuid.UUID, reason string) db.RoomWait {
 	t.Helper()
-	w, err := s.OpenRoomWait(t.Context(), db.OpenRoomWaitParams{
-		TeamID: f.team, RunID: run, RootRunID: root, SessionID: f.session, Reason: reason, FirstSeconds: 60,
-	})
+	w, err := s.WaitForRoom(t.Context(), run, reason, 60)
 	if err != nil {
-		t.Fatalf("OpenRoomWait: %v", err)
+		t.Fatalf("WaitForRoom: %v", err)
 	}
 	return w
+}
+
+// A wait a person, a cancel or the hour ended is not opened again by a
+// refusal the run meets before it is told; nor does a run that no longer
+// runs open one.
+func TestAWaitEndedByAnyoneButTheRoomIsNotReopened(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newRunFixture(t, s, "room-reopen")
+	for _, ended := range []string{"superseded", "cancelled", "gave_up"} {
+		root := mustInsertRun(t, s, inState(f.root(), "running"))
+		w := openWait(t, s, f, root, root, "it is full")
+		exec(t, s, `UPDATE room_waits SET ended = '`+ended+`', ended_at = now() WHERE id = '`+w.ID.String()+`'`)
+		if _, err := s.WaitForRoom(t.Context(), root, "it is full", 60); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("a wait ended %s was reopened: %v", ended, err)
+		}
+	}
+	parked := mustInsertRun(t, s, inState(f.root(), "running"))
+	park(t, s, parked)
+	if _, err := s.WaitForRoom(t.Context(), parked, "it is full", 60); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("a run that no longer runs opened a wait: %v", err)
+	}
 }
 
 // A run waits for room once at a time: a second refusal is the same wait,
@@ -149,5 +172,37 @@ func TestDueWaitsAndTheirBackoff(t *testing.T) {
 	}
 	if n, err := s.PushRoomWait(t.Context(), db.PushRoomWaitParams{ID: w.ID, MinSeconds: 60, MaxSeconds: 600}); err != nil || n != 0 {
 		t.Fatalf("an ended wait was put off: %d, %v", n, err)
+	}
+}
+
+// A tree that waits on a person and on room is queued again only once both
+// are done, whichever comes first.
+func TestATreeWaitingOnAPersonAndRoomIsQueuedOnceBothAreDone(t *testing.T) {
+	t.Parallel()
+
+	s := queryStore(t)
+	f := newRunFixture(t, s, "mixed-waits")
+	for _, roomFirst := range []bool{true, false} {
+		root := mustInsertRun(t, s, inState(f.root(), "running"))
+		child := mustInsertRun(t, s, inState(f.child(root, "call_1#c"), "running"))
+		a := mustAsk(t, s, asking(f, root, root, "call_2", "ABCD"))
+		w := openWait(t, s, f, child, root, "it is full")
+		park(t, s, root)
+
+		endRoom := func() {
+			exec(t, s, `UPDATE room_waits SET ended = 'room', ended_at = now() WHERE id = '`+w.ID.String()+`'`)
+		}
+		first, second := endRoom, func() { approve(t, s, a) }
+		if !roomFirst {
+			first, second = second, first
+		}
+		first()
+		if _, err := s.RequeueAnswered(t.Context(), root); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("room first %v: queued with one of the two still waiting: %v", roomFirst, err)
+		}
+		second()
+		if _, err := s.RequeueAnswered(t.Context(), root); err != nil {
+			t.Fatalf("room first %v: not queued once both were done: %v", roomFirst, err)
+		}
 	}
 }

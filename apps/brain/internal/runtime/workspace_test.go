@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
@@ -472,18 +473,24 @@ func TestACommandsEndReadsBackFromItsText(t *testing.T) {
 // waitsKept is the store's side of a run's waits for room: each one opened.
 type waitsKept struct {
 	mu     sync.Mutex
-	opened []db.OpenRoomWaitParams
+	opened []openedWait
 	err    error
 }
 
-func (w *waitsKept) OpenRoomWait(_ context.Context, arg db.OpenRoomWaitParams) (db.RoomWait, error) {
+type openedWait struct {
+	run          uuid.UUID
+	reason       string
+	firstSeconds float64
+}
+
+func (w *waitsKept) WaitForRoom(_ context.Context, run uuid.UUID, reason string, firstSeconds float64) (db.RoomWait, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.opened = append(w.opened, arg)
+	w.opened = append(w.opened, openedWait{run, reason, firstSeconds})
 	if w.err != nil {
 		return db.RoomWait{}, w.err
 	}
-	return db.RoomWait{ID: uuid.New(), RunID: arg.RunID}, nil
+	return db.RoomWait{ID: uuid.New(), RunID: run}, nil
 }
 
 func (w *waitsKept) count() int {
@@ -496,7 +503,7 @@ func newWaitingFixture(t *testing.T) (*fixture, *fakeWorkspaces, *waitsKept) {
 	t.Helper()
 	f, ws := newWorkspaceFixture(t, true)
 	waits := &waitsKept{}
-	f.builder.WithWorkspaces(&WorkspaceDeps{Rooms: ws, Client: http.DefaultClient, Waits: waits})
+	f.builder.WithWorkspaces(&WorkspaceDeps{Rooms: ws, Client: http.DefaultClient, Waits: waits, Logger: quietLogger()})
 	return f, ws, waits
 }
 
@@ -512,7 +519,7 @@ func TestARefusalForWantOfRoomMakesTheRunWait(t *testing.T) {
 	}{
 		{"full", fmt.Errorf("making the room: %w: memory", sandbox.ErrFull), "(it is full)"},
 		{"preparing", sandbox.ErrPreparing, "(it is still being prepared)"},
-		{"unavailable", sandbox.Unanswered(context.Background(), errors.New("dial tcp: refused")), "(its provider did not answer)"},
+		{"unavailable", fmt.Errorf("%w: dial tcp: refused", sandbox.ErrUnavailable), "(its provider did not answer)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f, ws, waits := newWaitingFixture(t)
@@ -537,9 +544,8 @@ func TestARefusalForWantOfRoomMakesTheRunWait(t *testing.T) {
 				t.Fatalf("waits opened = %d, want 1", waits.count())
 			}
 			w := waits.opened[0]
-			if w.RunID != f.run.ID || w.RootRunID != f.run.RootRunID || w.TeamID != f.run.TeamID ||
-				w.SessionID != f.run.SessionID || w.Reason != c.refused.Error() || w.FirstSeconds != 60 {
-				t.Errorf("wait = %+v, want the run's, its refusal, tried in a minute", w)
+			if w.run != f.run.ID || w.reason != strings.Trim(c.says, "()") || w.firstSeconds != 60 {
+				t.Errorf("wait = %+v, want the run's, its refusal in a few words, tried in a minute", w)
 			}
 		})
 	}
@@ -550,6 +556,7 @@ func TestARefusalWaitingCannotEndIsTheCallsError(t *testing.T) {
 	for _, refused := range []error{
 		sandbox.ErrRefused, sandbox.ErrNotReady, sandbox.ErrNoProvider, errors.New("boom"),
 		sandbox.Unanswered(canceled(), errors.New("context canceled")),
+		fmt.Errorf("%w: %w", sandbox.ErrNotReady, sandbox.ErrUnavailable),
 	} {
 		f, ws, waits := newWaitingFixture(t)
 		ws.ensureErr = refused
@@ -571,6 +578,20 @@ func TestWithNoWaitsAFullSandboxIsTheCallsError(t *testing.T) {
 	_, err := invoke(t, f.build(t), BashToolName, `{"command":"ls"}`)
 	if err == nil || !strings.Contains(err.Error(), "could not be started") || !strings.Contains(err.Error(), sandbox.ErrFull.Error()) {
 		t.Fatalf("Bash = %v", err)
+	}
+}
+
+// A run that may not open a wait (it no longer runs, or a person or a cancel
+// ended it) is told the refusal, as before waits.
+func TestAWaitTheRunMayNotOpenIsTheRefusal(t *testing.T) {
+	f, ws, waits := newWaitingFixture(t)
+	ws.ensureErr = sandbox.ErrFull
+	waits.err = pgx.ErrNoRows
+	_, err := invoke(t, f.build(t), BashToolName, `{"command":"ls"}`)
+	var said toModel
+	if err == nil || errors.As(err, &said) || !strings.Contains(err.Error(), sandbox.ErrFull.Error()) ||
+		strings.Contains(err.Error(), "no rows") {
+		t.Fatalf("Bash = %v, want the plain refusal", err)
 	}
 }
 

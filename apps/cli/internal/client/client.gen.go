@@ -4190,8 +4190,9 @@ type Run struct {
 	StartedAt *time.Time `json:"started_at,omitempty" yaml:"started_at,omitempty"`
 
 	// Status Where a run stands. `queued` and `running` are live; `waiting` is a
-	// run that stopped for a person's answer, holding nothing, and carries
-	// on when it is answered; the other three are final.
+	// run that stopped for a person's answer or for room in the team's
+	// sandbox, holding nothing, and carries on when that comes; the other
+	// three are final.
 	Status RunStatus `json:"status" yaml:"status"`
 }
 
@@ -4300,8 +4301,9 @@ type RunRequest struct {
 }
 
 // RunStatus Where a run stands. `queued` and `running` are live; `waiting` is a
-// run that stopped for a person's answer, holding nothing, and carries
-// on when it is answered; the other three are final.
+// run that stopped for a person's answer or for room in the team's
+// sandbox, holding nothing, and carries on when that comes; the other
+// three are final.
 type RunStatus string
 
 // Said defines model for Said.
@@ -7999,7 +8001,8 @@ type ClientInterface interface {
 	// `run_finished` carries the whole answer.
 	// A run that asks a person before a call says so in
 	// `approval_requested`, waits in `run_waiting` with what it told them,
-	// and hears the answer in `approval_decided`.
+	// and hears the answer in `approval_decided`. A run the team's sandbox
+	// has no room for waits in `run_waiting` too, its `reason` `sandbox`.
 	// A file a run hands the person is `file_sent`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
@@ -11497,7 +11500,8 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // `run_finished` carries the whole answer.
 // A run that asks a person before a call says so in
 // `approval_requested`, waits in `run_waiting` with what it told them,
-// and hears the answer in `approval_decided`.
+// and hears the answer in `approval_decided`. A run the team's sandbox
+// has no room for waits in `run_waiting` too, its `reason` `sandbox`.
 // A file a run hands the person is `file_sent`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
@@ -20698,7 +20702,8 @@ type ClientWithResponsesInterface interface {
 	// `run_finished` carries the whole answer.
 	// A run that asks a person before a call says so in
 	// `approval_requested`, waits in `run_waiting` with what it told them,
-	// and hears the answer in `approval_decided`.
+	// and hears the answer in `approval_decided`. A run the team's sandbox
+	// has no room for waits in `run_waiting` too, its `reason` `sandbox`.
 	// A file a run hands the person is `file_sent`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
@@ -29519,7 +29524,8 @@ func (c *ClientWithResponses) GetSessionAttachmentWithResponse(ctx context.Conte
 // `run_finished` carries the whole answer.
 // A run that asks a person before a call says so in
 // `approval_requested`, waits in `run_waiting` with what it told them,
-// and hears the answer in `approval_decided`.
+// and hears the answer in `approval_decided`. A run the team's sandbox
+// has no room for waits in `run_waiting` too, its `reason` `sandbox`.
 // A file a run hands the person is `file_sent`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the

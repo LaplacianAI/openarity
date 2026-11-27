@@ -128,12 +128,12 @@ func TestWorkspacesShareTheKeeperOrThereAreNone(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{}
-	if ws := newWorkspaces(runCommandsInRooms(newDiscoverer(cfg, readOnly{}, nil), cfg, quietLogger(), &store.Store{}, readOnly{}), cfg, &store.Store{}); ws != nil {
+	if ws := newWorkspaces(runCommandsInRooms(newDiscoverer(cfg, readOnly{}, nil), cfg, quietLogger(), &store.Store{}, readOnly{}), cfg, &store.Store{}, quietLogger()); ws != nil {
 		t.Errorf("workspaces %+v with no keeper", ws)
 	}
 	k := runCommandsInRooms(newDiscoverer(cfg, static.New(), nil), cfg, quietLogger(), &store.Store{}, static.New())
-	ws := newWorkspaces(k, cfg, &store.Store{})
-	if ws == nil || ws.Rooms == nil || ws.Client == nil || ws.Waits == nil {
+	ws := newWorkspaces(k, cfg, &store.Store{}, quietLogger())
+	if ws == nil || ws.Rooms == nil || ws.Client == nil || ws.Waits == nil || ws.Logger == nil {
 		t.Fatalf("workspaces = %+v over a keeper", ws)
 	}
 }

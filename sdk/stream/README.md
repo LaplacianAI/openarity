@@ -77,7 +77,7 @@ with the envelope's `at` and `run_id` beside the event's own fields.
 | `run_finished` | a run ending, with its whole answer |
 | `approval_requested` | a run asking a person before a call: the call is not made, with the code a person can type back |
 | `approval_decided` | the request answered, expired, or cancelled: with its run, or because the person wrote again (`superseded`) |
-| `run_waiting` | a run that stopped for a person's answer rather than finishing, with what it told them in `said` |
+| `run_waiting` | a run that stopped rather than finishing, for a person's answer (`reason` `approval`) or for room in the team's sandbox (`sandbox`), with what it said in `said` |
 | `file_sent` | a run handing a person a file of the conversation, named by its id like a message's file, with the call that sent it |
 | `custom` | a server's own event, named |
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"testing"
 
@@ -18,7 +20,8 @@ func TestWaitableIsWhatWaitingCanEnd(t *testing.T) {
 		sandbox.ErrFull:        true,
 		sandbox.ErrPreparing:   true,
 		sandbox.ErrUnavailable: true,
-		fmt.Errorf("making the room: %w: memory", sandbox.ErrFull): true,
+		fmt.Errorf("making the room: %w: memory", sandbox.ErrFull):        true,
+		fmt.Errorf("%w: %w", sandbox.ErrNotReady, sandbox.ErrUnavailable): false,
 		sandbox.ErrRefused:    false,
 		sandbox.ErrNotReady:   false,
 		sandbox.ErrNoProvider: false,
@@ -40,10 +43,20 @@ func TestWaitableIsWhatWaitingCanEnd(t *testing.T) {
 // gave up on it.
 func TestUnansweredIsUnavailableUnlessTheCallerGaveUp(t *testing.T) {
 	t.Parallel()
-	dial := errors.New("dial tcp 100.93.194.60:9090: connect: connection refused")
+	dial := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
 	err := sandbox.Unanswered(t.Context(), dial)
 	if !errors.Is(err, sandbox.ErrUnavailable) || !errors.Is(err, dial) {
 		t.Fatalf("Unanswered = %v, want ErrUnavailable around the dial error", err)
+	}
+	for _, err := range []error{io.EOF, fmt.Errorf("read: %w", io.ErrUnexpectedEOF)} {
+		if !errors.Is(sandbox.Unanswered(t.Context(), err), sandbox.ErrUnavailable) {
+			t.Errorf("a connection closed before an answer (%v) is not unavailable", err)
+		}
+	}
+	for _, err := range []error{errors.New("x509: certificate signed by unknown authority"), errors.New(`unsupported protocol scheme ""`)} {
+		if errors.Is(sandbox.Unanswered(t.Context(), err), sandbox.ErrUnavailable) {
+			t.Errorf("a setting to fix (%v) is waited for", err)
+		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

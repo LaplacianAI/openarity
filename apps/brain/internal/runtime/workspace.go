@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -50,6 +51,9 @@ type WorkspaceDeps struct {
 	// Waits keeps a run's wait for room when the sandbox has none
 	// (roomwait.go). Without it a refusal is the call's error.
 	Waits RoomWaits
+	// Logger records the provider's own words for a refusal the run waits
+	// on, which the model is told only in a few. Needed with Waits.
+	Logger *slog.Logger
 }
 
 // WithWorkspaces lets runs of agents granted the workspace have one. Without

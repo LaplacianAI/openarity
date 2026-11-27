@@ -26,14 +26,17 @@ const (
 	// start.
 	roomWakeBatch   = 10
 	roomWakeTimeout = 2 * time.Minute
+	// roomWakeBudget is how long a sweep starts tries for: none begins after
+	// it, and a wait it skips stays due, first in line for the next sweep.
+	roomWakeBudget = 2 * time.Minute
 )
 
 // How a wait ended, as room_waits.ended stores it.
 const (
-	roomEndedRoom       = "room"
-	roomEndedGaveUp     = "gave_up"
-	roomEndedSuperseded = "superseded"
-	roomEndedCancelled  = "cancelled"
+	roomEndedRoom       = db.RoomWaitRoom
+	roomEndedGaveUp     = db.RoomWaitGaveUp
+	roomEndedSuperseded = db.RoomWaitSuperseded
+	roomEndedCancelled  = db.RoomWaitCancelled
 )
 
 const (
@@ -49,9 +52,11 @@ const (
 	roomSuperseded = "The person wrote again while the workspace waited for room, so the calls that waited were not made. Read what they wrote."
 )
 
-// RoomWaits keeps a run's wait for sandbox room.
+// RoomWaits keeps a run's wait for sandbox room; *store.Store is one. A
+// workspace without it, as in a test of the tools alone, refuses as it did
+// before waits.
 type RoomWaits interface {
-	OpenRoomWait(ctx context.Context, arg db.OpenRoomWaitParams) (db.RoomWait, error)
+	WaitForRoom(ctx context.Context, run uuid.UUID, reason string, firstSeconds float64) (db.RoomWait, error)
 }
 
 // roomShort is a refusal in a few words, for the model.
@@ -67,16 +72,22 @@ func roomShort(err error) string {
 
 // wait keeps the run's wait for room and is what the model reads instead of
 // the call's result. The first refusal opens it; every call after it in the
-// attempt is refused here without asking the provider again. A wait that
-// cannot be kept is the refusal, as it was before waits.
+// attempt is refused here without asking the provider again. What the model
+// and the wait are told is the refusal in a few words: the provider's own
+// error can name its internal address, so it goes to the log alone. A wait
+// that cannot be kept, or that the run may not open (it no longer runs, or a
+// person or a cancel ended it), is the refusal, as it was before waits.
 func (w *runWorkspace) wait(ctx context.Context, refused error) error {
-	if _, err := w.deps.Waits.OpenRoomWait(context.WithoutCancel(ctx), db.OpenRoomWaitParams{
-		TeamID: w.team, RunID: w.run, RootRunID: w.root, SessionID: w.session,
-		Reason: refused.Error(), FirstSeconds: roomRetryMin.Seconds(),
-	}); err != nil {
+	short := roomShort(refused)
+	w.deps.Logger.InfoContext(ctx, "The sandbox had no room for a workspace call; the run waits",
+		"run", w.run, "err", refused)
+	if _, err := w.deps.Waits.WaitForRoom(context.WithoutCancel(ctx), w.run, short, roomRetryMin.Seconds()); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("the workspace could not be started: %w", refused)
+		}
 		return fmt.Errorf("the workspace could not be started: %w (and its wait for room was not kept: %w)", refused, err)
 	}
-	w.waiting = toModel(fmt.Sprintf(waitingForRoom, roomShort(refused)))
+	w.waiting = toModel(fmt.Sprintf(waitingForRoom, short))
 	return w.waiting
 }
 
@@ -93,14 +104,22 @@ func (e *Executor) roomWaitsEnded(ctx context.Context, runID uuid.UUID) ([]strin
 	)
 	for _, w := range waits {
 		ids = append(ids, w.ID)
+		if w.Ended == nil {
+			continue // ListUntoldRoomWaits reads only ended ones
+		}
 		switch *w.Ended {
 		case roomEndedRoom:
 			parts = append(parts, roomCame)
 		case roomEndedGaveUp:
-			said, _ := clip(oneLine(w.Reason))
+			said, _ := clip(oneLine(w.Reason)) // whether it was clipped says nothing to the model
 			parts = append(parts, fmt.Sprintf(roomGaveUp, said))
 		case roomEndedSuperseded:
 			parts = append(parts, roomSuperseded)
+		default:
+			// A cancelled wait belongs to a run that ended, which is not
+			// resumed to be told; anything else is a wait this brain does not
+			// know, told as the room coming, which costs a call at most.
+			parts = append(parts, roomCame)
 		}
 	}
 	return parts, ids, nil
@@ -111,7 +130,8 @@ func (e *Executor) roomWaitsEnded(ctx context.Context, runID uuid.UUID) ([]strin
 // else of its tree waits; still no room, the next try later; an hour gone,
 // given up, and the root queued so its model is told. The room is made
 // without the session held, as a call makes it; the wait is ended and the
-// root queued under it, as an answer is.
+// root queued under it, as an answer is. Tries start for roomWakeBudget at
+// most, so a slow provider holds up one sweep, not the minute's next ones.
 func (j *Job) wakeRoomWaits(ctx context.Context) []error {
 	due, err := j.store.ListDueRoomWaits(ctx, db.ListDueRoomWaitsParams{
 		GiveUpSeconds: roomGiveUpAfter.Seconds(), Batch: roomWakeBatch,
@@ -119,26 +139,13 @@ func (j *Job) wakeRoomWaits(ctx context.Context) []error {
 	if err != nil {
 		return []error{fmt.Errorf("listing waits for room due a try: %w", err)}
 	}
+	stop := time.Now().Add(j.wakeBudget)
 	var failed []error
 	for _, w := range due {
-		ended := roomEndedGaveUp
-		if !w.GaveUp {
-			waitable, err := j.makeRoom(ctx, w)
-			if err != nil {
-				failed = append(failed, err)
-				continue
-			}
-			if waitable {
-				if _, err := j.store.PushRoomWait(ctx, db.PushRoomWaitParams{
-					ID: w.ID, MinSeconds: roomRetryMin.Seconds(), MaxSeconds: roomRetryMax.Seconds(),
-				}); err != nil {
-					failed = append(failed, fmt.Errorf("putting off wait %s: %w", w.ID, err))
-				}
-				continue
-			}
-			ended = roomEndedRoom
+		if !w.GaveUp && !time.Now().Before(stop) {
+			continue // a wait given up needs no try, so the rest are still read
 		}
-		again, err := endRoomWait(ctx, j.store, w, ended)
+		again, err := j.tryWait(ctx, w)
 		if err != nil {
 			failed = append(failed, err)
 			continue
@@ -151,6 +158,28 @@ func (j *Job) wakeRoomWaits(ctx context.Context) []error {
 		}
 	}
 	return failed
+}
+
+// tryWait is one due wait: given up, ended with the room made (or refused in
+// a way waiting cannot end), or put off; the root to queue, when ending it
+// left nothing of its tree waiting.
+func (j *Job) tryWait(ctx context.Context, w db.ListDueRoomWaitsRow) (*Resumed, error) {
+	if w.GaveUp {
+		return endRoomWait(ctx, j.store, w, roomEndedGaveUp)
+	}
+	waitable, err := j.makeRoom(ctx, w)
+	if err != nil {
+		return nil, err
+	}
+	if !waitable {
+		return endRoomWait(ctx, j.store, w, roomEndedRoom)
+	}
+	if _, err := j.store.PushRoomWait(ctx, db.PushRoomWaitParams{
+		ID: w.ID, MinSeconds: roomRetryMin.Seconds(), MaxSeconds: roomRetryMax.Seconds(),
+	}); err != nil {
+		return nil, fmt.Errorf("putting off wait %s: %w", w.ID, err)
+	}
+	return nil, nil
 }
 
 // makeRoom makes the wait's room: waitable when the sandbox still has no

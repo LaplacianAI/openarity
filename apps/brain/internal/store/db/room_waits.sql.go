@@ -151,40 +151,33 @@ func (q *Queries) MarkRoomWaitsTold(ctx context.Context, ids []uuid.UUID) error 
 
 const openRoomWait = `-- name: OpenRoomWait :one
 INSERT INTO room_waits (team_id, run_id, root_run_id, session_id, reason, retry_at)
-VALUES (
-    $1, $2, $3, $4,
-    $5, now() + make_interval(secs => $6::float8)
-)
+SELECT r.team_id, r.id, r.root_run_id, r.session_id, $1,
+       now() + make_interval(secs => $2::float8)
+FROM runs r
+WHERE r.id = $3 AND r.status = 'running'
 ON CONFLICT (run_id) WHERE told_at IS NULL DO UPDATE SET
     reason   = EXCLUDED.reason,
     retry_at = CASE WHEN room_waits.ended IS NULL THEN room_waits.retry_at ELSE EXCLUDED.retry_at END,
     ended    = NULL,
     ended_at = NULL
+WHERE room_waits.ended IS NULL OR room_waits.ended = 'room'
 RETURNING id, team_id, run_id, root_run_id, session_id, reason, since, retry_at, ended, ended_at, told_at
 `
 
 type OpenRoomWaitParams struct {
-	TeamID       uuid.UUID
-	RunID        uuid.UUID
-	RootRunID    uuid.UUID
-	SessionID    uuid.UUID
 	Reason       string
 	FirstSeconds float64
+	RunID        uuid.UUID
 }
 
 // A run's workspace call refused for want of room: its wait, opened by the
-// first refusal. A later refusal before the run is told how the wait ended is
-// the same wait, opened again if it had ended (the room it was made went
-// before the run could use it), keeping when it began.
+// first refusal, only while the run is running (a run cancelled or parked
+// meanwhile opens none). A later refusal before the run is told how the wait
+// ended is the same wait, keeping when it began; one the room ended opens
+// again (the room it was made went before the run could use it). One a
+// person, a cancel or the hour ended is not reopened: no row.
 func (q *Queries) OpenRoomWait(ctx context.Context, arg OpenRoomWaitParams) (RoomWait, error) {
-	row := q.db.QueryRow(ctx, openRoomWait,
-		arg.TeamID,
-		arg.RunID,
-		arg.RootRunID,
-		arg.SessionID,
-		arg.Reason,
-		arg.FirstSeconds,
-	)
+	row := q.db.QueryRow(ctx, openRoomWait, arg.Reason, arg.FirstSeconds, arg.RunID)
 	var i RoomWait
 	err := row.Scan(
 		&i.ID,

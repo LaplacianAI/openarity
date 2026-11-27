@@ -1367,11 +1367,19 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     say it waits and stop, and parks with `waiting_for = 'sandbox'`. The
     sweep makes the room itself, a minute after the refusal and then after
     as long as the run has waited, at most ten minutes apart, and queues the
-    root once it is made, or once the wait is an hour old, so a try costs no
+    root once it is made, or at the first try after the wait is an hour old,
+    so a try costs no
     model turn and a delegate's parent is not woken to hear it still
     waits. Only what nothing ran for waits: a command killed inside its room,
-    sandboxd's own 503 (an image it cannot pull) and a room lost mid-call
-    stay the call's error. A person writing again ends the wait, as it gives
+    sandboxd's own 503 (an image it cannot pull), a room that started and
+    did not answer (`ErrNotReady`, whatever it wraps), a room lost mid-call,
+    and a transport failure that is not one of no answer (a refused
+    certificate) stay the call's error. A wait opens under the run's session
+    lock and only while it runs, so a cancel or a person writing again
+    cannot leave one open behind them; the model and the wait carry the
+    refusal in a few words, and the provider's own, which can name an
+    internal address, goes to the log. The sweep tries rooms after it has
+    restarted queued runs, and starts tries for two minutes at most. A person writing again ends the wait, as it gives
     up their requests; a tree that ends cancels it. Command MCP servers in
     the sandbox do not wait yet: none met these in the same 30 days.
   - **A stop re-checks idleness under the owner's locks**, so a run that

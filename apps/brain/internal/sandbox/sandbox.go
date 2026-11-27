@@ -11,6 +11,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 )
 
@@ -160,19 +162,33 @@ var (
 
 // Waitable is a refusal that waiting can end: the provider has no room now,
 // is still preparing what rooms start from, or did not answer. Nothing ran
-// for it, so the same call can be made again once there is room.
+// for it, so the same call can be made again once there is room. A room that
+// was made and did not start (ErrNotReady) is not, whatever it wraps: it is
+// deleted, and the next call starts another at once.
 func Waitable(err error) bool {
+	if errors.Is(err, ErrNotReady) {
+		return false
+	}
 	return errors.Is(err, ErrFull) || errors.Is(err, ErrPreparing) || errors.Is(err, ErrUnavailable)
 }
 
 // Unanswered is a request to a provider that got no answer, as
-// ErrUnavailable; one whose context ended is the caller giving up, and stays
-// as it is.
+// ErrUnavailable: it could not connect, timed out, or the connection closed
+// before an answer. One whose context ended is the caller giving up, and any
+// other failure (a certificate it refused, an address it cannot parse) is a
+// setting to fix, which waiting would only hide; both stay as they are.
 func Unanswered(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || !noAnswer(err) {
 		return err
 	}
 	return fmt.Errorf("%w: %w", ErrUnavailable, err)
+}
+
+func noAnswer(err error) bool {
+	var op *net.OpError
+	var ne net.Error
+	return errors.As(err, &op) || (errors.As(err, &ne) && ne.Timeout()) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // Down is a status a gateway in front of a provider answers with when the

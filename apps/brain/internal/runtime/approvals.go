@@ -44,7 +44,7 @@ type TxStore interface {
 // transaction: asked is the waiting event's seq when a prompt was queued,
 // which names it to the reply sender, and 0 when none was. One that waits
 // for nobody, only for sandbox room, tells its conversation what it said.
-func parkAndAsk(ctx context.Context, s TxStore, runID uuid.UUID, worker string, child bool, said *string, waitsFor string, payload []byte) (parked bool, again *Resumed, asked int32, err error) {
+func parkAndAsk(ctx context.Context, s TxStore, runID uuid.UUID, worker string, child bool, said *string, why waitsFor, payload []byte) (parked bool, again *Resumed, asked int32, err error) {
 	err = s.InTx(ctx, func(q *db.Queries) error {
 		if _, err := q.LockRunSession(ctx, runID); err != nil {
 			return fmt.Errorf("lock the session of run %s: %w", runID, err)
@@ -59,9 +59,9 @@ func parkAndAsk(ctx context.Context, s TxStore, runID uuid.UUID, worker string, 
 		}
 		var n int64
 		if child {
-			n, err = q.ParkChild(ctx, db.ParkChildParams{ID: runID, Worker: worker, Said: said, WaitingFor: waitsFor})
+			n, err = q.ParkChild(ctx, db.ParkChildParams{ID: runID, Worker: worker, Said: said, WaitingFor: string(why)})
 		} else {
-			n, err = q.ParkRun(ctx, db.ParkRunParams{ID: runID, Worker: worker, Said: said, WaitingFor: waitsFor})
+			n, err = q.ParkRun(ctx, db.ParkRunParams{ID: runID, Worker: worker, Said: said, WaitingFor: string(why)})
 		}
 		if err != nil || n == 0 {
 			return err

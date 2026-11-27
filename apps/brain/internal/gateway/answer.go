@@ -232,7 +232,7 @@ func Supersede(ctx context.Context, q Superseding, runID, userID uuid.UUID, via 
 	if err != nil {
 		return nil, fmt.Errorf("give up what run %s asked %s: %w", runID, userID, err)
 	}
-	waits, err := q.EndTreeRoomWaits(ctx, db.EndTreeRoomWaitsParams{RootRunID: runID, Ended: "superseded"})
+	waits, err := q.EndTreeRoomWaits(ctx, db.EndTreeRoomWaitsParams{RootRunID: runID, Ended: db.RoomWaitSuperseded})
 	if err != nil {
 		return nil, fmt.Errorf("give up what run %s waits for in the sandbox: %w", runID, err)
 	}

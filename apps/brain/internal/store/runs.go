@@ -163,7 +163,7 @@ func answerChannel(ctx context.Context, q *db.Queries, run db.Run, finish db.Fin
 // still waits for in the sandbox, so the sweep makes no room for it. The
 // caller holds the tree's session.
 func endApprovals(ctx context.Context, q *db.Queries, root uuid.UUID) error {
-	if _, err := q.EndTreeRoomWaits(ctx, db.EndTreeRoomWaitsParams{RootRunID: root, Ended: "cancelled"}); err != nil {
+	if _, err := q.EndTreeRoomWaits(ctx, db.EndTreeRoomWaitsParams{RootRunID: root, Ended: db.RoomWaitCancelled}); err != nil {
 		return fmt.Errorf("end what run %s waits for in the sandbox: %w", root, err)
 	}
 	ended, err := q.CancelRunApprovals(ctx, root)

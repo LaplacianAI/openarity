@@ -154,7 +154,8 @@ func startingCall(child db.Run) string {
 // anything else: each child that waited carries on, to its report or to
 // waiting again; each of the run's own requests that was answered is acted
 // on, an approved call made then, with exactly the arguments that were
-// approved; and each of its waits for sandbox room that ended is told. Empty when nothing happened, as on a resume after a crash.
+// approved; and each of its waits for sandbox room that ended is told.
+// Empty when nothing happened, as on a resume after a crash.
 func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Lineage) ([]agent.Content, error) {
 	var (
 		parts []string

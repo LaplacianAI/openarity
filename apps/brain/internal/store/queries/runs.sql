@@ -365,7 +365,8 @@ UPDATE runs SET
     worker         = sqlc.arg('worker')::text,
     heartbeat_at   = now(),
     waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
-    waiting_since  = NULL
+    waiting_since  = NULL,
+    waiting_for    = NULL
 WHERE id = sqlc.arg('id')::uuid AND status = 'waiting' AND parent_run_id IS NOT NULL
 RETURNING *;
 
@@ -421,7 +422,8 @@ UPDATE runs SET
     status         = 'queued',
     attempt        = attempt + 1,
     waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
-    waiting_since  = NULL
+    waiting_since  = NULL,
+    waiting_for    = NULL
 WHERE runs.id = $1 AND runs.status = 'waiting'
   AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.root_run_id = runs.id AND a.status = 'pending')
   AND NOT EXISTS (SELECT 1 FROM room_waits w WHERE w.root_run_id = runs.id AND w.ended IS NULL)

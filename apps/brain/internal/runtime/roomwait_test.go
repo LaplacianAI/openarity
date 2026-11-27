@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -26,7 +27,7 @@ func roomFixture(t *testing.T, model *scripted) (*execFixture, *fakeWorkspaces, 
 	f.mustExec(t, `UPDATE agents SET workspace = true WHERE id = $1`, f.agent)
 	f.mustExec(t, `UPDATE team_settings SET sandbox_provider = 'sandboxd', sandbox_secret_id = gen_random_uuid(), sandbox_url = 'http://sandboxd.example:9090' WHERE team_id = $1`, f.team)
 	ws := &fakeWorkspaces{room: newFakeRoom(t), ensureErr: fmt.Errorf("making the room: %w: memory", sandbox.ErrFull)}
-	f.exec.builder.WithWorkspaces(&WorkspaceDeps{Rooms: ws, Client: f.roomClient(), Waits: f.store})
+	f.exec.builder.WithWorkspaces(&WorkspaceDeps{Rooms: ws, Client: f.roomClient(), Waits: f.store, Logger: quietLogger()})
 	j := RunJob(f.exec, f.store, quietLogger())
 	r := &wakes{}
 	j.resume = r.add
@@ -108,16 +109,16 @@ func TestARunTheSandboxHasNoRoomForParksToWait(t *testing.T) {
 	f.mustExecute(t)
 
 	row := f.row(t)
-	if row.Status != "waiting" || deref(row.WaitingFor) != waitsForRoom || deref(row.Output) != waitsForTheSandbox {
+	if row.Status != "waiting" || waitsFor(deref(row.WaitingFor)) != waitsForRoom || deref(row.Output) != waitsForTheSandbox {
 		t.Fatalf("run is %s for %q saying %q (%s), want waiting for the sandbox in its words",
 			row.Status, deref(row.WaitingFor), deref(row.Output), deref(row.Error))
 	}
-	if p := waitingEvent(t, f.events(t)); p.Reason != waitsForRoom || p.Said != waitsForTheSandbox {
+	if p := waitingEvent(t, f.events(t)); p.Reason != string(waitsForRoom) || p.Said != waitsForTheSandbox {
 		t.Errorf("waiting event = %+v", p)
 	}
 	waits := f.roomWaits(t)
-	if len(waits) != 1 || waits[0].Ended != nil || waits[0].RunID != f.run || !strings.Contains(waits[0].Reason, "memory") {
-		t.Fatalf("waits = %+v, want one open for the run, with its refusal", waits)
+	if len(waits) != 1 || waits[0].Ended != nil || waits[0].RunID != f.run || waits[0].Reason != "it is full" {
+		t.Fatalf("waits = %+v, want one open for the run, with its refusal in a few words", waits)
 	}
 	if n := ws.room.calls("/exec"); n != 0 {
 		t.Errorf("the command was sent %d times", n)
@@ -233,7 +234,8 @@ func TestAWaitOfAnHourIsGivenUp(t *testing.T) {
 	wantStatus(t, f.row(t), "succeeded", "")
 	reqs := f.model.requests()
 	told := lastUser(reqs[2].Messages)
-	if !strings.Contains(told, "after an hour") || !strings.Contains(told, "memory") || !strings.Contains(told, "were not made") {
+	if !strings.Contains(told, "after an hour") || !strings.Contains(told, "(it is full)") || strings.Contains(told, "memory") ||
+		!strings.Contains(told, "were not made") {
 		t.Errorf("told %q, want the wait given up with its refusal", told)
 	}
 }
@@ -349,10 +351,10 @@ func TestADelegateWaitsForRoomAndCarriesOnWithItsParent(t *testing.T) {
 	f.mustExecute(t)
 
 	child := f.onlyChild(t)
-	if child.Status != "waiting" || deref(child.WaitingFor) != waitsForRoom {
+	if child.Status != "waiting" || waitsFor(deref(child.WaitingFor)) != waitsForRoom {
 		t.Fatalf("billing is %s for %q", child.Status, deref(child.WaitingFor))
 	}
-	if root := f.row(t); root.Status != "waiting" || deref(root.WaitingFor) != waitsForRoom {
+	if root := f.row(t); root.Status != "waiting" || waitsFor(deref(root.WaitingFor)) != waitsForRoom {
 		t.Fatalf("triage is %s for %q, want waiting for the sandbox", root.Status, deref(root.WaitingFor))
 	}
 	reqs := f.model.requests()
@@ -402,10 +404,7 @@ func TestARunWaitingForRoomTellsItsConversation(t *testing.T) {
 		if _, err := a.raw.Exec(t.Context(), `DELETE FROM approvals WHERE run_id = $1`, a.run.ID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := a.store.OpenRoomWait(t.Context(), db.OpenRoomWaitParams{
-			TeamID: a.run.TeamID, RunID: a.run.ID, RootRunID: a.run.ID, SessionID: a.run.SessionID,
-			Reason: "full", FirstSeconds: 60,
-		}); err != nil {
+		if _, err := a.store.WaitForRoom(t.Context(), a.run.ID, "it is full", 60); err != nil {
 			t.Fatal(err)
 		}
 		parked, again, asked, err := parkAndAsk(t.Context(), a.store, a.run.ID, worker, false, &said, waitsForRoom, []byte(`{}`))
@@ -425,8 +424,50 @@ func TestARunWaitingForRoomTellsItsConversation(t *testing.T) {
 			t.Errorf("prompts = %+v, want nobody asked", got)
 		}
 		row, err := a.store.GetRun(t.Context(), a.run.ID)
-		if err != nil || deref(row.WaitingFor) != waitsForRoom {
+		if err != nil || waitsFor(deref(row.WaitingFor)) != waitsForRoom {
 			t.Errorf("waiting for %q, %v", deref(row.WaitingFor), err)
 		}
+	}
+}
+
+// slowRooms is a sandbox whose every room takes its time to make.
+type slowRooms struct {
+	*fakeWorkspaces
+	delay time.Duration
+}
+
+func (s slowRooms) Ensure(ctx context.Context, team, session uuid.UUID) (sandbox.Endpoint, error) {
+	time.Sleep(s.delay)
+	return s.fakeWorkspaces.Ensure(ctx, team, session)
+}
+
+// A sweep starts tries for its budget and no longer: a wait it does not
+// reach stays due, for the next sweep, and a wait given up is still ended.
+func TestASweepStartsTriesOnlyWithinItsBudget(t *testing.T) {
+	f, ws, j, resumed := roomFixture(t, newScripted(
+		callTool("c1", BashToolName, `{"command":"make"}`),
+		answer(waitsForTheSandbox, 10, 5),
+	))
+	f.mustExecute(t)
+	f.exec.builder.workspaces.Rooms = slowRooms{ws, 50 * time.Millisecond}
+	j.wakeBudget = 0
+	f.due(t, 2*time.Minute)
+
+	if failed := j.wakeRoomWaits(t.Context()); len(failed) != 0 {
+		t.Fatalf("wake: %v", failed)
+	}
+	if e, _ := ws.counts(); e != 1 {
+		t.Errorf("ensured %d times, want no try past the budget", e)
+	}
+	if w := f.roomWaits(t); w[0].Ended != nil || len(resumed.got()) != 0 {
+		t.Fatalf("waits %+v, resumed %v; want the wait left due", w, resumed.got())
+	}
+
+	f.due(t, roomGiveUpAfter)
+	if failed := j.wakeRoomWaits(t.Context()); len(failed) != 0 {
+		t.Fatalf("wake: %v", failed)
+	}
+	if w := f.roomWaits(t); deref(w[0].Ended) != roomEndedGaveUp || len(resumed.got()) != 1 {
+		t.Fatalf("waits %+v, resumed %v; want a given-up wait ended past the budget", w, resumed.got())
 	}
 }

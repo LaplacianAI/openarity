@@ -292,11 +292,11 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 			return fmt.Errorf("reading whether run %s waits: %w", row.ID, err)
 		}
 		if awaits.Awaits {
-			waitsFor := waitsForRoom
+			why := waitsForRoom
 			if awaits.Person {
-				waitsFor = waitsForPerson
+				why = waitsForPerson
 			}
-			return e.park(ctx, row, l, output, waitsFor)
+			return e.park(ctx, row, l, output, why)
 		}
 	}
 	if status == "failed" {

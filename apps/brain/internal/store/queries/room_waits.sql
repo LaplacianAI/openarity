@@ -1,18 +1,21 @@
 -- A run's workspace call refused for want of room: its wait, opened by the
--- first refusal. A later refusal before the run is told how the wait ended is
--- the same wait, opened again if it had ended (the room it was made went
--- before the run could use it), keeping when it began.
+-- first refusal, only while the run is running (a run cancelled or parked
+-- meanwhile opens none). A later refusal before the run is told how the wait
+-- ended is the same wait, keeping when it began; one the room ended opens
+-- again (the room it was made went before the run could use it). One a
+-- person, a cancel or the hour ended is not reopened: no row.
 -- name: OpenRoomWait :one
 INSERT INTO room_waits (team_id, run_id, root_run_id, session_id, reason, retry_at)
-VALUES (
-    sqlc.arg(team_id), sqlc.arg(run_id), sqlc.arg(root_run_id), sqlc.arg(session_id),
-    sqlc.arg(reason), now() + make_interval(secs => sqlc.arg(first_seconds)::float8)
-)
+SELECT r.team_id, r.id, r.root_run_id, r.session_id, sqlc.arg(reason),
+       now() + make_interval(secs => sqlc.arg(first_seconds)::float8)
+FROM runs r
+WHERE r.id = sqlc.arg(run_id) AND r.status = 'running'
 ON CONFLICT (run_id) WHERE told_at IS NULL DO UPDATE SET
     reason   = EXCLUDED.reason,
     retry_at = CASE WHEN room_waits.ended IS NULL THEN room_waits.retry_at ELSE EXCLUDED.retry_at END,
     ended    = NULL,
     ended_at = NULL
+WHERE room_waits.ended IS NULL OR room_waits.ended = 'room'
 RETURNING *;
 
 -- The waits whose time to try again has come, read without a lock: each is

@@ -91,7 +91,8 @@ UPDATE runs SET
     worker         = $1::text,
     heartbeat_at   = now(),
     waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
-    waiting_since  = NULL
+    waiting_since  = NULL,
+    waiting_for    = NULL
 WHERE id = $2::uuid AND status = 'waiting' AND parent_run_id IS NOT NULL
 RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since, cached_input_tokens, waiting_for
 `
@@ -1535,7 +1536,8 @@ UPDATE runs SET
     status         = 'queued',
     attempt        = attempt + 1,
     waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
-    waiting_since  = NULL
+    waiting_since  = NULL,
+    waiting_for    = NULL
 WHERE runs.id = $1 AND runs.status = 'waiting'
   AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.root_run_id = runs.id AND a.status = 'pending')
   AND NOT EXISTS (SELECT 1 FROM room_waits w WHERE w.root_run_id = runs.id AND w.ended IS NULL)

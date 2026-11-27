@@ -43,7 +43,10 @@ ALTER TABLE runs
 -- wait.
 CREATE UNIQUE INDEX room_waits_open_key ON room_waits (run_id) WHERE told_at IS NULL;
 CREATE INDEX room_waits_due_idx ON room_waits (retry_at) WHERE ended IS NULL;
-CREATE INDEX room_waits_root_idx ON room_waits (root_run_id) WHERE ended IS NULL;
+-- Whole, not partial: a run or team deleted cascades here, ended waits too.
+CREATE INDEX room_waits_root_idx ON room_waits (root_run_id);
+CREATE INDEX room_waits_run_idx ON room_waits (run_id);
+CREATE INDEX room_waits_team_idx ON room_waits (team_id);
 
 -- +goose Down
 SET LOCAL lock_timeout = '3s';
