@@ -353,7 +353,7 @@ SELECT EXISTS (
 -- the agent that asked it: the resume takes it up again.
 -- name: ParkChild :execrows
 UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now(),
-                output = sqlc.narg('said')
+                output = sqlc.narg('said'), waiting_for = sqlc.arg('waiting_for')::text
 WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'running'
   AND parent_run_id IS NOT NULL;
 
@@ -365,7 +365,8 @@ UPDATE runs SET
     worker         = sqlc.arg('worker')::text,
     heartbeat_at   = now(),
     waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
-    waiting_since  = NULL
+    waiting_since  = NULL,
+    waiting_for    = NULL
 WHERE id = sqlc.arg('id')::uuid AND status = 'waiting' AND parent_run_id IS NOT NULL
 RETURNING *;
 
@@ -394,18 +395,26 @@ WHERE parent_run_id = sqlc.arg('parent_id')::uuid AND status = 'waiting'
 ORDER BY created_at, id;
 
 -- Whether a run whose turn has ended is waiting rather than finished: a
--- request it made that its model has not been told the answer to, or a child
--- that waits.
+-- request it made that its model has not been told the answer to, a wait
+-- for sandbox room it has not been told the end of, or a child that waits.
+-- person is whether any of that is a person's to answer, here or below.
 -- name: RunAwaits :one
-SELECT (EXISTS (SELECT 1 FROM approvals a WHERE a.run_id = sqlc.arg('id')::uuid AND a.told_at IS NULL)
-     OR EXISTS (SELECT 1 FROM runs c WHERE c.parent_run_id = sqlc.arg('id')::uuid AND c.status = 'waiting'))::bool AS awaits;
+WITH w AS (
+    SELECT EXISTS (SELECT 1 FROM approvals a WHERE a.run_id = sqlc.arg('id')::uuid AND a.told_at IS NULL) AS asked,
+           EXISTS (SELECT 1 FROM room_waits r WHERE r.run_id = sqlc.arg('id')::uuid AND r.told_at IS NULL) AS room,
+           EXISTS (SELECT 1 FROM runs c WHERE c.parent_run_id = sqlc.arg('id')::uuid AND c.status = 'waiting') AS child,
+           EXISTS (SELECT 1 FROM runs c WHERE c.parent_run_id = sqlc.arg('id')::uuid AND c.status = 'waiting'
+                   AND c.waiting_for IS DISTINCT FROM 'sandbox') AS child_person
+)
+SELECT (asked OR room OR child)::bool AS awaits, (asked OR child_person)::bool AS person FROM w;
 
 -- name: ParkRun :execrows
 UPDATE runs SET status = 'waiting', worker = NULL, heartbeat_at = NULL, waiting_since = now(),
-                output = sqlc.narg('said')
+                output = sqlc.narg('said'), waiting_for = sqlc.arg('waiting_for')::text
 WHERE id = sqlc.arg('id') AND worker = sqlc.arg('worker')::text AND status = 'running';
 
--- A parked run whose tree waits on nothing more is queued again, under its
+-- A parked run whose tree waits on nothing more (no person to answer, no
+-- room still waited for) is queued again, under its
 -- next attempt: a finished DBOS workflow id never runs again, so each resume
 -- is a workflow of its own. The time spent waiting is not the run's.
 -- name: RequeueAnswered :one
@@ -413,9 +422,11 @@ UPDATE runs SET
     status         = 'queued',
     attempt        = attempt + 1,
     waited_seconds = waited_seconds + greatest(0, extract(epoch FROM now() - waiting_since))::int,
-    waiting_since  = NULL
+    waiting_since  = NULL,
+    waiting_for    = NULL
 WHERE runs.id = $1 AND runs.status = 'waiting'
   AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.root_run_id = runs.id AND a.status = 'pending')
+  AND NOT EXISTS (SELECT 1 FROM room_waits w WHERE w.root_run_id = runs.id AND w.ended IS NULL)
 RETURNING runs.id, runs.attempt;
 
 -- The run's session, when nothing else in it is queued or running: the

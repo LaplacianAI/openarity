@@ -1197,6 +1197,24 @@ describe("a run's trace", () => {
     expect(stream?.headers.get("Accept")).toBe("text/event-stream");
   });
 
+  it("says a run waits for room in the sandbox, not for a person", async () => {
+    const wire =
+      frame(1, "step", { step: 1 }) +
+      frame(2, "waiting", { reason: "sandbox", said: "Waiting for the sandbox." }) +
+      END;
+    listed({
+      [RUNS]: {
+        body: { items: [run("r1", "helper", "waiting", { output: "Waiting for the sandbox." })] },
+      },
+      [EVENTS]: () => ({ stream: chunks(wire) }),
+    });
+
+    await open("?tab=runs");
+    const detail = pane();
+    expect(await within(detail).findByText("Waiting for room in the sandbox")).toBeVisible();
+    expect(within(detail).queryByText(/Waiting for a person/)).toBeNull();
+  });
+
   it("says what a run spent of its budget, counted as billed", async () => {
     listed({
       [RUNS]: {
@@ -3352,6 +3370,32 @@ describe("writing in a conversation", () => {
     expect(await screen.findByText("Replying takes run:write.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Start one on the dashboard" })).toBeNull();
+  });
+});
+
+describe("a run that waits for room in the sandbox", () => {
+  it("says it waits for the sandbox when it said nothing, and offers nothing to answer", async () => {
+    listed({
+      ...team(["approval:self"]),
+      "GET /whoami": { body: { id: "me", subject: "me" } },
+      [CONVO]: () =>
+        conversation(
+          said("m1", "user-ann", "build the report"),
+          sf("run_started", { run_id: "r1", agent: "hub" }),
+          sf("step_started", { run_id: "r1", step: 1 }),
+          sf("run_waiting", { run_id: "r1", reason: "sandbox", said: "" }),
+        ),
+    });
+    await open();
+    const turn = await waitFor(() => {
+      const t = document.querySelector("[data-turn=r1]");
+      if (!t) throw new Error("no turn");
+      return t as HTMLElement;
+    });
+    expect(await within(turn).findByText("Waiting for room in the sandbox.")).toBeInTheDocument();
+    expect(turn).toHaveAttribute("data-status", "waiting");
+    expect(within(turn).queryByText("Waiting for your answer.")).toBeNull();
+    expect(within(turn).queryByRole("button", { name: "Approve" })).toBeNull();
   });
 });
 

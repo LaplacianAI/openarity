@@ -780,3 +780,19 @@ func TestAFailedCleanupStopIsSaid(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Daytona down behind its gateway, or not answering, is unavailable.
+func TestADaytonaThatIsDownIsUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := New(srv.URL, testKey, srv.Client()).URL(t.Context(), "sb-1", 8080); !errors.Is(err, sandbox.ErrUnavailable) {
+		t.Errorf("502: err = %v, want ErrUnavailable", err)
+	}
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	if _, err := New(gone.URL, testKey, gone.Client()).URL(t.Context(), "sb-1", 8080); !errors.Is(err, sandbox.ErrUnavailable) {
+		t.Errorf("no answer: err = %v, want ErrUnavailable", err)
+	}
+}

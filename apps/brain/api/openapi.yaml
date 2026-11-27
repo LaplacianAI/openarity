@@ -1420,7 +1420,8 @@ paths:
         `run_finished` carries the whole answer.
         A run that asks a person before a call says so in
         `approval_requested`, waits in `run_waiting` with what it told them,
-        and hears the answer in `approval_decided`.
+        and hears the answer in `approval_decided`. A run the team's sandbox
+        has no room for waits in `run_waiting` too, its `reason` `sandbox`.
         A file a run hands the person is `file_sent`.
         Events the catalog has no kind for are `custom`, named by the kind
         the run recorded. The stream does not end: it follows the
@@ -6565,7 +6566,7 @@ components:
     SessionEventRunWaiting:
       type: object
       description: |
-        The data of a `run_waiting` frame on a session's stream. A run that stopped for a person's answer rather than finishing; `said` is what it told them, in its own words.
+        The data of a `run_waiting` frame on a session's stream. A run that stopped rather than finishing, for a person's answer (`reason` is `approval`) or for room in the team's sandbox (`sandbox`); `said` is what it said about it, in its own words.
       required: [reason]
       properties:
         at:
@@ -6576,6 +6577,7 @@ components:
           format: uuid
         reason:
           type: string
+          description: "`approval` or `sandbox`"
         said:
           type: string
     SessionEventFileSent:
@@ -9891,8 +9893,9 @@ components:
       enum: [queued, running, waiting, succeeded, failed, cancelled]
       description: |
         Where a run stands. `queued` and `running` are live; `waiting` is a
-        run that stopped for a person's answer, holding nothing, and carries
-        on when it is answered; the other three are final.
+        run that stopped for a person's answer or for room in the team's
+        sandbox, holding nothing, and carries on when that comes; the other
+        three are final.
 
     Run:
       type: object

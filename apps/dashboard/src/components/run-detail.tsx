@@ -733,8 +733,16 @@ function TraceView({
           case "waiting":
             return (
               <Note key={key} kind="waiting">
-                <span className="font-medium text-foreground">Waiting for a person</span>
-                {item.reason ? `: ${item.reason}` : null}
+                {item.reason === "sandbox" ? (
+                  <span className="font-medium text-foreground">
+                    Waiting for room in the sandbox
+                  </span>
+                ) : (
+                  <>
+                    <span className="font-medium text-foreground">Waiting for a person</span>
+                    {item.reason ? `: ${item.reason}` : null}
+                  </>
+                )}
                 {item.said ? (
                   <span className="mt-0.5 block whitespace-pre-wrap">{item.said}</span>
                 ) : null}

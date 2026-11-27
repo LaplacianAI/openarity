@@ -878,9 +878,9 @@ func TestAnUnknownLoopFailsNamingTheKnownOnes(t *testing.T) {
 // that failed and no setting: the setting is the operator's, in the logs.
 func TestAnUnreachableModelFailsNamingTheModel(t *testing.T) {
 	f := newExecFixture(t, newScripted())
-	gone := httptest.NewServer(http.NotFoundHandler())
-	gone.Close()
-	f.exec = f.executor(t, openaicompat.Factory(), agent.Endpoint{BaseURL: gone.URL + "/v1", APIKey: "test"})
+	// Port 0 can never be dialled: a closed test server's port can be taken
+	// by another test's server meanwhile, which then answers.
+	f.exec = f.executor(t, openaicompat.Factory(), agent.Endpoint{BaseURL: "http://127.0.0.1:0/v1", APIKey: "test"})
 
 	f.mustExecute(t)
 

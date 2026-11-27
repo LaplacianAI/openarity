@@ -154,12 +154,44 @@ anything that must outlive a release somewhere else: a repository it
 pushes to, or an attachment.
 
 On E2B the first room waits for that template to be built, a few minutes after
-the sandbox is saved or its size changes. Until it is, a call says the sandbox
-is still being prepared and nothing ran, and the agent tells the person rather
-than calling again; Settings shows the build, and why it failed if it did.
+the sandbox is saved or its size changes. Until it is, the run waits for it, as
+below; Settings shows the build, and why it failed if it did.
 After an upgrade, rooms start from the last template built at the same size
 while the new one builds, so nothing waits. A team that names its own E2B
 template gets that template's size, whatever size it sets.
+
+## When the sandbox has no room
+
+A call the sandbox refuses before anything runs waits for room instead of
+failing. Three refusals wait:
+
+- **Full:** every share of sandboxd's memory or disk budget is in use, or
+  E2B's limit is reached.
+- **Being prepared:** E2B's template for the team is still being built.
+- **Not answering:** the provider could not be reached, timed out, or a
+  gateway in front of it said it was down, as during its own deploy. A
+  certificate it refuses, an address it cannot use or a host name that does
+  not exist is a setting to fix, and stays the call's error.
+
+The call is not made. The agent says in a line that it is waiting, the person
+on a channel is sent that line, and the run parks holding no worker, as it
+does for an approval. Every minute the brain tries to make the room itself, so
+a try costs the agent nothing: a minute after the refusal, then after as long
+as the run has waited, at most ten minutes apart. Once the room is made the
+run carries on, is told there is room, and makes the call again. At the first
+try after an hour (so up to ten minutes past it) it is told the sandbox still
+had no room and goes on without it. A person who
+writes in the conversation meanwhile ends the wait at once, and the agent reads
+what they wrote.
+
+A delegate waits the same way, and its parent with it: the run that asked is
+told its delegate waits for the sandbox, not for a person.
+
+Not waited for, because waiting does not change them: a command that ran out
+of its room's memory or disk (exit code 137, `No space left on device`), an
+image sandboxd cannot pull, a provider that refuses the room's size, and a
+room lost in the middle of a call, which may have run. Those are the call's
+error, as before.
 
 ## A file the agent made
 

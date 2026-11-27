@@ -261,7 +261,7 @@ func (c *Client) api(ctx context.Context, method, path string, body []byte, out 
 	}
 	resp, err := c.http.Do(req) //nolint:gosec // G704: as above
 	if err != nil {
-		return 0, fmt.Errorf("e2b: %s %s: %w", method, path, scrubErr(err, secrets))
+		return 0, sandbox.Unanswered(ctx, fmt.Errorf("e2b: %s %s: %w", method, path, scrubErr(err, secrets)))
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -291,8 +291,14 @@ func statusError(method, path string, status int, raw []byte, secrets []string) 
 	if msg != "" {
 		text += ": " + msg
 	}
-	if status == http.StatusNotFound {
+	switch {
+	case status == http.StatusNotFound:
 		return fmt.Errorf("%w (%s)", sandbox.ErrNotFound, text)
+	case sandbox.Down(status):
+		// Any 502/503/504 counts as E2B not there. sandboxd waits only on an
+		// empty body because its own 503 names a cause (an image still
+		// pulling), which is no outage.
+		return fmt.Errorf("%w (%s)", sandbox.ErrUnavailable, text)
 	}
 	return errors.New(text)
 }
@@ -328,8 +334,19 @@ func scrubErr(err error, secrets []string) error {
 	if scrub(msg, secrets) == msg {
 		return err
 	}
-	return errors.New(scrub(msg, secrets))
+	return &scrubbed{msg: scrub(msg, secrets), err: err}
 }
+
+// scrubbed is an error with its secrets taken out of what it says, still the
+// error it was to errors.Is, so a provider that did not answer is still
+// told apart.
+type scrubbed struct {
+	msg string
+	err error
+}
+
+func (e *scrubbed) Error() string { return e.msg }
+func (e *scrubbed) Unwrap() error { return e.err }
 
 // secretsIn gathers the values that must never reach an error.
 func secretsIn(env map[string]string, apiKey string) []string {

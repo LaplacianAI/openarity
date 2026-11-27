@@ -82,7 +82,7 @@ func waitingIn(t *testing.T, role string, requireOther bool) waitingRun {
 // park parks the run with what it said, as the executor does.
 func (a waitingRun) park(t *testing.T, said string) int32 {
 	t.Helper()
-	parked, again, asked, err := parkAndAsk(t.Context(), a.store, a.run.ID, worker, false, &said, []byte(`{}`))
+	parked, again, asked, err := parkAndAsk(t.Context(), a.store, a.run.ID, worker, false, &said, waitsForPerson, []byte(`{}`))
 	if err != nil || !parked || again != nil {
 		t.Fatalf("park = parked %v, queued %v, %v; want parked and waiting", parked, again, err)
 	}
@@ -183,7 +183,7 @@ func TestARunAnsweredBeforeItParksAsksNothing(t *testing.T) {
 		t.Fatalf("answer: %v", err)
 	}
 	said := "I'd like to open an issue."
-	parked, again, asked, err := parkAndAsk(t.Context(), a.store, a.run.ID, worker, false, &said, []byte(`{}`))
+	parked, again, asked, err := parkAndAsk(t.Context(), a.store, a.run.ID, worker, false, &said, waitsForPerson, []byte(`{}`))
 	if err != nil || !parked || again == nil || asked != 0 {
 		t.Fatalf("park = parked %v, queued %v, asked %d, %v; want queued again and nothing asked", parked, again, asked, err)
 	}
@@ -213,7 +213,7 @@ func TestADelegateThatParksAsksNothing(t *testing.T) {
 	}
 
 	said := "the refund needs an OK"
-	parked, again, asked, err := parkAndAsk(t.Context(), a.store, child, worker, true, &said, []byte(`{}`))
+	parked, again, asked, err := parkAndAsk(t.Context(), a.store, child, worker, true, &said, waitsForPerson, []byte(`{}`))
 	if err != nil || !parked || again != nil || asked != 0 {
 		t.Fatalf("a delegate's park = parked %v, queued %v, asked %d, %v; want parked, waiting, asking nothing",
 			parked, again, asked, err)
@@ -292,7 +292,7 @@ func TestAParkKicksItsPromptByItsWaitingEvent(t *testing.T) {
 	k := &stepKicks{}
 	e := &Executor{store: a.store, logger: quietLogger(), kickEvent: k.kick}
 
-	if err := e.park(t.Context(), a.run, Lineage{Worker: worker}, "OK to open the issue?"); err != nil {
+	if err := e.park(t.Context(), a.run, Lineage{Worker: worker}, "OK to open the issue?", waitsForPerson); err != nil {
 		t.Fatalf("park: %v", err)
 	}
 

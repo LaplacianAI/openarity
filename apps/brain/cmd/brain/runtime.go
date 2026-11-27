@@ -86,7 +86,7 @@ func newRunJob(
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)
 	}
-	if ws := newWorkspaces(d.rooms, cfg); ws != nil {
+	if ws := newWorkspaces(d.rooms, cfg, dbStore, logger); ws != nil {
 		builder.WithWorkspaces(ws)
 	}
 	// A file a tool wrote in its room, kept as F2 keeps a returned one.

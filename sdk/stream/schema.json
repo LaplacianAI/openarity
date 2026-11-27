@@ -191,7 +191,7 @@
       "properties": {
         "at": { "$ref": "#/$defs/envelope/properties/at" },
         "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
-        "reason": { "type": "string", "description": "What the run waits for: approval." },
+        "reason": { "type": "string", "description": "What the run waits for: approval, a person's answer; or sandbox, room in the team's sandbox." },
         "said": { "type": "string", "description": "What the run told the person, in its own words." }
       }
     },

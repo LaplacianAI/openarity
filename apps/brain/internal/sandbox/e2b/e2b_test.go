@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -283,6 +284,18 @@ func TestATransportErrorDoesNotLeakTheKey(t *testing.T) {
 	_, err := c.Create(t.Context(), sandbox.Spec{Image: "t"})
 	if err == nil || strings.Contains(err.Error(), apiKey) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A transport error with the key scrubbed out is still the error it was, so
+// a refused dial is still E2B not answering, and waits.
+func TestAScrubbedTransportErrorIsStillUnavailable(t *testing.T) {
+	c := New(apiKey, &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused, key " + apiKey)}
+	})})
+	_, err := c.Create(t.Context(), sandbox.Spec{Image: "t"})
+	if !errors.Is(err, sandbox.ErrUnavailable) || strings.Contains(err.Error(), apiKey) {
+		t.Fatalf("err = %v, want ErrUnavailable with the key scrubbed", err)
 	}
 }
 
@@ -724,5 +737,24 @@ func TestAResumeE2BLimitsIsErrFullAndAGoneOneErrNotFound(t *testing.T) {
 		if !errors.Is(err, want) || strings.Contains(err.Error(), apiKey) {
 			t.Errorf("%d: %v, want %v without the key", status, err, want)
 		}
+	}
+}
+
+// E2B's control plane down behind its gateway is unavailable.
+func TestAnE2BThatIsDownIsUnavailable(t *testing.T) {
+	for _, status := range []int{502, 503, 504} {
+		f := &fake{api: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, status, map[string]any{"message": "upstream"})
+		}}
+		_, err := newClient(f).Create(t.Context(), sandbox.Spec{Image: templateID})
+		if !errors.Is(err, sandbox.ErrUnavailable) {
+			t.Errorf("%d: err = %v, want ErrUnavailable", status, err)
+		}
+	}
+	f := &fake{api: func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 500, map[string]any{"message": "bug"})
+	}}
+	if _, err := newClient(f).Create(t.Context(), sandbox.Spec{Image: templateID}); sandbox.Waitable(err) {
+		t.Errorf("a 500 is waited for: %v", err)
 	}
 }
