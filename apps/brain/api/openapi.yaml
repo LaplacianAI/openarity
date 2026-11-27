@@ -57,6 +57,8 @@ tags:
     description: What agents ask a person before acting, and when they ask
   - name: schedules
     description: Runs started on the clock, what each did, and a team's limits for them
+  - name: watchers
+    description: Runs started when a web page or a feed changes, and what each look saw
   - name: improvements
     description: Changes a team's agents propose to their own harness, and a person's decision on each
 
@@ -3635,6 +3637,313 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /teams/{id}/watchers:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+    get:
+      operationId: listWatchers
+      tags: [watchers]
+      summary: List watchers
+      description: |
+        Requires `schedule:read` in this team. The caller's own, newest
+        first; `all=true` lists everyone's and requires `schedule:manage`.
+        Deleted watchers are listed only when `status=deleted` is asked for.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          description: Only watchers in these states.
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [proposed, waiting_secret, active, paused, deleted]
+        - name: all
+          in: query
+          description: Everyone's, not only the caller's.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: A page of watchers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatcherPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createWatcher
+      tags: [watchers]
+      summary: Make a watcher
+      description: |
+        Requires `schedule:write` in this team. The watcher looks at a web page
+        or a feed every `every_seconds`, held to the team's minimum interval,
+        and runs in a conversation of its own as the caller when what it sees
+        changes. Its first look is its baseline and starts nothing. Watchers of
+        the same address share one fetch. A change within `cooldown_seconds` of
+        its last run (an hour unless given) is held and given to the next run.
+        The team's limits on schedules and watchers per person and per team
+        apply, and a caller who may not start runs is refused with 403.
+        `target` is where it answers, as for a schedule. A webhook watcher
+        cannot be made yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWatcherRequest"
+      responses:
+        "201":
+          description: Made
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watcher"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The name is taken, or a team limit is reached
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["you already have 5 schedules and watchers, which is this team's limit per person; delete one first"]
+  /teams/{id}/watchers/{watcherID}:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/WatcherID"
+    get:
+      operationId: getWatcher
+      tags: [watchers]
+      summary: Read a watcher
+      description: |
+        Requires `schedule:read` in this team. The caller's own, or anyone's with `schedule:manage`.
+      responses:
+        "200":
+          description: The watcher
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watcher"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateWatcher
+      tags: [watchers]
+      summary: Change, pause or resume a watcher
+      description: |
+        Requires `schedule:write` in this team. What it does (name, objective,
+        selector, interval, cooldown, agent) is changed only by its maker, since
+        it runs as them; another caller is refused with 403. `status` pauses or
+        resumes it, by its maker or one who holds `schedule:manage`; a resumed
+        watcher looks again now. A new selector makes its next look a new
+        baseline. Everything named is changed together, or nothing is. The
+        address and where it answers never change: delete it and make another.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWatcherRequest"
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watcher"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Its state does not allow it
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["only a paused watcher can be resumed; this one is active"]
+    delete:
+      operationId: deleteWatcher
+      tags: [watchers]
+      summary: Delete a watcher
+      description: |
+        Requires `schedule:write` in this team, and the watcher to be the
+        caller's own or the caller to hold `schedule:manage` (404 otherwise).
+        It looks no more, and its conversation is closed and kept, with its
+        runs. A run already working finishes.
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /teams/{id}/watchers/{watcherID}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/WatcherID"
+    post:
+      operationId: confirmWatcher
+      tags: [watchers]
+      summary: Confirm a watcher an agent proposed
+      description: |
+        Requires `schedule:write` in this team, and the caller to be the person
+        it was proposed to. It becomes active and looks now. A proposal lapses
+        after an hour.
+      responses:
+        "200":
+          description: Confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watcher"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It is not waiting to be confirmed
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["this watcher is not waiting to be confirmed; it is active"]
+  /teams/{id}/watchers/{watcherID}/run:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/WatcherID"
+    post:
+      operationId: checkWatcherNow
+      tags: [watchers]
+      summary: Have a watcher look now
+      description: |
+        Requires `schedule:write` in this team, and the caller to be its maker
+        (403 otherwise). An active watcher looks within the minute rather than
+        at its next time; a change it finds runs as any would, past its
+        cooldown.
+      responses:
+        "200":
+          description: It will look now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watcher"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It is not active
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["only an active watcher can be checked; this one is paused"]
+  /teams/{id}/watchers/{watcherID}/take-over:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/WatcherID"
+    post:
+      operationId: takeOverWatcher
+      tags: [watchers]
+      summary: Take over a watcher whose maker left
+      description: |
+        Requires `schedule:manage` in this team. Only a paused watcher whose
+        maker left, or may no longer start runs or post where it answers, is
+        taken over, whoever paused it. It stays paused until the caller resumes
+        it, and runs as them from then, so a caller who may not start runs is
+        refused with 403, as is one without `channel:write` for a watcher
+        posting where a group reads it. One answering in its maker's direct
+        messages or their own thread cannot be handed on: 409.
+      responses:
+        "200":
+          description: Taken over
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Watcher"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It is not paused for its maker, or it answers in its maker's own conversation
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["this watcher answers in its maker's direct messages or their own thread, so it cannot be handed on; delete it and make another"]
+  /teams/{id}/watchers/{watcherID}/checks:
+    parameters:
+      - $ref: "#/components/parameters/TeamID"
+      - $ref: "#/components/parameters/WatcherID"
+    get:
+      operationId: listWatcherChecks
+      tags: [watchers]
+      summary: List what a watcher saw each time it looked
+      description: |
+        Requires `schedule:read` in this team. The caller's own watcher, or
+        anyone's with `schedule:manage` (404 otherwise). Newest first; each
+        watcher keeps its newest 200.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of checks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatcherCheckPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /teams/{id}/scheduled/news:
     parameters:
       - $ref: "#/components/parameters/TeamID"
@@ -3643,10 +3952,11 @@ paths:
       tags: [schedules]
       summary: What the caller's schedules did that they have not seen
       description: |
-        Requires `schedule:read` in this team. Every fire that failed, was
-        skipped or was missed, wherever the schedule answers, and every
-        answer kept in a schedule's own conversation. A run with nothing to
-        say tells nobody.
+        Requires `schedule:read` in this team. Every fire or check that
+        failed, was skipped or was missed, wherever the schedule or watcher
+        answers, every page or feed a watcher could not read, and every
+        answer kept in one's own conversation, newest first. A run with
+        nothing to say tells nobody.
       responses:
         "200":
           description: The news
@@ -3669,7 +3979,7 @@ paths:
     post:
       operationId: markScheduledNewsSeen
       tags: [schedules]
-      summary: Mark what one of the caller's schedules did as seen
+      summary: Mark what one of the caller's schedules or watchers did as seen
       description: Requires `schedule:read` in this team.
       requestBody:
         required: true
@@ -4667,6 +4977,14 @@ components:
       in: path
       required: true
       description: The schedule
+      schema:
+        type: string
+        format: uuid
+    WatcherID:
+      name: watcherID
+      in: path
+      required: true
+      description: The watcher
       schema:
         type: string
         format: uuid
@@ -9102,11 +9420,203 @@ components:
         next_cursor:
           type: string
 
+    Watcher:
+      type: object
+      required: [id, name, objective, source, cooldown_seconds, hub, target, session_id, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        objective:
+          type: string
+        source:
+          type: string
+          description: One of `web_page`, `feed` or `webhook`.
+        url:
+          type: string
+          description: The address it looks at, as it was normalised; absent once it is deleted.
+        selector:
+          type: string
+          description: The CSS selector whose text a web_page watcher compares; absent is the page's whole text.
+        every_seconds:
+          type: integer
+          format: int32
+        cooldown_seconds:
+          type: integer
+          format: int32
+        agent_id:
+          type: string
+          format: uuid
+        hub:
+          type: boolean
+        target:
+          $ref: "#/components/schemas/ScheduleTarget"
+        session_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: One of `proposed`, `waiting_secret`, `active`, `paused` or `deleted`.
+        paused_reason:
+          type: string
+          description: |
+            Why it is paused: one of `by_person`, `failing`,
+            `maker_cannot_run`, `maker_gone` or `target_gone`, as for a
+            schedule. `failing` is five failed runs in a row, or what
+            it looks at failing for a day.
+        next_check_at:
+          type: string
+          format: date-time
+        last_check_at:
+          type: string
+          format: date-time
+        last_run_at:
+          type: string
+          format: date-time
+        last_outcome:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    WatcherPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Watcher"
+        next_cursor:
+          type: string
+          description: Absent on the last page.
+
+    CreateWatcherRequest:
+      type: object
+      required: [name, objective, source, url, every_seconds]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        objective:
+          type: string
+          maxLength: 4000
+        source:
+          type: string
+          enum: [web_page, feed]
+        url:
+          type: string
+          maxLength: 2048
+          description: http or https, at most 2048 bytes, not a host written as a number.
+        selector:
+          type: string
+          maxLength: 512
+          description: web_page only. A CSS selector; the text it matches is what is compared.
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 2678400
+          description: How often to look, in whole minutes; at least the team's minimum interval.
+        cooldown_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+          description: How long after a run a change is held rather than run; an hour unless given.
+        agent_id:
+          type: string
+          format: uuid
+          description: Absent is the hub.
+        target:
+          $ref: "#/components/schemas/ScheduleTargetPick"
+
+    UpdateWatcherRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        objective:
+          type: string
+          maxLength: 4000
+        selector:
+          type: string
+          maxLength: 512
+          description: An empty string clears it.
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 2678400
+        cooldown_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 604800
+        agent_id:
+          type: string
+          format: uuid
+        hub:
+          type: boolean
+          description: Back to the hub.
+        status:
+          type: string
+          description: "`active` or `paused`."
+
+    WatcherCheck:
+      type: object
+      required: [checked_at, outcome]
+      properties:
+        checked_at:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+          description: |
+            One of `unchanged`, `baseline`, `changed`, `held`, `error`,
+            `delivered`, `duplicate`, `skipped_cap`, `skipped_maker`,
+            `skipped_target`, `silent`, `answered`, `failed` or `cancelled`.
+            `baseline` is a first look; `unchanged` nothing new; `changed` a
+            run still going; `held` a change kept for later, within the
+            cooldown or while its last run was working; `error` what it
+            looks at could not be read, with why in `detail`; `answered`,
+            `silent`, `failed` and `cancelled` how a run ended; `skipped_*`
+            as for a schedule's fire, the change kept for later.
+        detail:
+          type: string
+        run_id:
+          type: string
+          format: uuid
+
+    WatcherCheckPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WatcherCheck"
+        next_cursor:
+          type: string
+
     ScheduledNewsItem:
       type: object
-      required: [schedule_id, name, session_id, scheduled_for, fired_at, outcome]
+      description: A schedule's fire or a watcher's check; which one says. `fired_at` is when it happened.
+      required: [name, session_id, fired_at, outcome]
       properties:
         schedule_id:
+          type: string
+          format: uuid
+        watcher_id:
           type: string
           format: uuid
         name:
@@ -9117,6 +9627,7 @@ components:
         scheduled_for:
           type: string
           format: date-time
+          description: When the schedule was due; absent for a watcher.
         fired_at:
           type: string
           format: date-time
@@ -9143,9 +9654,12 @@ components:
 
     ScheduledNewsSeenRequest:
       type: object
-      required: [schedule_id]
+      description: Exactly one of `schedule_id` or `watcher_id`.
       properties:
         schedule_id:
+          type: string
+          format: uuid
+        watcher_id:
           type: string
           format: uuid
 

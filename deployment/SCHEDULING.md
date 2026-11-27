@@ -135,8 +135,19 @@ One DBOS tick a minute, `openarity.triggers.tick`, reads that table instead:
 - A fire starts an ordinary run on `openarity-runs`. A rush at 09:00 delays
   when the runs start, never whether they fire.
 
-An hourly sweep, `openarity.triggers.sweep`, lapses proposals nobody confirmed
-and keeps each schedule's newest 200 fires.
+The same tick counts the watched pages and feeds that are due and hands out
+one batch per fifty, at most eight, onto the `openarity-watch` queue (two at a
+time per worker). A batch fetches each address once however many watchers
+share it, one host at a time and eight hosts at once, and leaves a host that
+answered 429 or 503 alone for as long as it asked (five minutes if it did not
+say, six hours at most). An address that cannot be read is tried again after
+1, 5, 15 and then 60 minutes; one failing for a day pauses its watchers. The
+worker logs `A watched address could not be read` for each failure and `A
+watcher paused` when one stops.
+
+An hourly sweep, `openarity.triggers.sweep`, lapses proposals nobody confirmed,
+keeps each schedule's newest 200 fires and each watcher's newest 200 checks,
+and deletes the addresses no watcher watches any more.
 
 A fire that fails with an error, rather than a refusal, waits a minute and is
 tried again for the time it was due, so one broken schedule never holds up

@@ -22,6 +22,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/browser"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/secrets"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
 
@@ -362,8 +363,7 @@ func pictureResult(p browser.Picture, unguarded, uncontained bool) string {
 
 // snapshotResult is s in the envelope web_fetch's pages come in.
 func snapshotResult(s browser.Snapshot, end string, unguarded, uncontained bool) string {
-	body := pageTag.ReplaceAllString(s.Text, "&lt;$1")
-	body = cutLine.ReplaceAllString(body, `\$1`)
+	body := cutLine.ReplaceAllString(s.Text, `\$1`)
 	body = browserLine.ReplaceAllString(body, `\$1`)
 	if strings.TrimSpace(body) == "" {
 		body = "The page has no text. If it should have some, it may need sockets, workers or new windows, " +
@@ -390,8 +390,7 @@ func snapshotResult(s browser.Snapshot, end string, unguarded, uncontained bool)
 	}
 	body += notes(unguarded, uncontained)
 	title := strings.Join(strings.Fields(s.Title), " ")
-	return fmt.Sprintf("<page url=\"%s\" title=\"%s\" end=\"%s\">\n%s\n</page end=\"%s\">",
-		html.EscapeString(s.URL), html.EscapeString(title), end, body, end)
+	return webfetch.Wrap("page", []webfetch.Attr{{Name: "url", Value: s.URL}, {Name: "title", Value: title}}, body, end)
 }
 
 // browserFor is the run's browser and its tools, from the settings Build

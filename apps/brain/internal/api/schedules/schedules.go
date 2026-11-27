@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,6 +66,7 @@ func New(logger *slog.Logger, s Store, a api.Authorizer, service *triggers.Servi
 	r.Get("/{id}/schedule-targets", h.targets)
 	r.Get("/{id}/schedule-settings", h.settings)
 	r.Put("/{id}/schedule-settings", h.setSettings)
+	h.registerWatchers(r)
 	return r
 }
 
@@ -138,13 +140,8 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	everyone := false
-	switch r.URL.Query().Get("all") {
-	case "", "false":
-	case "true":
-		everyone = true
-	default:
-		http.Error(w, "all must be true or false", http.StatusBadRequest)
+	everyone, ok := allOf(w, r)
+	if !ok {
 		return
 	}
 	var after *time.Time
@@ -371,23 +368,36 @@ func (h *handler) news(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.service.News(r.Context(), who, newsPage+1)
+	fires, err := h.service.News(r.Context(), who, newsPage+1)
 	if err != nil {
 		h.answer(w, r, "failed to read the schedules' news", err)
 		return
 	}
-	more := len(rows) > newsPage
-	if more {
-		rows = rows[:newsPage]
+	checks, err := h.service.WatcherNews(r.Context(), who, newsPage+1)
+	if err != nil {
+		h.answer(w, r, "failed to read the watchers' news", err)
+		return
 	}
-	out := news{Items: make([]newsItem, len(rows)), Count: len(rows), More: more}
-	for i, n := range rows {
-		out.Items[i] = newsItem{
-			ScheduleID: n.ScheduleID, Name: n.Name, SessionID: n.SessionID, ScheduledFor: n.ScheduledFor,
+	items := make([]newsItem, 0, len(fires)+len(checks))
+	for _, n := range fires {
+		items = append(items, newsItem{
+			ScheduleID: &n.ScheduleID, Name: n.Name, SessionID: n.SessionID, ScheduledFor: &n.ScheduledFor,
 			FiredAt: n.FiredAt, Outcome: n.Outcome, RunID: n.RunID,
-		}
+		})
 	}
-	api.WriteJSON(w, h.logger, http.StatusOK, out)
+	for _, n := range checks {
+		items = append(items, newsItem{
+			WatcherID: &n.WatcherID, Name: n.Name, SessionID: n.SessionID, FiredAt: n.CheckedAt,
+			Outcome: n.Outcome, RunID: n.RunID,
+		})
+	}
+	// Both come newest first; together they are, too.
+	slices.SortStableFunc(items, func(a, b newsItem) int { return b.FiredAt.Compare(a.FiredAt) })
+	more := len(items) > newsPage
+	if more {
+		items = items[:newsPage]
+	}
+	api.WriteJSON(w, h.logger, http.StatusOK, news{Items: items, Count: len(items), More: more})
 }
 
 func (h *handler) seen(w http.ResponseWriter, r *http.Request) {
@@ -399,13 +409,20 @@ func (h *handler) seen(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSONWithin(w, r, &req, maxBody) {
 		return
 	}
-	if req.ScheduleID == uuid.Nil {
-		http.Error(w, "schedule_id is required", http.StatusBadRequest)
+	switch {
+	case (req.ScheduleID == nil) == (req.WatcherID == nil):
+		http.Error(w, "give schedule_id or watcher_id", http.StatusBadRequest)
 		return
-	}
-	if err := h.service.Seen(r.Context(), who, req.ScheduleID); err != nil {
-		h.answer(w, r, "failed to mark the schedule seen", err)
-		return
+	case req.ScheduleID != nil:
+		if err := h.service.Seen(r.Context(), who, *req.ScheduleID); err != nil {
+			h.answer(w, r, "failed to mark the schedule seen", err)
+			return
+		}
+	default:
+		if err := h.service.WatcherSeen(r.Context(), who, *req.WatcherID); err != nil {
+			h.answer(w, r, "failed to mark the watcher seen", err)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

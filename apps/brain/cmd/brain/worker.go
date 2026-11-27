@@ -24,6 +24,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/skill/hub"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/triggers"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/worker"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
@@ -111,8 +112,8 @@ func newJobs(
 	judging := newImproveJob(cfg, logger, dbStore)
 	templates := keeper.TemplatesJob(newTemplates(cfg, logger, dbStore, secretStore))
 	watching := improve.NewWatchJob(improve.NewWatcher(dbStore, logger))
-	scheduling := triggers.NewJob(dbStore, runtime.EnqueueRun, logger)
-	retaining := retention.NewJob(logger, triggers.FireWorkflow)
+	scheduling := triggers.NewJob(dbStore, runtime.EnqueueRun, webfetch.NewClient(hub.Public), logger)
+	retaining := retention.NewJob(logger, triggers.FireWorkflow, triggers.CheckWorkflow)
 	deps, err := newRunDeps(cfg, logger, dbStore, secretStore)
 	if err != nil {
 		return nil, nil, err

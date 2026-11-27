@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net/url"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/webfetch"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/websearch"
@@ -35,8 +33,6 @@ var webFetchSchema = json.RawMessage(`{
   "required": ["url"],
   "additionalProperties": false
 }`)
-
-var pageTag = regexp.MustCompile(`(?i)<(/?page)`)
 
 // cutLine is the start of the brain's own cut lines; a page that writes one
 // has it escaped, so only the brain's, last, says the page was cut.
@@ -130,8 +126,7 @@ func endedPublic(ctx context.Context, public func(context.Context, string) error
 }
 
 func pageResult(p webfetch.Page, end string) string {
-	body := pageTag.ReplaceAllString(p.Markdown, "&lt;$1")
-	body = cutLine.ReplaceAllString(body, `\$1`)
+	body := cutLine.ReplaceAllString(p.Markdown, `\$1`)
 	if strings.TrimSpace(body) == "" {
 		body = "The page has no text."
 	}
@@ -139,8 +134,9 @@ func pageResult(p webfetch.Page, end string) string {
 		body += "\n[the page was cut: only its first 2 MiB were read]"
 	}
 	title := strings.Join(strings.Fields(p.Title), " ")
-	return fmt.Sprintf("<page url=\"%s\" title=\"%s\" end=\"%s\">\n%s\n</page end=\"%s\">",
-		attribute(p.URL, maxTagURL), attribute(title, maxTagTitle), end, body, end)
+	return webfetch.Wrap("page", []webfetch.Attr{
+		{Name: "url", Value: p.URL, Max: maxTagURL}, {Name: "title", Value: title, Max: maxTagTitle},
+	}, body, end)
 }
 
 // The opening tag, its end included, must fit in a preview's 4 KiB head, or
@@ -149,19 +145,6 @@ const (
 	maxTagURL   = 1 << 10
 	maxTagTitle = 512
 )
-
-// attribute is s escaped, then cut on a rune to at most n bytes: a cut after
-// escaping can split an entity, never leave a quote.
-func attribute(s string, n int) string {
-	s = html.EscapeString(s)
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n] + "…"
-}
 
 func (b *Builder) fetchTool(p websearch.Provider, address, key string, keyed bool) agent.Tool {
 	if keyed && b.fetch.Scrapers != nil {
