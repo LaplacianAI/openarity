@@ -1573,6 +1573,18 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   job, imports them without importing a route (#277). Before, the improver
   reached the rules through three handler packages, so a handler change
   could break a job that serves no request.
+- **The judge and the improver read a tool's result by both its ends.** A
+  run's evidence shows each result as its first and last 200 characters
+  (`resultChars`), since a long command's error is in its last lines, and a
+  Bash result the workspace ended with `exit code N`, or began with "The
+  command ran out of time", as `Bash failed (exit N)` or `Bash timed out`.
+  Both markers are `execText`'s, read from the text, as the result's event
+  holds no exit code; only the last line, whole, counts, so a command that
+  printed one is not taken as failed. A pipe still hides a failure, as its
+  status is its last command's: Bash's description says to use `set -o
+  pipefail` or `${PIPESTATUS[0]}` when the status matters. It is not turned
+  on for every command, as `grep` finding nothing and `head` closing a pipe
+  early would read as failures.
 - **A blueprint writes through the domain packages' own code, in one
   transaction.** `internal/api/blueprints` turns each item into the request
   its own API takes and runs `harness.Validate`, `mcpservers.Parse` and

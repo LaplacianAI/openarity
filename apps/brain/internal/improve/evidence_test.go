@@ -99,3 +99,93 @@ func TestAnOverlongTraceGoesBeforeTheAnswer(t *testing.T) {
 		}
 	}
 }
+
+// A result is read by both its ends, and a Bash command that exited non-zero,
+// or ran out of time, as failed: its error is in its last lines.
+func TestAResultIsReadByBothEnds(t *testing.T) {
+	t.Parallel()
+
+	log := "Building pycairo==1.29.2\n" + strings.Repeat("meson setup ...\n", 100) + "ERROR: Unknown linker(s): ar"
+	long := "line 1 of a long file\n" + strings.Repeat("x", 2000) + "\nthe last line"
+	for name, c := range map[string]struct {
+		p          toolResultPayload
+		want, lose []string
+	}{
+		"a failed command": {
+			toolResultPayload{Name: "Bash", Output: log + "\nexit code 2"},
+			[]string{"Bash failed (exit 2):", "Building pycairo", "Unknown linker(s): ar", "exit code 2"},
+			[]string{"returned"},
+		},
+		"a command out of time": {
+			toolResultPayload{Name: "Bash", Output: "The command ran out of time and was stopped, with everything it started.\npart\nexit code -1"},
+			[]string{"Bash failed (exit -1):"},
+			nil,
+		},
+		"a timeout with no exit line": {
+			toolResultPayload{Name: "Bash", Output: "The command ran out of time and was stopped, with everything it started.\npart"},
+			[]string{"Bash timed out:"},
+			nil,
+		},
+		"a command that exited 0": {
+			toolResultPayload{Name: "Bash", Output: log},
+			[]string{"Bash returned:", "Building pycairo", "Unknown linker(s): ar"},
+			[]string{"failed"},
+		},
+		"a long read": {
+			toolResultPayload{Name: "Read", Output: long},
+			[]string{"Read returned:", "line 1 of a long file", "the last line", " … "},
+			nil,
+		},
+		// What a command printed is not how it ended: only the last line,
+		// whole, is the workspace's.
+		"a command that printed an exit code midway": {
+			toolResultPayload{Name: "Bash", Output: "job 4 ended with\nexit code 1\nretrying: ok"},
+			[]string{"Bash returned:"},
+			[]string{"failed"},
+		},
+		"a command whose last line ends in one": {
+			toolResultPayload{Name: "Bash", Output: "the job failed with exit code 3"},
+			[]string{"Bash returned:"},
+			[]string{"failed (exit"},
+		},
+		"another tool ending as Bash does": {
+			toolResultPayload{Name: "Read", Output: "a file\nexit code 1"},
+			[]string{"Read returned:"},
+			[]string{"failed"},
+		},
+		"a short result": {
+			toolResultPayload{Name: "graph", Output: "three tools"},
+			[]string{"graph returned: three tools"},
+			[]string{" … "},
+		},
+		"a tool error": {
+			toolResultPayload{Name: "Bash", Output: "", Error: "the workspace is gone"},
+			[]string{"Bash failed: the workspace is gone"},
+			nil,
+		},
+	} {
+		got := resultLine(c.p)
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: %q lacks %q", name, got, w)
+			}
+		}
+		for _, l := range c.lose {
+			if strings.Contains(got, l) {
+				t.Errorf("%s: %q holds %q", name, got, l)
+			}
+		}
+		if utf8.RuneCountInString(got) > resultChars+80 {
+			t.Errorf("%s: %d characters, want about %d", name, utf8.RuneCountInString(got), resultChars)
+		}
+	}
+}
+
+// Both ends are cut on rune boundaries.
+func TestEndsCutsOnRunes(t *testing.T) {
+	t.Parallel()
+
+	if got := ends(strings.Repeat("é", 1000), 10); !utf8.ValidString(got) || got != "ééééé … ééééé" {
+		t.Errorf("ends = %q", got)
+	}
+}

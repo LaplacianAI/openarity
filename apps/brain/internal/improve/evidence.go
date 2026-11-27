@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -30,7 +32,8 @@ type Reads interface {
 const (
 	before        = 6     // messages before the run, for context
 	after         = 2     // people's messages after it
-	argChars      = 300   // a tool call's arguments, and its result
+	argChars      = 300   // a tool call's arguments
+	resultChars   = 400   // a tool's result: its first and last half
 	answerChars   = 6000  // the root run's answer
 	childChars    = 1500  // a delegate's input and answer, in a digest
 	eventsPerRun  = 2000  // the trace read of one run
@@ -211,11 +214,7 @@ func traceOf(ctx context.Context, r Reads, run db.ListTreeRunsRow) ([]string, he
 		case "tool_result":
 			var p toolResultPayload
 			if json.Unmarshal(e.Payload, &p) == nil {
-				if p.Error != "" {
-					lines = append(lines, fmt.Sprintf("  %s failed: %s", p.Name, clip(p.Error, argChars)))
-				} else {
-					lines = append(lines, fmt.Sprintf("  %s returned: %s", p.Name, clip(p.Output, argChars)))
-				}
+				lines = append(lines, resultLine(p))
 			}
 		case "tool_unavailable", "skipped":
 			var p namedReason
@@ -240,6 +239,54 @@ func traceOf(ctx context.Context, r Reads, run db.ListTreeRunsRow) ([]string, he
 		lines = append(lines, fmt.Sprintf("[%s ended: %s]", who, end))
 	}
 	return lines, h, nil
+}
+
+// resultLine is a tool's result as the trace reads it: both its ends, as
+// the error a long command ends with is in its last lines, and a command that
+// exited non-zero, or ran out of time, read as failed.
+func resultLine(p toolResultPayload) string {
+	if p.Error != "" {
+		return fmt.Sprintf("  %s failed: %s", p.Name, clip(p.Error, argChars))
+	}
+	if p.Name == bashTool {
+		if code, ok := bashExit(p.Output); ok {
+			return fmt.Sprintf("  %s failed (exit %d): %s", p.Name, code, ends(p.Output, resultChars))
+		}
+		if strings.HasPrefix(p.Output, bashTimedOut) {
+			return fmt.Sprintf("  %s timed out: %s", p.Name, ends(p.Output, resultChars))
+		}
+	}
+	return fmt.Sprintf("  %s returned: %s", p.Name, ends(p.Output, resultChars))
+}
+
+// What the workspace's Bash writes for a command that did not end well:
+// runtime's execText writes both, and its tests pin them.
+const (
+	bashTool     = "Bash"
+	bashTimedOut = "The command ran out of time"
+)
+
+var bashExitLine = regexp.MustCompile(`(?:^|\n)exit code (-?\d+)$`)
+
+// bashExit is the exit code a Bash result ends with, when it ends with one.
+func bashExit(out string) (int, bool) {
+	m := bashExitLine.FindStringSubmatch(out)
+	if m == nil {
+		return 0, false
+	}
+	code, err := strconv.Atoi(m[1])
+	return code, err == nil
+}
+
+// ends is s whole when it fits in n characters, else its first and last
+// n/2, cut on rune boundaries.
+func ends(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n/2]) + " … " + string(r[len(r)-n/2:])
 }
 
 func firstOf(a, b string) string {

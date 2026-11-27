@@ -426,3 +426,19 @@ func TestARuleAllowingBashLetsItRunUnasked(t *testing.T) {
 		t.Errorf("Bash with a rule allowing it: %v, want allow", got.Verdict)
 	}
 }
+
+// The model is told how a pipe hides a failure, so it keeps the status when
+// it filters a command's output.
+func TestBashSaysAPipeHidesAFailure(t *testing.T) {
+	t.Parallel()
+
+	var desc string
+	for _, tl := range (&runWorkspace{}).tools() {
+		if tl.Name == BashToolName {
+			desc = tl.Description
+		}
+	}
+	if !strings.Contains(desc, "set -o pipefail") || !strings.Contains(desc, "PIPESTATUS") {
+		t.Errorf("Bash's description does not say how a pipe hides a failure: %q", desc)
+	}
+}
