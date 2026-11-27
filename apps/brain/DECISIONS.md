@@ -1302,10 +1302,10 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     wait hours; its room is stopped meanwhile and resumed when it calls again.
     `IdleSessionOf` and `SessionIsIdle` leave `waiting` out on purpose.
   - **A call refused for want of room waits for room** (`room_waits`,
-    `runtime/roomwait.go`). On staging, 36 runs in 30 days met `ErrFull`,
-    `ErrPreparing` or an unreachable sandboxd, all on workspace tools, about
-    three refusals each; each went on without its workspace, and 15 were
-    judged not done or partly. Now a refusal `sandbox.Waitable` names
+    `runtime/roomwait.go`). On staging, 12 runs in 30 days had a workspace
+    call refused this way (29 refusals for a full sandbox, 11 for an
+    unreachable sandboxd); each went on without its workspace, and 2 of the
+    9 judged were not done or partly. Now a refusal `sandbox.Waitable` names
     (full, preparing, `ErrUnavailable`) makes nothing: the run is told to
     say it waits and stop, and parks with `waiting_for = 'sandbox'`. The
     sweep makes the room itself, a minute after the refusal and then after
