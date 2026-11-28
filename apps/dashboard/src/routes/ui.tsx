@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   ArchiveRestore,
@@ -520,9 +520,25 @@ function Nav({
   );
 }
 
+/**
+ * Screens about no one team: switching teams leaves them where they are.
+ * Every other screen shows one team's things, which the new team does not
+ * have, so switching from one goes Home.
+ */
+const ACROSS_TEAMS = ["/ui/teams"];
+
 /** The team the dashboard is about, and the reader's role in it. */
 function TeamSwitcher() {
-  const { teamId, teams, choose } = useCurrentTeam();
+  const { teamId, teams, choose: chooseTeam } = useCurrentTeam();
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const choose = (id: string) => {
+    if (id === teamId) return;
+    chooseTeam(id);
+    if (!ACROSS_TEAMS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+      void navigate({ to: "/ui" });
+    }
+  };
   const current = teams.find((t) => t.id === teamId);
   const role = current?.role ? (
     <span className="shrink-0 text-xs text-muted-foreground">{current.role}</span>

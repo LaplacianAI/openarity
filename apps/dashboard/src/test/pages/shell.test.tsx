@@ -2,8 +2,9 @@ import { createRoute } from "@tanstack/react-router";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { useCurrentTeam } from "@/api/session";
 import { brain, showAt, TEAM, team } from "@/test/brain";
 
 const { Route: UiRoute } = await import("@/routes/ui");
@@ -227,8 +228,16 @@ function DraftPage() {
   const [text, setText] = useState("");
   return <input aria-label="Draft" value={text} onChange={(e) => setText(e.target.value)} />;
 }
+/** A page that says which team it is showing, read as every screen reads it. */
+function TeamProbe() {
+  const { teamId } = useCurrentTeam();
+  return <p>showing {teamId}</p>;
+}
 UiRoute.addChildren([
   createRoute({ getParentRoute: () => UiRoute, path: "draft", component: DraftPage }),
+  createRoute({ getParentRoute: () => UiRoute, path: "/", component: () => <p>home page</p> }),
+  createRoute({ getParentRoute: () => UiRoute, path: "agents", component: TeamProbe }),
+  createRoute({ getParentRoute: () => UiRoute, path: "teams", component: TeamProbe }),
 ]);
 
 // Each width lays the shell out differently. The page inside it must be the
@@ -258,5 +267,61 @@ it("keeps the page, and what was typed in it, as the width crosses each layout",
   }
 });
 
-// The fake brain answers the team route with this team.
-void TEAM;
+const OTHER = "8a2c9e10-3b4d-4f5e-8a6b-7c8d9e0f1a2b";
+
+/** Two teams, the first current, and the shell open at `at`. */
+function twoTeams(at: string) {
+  window.sessionStorage.removeItem("openarity.team");
+  Element.prototype.scrollIntoView = vi.fn();
+  onTestFinished(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    window.sessionStorage.removeItem("openarity.team");
+  });
+  widths(true, true);
+  brain({
+    ...team([]),
+    "GET /teams": {
+      body: {
+        items: [
+          { id: TEAM, name: "platform", role: "admin" },
+          { id: OTHER, name: "ops", role: "admin" },
+        ],
+      },
+    },
+    "GET /whoami": { body: { subject: "ann", email: "ann@example.com" } },
+  });
+  return showAt(at, [["/ui", UiRoute]]);
+}
+
+async function switchTo(name: string) {
+  (await screen.findByRole("combobox", { name: "Current team" })).focus();
+  await userEvent.keyboard("{ArrowDown}");
+  await userEvent.click(await screen.findByRole("option", { name }));
+}
+
+describe("switching teams", () => {
+  // One team's screen shows that team's things, which the new team does not
+  // have: switching from it goes Home rather than leave the old team's page.
+  it("goes Home from a screen about one team", async () => {
+    const router = twoTeams("/ui/agents");
+    expect(await screen.findByText(`showing ${TEAM}`)).toBeInTheDocument();
+
+    await switchTo("ops");
+
+    expect(await screen.findByText("home page")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/ui");
+    expect(window.sessionStorage.getItem("openarity.team")).toBe(OTHER);
+  });
+
+  // Every screen reads the one current team: the page that is open moves
+  // with the picker, not only the picker itself.
+  it("moves the open screen to the new team, and leaves a screen about every team where it is", async () => {
+    const router = twoTeams("/ui/teams");
+    expect(await screen.findByText(`showing ${TEAM}`)).toBeInTheDocument();
+
+    await switchTo("ops");
+
+    expect(await screen.findByText(`showing ${OTHER}`)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/ui/teams");
+  });
+});
