@@ -36,7 +36,7 @@ func report(child db.Run, end string, t toldPerson) string {
 	}
 	body = cutReport(reportTag.ReplaceAllString(body, "&lt;$1"), child)
 	if s := saidBlock(t.said); s != "" {
-		body += "\n" + reportTag.ReplaceAllString(s, "&lt;$1")
+		body += "\n" + s
 	}
 	if t.unread {
 		body += "\n[what it told the person while it worked could not be read: it may have told them some of this]"
@@ -52,23 +52,33 @@ func report(child db.Run, end string, t toldPerson) string {
 
 // saidBlock lists what was said, its newest lines whole that fit in a
 // report, saying how many earlier ones were left out.
+//
+// Each line is one line, escaped as the report is, so a line break in what
+// was said cannot start a note of the brain's after it, and its size is
+// counted as it is written, the head and the room for its count too.
 func saidBlock(said []string) string {
 	if len(said) == 0 {
 		return ""
 	}
-	keep, size := len(said), 0
-	for keep > 0 && size+len(said[keep-1])+3 <= maxReport {
-		size += len(said[keep-1]) + 3
+	lines := make([]string, len(said))
+	for i, s := range said {
+		lines[i] = "- " + reportTag.ReplaceAllString(strings.Join(strings.Fields(s), " "), "&lt;$1")
+	}
+	const head = "[it told the person while it worked, so do not tell them again:"
+	room := maxReport - len(head) - len(" (10000 earlier, not shown)") - len("]")
+	keep, size := len(lines), 0
+	for keep > 0 && size+len(lines[keep-1])+1 <= room {
+		size += len(lines[keep-1]) + 1
 		keep--
 	}
-	head := "[it told the person while it worked, so do not tell them again:"
+	h := head
 	if keep > 0 {
-		head += fmt.Sprintf(" (%d earlier, not shown)", keep)
+		h += fmt.Sprintf(" (%d earlier, not shown)", keep)
 	}
-	if keep == len(said) {
-		return head + "]"
+	if keep == len(lines) {
+		return h + "]"
 	}
-	return head + "\n- " + strings.Join(said[keep:], "\n- ") + "]"
+	return h + "\n" + strings.Join(lines[keep:], "\n") + "]"
 }
 
 // cutReport is s held to maxReport, cut on a rune and saying where the rest is.

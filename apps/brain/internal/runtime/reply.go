@@ -143,7 +143,7 @@ func (r *replying) post(ctx context.Context, seq int32, text string) error {
 		return fmt.Errorf("it did not reach the person; do not send it again, put it in your answer: %w", err)
 	}
 	if n == 0 {
-		return errors.New("it did not reach the person: this conversation can no longer be posted to; say so in your answer")
+		return errors.New("it did not reach the person: this conversation can no longer be posted to; put it in your answer")
 	}
 	if r.kick != nil {
 		r.kick(seq)
@@ -154,21 +154,33 @@ func (r *replying) post(ctx context.Context, seq int32, text string) error {
 // replyText is what a person is sent: line breaks kept, a tab a space, no
 // other control character and no invisible format mark (one that reorders
 // the text around it among them), and one message long with prefix. Joiners
-// and tags stay, as emoji and flags are made of them.
+// stay, as emoji are made of them, and so do the tags of a flag; a tag
+// anywhere else is text hidden from the person, and goes.
 func replyText(s, prefix string) (string, error) {
-	s = strings.TrimSpace(strings.Map(func(r rune) rune {
+	var b strings.Builder
+	inFlag := false
+	for _, r := range s {
+		keep := r
 		switch {
 		case r == '\n':
-			return r
 		case r == '\t':
-			return ' '
+			keep = ' '
 		case unicode.IsControl(r), r == '\u2028', r == '\u2029':
-			return -1
-		case unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d' && (r < 0xE0020 || r > 0xE007F):
-			return -1
+			keep = -1
+		case flagTag(r):
+			if !inFlag {
+				keep = -1
+			}
+		case unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d':
+			keep = -1
 		}
-		return r
-	}, s))
+		// A flag is a black flag, its tags, and the cancel tag that ends it.
+		inFlag = r == blackFlag || inFlag && flagTag(r) && r != cancelTag
+		if keep >= 0 {
+			b.WriteRune(keep)
+		}
+	}
+	s = strings.TrimSpace(b.String())
 	if s == "" {
 		return "", errors.New("there is nothing to send; say what to tell them")
 	}
@@ -177,6 +189,17 @@ func replyText(s, prefix string) (string, error) {
 			utf8.RuneCountInString(s), most)
 	}
 	return s, nil
+}
+
+const (
+	blackFlag = '\U0001F3F4'
+	cancelTag = '\U000E007F'
+)
+
+// flagTag is a tag a subdivision flag is spelled with: a digit, a small
+// letter, or the cancel tag.
+func flagTag(r rune) bool {
+	return r >= 0xE0030 && r <= 0xE0039 || r >= 0xE0061 && r <= 0xE007A || r == cancelTag
 }
 
 // WithReplies gives a run whose tree answers a person's message reply, on

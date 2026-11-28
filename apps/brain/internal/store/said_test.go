@@ -200,6 +200,19 @@ func TestWhatATreeSaidIsCountedTogether(t *testing.T) {
 	saysOnRun(t, s, direct.ID, "a")
 	saysOnRun(t, s, direct.ID, "b")
 	if told, err := s.ListRunSaid(t.Context(), direct.ID); err != nil || !slices.Equal(told, []string{"a", "b"}) {
-		t.Errorf("ListRunSaid on the dashboard = %q, %v", told, err)
+		t.Errorf("ListRunSaid with no channel = %q, %v", told, err)
+	}
+
+	// A conversation the dashboard started is on the team's dashboard
+	// channel, which is read on its stream too.
+	d := newStreamFixture(t, s)
+	dash := createRun(t, s, d.runFixture)
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET status = 'running', worker = 'w-1', heartbeat_at = now() WHERE id = $1`, dash.ID); err != nil {
+		t.Fatal(err)
+	}
+	saysOnRun(t, s, dash.ID, "a")
+	saysOnRun(t, s, dash.ID, "b")
+	if told, err := s.ListRunSaid(t.Context(), dash.ID); err != nil || !slices.Equal(told, []string{"a", "b"}) {
+		t.Errorf("ListRunSaid on the dashboard channel = %q, %v", told, err)
 	}
 }
