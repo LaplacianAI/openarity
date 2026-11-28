@@ -54,6 +54,8 @@ func Resolving(f agent.ClientFactory, s AttachmentReader, o Objects) agent.Clien
 	}
 }
 
+// resolving is one run's model client: Resolving's factory is called once a
+// run, so what it learns about the run's files lasts that run alone.
 type resolving struct {
 	inner   agent.ModelClient
 	store   AttachmentReader
@@ -73,40 +75,49 @@ func (r *resolving) Complete(ctx context.Context, req agent.Request) (agent.Resp
 	if !unsendable(err, files) {
 		return resp, refused(err, files, req.Model.Name)
 	}
-	bare, _, rerr := r.resolve(ctx, req, false)
-	if rerr != nil {
+	bare, _, berr := r.resolve(ctx, req, false)
+	if berr == nil {
+		resp, berr = r.inner.Complete(ctx, bare)
+	}
+	if berr != nil {
 		return agent.Response{}, refused(err, files, req.Model.Name)
 	}
-	resp, rerr = r.inner.Complete(ctx, bare)
-	if rerr != nil {
-		return agent.Response{}, refused(err, files, req.Model.Name)
-	}
-	r.filesOff.Store(true)
+	r.settle(err)
 	return resp, nil
 }
 
+// Stream asks again without files as Complete does. A provider's answer
+// reaches a stream at its first read, not when it is opened, so the stream
+// asks again there, before any event, never after one.
 func (r *resolving) Stream(ctx context.Context, req agent.Request) (agent.Stream, error) {
 	sent, files, err := r.resolve(ctx, req, !r.filesOff.Load())
 	if err != nil {
 		return nil, err
 	}
-	s, err := r.inner.Stream(ctx, sent)
+	rs := &refusingStream{r: r, ctx: ctx, req: req, files: files}
+	rs.Stream, err = r.inner.Stream(ctx, sent)
 	if err == nil {
-		return &refusingStream{Stream: s, files: files, model: req.Model.Name}, nil
+		return rs, nil
 	}
-	if !unsendable(err, files) {
+	if !unsendable(err, files) || !rs.reopen(err) {
 		return nil, refused(err, files, req.Model.Name)
 	}
-	bare, _, rerr := r.resolve(ctx, req, false)
-	if rerr != nil {
-		return nil, refused(err, files, req.Model.Name)
+	return rs, nil
+}
+
+// settle turns the run's files off after a refusal that a request without
+// them got past, unless the refusal was a gateway's, which the next request
+// may well not meet.
+func (r *resolving) settle(refusal error) {
+	var answered *agent.ModelError
+	if !errors.As(refusal, &answered) {
+		return
 	}
-	s, rerr = r.inner.Stream(ctx, bare)
-	if rerr != nil {
-		return nil, refused(err, files, req.Model.Name)
+	switch answered.Status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return
 	}
 	r.filesOff.Store(true)
-	return s, nil
 }
 
 // unsendable is a request whose files the provider would not take: refused as
@@ -124,11 +135,68 @@ func unsendable(err error, files int) bool {
 
 type refusingStream struct {
 	agent.Stream
+	r     *resolving
+	ctx   context.Context
+	req   agent.Request
 	files int
-	model string
+	// first is the answer to the request with its files, once the stream
+	// went without them; seen, that an event was read.
+	first error
+	seen  bool
 }
 
-func (s *refusingStream) Err() error { return refused(s.Stream.Err(), s.files, s.model) }
+func (s *refusingStream) Next() bool {
+	if s.Stream.Next() {
+		s.saw()
+		return true
+	}
+	err := s.Stream.Err()
+	if s.first != nil || s.seen || !unsendable(err, s.files) {
+		if s.first != nil && err == nil {
+			s.saw()
+		}
+		return false
+	}
+	return s.reopen(err) && s.Next()
+}
+
+// reopen asks again without files, keeping the stream it has when it cannot.
+func (s *refusingStream) reopen(first error) bool {
+	bare, _, err := s.r.resolve(s.ctx, s.req, false)
+	if err != nil {
+		return false
+	}
+	next, err := s.r.inner.Stream(s.ctx, bare)
+	if err != nil {
+		return false
+	}
+	if s.Stream != nil {
+		_ = s.Close()
+	}
+	s.Stream, s.first = next, first
+	return true
+}
+
+// saw is an answer: the first one after a refusal settles the run's files.
+func (s *refusingStream) saw() {
+	if !s.seen && s.first != nil {
+		s.r.settle(s.first)
+	}
+	s.seen = true
+}
+
+// Err is the stream's own error, but the first answer when the stream without
+// files failed before anything was read: that answer is the files' refusal.
+func (s *refusingStream) Err() error {
+	err := s.Stream.Err()
+	switch {
+	case s.first == nil, err == nil:
+		return refused(err, s.files, s.req.Model.Name)
+	case s.seen:
+		return err
+	}
+	return refused(s.first, s.files, s.req.Model.Name)
+}
 
 type place struct{ msg, part int }
 
@@ -136,10 +204,10 @@ type place struct{ msg, part int }
 // the files a tool attached whole, the newest first, up to eight files and
 // bytesPerRequest of them, text files among them; older ones are named as
 // earlier files rather than sent, and one past the bytes left is never read.
-// Without files, each image or PDF is named as one the provider could not
-// take, never read, and text files are still sent as their text. It copies what it
-// changes, so the caller's messages, which are the transcript, keep only the
-// references and every file.
+// Without files, each image or PDF is named as not sent, never read, and
+// text files are still sent as their text. It copies what it changes, so the
+// caller's messages, which are the transcript, keep only the references and
+// every file. It reports how many files went as files.
 func (r *resolving) resolve(ctx context.Context, req agent.Request, withFiles bool) (agent.Request, int, error) {
 	var (
 		files []place
@@ -190,7 +258,7 @@ func (r *resolving) resolve(ctx context.Context, req agent.Request, withFiles bo
 			continue
 		}
 		if !withFiles && bareType(part.Blob.MediaType) != "text/plain" {
-			set(p, textPart(fmt.Sprintf("[%s: not sent; the model's provider could not take it]", name)))
+			set(p, textPart(fmt.Sprintf("[%s: not sent; the model's provider failed on the request carrying it]", name)))
 			continue
 		}
 		if len(part.Blob.Data) == 0 {

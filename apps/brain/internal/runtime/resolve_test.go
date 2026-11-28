@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -13,9 +15,12 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
+	"github.com/LaplacianAI/openarity/sdk/agent/models/openaicompat"
 )
 
-// recordingClient is a model that keeps what it was sent and answers err.
+// recordingClient is a model that keeps what it was sent and answers err. Its
+// streams open and report their answer at the first read, as openaicompat's
+// do, unless atOpen says the answer comes when one is opened.
 type recordingClient struct {
 	mu   sync.Mutex
 	sent []agent.Request
@@ -25,6 +30,12 @@ type recordingClient struct {
 	// filesErr is what a request carrying a file is answered, as a provider
 	// that cannot take one does, while one without is answered err.
 	filesErr error
+	atOpen   bool
+	// midErr is what a stream answered reports after its first event; silent,
+	// a stream answered that ends with none.
+	midErr  error
+	silent  bool
+	streams []*endedStream
 }
 
 func (c *recordingClient) answer(req agent.Request) error {
@@ -44,10 +55,22 @@ func (c *recordingClient) Complete(_ context.Context, req agent.Request) (agent.
 func (c *recordingClient) Stream(_ context.Context, req agent.Request) (agent.Stream, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if err := c.answer(req); err != nil {
+	err := c.answer(req)
+	if err != nil && c.atOpen {
 		return nil, err
 	}
-	return &endedStream{err: c.streamErr}, nil
+	s := &endedStream{err: err}
+	switch {
+	case err != nil:
+	case c.midErr != nil:
+		s.events, s.err = 1, c.midErr
+	case !c.silent:
+		s.events, s.err = 1, c.streamErr
+	default:
+		s.err = c.streamErr
+	}
+	c.streams = append(c.streams, s)
+	return s, nil
 }
 
 func blobsIn(req agent.Request) int {
@@ -62,12 +85,36 @@ func blobsIn(req agent.Request) int {
 	return n
 }
 
-type endedStream struct{ err error }
+// endedStream gives its events, then ends with err.
+type endedStream struct {
+	events, closed int
+	err            error
+}
 
-func (s *endedStream) Next() bool               { return false }
-func (s *endedStream) Event() agent.StreamEvent { return agent.StreamEvent{} }
-func (s *endedStream) Err() error               { return s.err }
-func (s *endedStream) Close() error             { return nil }
+func (s *endedStream) Next() bool {
+	if s.events == 0 {
+		return false
+	}
+	s.events--
+	return true
+}
+func (s *endedStream) Event() agent.StreamEvent { return agent.StreamEvent{Text: "an answer"} }
+func (s *endedStream) Err() error {
+	if s.events > 0 {
+		return nil
+	}
+	return s.err
+}
+func (s *endedStream) Close() error { s.closed++; return nil }
+
+// drain reads a stream to its end as a run does: its events, then its error.
+func drain(s agent.Stream) (int, error) {
+	n := 0
+	for s.Next() {
+		n++
+	}
+	return n, s.Err()
+}
 
 type resolveFixture struct {
 	session uuid.UUID
@@ -395,17 +442,25 @@ func TestARefusedRequestWithFilesSaysTheModelMayNotReadThem(t *testing.T) {
 		t.Errorf("outcome = %s, %q", status, failure)
 	}
 
-	// Streamed, whether it is refused at once or at the end.
-	if _, err := f.client.Stream(f.ctx(t), req); !errors.As(err, &refusedFiles) {
-		t.Errorf("Stream = %v", err)
-	}
-	f.inner.err, f.inner.streamErr = nil, &agent.ModelError{Status: http.StatusUnprocessableEntity}
+	// Streamed, whether it is refused at its first read, at its end, or when
+	// it is opened.
 	s, err := f.client.Stream(f.ctx(t), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Err(); !errors.As(err, &refusedFiles) {
+	if _, err := drain(s); !errors.As(err, &refusedFiles) {
 		t.Errorf("the stream ended with %v", err)
+	}
+	f.inner.err, f.inner.streamErr = nil, &agent.ModelError{Status: http.StatusUnprocessableEntity}
+	if s, err = f.client.Stream(f.ctx(t), req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := drain(s); !errors.As(err, &refusedFiles) {
+		t.Errorf("the stream ended with %v", err)
+	}
+	f.inner.err, f.inner.streamErr, f.inner.atOpen = &agent.ModelError{Status: http.StatusBadRequest}, nil, true
+	if _, err := f.client.Stream(f.ctx(t), req); !errors.As(err, &refusedFiles) {
+		t.Errorf("Stream = %v", err)
 	}
 }
 
@@ -455,6 +510,37 @@ func TestAReferenceThatNamesNoFileIsRefused(t *testing.T) {
 	}
 }
 
+// asker is how a run asks: Complete, or a stream read to its end.
+type asker func(t *testing.T, f *resolveFixture, req agent.Request) error
+
+var asks = map[string]asker{
+	"complete": func(t *testing.T, f *resolveFixture, req agent.Request) error {
+		_, err := f.client.Complete(f.ctx(t), req)
+		return err
+	},
+	"stream": func(t *testing.T, f *resolveFixture, req agent.Request) error {
+		s, err := f.client.Stream(f.ctx(t), req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = s.Close() }()
+		if n, err := drain(s); err != nil || n == 0 {
+			return fmt.Errorf("%d events, then %w", n, err)
+		}
+		return nil
+	},
+	"stream refused when opened": func(t *testing.T, f *resolveFixture, req agent.Request) error {
+		f.inner.atOpen = true
+		s, err := f.client.Stream(f.ctx(t), req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = s.Close() }()
+		_, err = drain(s)
+		return err
+	},
+}
+
 // A provider that cannot take a request's files, refusing it or failing on its
 // side as a router that breaks on a large PDF does, is asked again without
 // them: the model is told which files were not sent, and the run goes on.
@@ -468,106 +554,182 @@ func TestARequestWhoseFilesTheProviderCannotTakeGoesWithoutThem(t *testing.T) {
 		{"router broke", &agent.ModelError{Status: http.StatusInternalServerError, Code: "internal_server_error"}},
 		{"gateway broke", &agent.ModelError{Status: http.StatusBadGateway}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newResolveFixture(t)
-			req := asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")), refTo(f.file("notes.txt", "text/plain", "the notes")))
-			f.inner.filesErr = tc.err
+		for how, ask := range asks {
+			t.Run(tc.name+", "+how, func(t *testing.T) {
+				f := newResolveFixture(t)
+				req := asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")), refTo(f.file("notes.txt", "text/plain", "the notes")))
+				f.inner.filesErr = tc.err
 
-			if _, err := f.client.Complete(f.ctx(t), req); err != nil {
-				t.Fatalf("Complete = %v", err)
-			}
-			if len(f.inner.sent) != 2 {
-				t.Fatalf("%d requests, want the one refused and one without its files", len(f.inner.sent))
-			}
-			bare := f.inner.sent[1]
-			if n := blobsIn(bare); n != 0 {
-				t.Errorf("the second request carried %d files", n)
-			}
-			got := textOf(bare.Messages)
-			if !strings.Contains(got, "[paper.pdf: not sent; the model's provider could not take it]") {
-				t.Errorf("the model was not told the PDF was not sent: %q", got)
-			}
-			if !strings.Contains(got, "the notes") {
-				t.Errorf("a text file is still sent as its text: %q", got)
-			}
-			if req.Messages[0].Content[1].Blob == nil {
-				t.Error("the transcript lost its reference")
-			}
-		})
-	}
-}
-
-// Once a run's files were sent without, the rest of its steps send none, and
-// never read them: one request each, not a refusal paid for every step.
-func TestAfterARefusalTheRunsLaterRequestsSendNoFiles(t *testing.T) {
-	f := newResolveFixture(t)
-	pdf := f.file("paper.pdf", "application/pdf", "%PDF")
-	req := asking(refTo(pdf))
-	f.inner.filesErr = &agent.ModelError{Status: http.StatusInternalServerError}
-
-	if _, err := f.client.Complete(f.ctx(t), req); err != nil {
-		t.Fatal(err)
-	}
-	delete(f.objects.data, pdf.ObjectKey)
-	if _, err := f.client.Complete(f.ctx(t), req); err != nil {
-		t.Fatalf("the next step = %v; it read the file it does not send", err)
-	}
-	if _, err := f.client.Stream(f.ctx(t), req); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.inner.sent) != 4 {
-		t.Fatalf("%d requests, want 2 then one a step", len(f.inner.sent))
-	}
-	for _, sent := range f.inner.sent[2:] {
-		if blobsIn(sent) != 0 {
-			t.Error("a later step carried the file")
+				if err := ask(t, f, req); err != nil {
+					t.Fatalf("asked = %v", err)
+				}
+				if len(f.inner.sent) != 2 {
+					t.Fatalf("%d requests, want the one refused and one without its files", len(f.inner.sent))
+				}
+				bare := f.inner.sent[1]
+				if n := blobsIn(bare); n != 0 {
+					t.Errorf("the second request carried %d files", n)
+				}
+				got := textOf(bare.Messages)
+				if !strings.Contains(got, "[paper.pdf: not sent; the model's provider failed on the request carrying it]") {
+					t.Errorf("the model was not told the PDF was not sent: %q", got)
+				}
+				if !strings.Contains(got, "the notes") {
+					t.Errorf("a text file is still sent as its text: %q", got)
+				}
+				if req.Messages[0].Content[1].Blob == nil {
+					t.Error("the transcript lost its reference")
+				}
+				for i, s := range f.inner.streams {
+					if s.closed != 1 {
+						t.Errorf("stream %d closed %d times", i, s.closed)
+					}
+				}
+			})
 		}
 	}
 }
 
-// A stream refused when it opens goes without its files the same way.
-func TestAStreamWhoseFilesTheProviderCannotTakeGoesWithoutThem(t *testing.T) {
+// Once a run's files were sent without, the rest of its steps send none, and
+// never read them: one request each, not a refusal paid for every step. A
+// gateway's failure is the exception: the next step may well get through.
+func TestAfterARefusalTheRunsLaterRequestsSendNoFiles(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		sticks bool
+	}{
+		{http.StatusBadRequest, true},
+		{http.StatusUnprocessableEntity, true},
+		{http.StatusInternalServerError, true},
+		{http.StatusBadGateway, false},
+		{http.StatusServiceUnavailable, false},
+		{http.StatusGatewayTimeout, false},
+	} {
+		for how, ask := range asks {
+			t.Run(fmt.Sprintf("%d, %s", tc.status, how), func(t *testing.T) {
+				f := newResolveFixture(t)
+				pdf := f.file("paper.pdf", "application/pdf", "%PDF")
+				req := asking(refTo(pdf))
+				f.inner.filesErr = &agent.ModelError{Status: tc.status}
+
+				if err := ask(t, f, req); err != nil {
+					t.Fatal(err)
+				}
+				f.inner.filesErr = nil
+				if tc.sticks {
+					delete(f.objects.data, pdf.ObjectKey)
+				}
+				if err := ask(t, f, req); err != nil {
+					t.Fatalf("the next step = %v", err)
+				}
+				if len(f.inner.sent) != 3 {
+					t.Fatalf("%d requests, want 2 then one", len(f.inner.sent))
+				}
+				if carried := blobsIn(f.inner.sent[2]) == 1; carried == tc.sticks {
+					t.Errorf("the next step carried the file: %v", carried)
+				}
+			})
+		}
+	}
+}
+
+// A stream that gave an event is never asked again, whatever it ends with:
+// what it said was shown. The run's files stay on.
+func TestAStreamThatAnsweredIsNeverAskedAgain(t *testing.T) {
 	f := newResolveFixture(t)
 	req := asking(refTo(f.file("screen.png", "image/png", "img")))
-	f.inner.filesErr = &agent.ModelError{Status: http.StatusInternalServerError}
+	broke := &agent.ModelError{Status: http.StatusInternalServerError}
+	f.inner.midErr = broke
 
 	s, err := f.client.Stream(f.ctx(t), req)
 	if err != nil {
-		t.Fatalf("Stream = %v", err)
+		t.Fatal(err)
 	}
-	if s.Err() != nil {
-		t.Errorf("the stream ended with %v", s.Err())
+	if n, err := drain(s); n != 1 || !errors.Is(err, broke) {
+		t.Fatalf("%d events, then %v", n, err)
 	}
-	if len(f.inner.sent) != 2 || blobsIn(f.inner.sent[1]) != 0 {
-		t.Errorf("sent %d requests, the last with files: %v", len(f.inner.sent), len(f.inner.sent) == 2)
+	if s.Next() || len(f.inner.sent) != 1 {
+		t.Errorf("%d requests after the stream ended", len(f.inner.sent))
+	}
+
+	f.inner.midErr = nil
+	if err := asks["stream"](t, f, req); err != nil {
+		t.Fatal(err)
+	}
+	if blobsIn(f.inner.sent[1]) != 1 {
+		t.Error("a stream that broke after answering turned the run's files off")
+	}
+}
+
+// A stream without its files that ends with nothing to say still got past
+// the refusal, so the run's files are off.
+func TestAStreamWithoutItsFilesThatEndsQuietlyTurnsThemOff(t *testing.T) {
+	f := newResolveFixture(t)
+	req := asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")))
+	f.inner.filesErr, f.inner.silent = &agent.ModelError{Status: http.StatusInternalServerError}, true
+
+	s, err := f.client.Stream(f.ctx(t), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := drain(s); n != 0 || err != nil {
+		t.Fatalf("%d events, then %v", n, err)
+	}
+	f.inner.filesErr = nil
+	if _, err := f.client.Complete(f.ctx(t), req); err != nil {
+		t.Fatalf("the next step = %v", err)
+	}
+	if blobsIn(f.inner.sent[2]) != 0 {
+		t.Error("the next step carried the file")
+	}
+}
+
+// A stream without its files that answers, then breaks, ends with its own
+// error: the refusal before it is not what stopped it.
+func TestAStreamWithoutItsFilesThatBreaksAfterAnsweringSaysWhy(t *testing.T) {
+	f := newResolveFixture(t)
+	req := asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")))
+	refusal, broke := &agent.ModelError{Status: http.StatusInternalServerError}, &agent.ModelError{Status: http.StatusBadGateway}
+	f.inner.filesErr, f.inner.midErr = refusal, broke
+
+	s, err := f.client.Stream(f.ctx(t), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := drain(s); n != 1 || !errors.Is(err, broke) || errors.Is(err, refusal) {
+		t.Errorf("%d events, then %v; want the break", n, err)
 	}
 }
 
 // A request that fails without its files too is not the files' doing: the
 // first answer is the one reported, a refusal still saying the model may not
-// read them, and the next step tries its files again.
+// read them, it is asked again only once, and the next step tries its files.
 func TestARequestThatFailsWithoutItsFilesTooKeepsTheFirstAnswer(t *testing.T) {
-	f := newResolveFixture(t)
-	req := asking(refTo(f.file("screen.png", "image/png", "img")))
-	first := &agent.ModelError{Status: http.StatusBadRequest, Code: "invalid_request_error"}
-	f.inner.filesErr, f.inner.err = first, &agent.ModelError{Status: http.StatusServiceUnavailable}
+	for how, ask := range asks {
+		t.Run(how, func(t *testing.T) {
+			f := newResolveFixture(t)
+			req := asking(refTo(f.file("screen.png", "image/png", "img")))
+			first := &agent.ModelError{Status: http.StatusBadRequest, Code: "invalid_request_error"}
+			f.inner.filesErr, f.inner.err = first, &agent.ModelError{Status: http.StatusServiceUnavailable}
 
-	_, err := f.client.Complete(f.ctx(t), req)
-	var refusedFiles *filesRefused
-	if !errors.As(err, &refusedFiles) || !errors.Is(err, first) {
-		t.Fatalf("Complete = %v, want the first refusal", err)
-	}
-	if _, err := f.client.Stream(f.ctx(t), req); !errors.Is(err, first) {
-		t.Errorf("Stream = %v, want the first refusal", err)
-	}
+			err := ask(t, f, req)
+			var refusedFiles *filesRefused
+			if !errors.As(err, &refusedFiles) || !errors.Is(err, first) {
+				t.Fatalf("asked = %v, want the first refusal", err)
+			}
+			if len(f.inner.sent) != 2 {
+				t.Errorf("%d requests, want 2", len(f.inner.sent))
+			}
 
-	f.inner.filesErr, f.inner.err = nil, nil
-	f.inner.sent = nil
-	if _, err := f.client.Complete(f.ctx(t), req); err != nil {
-		t.Fatal(err)
-	}
-	if blobsIn(f.inner.sent[0]) != 1 {
-		t.Error("a failed retry turned the run's files off")
+			f.inner.filesErr, f.inner.err = nil, nil
+			f.inner.sent = nil
+			if err := ask(t, f, req); err != nil {
+				t.Fatal(err)
+			}
+			if blobsIn(f.inner.sent[0]) != 1 {
+				t.Error("a failed retry turned the run's files off")
+			}
+		})
 	}
 }
 
@@ -584,23 +746,82 @@ func TestOnlyARequestsFilesAreGoneWithout(t *testing.T) {
 		{"rate limited", true, &agent.ModelError{Status: http.StatusTooManyRequests}},
 		{"unreachable", true, errors.New("dial tcp: connection refused")},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newResolveFixture(t)
-			req := asking()
-			if tc.file {
-				req = asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")))
-			}
-			f.inner.err = tc.err
+		for how, ask := range asks {
+			t.Run(tc.name+", "+how, func(t *testing.T) {
+				f := newResolveFixture(t)
+				req := asking()
+				if tc.file {
+					req = asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")))
+				}
+				f.inner.err = tc.err
 
-			if _, err := f.client.Complete(f.ctx(t), req); !errors.Is(err, tc.err) {
-				t.Errorf("Complete = %v", err)
-			}
-			if _, err := f.client.Stream(f.ctx(t), req); !errors.Is(err, tc.err) {
-				t.Errorf("Stream = %v", err)
-			}
-			if len(f.inner.sent) != 2 {
-				t.Errorf("%d requests, want one each", len(f.inner.sent))
-			}
-		})
+				if err := ask(t, f, req); !errors.Is(err, tc.err) {
+					t.Errorf("asked = %v", err)
+				}
+				if len(f.inner.sent) != 1 {
+					t.Errorf("%d requests, want one", len(f.inner.sent))
+				}
+			})
+		}
+	}
+}
+
+// Through the client the brain runs, whose stream reports a 500 at its first
+// read: a router that breaks on the request carrying a PDF is asked again
+// without it, and the run's stream answers.
+func TestTheBrainsClientStreamsPastARouterThatBreaksOnAFile(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+		if strings.Contains(string(body), "file_data") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"message":"Maximum call stack size exceeded","type":"internal_server_error"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"id":"c","object":"chat.completion.chunk","model":"test/model","choices":[{"index":0,"delta":{"content":"I could not open paper.pdf"},"finish_reason":null}]}`+"\n\n")
+		_, _ = io.WriteString(w, `data: {"id":"c","object":"chat.completion.chunk","model":"test/model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	f := newResolveFixture(t)
+	client, err := Resolving(openaicompat.Factory(), f.store, f.objects)(agent.Endpoint{BaseURL: srv.URL, APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF-1.7")))
+
+	s, err := client.Stream(f.ctx(t), req)
+	if err != nil {
+		t.Fatalf("Stream = %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	var said strings.Builder
+	for s.Next() {
+		said.WriteString(s.Event().Text)
+	}
+	if err := s.Err(); err != nil || said.String() != "I could not open paper.pdf" {
+		t.Fatalf("said %q, then %v", said.String(), err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	withFile := 0
+	for _, b := range bodies {
+		if strings.Contains(b, "file_data") {
+			withFile++
+		}
+	}
+	if withFile != 3 || len(bodies) != 4 {
+		t.Errorf("%d requests, %d with the file; want openai-go's three tries, then one without", len(bodies), withFile)
+	}
+	last := bodies[len(bodies)-1]
+	if strings.Contains(last, "file_data") || !strings.Contains(last, "paper.pdf: not sent") {
+		t.Errorf("the request that answered: %s", last)
 	}
 }
