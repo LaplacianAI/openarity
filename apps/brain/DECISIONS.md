@@ -1428,6 +1428,30 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   - **A waiting run does not hold the room.** A run waiting for a person may
     wait hours; its room is stopped meanwhile and resumed when it calls again.
     `IdleSessionOf` and `SessionIsIdle` leave `waiting` out on purpose.
+  - **A call refused for want of room waits for room** (`room_waits`,
+    `runtime/roomwait.go`). On staging, 12 runs in 30 days had a workspace
+    call refused this way (29 refusals for a full sandbox, 11 for an
+    unreachable sandboxd); each went on without its workspace, and 2 of the
+    9 judged were not done or partly. Now a refusal `sandbox.Waitable` names
+    (full, preparing, `ErrUnavailable`) makes nothing: the run is told to
+    say it waits and stop, and parks with `waiting_for = 'sandbox'`. The
+    sweep makes the room itself, a minute after the refusal and then after
+    as long as the run has waited, at most ten minutes apart, and queues the
+    root once it is made, or at the first try after the wait is an hour old,
+    so a try costs no
+    model turn and a delegate's parent is not woken to hear it still
+    waits. Only what nothing ran for waits: a command killed inside its room,
+    sandboxd's own 503 (an image it cannot pull), a room that started and
+    did not answer (`ErrNotReady`, whatever it wraps), a room lost mid-call,
+    and a transport failure that is not one of no answer (a refused
+    certificate) stay the call's error. A wait opens under the run's session
+    lock and only while it runs, so a cancel or a person writing again
+    cannot leave one open behind them; the model and the wait carry the
+    refusal in a few words, and the provider's own, which can name an
+    internal address, goes to the log. The sweep tries rooms after it has
+    restarted queued runs, and starts tries for two minutes at most. A person writing again ends the wait, as it gives
+    up their requests; a tree that ends cancels it. Command MCP servers in
+    the sandbox do not wait yet: none met these in the same 30 days.
   - **A stop re-checks idleness under the owner's locks**, so a run that
     starts between the check and the stop is never left without its room.
   - **A resume refused for room (`ErrFull`) leaves the room stopped** and

@@ -544,7 +544,7 @@ func (q *Queries) ListReplayGoodRunIDs(ctx context.Context, arg ListReplayGoodRu
 }
 
 const listReplayRuns = `-- name: ListReplayRuns :many
-SELECT r.id, r.team_id, r.session_id, r.parent_run_id, r.root_run_id, r.parent_tool_call, r.depth, r.agent_id, r.agent_name, r.user_id, r.status, r.input, r.output, r.error, r.input_tokens, r.output_tokens, r.worker, r.heartbeat_at, r.cancel_requested_at, r.created_at, r.started_at, r.finished_at, r.token_budget, r.hub, r.message_id, r.reply_to_channel, r.builder, r.transcript, r.transcript_from, r.attempt, r.unattended, r.waited_seconds, r.waiting_since, r.cached_input_tokens, o.verdict,
+SELECT r.id, r.team_id, r.session_id, r.parent_run_id, r.root_run_id, r.parent_tool_call, r.depth, r.agent_id, r.agent_name, r.user_id, r.status, r.input, r.output, r.error, r.input_tokens, r.output_tokens, r.worker, r.heartbeat_at, r.cancel_requested_at, r.created_at, r.started_at, r.finished_at, r.token_budget, r.hub, r.message_id, r.reply_to_channel, r.builder, r.transcript, r.transcript_from, r.attempt, r.unattended, r.waited_seconds, r.waiting_since, r.cached_input_tokens, r.waiting_for, o.verdict,
        (SELECT count(*) FROM run_feedback f WHERE f.run_id = r.id AND f.value = 'up')::int AS up,
        (SELECT count(*) FROM run_feedback f WHERE f.run_id = r.id AND f.value = 'down')::int AS down,
        EXISTS (SELECT 1 FROM run_events e WHERE e.run_id = r.id AND e.kind IN ('tool_call', 'tool_result')
@@ -619,6 +619,7 @@ func (q *Queries) ListReplayRuns(ctx context.Context, arg ListReplayRunsParams) 
 			&i.Run.WaitedSeconds,
 			&i.Run.WaitingSince,
 			&i.Run.CachedInputTokens,
+			&i.Run.WaitingFor,
 			&i.Verdict,
 			&i.Up,
 			&i.Down,

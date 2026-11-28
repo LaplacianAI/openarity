@@ -224,9 +224,10 @@ type ApprovalDecided struct {
 	Superseded bool   `json:"superseded,omitempty"`
 }
 
-// RunWaiting is a run that stopped for a person's answer rather than
-// finishing: it holds nothing, and carries on when it is answered. Said is
-// what it told them, in its own words.
+// RunWaiting is a run that stopped rather than finishing, for what Reason
+// names: approval, a person's answer, or sandbox, room in the team's
+// sandbox. It holds nothing, and carries on when that comes. Said is what it
+// said about it, in its own words.
 type RunWaiting struct {
 	Reason string `json:"reason"`
 	Said   string `json:"said,omitempty"`

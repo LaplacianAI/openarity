@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
@@ -207,7 +208,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	if err != nil {
 		return Built{}, err
 	}
-	built.Spec.Compaction = compactionFor(settings, budgetOf(run.TokenBudget))
+	built.Spec.Compaction = compactionFor(settings, harness.BudgetOf(run.TokenBudget))
 	// Who the run acts for: a call's class, and a replay's reads, turn on it.
 	actor, err := b.actorFor(ctx, run, gates)
 	if err != nil {
@@ -394,7 +395,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		// The workspace has moved on since: the replay's are stand-ins.
 		built.Spec.Tools = append(built.Spec.Tools, (&runWorkspace{}).tools()...)
 	case work:
-		ws = &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID}
+		ws = &runWorkspace{deps: *b.workspaces, team: run.TeamID, session: run.SessionID, run: run.ID, root: run.RootRunID}
 		for _, t := range ws.tools() {
 			built.answerable[t.Name] = t
 			gated, refused := gates.gate(t, target{name: t.Name, class: workspaceClass(t.Name)})

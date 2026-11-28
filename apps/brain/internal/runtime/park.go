@@ -16,15 +16,27 @@ type waitingPayload struct {
 	Said   string `json:"said,omitempty"`
 }
 
+// waitsFor is what a parked run waits for: a person, or room in the team's
+// sandbox. A run that waits for both waits for the person, whose part is the
+// one to act on. It is stored as runs.waiting_for and sent as the waiting
+// event's reason, which the stream's run_waiting carries.
+type waitsFor string
+
+const (
+	waitsForPerson waitsFor = "approval"
+	waitsForRoom   waitsFor = "sandbox"
+)
+
 // park ends a run's attempt without finishing it: its turn ended with a
-// person still to answer, or with an answer it has not been told, or with a
-// child that waits. What it said is kept as its output, the transcript is
-// saved, and it waits holding no worker. A root whose answers all came before
-// it parked goes straight back to the queue; a delegate is left for its
-// parent, which reads what it said as its report and waits in turn.
-func (e *Executor) park(ctx context.Context, row db.Run, l Lineage, said string) error {
+// person still to answer, or with an answer it has not been told, with
+// sandbox room still to come, or with a child that waits. What it said is
+// kept as its output, the transcript is saved, and it waits holding no
+// worker. A root whose answers all came before it parked goes straight back
+// to the queue; a delegate is left for its parent, which reads what it said
+// as its report and waits in turn.
+func (e *Executor) park(ctx context.Context, row db.Run, l Lineage, said string, why waitsFor) error {
 	ctx = context.WithoutCancel(ctx)
-	payload, err := json.Marshal(waitingPayload{Reason: "approval", Said: said})
+	payload, err := json.Marshal(waitingPayload{Reason: string(why), Said: said})
 	if err != nil {
 		return fmt.Errorf("encoding the waiting event: %w", err)
 	}
@@ -32,7 +44,7 @@ func (e *Executor) park(ctx context.Context, row db.Run, l Lineage, said string)
 	if said != "" {
 		output = &said
 	}
-	parked, again, asked, err := parkAndAsk(ctx, e.store, row.ID, l.Worker, row.ParentRunID != nil, output, payload)
+	parked, again, asked, err := parkAndAsk(ctx, e.store, row.ID, l.Worker, row.ParentRunID != nil, output, why, payload)
 	if err != nil {
 		return fmt.Errorf("parking run %s: %w", row.ID, err)
 	}

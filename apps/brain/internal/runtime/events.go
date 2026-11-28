@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -25,7 +26,7 @@ type EventStore interface {
 
 const (
 	maxEventText = 64 << 10
-	maxTokens    = 1_000_000
+	maxTokens    = harness.DefaultTokenBudget
 )
 
 var (
@@ -300,13 +301,6 @@ func recordUsage(ctx context.Context, s EventStore, runID uuid.UUID, worker stri
 		return appendEvent(ctx, s, runID, worker, "wrap_up", wrap)
 	}
 	return nil
-}
-
-func budgetOf(set *int64) int64 {
-	if set == nil {
-		return maxTokens
-	}
-	return *set
 }
 
 func appendEvent(ctx context.Context, s EventStore, runID uuid.UUID, worker, kind string, payload any) error {

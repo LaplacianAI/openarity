@@ -497,17 +497,6 @@ func TestARunsOwnBudgetIsTheLimit(t *testing.T) {
 	}
 }
 
-func TestARunWithNoBudgetOfItsOwnGetsTheDefault(t *testing.T) {
-	t.Parallel()
-
-	if got := budgetOf(nil); got != maxTokens {
-		t.Errorf("budgetOf(nil) = %d, want the default %d", got, maxTokens)
-	}
-	if got := budgetOf(new(int64(5000))); got != 5000 {
-		t.Errorf("budgetOf(5000) = %d", got)
-	}
-}
-
 // A resumed run is a new process with nothing in memory; what it has spent
 // is the row's.
 func TestUsageCarriesOnFromWhatWasSpentBeforeAResume(t *testing.T) {

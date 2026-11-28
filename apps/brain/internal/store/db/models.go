@@ -500,6 +500,20 @@ type RolePermission struct {
 	Action string
 }
 
+type RoomWait struct {
+	ID        uuid.UUID
+	TeamID    uuid.UUID
+	RunID     uuid.UUID
+	RootRunID uuid.UUID
+	SessionID uuid.UUID
+	Reason    string
+	Since     time.Time
+	RetryAt   time.Time
+	Ended     *string
+	EndedAt   *time.Time
+	ToldAt    *time.Time
+}
+
 type RoutePermission struct {
 	Method     string
 	Path       string
@@ -542,6 +556,7 @@ type Run struct {
 	WaitedSeconds     int32
 	WaitingSince      *time.Time
 	CachedInputTokens int64
+	WaitingFor        *string
 }
 
 type RunDigest struct {

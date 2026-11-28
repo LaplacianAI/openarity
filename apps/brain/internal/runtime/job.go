@@ -35,6 +35,8 @@ type SweepStore interface {
 	ListUnstartedRuns(ctx context.Context, olderThanSeconds float64) ([]db.ListUnstartedRunsRow, error)
 	TakeOverStaleRuns(ctx context.Context, staleSeconds float64) ([]uuid.UUID, error)
 	ListDueApprovals(ctx context.Context, batch int32) ([]db.ListDueApprovalsRow, error)
+	ListDueRoomWaits(ctx context.Context, arg db.ListDueRoomWaitsParams) ([]db.ListDueRoomWaitsRow, error)
+	PushRoomWait(ctx context.Context, arg db.PushRoomWaitParams) (int64, error)
 	TxStore
 }
 
@@ -48,10 +50,12 @@ type Job struct {
 	kick      func(dbos.Client, uuid.UUID) error
 	kickEvent func(dbos.Client, uuid.UUID, int32) error
 	kickFile  func(dbos.Client, uuid.UUID, string) error
+	// wakeBudget is how long a sweep starts tries for room: roomWakeBudget.
+	wakeBudget time.Duration
 }
 
 func RunJob(e *Executor, s SweepStore, logger *slog.Logger) *Job {
-	j := &Job{executor: e, store: s, logger: logger}
+	j := &Job{executor: e, store: s, logger: logger, wakeBudget: roomWakeBudget}
 	j.restart = j.restartRun
 	j.resume = func(id uuid.UUID, attempt int32) error { return enqueue(j.dbos, id, attempt) }
 	return j
@@ -139,15 +143,18 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 
 	queued, err := j.store.ListUnstartedRuns(ctx, unstartedAfter.Seconds())
 	if err != nil {
-		return errors.Join(append(failed, fmt.Errorf("listing unstarted runs: %w", err))...)
+		failed = append(failed, fmt.Errorf("listing unstarted runs: %w", err))
 	}
-
 	for _, r := range queued {
 		if err := j.restart(r.ID, r.Attempt); err != nil {
 			failed = append(failed, err)
 		}
 	}
-	return errors.Join(failed...)
+
+	// Last: a try may wait on a provider for minutes, and runs already
+	// queued should not wait behind it. A run a wake queues is enqueued
+	// here, and one whose enqueue fails is restarted by a later sweep.
+	return errors.Join(append(failed, j.wakeRoomWaits(ctx)...)...)
 }
 
 // expire ends the requests nobody answered in time, each as a late answer

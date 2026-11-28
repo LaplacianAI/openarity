@@ -390,7 +390,7 @@ LEFT JOIN agents a ON a.team_id = ss.team_id
 WHERE ss.id = $6 AND ss.team_id = $7
   AND (ss.schedule_id IS NOT NULL OR ss.watcher_id IS NOT NULL)
   AND ($4::bool OR a.id IS NOT NULL)
-RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since, cached_input_tokens
+RETURNING id, team_id, session_id, parent_run_id, root_run_id, parent_tool_call, depth, agent_id, agent_name, user_id, status, input, output, error, input_tokens, output_tokens, worker, heartbeat_at, cancel_requested_at, created_at, started_at, finished_at, token_budget, hub, message_id, reply_to_channel, builder, transcript, transcript_from, attempt, unattended, waited_seconds, waiting_since, cached_input_tokens, waiting_for
 `
 
 type CreateTriggeredRunParams struct {
@@ -453,6 +453,7 @@ func (q *Queries) CreateTriggeredRun(ctx context.Context, arg CreateTriggeredRun
 		&i.WaitedSeconds,
 		&i.WaitingSince,
 		&i.CachedInputTokens,
+		&i.WaitingFor,
 	)
 	return i, err
 }

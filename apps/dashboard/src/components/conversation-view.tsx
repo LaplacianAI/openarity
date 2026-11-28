@@ -313,7 +313,13 @@ function RunTurnView({
       <div data-answer className="max-w-[75ch] text-sm">
         {run.status === "waiting" ? (
           // What it told the person, in its own words, as it would say a reply.
-          <Markdown>{run.waiting?.said.trim() || live || "Waiting for your answer."}</Markdown>
+          <Markdown>
+            {run.waiting?.said.trim() ||
+              live ||
+              (run.waiting?.reason === "sandbox"
+                ? "Waiting for room in the sandbox."
+                : "Waiting for your answer.")}
+          </Markdown>
         ) : running ? (
           live ? (
             <p data-live className="whitespace-pre-wrap break-words">

@@ -23,6 +23,7 @@ import (
 	"github.com/LaplacianAI/openarity/apps/brain/internal/api"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/auth"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/authz"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
@@ -740,31 +741,47 @@ func TestTheRunIsReadAsItIs(t *testing.T) {
 	out, msg := "done", "boom"
 	r := w.run(w.session("group", nil), "succeeded")
 	r.Output, r.Error, r.InputTokens, r.OutputTokens = &out, &msg, 120, 30
+	r.CachedInputTokens = 100
 	w.store.runs[r.ID] = r
 
 	rec := w.call(t, w.me, http.MethodGet, w.one(r.ID), nil)
 
 	got := decodeRun(t, rec)
 	if rec.Code != http.StatusOK || got.ID != r.ID || *got.Output != "done" || *got.Error != "boom" ||
-		got.InputTokens != 120 || got.OutputTokens != 30 || got.FinishedAt == nil {
+		got.InputTokens != 120 || got.OutputTokens != 30 || got.FinishedAt == nil ||
+		got.Spent != 60 || got.TokenBudget != harness.DefaultTokenBudget {
 		t.Errorf("status %d, run %+v", rec.Code, got)
 	}
 	keys := map[string]any{}
 	_ = json.Unmarshal(rec.Body.Bytes(), &keys)
 	for _, k := range []string{
 		"id", "session_id", "agent", "status", "input", "output", "error",
-		"input_tokens", "output_tokens", "created_at", "started_at", "finished_at",
+		"input_tokens", "output_tokens", "spent", "token_budget", "created_at", "started_at", "finished_at",
 		"parent_run_id", "depth", "hub", "builder", "message_id", "delegates", "reply",
 	} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("the run has no %q", k)
 		}
 	}
-	if len(keys) != 19 {
-		t.Errorf("the run has %d fields, want the 19 in the contract", len(keys))
+	if len(keys) != 21 {
+		t.Errorf("the run has %d fields, want the 21 in the contract", len(keys))
 	}
 	if keys["parent_run_id"] != nil || keys["depth"] != float64(0) {
 		t.Errorf("a top-level run says parent %v depth %v, want null and 0", keys["parent_run_id"], keys["depth"])
+	}
+}
+
+// A run started with a budget of its own reads it back.
+func TestARunReadsItsOwnBudget(t *testing.T) {
+	w := newWorld(t)
+	r := w.run(w.session("group", nil), "succeeded")
+	budget := int64(2_000_000)
+	r.TokenBudget = &budget
+	w.store.runs[r.ID] = r
+
+	got := decodeRun(t, w.call(t, w.me, http.MethodGet, w.one(r.ID), nil))
+	if got.TokenBudget != budget {
+		t.Errorf("token_budget = %d, want the run's own", got.TokenBudget)
 	}
 }
 

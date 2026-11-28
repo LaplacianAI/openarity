@@ -21,13 +21,13 @@ func TestADelegateParksOnlyWhileItsWorkerHoldsIt(t *testing.T) {
 	root := mustInsertRun(t, s, inState(f.root(), "running"))
 	child := mustInsertRun(t, s, inState(f.child(root, "call_1#x"), "running"))
 
-	if n, err := s.ParkChild(t.Context(), db.ParkChildParams{ID: child, Worker: "someone-else"}); err != nil || n != 0 {
+	if n, err := s.ParkChild(t.Context(), db.ParkChildParams{ID: child, Worker: "someone-else", WaitingFor: "approval"}); err != nil || n != 0 {
 		t.Fatalf("parked by another worker: %d, %v", n, err)
 	}
-	if n, err := s.ParkChild(t.Context(), db.ParkChildParams{ID: root, Worker: "worker-1"}); err != nil || n != 0 {
+	if n, err := s.ParkChild(t.Context(), db.ParkChildParams{ID: root, Worker: "worker-1", WaitingFor: "approval"}); err != nil || n != 0 {
 		t.Fatalf("a root parked as a delegate: %d, %v", n, err)
 	}
-	if n, err := s.ParkChild(t.Context(), db.ParkChildParams{ID: child, Worker: "worker-1"}); err != nil || n != 1 {
+	if n, err := s.ParkChild(t.Context(), db.ParkChildParams{ID: child, Worker: "worker-1", WaitingFor: "approval"}); err != nil || n != 1 {
 		t.Fatalf("ParkChild = %d, %v", n, err)
 	}
 	got, err := s.GetRun(t.Context(), child)
@@ -125,7 +125,7 @@ func TestARunWaitsUntilItIsToldEveryAnswer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunAwaits: %v", err)
 		}
-		return got
+		return got.Awaits
 	}
 	if awaits() {
 		t.Fatal("a run that asked nothing waits")

@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,10 +14,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/approval"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/sandbox/workroom"
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // fakeRoom is a workspace that answers each route with what replies says,
@@ -462,4 +466,162 @@ func TestACommandsEndReadsBackFromItsText(t *testing.T) {
 			}
 		}
 	}
+}
+
+// --- waiting for room ---
+
+// waitsKept is the store's side of a run's waits for room: each one opened.
+type waitsKept struct {
+	mu     sync.Mutex
+	opened []openedWait
+	err    error
+}
+
+type openedWait struct {
+	run          uuid.UUID
+	reason       string
+	firstSeconds float64
+}
+
+func (w *waitsKept) WaitForRoom(_ context.Context, run uuid.UUID, reason string, firstSeconds float64) (db.RoomWait, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.opened = append(w.opened, openedWait{run, reason, firstSeconds})
+	if w.err != nil {
+		return db.RoomWait{}, w.err
+	}
+	return db.RoomWait{ID: uuid.New(), RunID: run}, nil
+}
+
+func (w *waitsKept) count() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.opened)
+}
+
+func newWaitingFixture(t *testing.T) (*fixture, *fakeWorkspaces, *waitsKept) {
+	t.Helper()
+	f, ws := newWorkspaceFixture(t, true)
+	waits := &waitsKept{}
+	f.builder.WithWorkspaces(&WorkspaceDeps{Rooms: ws, Client: http.DefaultClient, Waits: waits, Logger: quietLogger()})
+	return f, ws, waits
+}
+
+// A sandbox with no room for the workspace, still preparing it, or not
+// answering refuses before anything runs: the call is not made, the run's
+// wait is kept, and the model is told to say so and stop. Every call after
+// it in the attempt reads the same, and asks the provider nothing.
+func TestARefusalForWantOfRoomMakesTheRunWait(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		refused error
+		says    string
+	}{
+		{"full", fmt.Errorf("making the room: %w: memory", sandbox.ErrFull), "(it is full)"},
+		{"preparing", sandbox.ErrPreparing, "(it is still being prepared)"},
+		{"unavailable", fmt.Errorf("%w: dial tcp: refused", sandbox.ErrUnavailable), "(its provider did not answer)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, ws, waits := newWaitingFixture(t)
+			ws.ensureErr = c.refused
+			got := f.build(t)
+
+			_, err := invoke(t, got, BashToolName, `{"command":"make"}`)
+			var said toModel
+			if !errors.As(err, &said) || !strings.Contains(err.Error(), c.says) || !strings.Contains(err.Error(), "end your turn") {
+				t.Fatalf("Bash = %v, want the model told it waits for room %s", err, c.says)
+			}
+			if _, err2 := invoke(t, got, ReadToolName, `{"path":"a"}`); err2 == nil || err2.Error() != err.Error() {
+				t.Fatalf("Read after = %v, want the same wait", err2)
+			}
+			if e, _ := ws.counts(); e != 1 {
+				t.Errorf("ensured %d times, want the provider asked once while the run waits", e)
+			}
+			if n := ws.room.calls("/exec") + ws.room.calls("/read"); n != 0 {
+				t.Errorf("%d calls reached a room", n)
+			}
+			if waits.count() != 1 {
+				t.Fatalf("waits opened = %d, want 1", waits.count())
+			}
+			w := waits.opened[0]
+			if w.run != f.run.ID || w.reason != strings.Trim(c.says, "()") || w.firstSeconds != 60 {
+				t.Errorf("wait = %+v, want the run's, its refusal in a few words, tried in a minute", w)
+			}
+		})
+	}
+}
+
+// What waiting cannot end stays the call's error, as before waits.
+func TestARefusalWaitingCannotEndIsTheCallsError(t *testing.T) {
+	for _, refused := range []error{
+		sandbox.ErrRefused, sandbox.ErrNotReady, sandbox.ErrNoProvider, errors.New("boom"),
+		sandbox.Unanswered(canceled(), errors.New("context canceled")),
+		fmt.Errorf("%w: %w", sandbox.ErrNotReady, sandbox.ErrUnavailable),
+	} {
+		f, ws, waits := newWaitingFixture(t)
+		ws.ensureErr = refused
+		_, err := invoke(t, f.build(t), GlobToolName, `{"pattern":"**"}`)
+		var said toModel
+		if err == nil || errors.As(err, &said) || !strings.Contains(err.Error(), "could not be started") {
+			t.Errorf("Glob on %v = %v, want the refusal", refused, err)
+		}
+		if waits.count() != 0 {
+			t.Errorf("%v opened a wait", refused)
+		}
+	}
+}
+
+// A workspace with nowhere to keep waits refuses as it did before them.
+func TestWithNoWaitsAFullSandboxIsTheCallsError(t *testing.T) {
+	f, ws := newWorkspaceFixture(t, true)
+	ws.ensureErr = sandbox.ErrFull
+	_, err := invoke(t, f.build(t), BashToolName, `{"command":"ls"}`)
+	if err == nil || !strings.Contains(err.Error(), "could not be started") || !strings.Contains(err.Error(), sandbox.ErrFull.Error()) {
+		t.Fatalf("Bash = %v", err)
+	}
+}
+
+// A run that may not open a wait (it no longer runs, or a person or a cancel
+// ended it) is told the refusal, as before waits.
+func TestAWaitTheRunMayNotOpenIsTheRefusal(t *testing.T) {
+	f, ws, waits := newWaitingFixture(t)
+	ws.ensureErr = fmt.Errorf("%w: http://10.0.0.5:7000", sandbox.ErrFull)
+	waits.err = pgx.ErrNoRows
+	_, err := invoke(t, f.build(t), BashToolName, `{"command":"ls"}`)
+	var said toModel
+	if err == nil || errors.As(err, &said) || !errors.Is(err, sandbox.ErrFull) ||
+		!strings.Contains(err.Error(), "it is full") || strings.Contains(err.Error(), "no rows") {
+		t.Fatalf("Bash = %v, want the plain refusal", err)
+	}
+	if strings.Contains(err.Error(), "10.0.0.5") {
+		t.Errorf("Bash = %v: the model reads the provider's address", err)
+	}
+}
+
+// A wait that cannot be kept is the refusal in a few words (why it was not
+// kept goes to the log), and the next call asks again.
+func TestAWaitNotKeptIsTheRefusal(t *testing.T) {
+	f, ws, waits := newWaitingFixture(t)
+	ws.ensureErr = fmt.Errorf("%w: http://10.0.0.5:7000", sandbox.ErrFull)
+	waits.err = errors.New("db down at 10.0.0.9")
+	got := f.build(t)
+	_, err := invoke(t, got, BashToolName, `{"command":"ls"}`)
+	if err == nil || !errors.Is(err, sandbox.ErrFull) || !strings.Contains(err.Error(), "it is full") ||
+		!strings.Contains(err.Error(), "was not kept") {
+		t.Fatalf("Bash = %v, want the refusal and that it was not waited for", err)
+	}
+	if strings.Contains(err.Error(), "10.0.0") {
+		t.Errorf("Bash = %v: the model reads an internal address", err)
+	}
+	ws.ensureErr = nil
+	ws.room.answer("/exec", 200, `{"stdout":"ok\n","stderr":"","exit_code":0}`)
+	if _, err := invoke(t, got, BashToolName, `{"command":"ls"}`); err != nil {
+		t.Fatalf("Bash after = %v", err)
+	}
+}
+
+func canceled() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
 }

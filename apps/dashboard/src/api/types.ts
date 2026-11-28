@@ -321,6 +321,13 @@ export type Run = {
   error: string | null;
   input_tokens: number;
   output_tokens: number;
+  /**
+   * What the tokens count against the budget: a cached input token is a
+   * tenth of one. Optional: a brain from before the field sends none.
+   */
+  spent?: number;
+  /** The budget the run started with. Optional, as spent. */
+  token_budget?: number;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/LaplacianAI/openarity/apps/brain/internal/harness"
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 	"github.com/LaplacianAI/openarity/sdk/agent"
 )
@@ -47,7 +48,9 @@ type Store interface {
 	ListUntoldApprovals(ctx context.Context, runID uuid.UUID) ([]db.Approval, error)
 	MarkApprovalsTold(ctx context.Context, ids []uuid.UUID) error
 	ClaimApprovalUse(ctx context.Context, id uuid.UUID) (db.Approval, error)
-	RunAwaits(ctx context.Context, id uuid.UUID) (bool, error)
+	RunAwaits(ctx context.Context, id uuid.UUID) (db.RunAwaitsRow, error)
+	ListUntoldRoomWaits(ctx context.Context, runID uuid.UUID) ([]db.RoomWait, error)
+	MarkRoomWaitsTold(ctx context.Context, ids []uuid.UUID) error
 }
 
 const (
@@ -289,8 +292,12 @@ func (e *Executor) hold(ctx context.Context, row db.Run, l Lineage) error {
 		if err != nil {
 			return fmt.Errorf("reading whether run %s waits: %w", row.ID, err)
 		}
-		if awaits {
-			return e.park(ctx, row, l, output)
+		if awaits.Awaits {
+			why := waitsForRoom
+			if awaits.Person {
+				why = waitsForPerson
+			}
+			return e.park(ctx, row, l, output, why)
 		}
 	}
 	if status == "failed" {
@@ -413,7 +420,7 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 	if e.streamer != nil && streamsText(row) {
 		runner, streams = e.streamer, true
 	}
-	lines := newSoftLines(budgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
+	lines := newSoftLines(harness.BudgetOf(row.TokenBudget), int64(built.Spec.Model.MaxTokens))
 	lines.steps = built.Spec.MaxSteps
 	recorded := record(context.WithoutCancel(ctx), e.store, row.ID, l.Worker, lines,
 		streams, e.teller(context.WithoutCancel(ctx), row), events, notes, stop)
@@ -625,7 +632,7 @@ func runOf(r db.ClaimRunRow) db.Run {
 		Hub: r.Hub, MessageID: r.MessageID, ReplyToChannel: r.ReplyToChannel, Builder: r.Builder,
 		Transcript: r.Transcript, TranscriptFrom: r.TranscriptFrom,
 		Attempt: r.Attempt, Unattended: r.Unattended, WaitedSeconds: r.WaitedSeconds,
-		WaitingSince: r.WaitingSince,
+		WaitingSince: r.WaitingSince, WaitingFor: r.WaitingFor,
 	}
 }
 

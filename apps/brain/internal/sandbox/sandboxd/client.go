@@ -171,7 +171,7 @@ func (c *Client) do(ctx context.Context, method, path string, in any, want int, 
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("sandboxd %s %s: %w", method, path, err)
+		return sandbox.Unanswered(ctx, fmt.Errorf("sandboxd %s %s: %w", method, path, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxReply))
@@ -210,10 +210,18 @@ func statusError(status int, raw []byte) error {
 	case http.StatusConflict:
 		return &conflict{msg: e.Error}
 	}
+	var err error
 	if e.Error == "" {
-		return fmt.Errorf("sandboxd answered %d", status)
+		err = fmt.Errorf("sandboxd answered %d", status)
+	} else {
+		err = fmt.Errorf("sandboxd answered %d: %s", status, e.Error)
 	}
-	return fmt.Errorf("sandboxd answered %d: %s", status, e.Error)
+	// A gateway's answer, not sandboxd's: sandboxd says why it refuses, and
+	// what it says (an image it cannot pull) is not ended by waiting.
+	if sandbox.Down(status) && e.Error == "" {
+		return fmt.Errorf("%w: %w", sandbox.ErrUnavailable, err)
+	}
+	return err
 }
 
 // conflict is sandboxd's 409: a room started twice, or one not started yet.
