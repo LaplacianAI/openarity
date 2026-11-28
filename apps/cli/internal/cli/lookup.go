@@ -279,3 +279,99 @@ func ResolveMCPServer(
 		func(s client.MCPServer) string { return s.Name },
 		func(s client.MCPServer) uuid.UUID { return s.ID })
 }
+
+// ResolveSchedule is one of the caller's own schedules, or with everyone
+// anyone's, by name or id. A name is unique among a person's own, so only
+// everyone's can hold two; then it asks for the id rather than guess whose.
+func ResolveSchedule(
+	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string, everyone bool,
+) (uuid.UUID, error) {
+	return onlyNamed(ctx, ref, "schedule", "oa schedules list"+allFlag(everyone), whose(everyone),
+		func(ctx context.Context, limit int32, cursor *string) ([]client.Schedule, *string, error) {
+			page, err := Result(api.ListSchedulesWithResponse(ctx, team,
+				&client.ListSchedulesParams{Limit: &limit, Cursor: cursor, All: &everyone}))
+			if err != nil {
+				return nil, nil, err
+			}
+			return page.Items, page.NextCursor, nil
+		},
+		func(s client.Schedule) string { return s.Name },
+		func(s client.Schedule) uuid.UUID { return s.ID })
+}
+
+// ResolveWatcher is ResolveSchedule for a watcher.
+func ResolveWatcher(
+	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string, everyone bool,
+) (uuid.UUID, error) {
+	return onlyNamed(ctx, ref, "watcher", "oa watchers list"+allFlag(everyone), whose(everyone),
+		func(ctx context.Context, limit int32, cursor *string) ([]client.Watcher, *string, error) {
+			page, err := Result(api.ListWatchersWithResponse(ctx, team,
+				&client.ListWatchersParams{Limit: &limit, Cursor: cursor, All: &everyone}))
+			if err != nil {
+				return nil, nil, err
+			}
+			return page.Items, page.NextCursor, nil
+		},
+		func(w client.Watcher) string { return w.Name },
+		func(w client.Watcher) uuid.UUID { return w.ID })
+}
+
+func allFlag(everyone bool) string {
+	if everyone {
+		return " --all"
+	}
+	return ""
+}
+
+// whose is where a name was looked for: only the caller's own, or everyone's.
+func whose(everyone bool) string {
+	if everyone {
+		return "in that team"
+	}
+	return "among yours"
+}
+
+// onlyNamed is byName for a list that may hold one name twice: it reads every
+// page, and two matches are an error rather than the first.
+func onlyNamed[T any](
+	ctx context.Context, ref, kind, hint, where string,
+	list func(ctx context.Context, limit int32, cursor *string) ([]T, *string, error),
+	name func(T) string, id func(T) uuid.UUID,
+) (uuid.UUID, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return uuid.Nil, fmt.Errorf("name a %s by name or id", kind)
+	}
+	if parsed, err := uuid.Parse(ref); err == nil {
+		return parsed, nil
+	}
+
+	var found []uuid.UUID
+	var cursor *string
+	for range maxLookupPages {
+		items, next, err := list(ctx, lookupPageSize, cursor)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("look up the %s %q: %w", kind, ref, err)
+		}
+		for _, item := range items {
+			if name(item) == ref {
+				found = append(found, id(item))
+			}
+		}
+		if next == nil {
+			switch len(found) {
+			case 0:
+				return uuid.Nil, fmt.Errorf("no %s named %q %s — `%s` shows them", kind, ref, where, hint)
+			case 1:
+				return found[0], nil
+			}
+			return uuid.Nil, fmt.Errorf("%d %ss are named %q — pass the id of the one you mean; `%s` shows them",
+				len(found), kind, ref, hint)
+		}
+		cursor = next
+	}
+
+	return uuid.Nil, fmt.Errorf(
+		"gave up looking for a %s named %q after %d pages — pass its id instead",
+		kind, ref, maxLookupPages)
+}

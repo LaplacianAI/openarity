@@ -73,7 +73,8 @@ apps/cli/
     response.go        Result, Created, Accepted, Started, NoContent, Needs, APIError: a call becomes a value
     page.go            Paging and PrintPage: a page becomes a table
     lookup.go          ResolveTeam, ResolveDeletedTeam, ResolveMember, ResolveChannel,
-                       ResolveSkill, ResolveAgent, ResolveMCPServer: a name becomes an id
+                       ResolveSkill, ResolveAgent, ResolveMCPServer, ResolveSchedule,
+                       ResolveWatcher: a name becomes an id
     safe.go            Safe, WriteRaw, ErrUnsafeForTerminal: untrusted text becomes a
                        safe cell or file output
     lines.go           Lines, Line: untrusted prose becomes lines
@@ -86,6 +87,12 @@ apps/cli/
     channels/          oa channels list|create|update|delete|pair (pair draws a WhatsApp QR or shows a code and waits until linked; create takes --secret-stdin or --secret-file PATH, --credential-stdin NAME, --answers-in, --trigger-word and --no-notify-strangers; update takes --reply-url, --no-reply-url, --notify-strangers, --no-notify-strangers, --reply-mode, --answers-in and --trigger-word), oa channels senders …
     sessions/          oa sessions list|get|read|feedback — the conversations, their messages, and your 👍/👎 on a run (up|down [--note], or --clear)
     runs/              oa runs start|list|get|events|cancel — events is an SSE stream; get shows the judge's outcome and your feedback
+    schedules/         oa schedules list|get|create|update|pause|resume|delete|run|fires|confirm|take-over|places|settings show|set —
+                       --at/--every/--cron, --tz, --agent or --hub, --target own|chat:<session>|channel:<channel>:<ref>|direct:<channel>;
+    watchers/          oa watchers list|get|create|update|pause|resume|delete|run|checks|confirm|take-over|secret — --source
+                       web_page|feed|webhook; a webhook's secret reaches stdout once, at create or from secret
+    trigger/           not a command: what schedules and watchers share — their permissions, finding the one named, and
+                       reading --at/--every/--cron, lengths, --target, --agent/--hub and the objective from flags
     users/             oa users list — who has logged in, and their id
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
     agents/            oa agents list|get|create|replace|delete — a file, grants by name

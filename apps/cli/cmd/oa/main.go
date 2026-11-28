@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata" // --tz and a team's zone load on a machine with no zone files
 
 	"github.com/spf13/cobra"
 
@@ -22,11 +23,13 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/logout"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/mcpservers"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/runs"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/schedules"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/sessions"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/setup"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/skills"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/teams"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/users"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/watchers"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/command/whoami"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/theme"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/ui"
@@ -68,6 +71,8 @@ func commands(opts *cli.Options) []*cobra.Command {
 		blueprints.NewApply(opts),
 		sessions.New(opts),
 		runs.New(opts),
+		schedules.New(opts),
+		watchers.New(opts),
 		users.New(opts),
 		login.New(opts),
 		logout.New(opts),
