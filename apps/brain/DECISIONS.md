@@ -1081,6 +1081,23 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   window is the rollout's. Runs from before this kept their files' bytes in
   their transcripts, and `Resolving` still sends inline bytes as it sends a
   reference's.
+- **A run tells its person something mid-run with `reply`** (design:
+  reply, ask and answering while a run works, PR 1). Offered to any run whose
+  tree answers a person's message (`GetReplyReach`), its delegates included,
+  and never in a schedule's or a watcher's conversation: nobody is waiting,
+  and an automation's answer is its one message (*user*, 2026-11-28). Not an
+  agent setting: it reaches only the person the run already answers, so
+  there is nothing to grant. A read for the approval gate (`approval.Looks`),
+  as the answer it precedes is ungated and reaches the same person with
+  whatever the model writes. A `said` run event is the delivery on the
+  dashboard; on a channel it is also a reply of kind `event` named by that
+  event (`InsertSaidReply`), whatever the reply mode, as a waiting line is,
+  in the root's conversation, a delegate's with its agent's name before it.
+  Ten a tree, counted across its delegates (`CountSaidInTree`), so five
+  delegates cannot send fifty. A delegate's report lists what it said
+  (`ListRunSaid`), inside the report as its own words, so the parent does
+  not say it again. The name is reserved only on a run that holds it: an
+  email server's `reply` stays the server's everywhere else.
 - **A run hands its person a file with `send_file` (F3).** Any file of the
   conversation, a person's or a tool's, by its id, looked up within the
   session so another conversation's is a missing row, and again by the

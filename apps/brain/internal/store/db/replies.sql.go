@@ -148,6 +148,21 @@ func (q *Queries) CountRunFilesSent(ctx context.Context, runID uuid.UUID) (int64
 	return count, err
 }
 
+const countSaidInTree = `-- name: CountSaidInTree :one
+SELECT count(*) FROM run_events e
+JOIN runs r ON r.id = e.run_id
+WHERE r.root_run_id = $1::uuid AND e.kind = 'said'
+`
+
+// How often a run's tree has told its person something, for reply's limit:
+// every delegate's counts, so a tree of five cannot send fifty.
+func (q *Queries) CountSaidInTree(ctx context.Context, rootID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSaidInTree, rootID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const extendReplyLease = `-- name: ExtendReplyLease :execrows
 UPDATE replies
 SET next_attempt_at = now() + make_interval(secs => $1::float8)
@@ -218,6 +233,36 @@ func (q *Queries) GetReplyFile(ctx context.Context, id int64) (GetReplyFileRow, 
 		&i.MediaType,
 		&i.SizeBytes,
 	)
+	return i, err
+}
+
+const getReplyReach = `-- name: GetReplyReach :one
+SELECT (s.schedule_id IS NULL AND s.watcher_id IS NULL
+        AND (s.channel_id IS NULL OR ch.provider = 'dashboard'
+             OR (root.reply_to_channel AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL))))::bool AS answers,
+       (s.channel_id IS NULL OR ch.provider = 'dashboard')::bool AS streamed
+FROM runs r
+JOIN runs root ON root.id = r.root_run_id
+JOIN sessions s ON s.id = root.session_id
+LEFT JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = $1::uuid
+`
+
+type GetReplyReachRow struct {
+	Answers  bool
+	Streamed bool
+}
+
+// Whether a run can tell its person something while it works (reply), and
+// how: its tree answers a person's message, on the dashboard or the API's
+// stream, or on a channel it can post to. A schedule's or a watcher's
+// conversation answers nobody who is waiting, so it says no; a delegate
+// answers as its root does. streamed is a conversation read on its stream,
+// whose event is the delivery.
+func (q *Queries) GetReplyReach(ctx context.Context, runID uuid.UUID) (GetReplyReachRow, error) {
+	row := q.db.QueryRow(ctx, getReplyReach, runID)
+	var i GetReplyReachRow
+	err := row.Scan(&i.Answers, &i.Streamed)
 	return i, err
 }
 
@@ -483,6 +528,38 @@ func (q *Queries) InsertReply(ctx context.Context, arg InsertReplyParams) (Reply
 	return i, err
 }
 
+const insertSaidReply = `-- name: InsertSaidReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
+SELECT r.team_id, r.id, root.session_id, s.channel_id, 'event', $1::text, $2::integer
+FROM runs r
+JOIN runs root ON root.id = r.root_run_id
+JOIN sessions s ON s.id = root.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = $3::uuid
+  AND root.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING
+`
+
+type InsertSaidReplyParams struct {
+	Text     string
+	EventSeq int32
+	RunID    uuid.UUID
+}
+
+// What a run, or a delegate of it, told its person, sent to the root's
+// channel as a step is, whatever its reply mode: the person is waiting on it,
+// as on a waiting line. Named by its said event, so a write retried is one
+// reply. Read again here, so a conversation that can no longer be posted to
+// is sent nothing.
+func (q *Queries) InsertSaidReply(ctx context.Context, arg InsertSaidReplyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertSaidReply, arg.Text, arg.EventSeq, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertWaitingReply = `-- name: InsertWaitingReply :execrows
 INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
 SELECT r.team_id, r.id, r.session_id, s.channel_id, 'event', $1::text, $2::integer
@@ -553,6 +630,34 @@ func (q *Queries) ListRunReplies(ctx context.Context, runIds []uuid.UUID) ([]Lis
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunSaid = `-- name: ListRunSaid :many
+SELECT (payload->>'text')::text AS text FROM run_events
+WHERE run_id = $1::uuid AND kind = 'said'
+ORDER BY seq
+`
+
+// What a delegate told its person, oldest first, for the report its parent
+// reads: so the parent does not say it again.
+func (q *Queries) ListRunSaid(ctx context.Context, runID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listRunSaid, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, err
+		}
+		items = append(items, text)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -206,6 +206,17 @@
         "caption": { "type": "string" }
       }
     },
+    "said": {
+      "type": "object",
+      "required": ["tool_call_id", "agent", "text"],
+      "properties": {
+        "at": { "$ref": "#/$defs/envelope/properties/at" },
+        "run_id": { "$ref": "#/$defs/envelope/properties/run_id" },
+        "tool_call_id": { "type": "string", "description": "The call that said it." },
+        "agent": { "type": "string", "description": "The agent of the run that said it; for a delegate, not the one answering." },
+        "text": { "type": "string" }
+      }
+    },
     "custom": {
       "type": "object",
       "required": ["name"],

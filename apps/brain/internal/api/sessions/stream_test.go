@@ -135,6 +135,11 @@ func TestEveryRecordedKindBecomesItsEvent(t *testing.T) {
 				File: stream.File{ID: "f1", Filename: "report.pdf", MediaType: "application/pdf", Size: 9},
 			},
 		},
+		// As the runtime writes it (reply.go).
+		{
+			eventRow(23, "said", &run, `{"tool_call_id":"c10","agent":"release","text":"v0.4.0 is tagged"}`),
+			stream.Said{ToolCallID: "c10", Agent: "release", Text: "v0.4.0 is tagged"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.row.Kind, func(t *testing.T) {
@@ -173,6 +178,7 @@ func TestARowThatCannotBeReadIsAnError(t *testing.T) {
 		"a broken request":   eventRow(8, "approval_requested", &run, `[`),
 		"a broken decision":  eventRow(9, "approval_decided", &run, `[`),
 		"a broken file sent": eventRow(10, "file_sent", &run, `[`),
+		"a broken said":      eventRow(11, "said", &run, `[`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := envelopeOf(row); err == nil {

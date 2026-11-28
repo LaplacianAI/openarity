@@ -2292,6 +2292,24 @@ describe("a file sent in the trace", () => {
   });
 });
 
+describe("what a run said in the trace", () => {
+  it("shows it as told to the person", async () => {
+    listed({
+      [RUNS]: { body: { items: [run("r1", "hub", "succeeded")] } },
+      [EVENTS]: () => ({
+        stream: chunks(
+          frame(1, "said", { tool_call_id: "c1", agent: "hub", text: "v0.4.0 is tagged" }),
+          END,
+        ),
+      }),
+    });
+    await open("?tab=runs");
+    await within(pane()).findByText("Ended: succeeded");
+    const note = pane().querySelector('[data-event="said"]') as HTMLElement;
+    expect(note).toHaveTextContent("Told the personv0.4.0 is tagged");
+  });
+});
+
 describe("a fetched page in the trace", () => {
   function fetched(output: string) {
     listed({
@@ -3328,6 +3346,41 @@ describe("writing in a conversation", () => {
         true,
       ),
     );
+  });
+
+  it("shows what a run and its delegate said while they worked, above the answer", async () => {
+    writer({
+      [SESSION]: { body: MINE },
+      [CONVO]: () =>
+        conversation(
+          sf("run_started", { run_id: "r1", agent: "hub" }),
+          sf("said", {
+            run_id: "r1",
+            tool_call_id: "c1",
+            agent: "hub",
+            text: "Starting the release.",
+          }),
+          sf("run_started", { run_id: "r2", agent: "release", parent_run_id: "r1" }),
+          sf("said", {
+            run_id: "r2",
+            tool_call_id: "c1",
+            agent: "release",
+            text: "v0.4.0 is tagged.",
+          }),
+          sf("run_finished", { run_id: "r2", status: "succeeded", output: "Released." }),
+          sf("run_finished", { run_id: "r1", status: "succeeded", output: "The release is out." }),
+        ),
+    });
+    await open("?tab=messages");
+
+    const told = await screen.findByRole("list", { name: "What hub said while it worked" });
+    const items = within(told).getAllByRole("listitem");
+    expect(items.map((i) => i.textContent)).toEqual([
+      "Starting the release.",
+      "releasev0.4.0 is tagged.",
+    ]);
+    const answer = await screen.findByText("The release is out.");
+    expect(told.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows one file sent twice as two, above the answer", async () => {

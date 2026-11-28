@@ -39,6 +39,7 @@ const (
 	KindApprovalDecided  Kind = "approval_decided"
 	KindRunWaiting       Kind = "run_waiting"
 	KindFileSent         Kind = "file_sent"
+	KindSaid             Kind = "said"
 	KindCustom           Kind = "custom"
 )
 
@@ -48,7 +49,7 @@ func Kinds() []Kind {
 		KindMessage, KindMessageConsumed, KindRunStarted, KindStepStarted,
 		KindTextMessageChunk, KindReasoningChunk, KindToolCallChunk, KindToolCallResult,
 		KindUsage, KindCompacted, KindRunFinished,
-		KindApprovalRequest, KindApprovalDecided, KindRunWaiting, KindFileSent, KindCustom,
+		KindApprovalRequest, KindApprovalDecided, KindRunWaiting, KindFileSent, KindSaid, KindCustom,
 	}
 }
 
@@ -241,6 +242,15 @@ type FileSent struct {
 	Caption    string `json:"caption,omitempty"`
 }
 
+// Said is a run telling its person something while it works, by the call
+// that said it: progress, or an answer to what they wrote meanwhile. Agent is
+// the run's agent, which for a delegate is not the one answering.
+type Said struct {
+	ToolCallID string `json:"tool_call_id"`
+	Agent      string `json:"agent"`
+	Text       string `json:"text"`
+}
+
 // Custom is an event the catalog has no kind for: a server's own, named.
 type Custom struct {
 	Name  string          `json:"name"`
@@ -270,5 +280,6 @@ func (ApprovalRequested) Kind() Kind { return KindApprovalRequest }
 func (ApprovalDecided) Kind() Kind   { return KindApprovalDecided }
 func (RunWaiting) Kind() Kind        { return KindRunWaiting }
 func (FileSent) Kind() Kind          { return KindFileSent }
+func (Said) Kind() Kind              { return KindSaid }
 func (Custom) Kind() Kind            { return KindCustom }
 func (u Unknown) Kind() Kind         { return u.Of }

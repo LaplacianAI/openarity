@@ -80,6 +80,7 @@ export type TraceItem =
   | { type: "decided"; decision: TraceDecision }
   | { type: "waiting"; reason: string; said: string }
   | { type: "sent"; filename: string; mediaType: string; size: number; caption: string }
+  | { type: "told"; text: string }
   | { type: "other"; event: RunEvent };
 
 /** The run asking a person before a call: the call is not made. */
@@ -321,6 +322,9 @@ export function groupTrace(events: readonly RunEvent[]): Trace {
         });
         break;
       }
+      case "said":
+        trace.items.push({ type: "told", text: text(d.text) });
+        break;
       case "plan": {
         // Each plan replaces the last; each stays where it was kept.
         const items = planItems(d.items);

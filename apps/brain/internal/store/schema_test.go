@@ -270,7 +270,9 @@ func TestUsersAndTeamMembersRollBackCleanly(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	const maxSteps = 100
+	// A bound on the loop, not a count of migrations: well past how many
+	// there are, so the next one added does not trip it.
+	const maxSteps = 1000
 	for step := 0; tableExists(t, s, "users"); step++ {
 		if step == maxSteps {
 			t.Fatalf("users still there after %d rollbacks", maxSteps)

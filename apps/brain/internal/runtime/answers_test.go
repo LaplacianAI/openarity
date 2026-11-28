@@ -410,3 +410,24 @@ func TestAChildThatFailsReportsItsFailure(t *testing.T) {
 		t.Errorf("call_1 reads %q; want the child's failed report", said)
 	}
 }
+
+// A child carried on reports what it told the person before its worker
+// stopped, as a child that never stopped does, so the parent does not say it
+// again.
+func TestACarriedOnReportSaysWhatTheChildToldThePerson(t *testing.T) {
+	f := newExecFixture(t, newScripted(answer("the bug is on line 412", 1, 1), answer("carried on", 1, 1)))
+	f.resumes(t, []agent.Message{userSaid(runInput), delegated("call_1")})
+	child := f.orphan(t, f.run, f.agent, "call_1", 120, userSaid("find the bug in send.go"))
+	if _, err := f.store.AppendBrainRunEvent(t.Context(), db.AppendBrainRunEventParams{
+		RunID: child.ID, Kind: "said", Payload: []byte(`{"tool_call_id":"x1","agent":"a","text":"reading send.go now"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.mustExecute(t)
+
+	said := resultOf(f.model.requests()[1].Messages, "call_1")
+	if !strings.Contains(said, "[it told the person while it worked, so do not tell them again:\n- reading send.go now]") {
+		t.Errorf("the parent's call_1 reads %q; want what the child said in its report", said)
+	}
+}

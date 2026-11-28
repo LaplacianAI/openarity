@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
@@ -14,13 +15,21 @@ const maxReport = 32 << 10
 
 var reportTag = regexp.MustCompile(`(?i)<(/?report)`)
 
-func report(child db.Run, end string) string {
+func report(child db.Run, end string) string { return reportTold(child, end, nil) }
+
+// reportTold is a delegate's report with what it told the person while it
+// worked, so the parent does not say it again. What was said is the child's
+// own words, so it goes inside the report, as data.
+func reportTold(child db.Run, end string, told []string) string {
 	body := ""
 	switch {
 	case child.Output != nil:
 		body = *child.Output
 	case child.Error != nil:
 		body = *child.Error
+	}
+	if len(told) > 0 {
+		body += "\n[it told the person while it worked, so do not tell them again:\n- " + strings.Join(told, "\n- ") + "]"
 	}
 
 	body = reportTag.ReplaceAllString(body, "&lt;$1")

@@ -763,6 +763,13 @@ function TraceView({
                 ) : null}
               </Note>
             );
+          case "told":
+            return (
+              <Note key={key} kind="said">
+                <span className="font-medium text-foreground">Told the person</span>
+                <span className="mt-0.5 block whitespace-pre-wrap">{item.text}</span>
+              </Note>
+            );
           default:
             return (
               <Note key={key} kind={item.event.kind}>

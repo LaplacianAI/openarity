@@ -129,6 +129,16 @@ func NewExecutor(s Store, b *Builder, r *agent.Runner, endpoint agent.Endpoint,
 	}
 	b.delegates = &DelegateDeps{Store: s, Run: e}
 	b.note = e.note
+	b.noteSeq = e.noteSeq
+	// Read when a reply is sent, as the kicks are set once the job registers.
+	b.kickEvent = func(id uuid.UUID, seq int32) {
+		if e.kickEvent == nil {
+			return
+		}
+		if err := e.kickEvent(id, seq); err != nil {
+			e.logger.Warn("reply not kicked; the sweep will send it", "run", id, "seq", seq, "err", err)
+		}
+	}
 	// Read when the file is sent, as the kicks are set once the job registers.
 	b.kickFile = func(id uuid.UUID, call string) {
 		if e.kickFile == nil {
@@ -447,18 +457,26 @@ func (e *Executor) run(ctx context.Context, row db.Run, l Lineage,
 // delegated event could land before the call it belongs to. A run not
 // executing here has no recorder, and is written to directly.
 func (e *Executor) note(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) error {
+	_, err := e.noteSeq(ctx, runID, worker, kind, payload)
+	return err
+}
+
+// noteSeq is note, returning the seq the event was written at, which a reply
+// sent for it is named by.
+func (e *Executor) noteSeq(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) (int32, error) {
 	v, _ := e.notes.Load(runID)
 	notes, ok := v.(chan note)
 	if !ok {
-		return appendEvent(ctx, e.store, runID, worker, kind, payload)
+		return appendEventSeq(ctx, e.store, runID, worker, kind, payload)
 	}
-	n := note{kind: kind, payload: payload, done: make(chan error, 1)}
+	n := note{kind: kind, payload: payload, done: make(chan noteWritten, 1)}
 	select {
 	case notes <- n:
 	case <-ctx.Done():
-		return context.Cause(ctx)
+		return 0, context.Cause(ctx)
 	}
-	return <-n.done
+	d := <-n.done
+	return d.seq, d.err
 }
 
 func (e *Executor) heartbeat(ctx context.Context, runID uuid.UUID, worker string, stop context.CancelCauseFunc) {

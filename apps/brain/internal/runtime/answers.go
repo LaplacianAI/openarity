@@ -102,16 +102,17 @@ func (e *Executor) carry(ctx context.Context, row, c db.Run, l Lineage) (string,
 	if got.Status == "running" { // lost to another worker: it reports there
 		return "", false, nil
 	}
-	return reportOf(got), true, nil
+	return e.reportOf(ctx, got), true, nil
 }
 
 // reportOf is what a delegate said, as its parent reads it: its report, or,
 // when it waits for a person, what it waits for.
-func reportOf(child db.Run) string {
+func (e *Executor) reportOf(ctx context.Context, child db.Run) string {
+	told := toldBy(ctx, e.store, child)
 	if child.Status == "waiting" {
-		return waitingReport(child)
+		return waitingReport(child, told)
 	}
-	return report(child, reportEnd())
+	return reportTold(child, reportEnd(), told)
 }
 
 // openCalls are the calls of the transcript's last turn that closeCalls
@@ -171,7 +172,7 @@ func (e *Executor) catchUp(ctx context.Context, row db.Run, built Built, l Linea
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, reportOf(got))
+		parts = append(parts, e.reportOf(ctx, got))
 	}
 
 	untold, err := e.store.ListUntoldApprovals(ctx, row.ID)

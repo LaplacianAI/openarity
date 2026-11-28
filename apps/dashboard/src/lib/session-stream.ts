@@ -87,7 +87,12 @@ export type RunTurn = {
   requests: string[];
   /** The files it handed the person, in the order sent, each once. */
   files: SentFile[];
+  /** What it told the person while it worked, in the order said, each once. */
+  told: Told[];
 };
+
+/** Something a run told the person while it worked, by the call that said it. */
+export type Told = { runId: string; toolCallId: string; agent: string; text: string; at: string };
 
 /** A file a run handed the person, by the call that sent it. */
 export type SentFile = { toolCallId: string; file: SessionEventFile; caption: string };
@@ -178,6 +183,7 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
         waiting: null,
         requests: [],
         files: [],
+        told: [],
       };
       const runs = { ...c.runs, [run.id]: run };
       if (parent) {
@@ -302,6 +308,26 @@ export function fold(c: Conversation, env: SessionEnvelope): Conversation {
             },
       );
     }
+    case "said": {
+      const d = env.data;
+      return withRun(next, d.run_id, (r) =>
+        r.told.some((t) => t.toolCallId === d.tool_call_id)
+          ? r
+          : {
+              ...r,
+              told: [
+                ...r.told,
+                {
+                  runId: d.run_id,
+                  toolCallId: d.tool_call_id,
+                  agent: d.agent,
+                  text: d.text,
+                  at: d.at,
+                },
+              ],
+            },
+      );
+    }
     case "run_finished": {
       const d = env.data;
       return withRun(next, d.run_id, (r) => ({
@@ -381,4 +407,24 @@ export function saying(r: RunTurn): string {
     if (text !== "") return text;
   }
   return "";
+}
+
+/**
+ * What a run and the runs it handed work to told the person while they
+ * worked, oldest first: a delegate speaks into the conversation it works for.
+ */
+export function toldIn(c: Conversation, run: RunTurn): Told[] {
+  const all: Told[] = [];
+  const seen = new Set<string>();
+  const walk = (r: RunTurn) => {
+    if (seen.has(r.id)) return;
+    seen.add(r.id);
+    all.push(...r.told);
+    for (const id of r.children) {
+      const child = c.runs[id];
+      if (child) walk(child);
+    }
+  };
+  walk(run);
+  return all.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 }

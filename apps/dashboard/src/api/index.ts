@@ -418,6 +418,7 @@ const SESSION_KINDS = new Set([
   "approval_decided",
   "run_waiting",
   "file_sent",
+  "said",
 ]);
 
 /**
