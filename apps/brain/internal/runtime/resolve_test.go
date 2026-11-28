@@ -22,23 +22,44 @@ type recordingClient struct {
 	err  error
 	// streamErr is what a stream that opened reports at its end.
 	streamErr error
+	// filesErr is what a request carrying a file is answered, as a provider
+	// that cannot take one does, while one without is answered err.
+	filesErr error
+}
+
+func (c *recordingClient) answer(req agent.Request) error {
+	c.sent = append(c.sent, req)
+	if c.filesErr != nil && blobsIn(req) > 0 {
+		return c.filesErr
+	}
+	return c.err
 }
 
 func (c *recordingClient) Complete(_ context.Context, req agent.Request) (agent.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.sent = append(c.sent, req)
-	return agent.Response{}, c.err
+	return agent.Response{}, c.answer(req)
 }
 
 func (c *recordingClient) Stream(_ context.Context, req agent.Request) (agent.Stream, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.sent = append(c.sent, req)
-	if c.err != nil {
-		return nil, c.err
+	if err := c.answer(req); err != nil {
+		return nil, err
 	}
 	return &endedStream{err: c.streamErr}, nil
+}
+
+func blobsIn(req agent.Request) int {
+	n := 0
+	for _, m := range req.Messages {
+		for _, c := range m.Content {
+			if c.Blob != nil {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 type endedStream struct{ err error }
@@ -431,5 +452,155 @@ func TestAReferenceThatNamesNoFileIsRefused(t *testing.T) {
 
 	if _, err := f.client.Complete(f.ctx(t), asking(bad)); err == nil || !strings.Contains(err.Error(), "names no file") {
 		t.Fatalf("Complete = %v", err)
+	}
+}
+
+// A provider that cannot take a request's files, refusing it or failing on its
+// side as a router that breaks on a large PDF does, is asked again without
+// them: the model is told which files were not sent, and the run goes on.
+func TestARequestWhoseFilesTheProviderCannotTakeGoesWithoutThem(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"refused", &agent.ModelError{Status: http.StatusBadRequest, Code: "invalid_request_error"}},
+		{"unprocessable", &agent.ModelError{Status: http.StatusUnprocessableEntity}},
+		{"router broke", &agent.ModelError{Status: http.StatusInternalServerError, Code: "internal_server_error"}},
+		{"gateway broke", &agent.ModelError{Status: http.StatusBadGateway}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newResolveFixture(t)
+			req := asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")), refTo(f.file("notes.txt", "text/plain", "the notes")))
+			f.inner.filesErr = tc.err
+
+			if _, err := f.client.Complete(f.ctx(t), req); err != nil {
+				t.Fatalf("Complete = %v", err)
+			}
+			if len(f.inner.sent) != 2 {
+				t.Fatalf("%d requests, want the one refused and one without its files", len(f.inner.sent))
+			}
+			bare := f.inner.sent[1]
+			if n := blobsIn(bare); n != 0 {
+				t.Errorf("the second request carried %d files", n)
+			}
+			got := textOf(bare.Messages)
+			if !strings.Contains(got, "[paper.pdf: not sent; the model's provider could not take it]") {
+				t.Errorf("the model was not told the PDF was not sent: %q", got)
+			}
+			if !strings.Contains(got, "the notes") {
+				t.Errorf("a text file is still sent as its text: %q", got)
+			}
+			if req.Messages[0].Content[1].Blob == nil {
+				t.Error("the transcript lost its reference")
+			}
+		})
+	}
+}
+
+// Once a run's files were sent without, the rest of its steps send none, and
+// never read them: one request each, not a refusal paid for every step.
+func TestAfterARefusalTheRunsLaterRequestsSendNoFiles(t *testing.T) {
+	f := newResolveFixture(t)
+	pdf := f.file("paper.pdf", "application/pdf", "%PDF")
+	req := asking(refTo(pdf))
+	f.inner.filesErr = &agent.ModelError{Status: http.StatusInternalServerError}
+
+	if _, err := f.client.Complete(f.ctx(t), req); err != nil {
+		t.Fatal(err)
+	}
+	delete(f.objects.data, pdf.ObjectKey)
+	if _, err := f.client.Complete(f.ctx(t), req); err != nil {
+		t.Fatalf("the next step = %v; it read the file it does not send", err)
+	}
+	if _, err := f.client.Stream(f.ctx(t), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.inner.sent) != 4 {
+		t.Fatalf("%d requests, want 2 then one a step", len(f.inner.sent))
+	}
+	for _, sent := range f.inner.sent[2:] {
+		if blobsIn(sent) != 0 {
+			t.Error("a later step carried the file")
+		}
+	}
+}
+
+// A stream refused when it opens goes without its files the same way.
+func TestAStreamWhoseFilesTheProviderCannotTakeGoesWithoutThem(t *testing.T) {
+	f := newResolveFixture(t)
+	req := asking(refTo(f.file("screen.png", "image/png", "img")))
+	f.inner.filesErr = &agent.ModelError{Status: http.StatusInternalServerError}
+
+	s, err := f.client.Stream(f.ctx(t), req)
+	if err != nil {
+		t.Fatalf("Stream = %v", err)
+	}
+	if s.Err() != nil {
+		t.Errorf("the stream ended with %v", s.Err())
+	}
+	if len(f.inner.sent) != 2 || blobsIn(f.inner.sent[1]) != 0 {
+		t.Errorf("sent %d requests, the last with files: %v", len(f.inner.sent), len(f.inner.sent) == 2)
+	}
+}
+
+// A request that fails without its files too is not the files' doing: the
+// first answer is the one reported, a refusal still saying the model may not
+// read them, and the next step tries its files again.
+func TestARequestThatFailsWithoutItsFilesTooKeepsTheFirstAnswer(t *testing.T) {
+	f := newResolveFixture(t)
+	req := asking(refTo(f.file("screen.png", "image/png", "img")))
+	first := &agent.ModelError{Status: http.StatusBadRequest, Code: "invalid_request_error"}
+	f.inner.filesErr, f.inner.err = first, &agent.ModelError{Status: http.StatusServiceUnavailable}
+
+	_, err := f.client.Complete(f.ctx(t), req)
+	var refusedFiles *filesRefused
+	if !errors.As(err, &refusedFiles) || !errors.Is(err, first) {
+		t.Fatalf("Complete = %v, want the first refusal", err)
+	}
+	if _, err := f.client.Stream(f.ctx(t), req); !errors.Is(err, first) {
+		t.Errorf("Stream = %v, want the first refusal", err)
+	}
+
+	f.inner.filesErr, f.inner.err = nil, nil
+	f.inner.sent = nil
+	if _, err := f.client.Complete(f.ctx(t), req); err != nil {
+		t.Fatal(err)
+	}
+	if blobsIn(f.inner.sent[0]) != 1 {
+		t.Error("a failed retry turned the run's files off")
+	}
+}
+
+// A request too long, or one with no files, is never tried again without
+// files: they are not what the provider could not take.
+func TestOnlyARequestsFilesAreGoneWithout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file bool
+		err  error
+	}{
+		{"too long", true, &agent.ModelError{Status: http.StatusBadRequest, Code: "context_length_exceeded"}},
+		{"no files", false, &agent.ModelError{Status: http.StatusInternalServerError}},
+		{"rate limited", true, &agent.ModelError{Status: http.StatusTooManyRequests}},
+		{"unreachable", true, errors.New("dial tcp: connection refused")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newResolveFixture(t)
+			req := asking()
+			if tc.file {
+				req = asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")))
+			}
+			f.inner.err = tc.err
+
+			if _, err := f.client.Complete(f.ctx(t), req); !errors.Is(err, tc.err) {
+				t.Errorf("Complete = %v", err)
+			}
+			if _, err := f.client.Stream(f.ctx(t), req); !errors.Is(err, tc.err) {
+				t.Errorf("Stream = %v", err)
+			}
+			if len(f.inner.sent) != 2 {
+				t.Errorf("%d requests, want one each", len(f.inner.sent))
+			}
+		})
 	}
 }

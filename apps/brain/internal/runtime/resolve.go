@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -57,27 +58,68 @@ type resolving struct {
 	inner   agent.ModelClient
 	store   AttachmentReader
 	objects Objects
+	// filesOff is set once a request was refused with its files and answered
+	// without them, so the rest of the run sends none rather than paying for
+	// the same refusal on every step.
+	filesOff atomic.Bool
 }
 
 func (r *resolving) Complete(ctx context.Context, req agent.Request) (agent.Response, error) {
-	sent, files, err := r.resolve(ctx, req)
+	sent, files, err := r.resolve(ctx, req, !r.filesOff.Load())
 	if err != nil {
 		return agent.Response{}, err
 	}
 	resp, err := r.inner.Complete(ctx, sent)
-	return resp, refused(err, files, req.Model.Name)
+	if !unsendable(err, files) {
+		return resp, refused(err, files, req.Model.Name)
+	}
+	bare, _, rerr := r.resolve(ctx, req, false)
+	if rerr != nil {
+		return agent.Response{}, refused(err, files, req.Model.Name)
+	}
+	resp, rerr = r.inner.Complete(ctx, bare)
+	if rerr != nil {
+		return agent.Response{}, refused(err, files, req.Model.Name)
+	}
+	r.filesOff.Store(true)
+	return resp, nil
 }
 
 func (r *resolving) Stream(ctx context.Context, req agent.Request) (agent.Stream, error) {
-	sent, files, err := r.resolve(ctx, req)
+	sent, files, err := r.resolve(ctx, req, !r.filesOff.Load())
 	if err != nil {
 		return nil, err
 	}
 	s, err := r.inner.Stream(ctx, sent)
-	if err != nil {
+	if err == nil {
+		return &refusingStream{Stream: s, files: files, model: req.Model.Name}, nil
+	}
+	if !unsendable(err, files) {
 		return nil, refused(err, files, req.Model.Name)
 	}
-	return &refusingStream{Stream: s, files: files, model: req.Model.Name}, nil
+	bare, _, rerr := r.resolve(ctx, req, false)
+	if rerr != nil {
+		return nil, refused(err, files, req.Model.Name)
+	}
+	s, rerr = r.inner.Stream(ctx, bare)
+	if rerr != nil {
+		return nil, refused(err, files, req.Model.Name)
+	}
+	r.filesOff.Store(true)
+	return s, nil
+}
+
+// unsendable is a request whose files the provider would not take: refused as
+// a bad request, or failed on its side, as a router that breaks on a large
+// file does with a 500. Such a request is tried again without its files, so
+// one file never stops a conversation. A request too long is compaction's.
+func unsendable(err error, files int) bool {
+	var answered *agent.ModelError
+	if err == nil || files == 0 || !errors.As(err, &answered) || answered.Code == "context_length_exceeded" {
+		return false
+	}
+	return answered.Status == http.StatusBadRequest || answered.Status == http.StatusUnprocessableEntity ||
+		answered.Status >= http.StatusInternalServerError
 }
 
 type refusingStream struct {
@@ -94,9 +136,11 @@ type place struct{ msg, part int }
 // the files a tool attached whole, the newest first, up to eight files and
 // bytesPerRequest of them, text files among them; older ones are named as
 // earlier files rather than sent, and one past the bytes left is never read.
-// It copies what it changes, so the caller's messages, which are the
-// transcript, keep only the references and every file.
-func (r *resolving) resolve(ctx context.Context, req agent.Request) (agent.Request, int, error) {
+// Without files, each image or PDF is named as one the provider could not
+// take, never read, and text files are still sent as their text. It copies what it
+// changes, so the caller's messages, which are the transcript, keep only the
+// references and every file.
+func (r *resolving) resolve(ctx context.Context, req agent.Request, withFiles bool) (agent.Request, int, error) {
 	var (
 		files []place
 		refs  bool
@@ -143,6 +187,10 @@ func (r *resolving) resolve(ctx context.Context, req agent.Request) (agent.Reque
 		name := part.Blob.Name
 		if counted >= filesPerRequest {
 			leftOut(p, name)
+			continue
+		}
+		if !withFiles && bareType(part.Blob.MediaType) != "text/plain" {
+			set(p, textPart(fmt.Sprintf("[%s: not sent; the model's provider could not take it]", name)))
 			continue
 		}
 		if len(part.Blob.Data) == 0 {
