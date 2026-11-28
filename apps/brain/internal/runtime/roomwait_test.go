@@ -172,15 +172,15 @@ func TestTheSweepMakesTheRoomAndTheRunCarriesOn(t *testing.T) {
 }
 
 // Still no room: the wait is tried later, after as long as it has waited,
-// at least a minute and at most ten, and the run stays parked.
+// at least a minute and at most two, and the run stays parked.
 func TestStillNoRoomPutsTheTryOff(t *testing.T) {
 	for _, c := range []struct {
 		waited time.Duration
 		next   time.Duration
 	}{
 		{10 * time.Second, time.Minute},
-		{5 * time.Minute, 5 * time.Minute},
-		{40 * time.Minute, 10 * time.Minute},
+		{90 * time.Second, 90 * time.Second},
+		{40 * time.Minute, 2 * time.Minute},
 	} {
 		t.Run(c.waited.String(), func(t *testing.T) {
 			f, ws, j, resumed := roomFixture(t, newScripted(

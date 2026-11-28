@@ -16,11 +16,12 @@ import (
 // A workspace call the sandbox refused before anything ran, for want of
 // room, waits for room: the call is not made, the run parks, and the sweep
 // makes the room itself, so a try costs no model turn. It is tried a minute
-// after the refusal, then after as long as it has waited, at most ten minutes
-// apart, and given up an hour after the first refusal.
+// after the refusal, then after as long as it has waited, at most two minutes
+// apart, so a sandbox back is noticed soon, and given up an hour after the
+// first refusal.
 const (
 	roomRetryMin    = time.Minute
-	roomRetryMax    = 10 * time.Minute
+	roomRetryMax    = 2 * time.Minute
 	roomGiveUpAfter = time.Hour
 	// roomWakeBatch bounds one sweep's tries; each may wait for a room to
 	// start.

@@ -177,7 +177,7 @@ The call is not made. The agent says in a line that it is waiting, the person
 on a channel is sent that line, and the run parks holding no worker, as it
 does for an approval. Every minute the brain tries to make the room itself, so
 a try costs the agent nothing: a minute after the refusal, then after as long
-as the run has waited, at most ten minutes apart. Once the room is made the
+as the run has waited, at most two minutes apart. Once the room is made the
 run carries on, is told there is room, and makes the call again. At the first
 try after an hour (so up to ten minutes past it) it is told the sandbox still
 had no room and goes on without it. A person who
