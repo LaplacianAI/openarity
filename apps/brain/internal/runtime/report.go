@@ -15,11 +15,18 @@ const maxReport = 32 << 10
 
 var reportTag = regexp.MustCompile(`(?i)<(/?report)`)
 
+// toldPerson is what a delegate told its person while it worked, as far as it
+// could be read.
+type toldPerson struct {
+	said   []string
+	unread bool
+}
+
 // report is a delegate's report, with what it told the person while it
-// worked (told), so the parent does not say it again. What was said is the
-// child's own words, so it goes inside the report, as data, after any cut so
-// a long answer never loses it; it is held to one cut of its own.
-func report(child db.Run, end string, told []string) string {
+// worked, so the parent does not say it again. What was said is the child's
+// own words, so it goes inside the report, as data, after any cut so a long
+// answer never loses it.
+func report(child db.Run, end string, t toldPerson) string {
 	body := ""
 	switch {
 	case child.Output != nil:
@@ -28,10 +35,11 @@ func report(child db.Run, end string, told []string) string {
 		body = *child.Error
 	}
 	body = cutReport(reportTag.ReplaceAllString(body, "&lt;$1"), child)
-	if len(told) > 0 {
-		said := reportTag.ReplaceAllString("[it told the person while it worked, so do not tell them again:\n- "+
-			strings.Join(told, "\n- ")+"]", "&lt;$1")
-		body += "\n" + cutReport(said, child)
+	if s := saidBlock(t.said); s != "" {
+		body += "\n" + reportTag.ReplaceAllString(s, "&lt;$1")
+	}
+	if t.unread {
+		body += "\n[what it told the person while it worked could not be read: it may have told them some of this]"
 	}
 	// A run stopped at a limit kept what it had; say it is not a finished answer.
 	if child.Output != nil && child.Status != "succeeded" && child.Error != nil {
@@ -40,6 +48,27 @@ func report(child db.Run, end string, told []string) string {
 
 	return fmt.Sprintf("<report agent=\"%s\" run=\"%s\" status=\"%s\" end=\"%s\">\n%s\n</report end=\"%s\">",
 		html.EscapeString(child.AgentName), child.ID, child.Status, end, body, end)
+}
+
+// saidBlock lists what was said, its newest lines whole that fit in a
+// report, saying how many earlier ones were left out.
+func saidBlock(said []string) string {
+	if len(said) == 0 {
+		return ""
+	}
+	keep, size := len(said), 0
+	for keep > 0 && size+len(said[keep-1])+3 <= maxReport {
+		size += len(said[keep-1]) + 3
+		keep--
+	}
+	head := "[it told the person while it worked, so do not tell them again:"
+	if keep > 0 {
+		head += fmt.Sprintf(" (%d earlier, not shown)", keep)
+	}
+	if keep == len(said) {
+		return head + "]"
+	}
+	return head + "\n- " + strings.Join(said[keep:], "\n- ") + "]"
 }
 
 // cutReport is s held to maxReport, cut on a rune and saying where the rest is.

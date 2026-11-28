@@ -295,8 +295,16 @@ JOIN runs r ON r.id = e.run_id
 WHERE r.root_run_id = sqlc.arg('root_id')::uuid AND e.kind = 'said';
 
 -- What a delegate told its person, oldest first, for the report its parent
--- reads: so the parent does not say it again.
+-- reads: so the parent does not say it again. Only what reached them: on a
+-- channel, a said event with its reply queued; on the dashboard, where the
+-- event is the delivery, every one. One whose post failed was put in the
+-- delegate's answer instead, so the parent passes it on.
 -- name: ListRunSaid :many
-SELECT (payload->>'text')::text AS text FROM run_events
-WHERE run_id = sqlc.arg('run_id')::uuid AND kind = 'said'
-ORDER BY seq;
+SELECT (e.payload->>'text')::text AS text FROM run_events e
+JOIN runs r ON r.id = e.run_id
+JOIN runs root ON root.id = r.root_run_id
+JOIN sessions s ON s.id = root.session_id
+WHERE e.run_id = sqlc.arg('run_id')::uuid AND e.kind = 'said'
+  AND (s.channel_id IS NULL
+       OR EXISTS (SELECT 1 FROM replies rp WHERE rp.run_id = e.run_id AND rp.event_seq = e.seq))
+ORDER BY e.seq;

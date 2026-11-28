@@ -169,7 +169,7 @@ func callOf(ctx context.Context) (string, error) {
 	call := agent.ToolCallID(ctx)
 	switch {
 	case call == "":
-		return "", errors.New("the call that returned the file has no id")
+		return "", errors.New("the call has no id")
 	case len(call) > maxCallID:
 		// Refused before anything is written, not after the bytes are.
 		return "", fmt.Errorf("the call's id is %d bytes, more than %d", len(call), maxCallID)

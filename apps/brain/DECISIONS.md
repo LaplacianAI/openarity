@@ -1094,9 +1094,13 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   event (`InsertSaidReply`), whatever the reply mode, as a waiting line is,
   in the root's conversation, a delegate's with its agent's name before it.
   Ten a tree, counted across its delegates (`CountSaidInTree`), so five
-  delegates cannot send fifty. A delegate's report lists what it said
-  (`ListRunSaid`), inside the report as its own words, so the parent does
-  not say it again. The name is reserved only on a run that holds it: an
+  delegates cannot send fifty; the count and the event are held together by
+  a lock per tree in the process, as a tree runs in one (a child adopted
+  from a worker thought lost while it still ran could overshoot by one). A
+  delegate's report lists what reached the person (`ListRunSaid`: on a
+  channel, what was queued to post), inside the report as its own words, so
+  the parent does not say it again; one whose post failed is in the
+  delegate's answer instead. The name is reserved only on a run that holds it: an
   email server's `reply` stays the server's everywhere else.
 - **A run hands its person a file with `send_file` (F3).** Any file of the
   conversation, a person's or a tool's, by its id, looked up within the

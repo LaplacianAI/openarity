@@ -90,21 +90,9 @@ func (r *replying) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if err != nil {
 		return "", fmt.Errorf("nothing was sent: %w", err)
 	}
-	mu := sayingFor(r.run.RootRunID)
-	mu.Lock()
-	defer mu.Unlock()
-	said, err := r.store.CountSaidInTree(ctx, r.run.RootRunID)
+	seq, err := r.say(ctx, call, text)
 	if err != nil {
-		return "", fmt.Errorf("nothing was sent: %w", err)
-	}
-	if said >= repliesPerTree {
-		return "", fmt.Errorf("the person has been told %d things while this task went on, the most it tells them; "+
-			"keep the rest for your answer", repliesPerTree)
-	}
-
-	seq, err := r.note(ctx, "said", stream.Said{ToolCallID: call, Agent: r.run.AgentName, Text: text})
-	if err != nil {
-		return "", fmt.Errorf("nothing was sent: %w", err)
+		return "", err
 	}
 	if r.toChannel {
 		if err := r.post(ctx, seq, text); err != nil {
@@ -112,6 +100,28 @@ func (r *replying) invoke(ctx context.Context, raw json.RawMessage) (string, err
 		}
 	}
 	return "Sent. Carry on; your answer still comes at the end, without repeating this.", nil
+}
+
+// say writes the said event when the tree has room for one: the count and
+// the write held together, and nothing else, so a post's latency is no other
+// tree's wait.
+func (r *replying) say(ctx context.Context, call, text string) (int32, error) {
+	mu := sayingFor(r.run.RootRunID)
+	mu.Lock()
+	defer mu.Unlock()
+	said, err := r.store.CountSaidInTree(ctx, r.run.RootRunID)
+	if err != nil {
+		return 0, fmt.Errorf("nothing was sent: %w", err)
+	}
+	if said >= repliesPerTree {
+		return 0, fmt.Errorf("the person has been told %d things while this task went on, the most it tells them; "+
+			"keep the rest for your answer", repliesPerTree)
+	}
+	seq, err := r.note(ctx, "said", stream.Said{ToolCallID: call, Agent: r.run.AgentName, Text: text})
+	if err != nil {
+		return 0, fmt.Errorf("nothing was sent: %w", err)
+	}
+	return seq, nil
 }
 
 // prefix is what a delegate's words carry on a channel: its agent's name, as
@@ -141,12 +151,20 @@ func (r *replying) post(ctx context.Context, seq int32, text string) error {
 	return nil
 }
 
-// replyText is what a person is sent: line breaks kept, no other control
-// characters, no marks that reorder the text around them, and one message
-// long with prefix. Joiners stay, as emoji are made of them.
+// replyText is what a person is sent: line breaks kept, a tab a space, no
+// other control character and no invisible format mark (one that reorders
+// the text around it among them), and one message long with prefix. Joiners
+// and tags stay, as emoji and flags are made of them.
 func replyText(s, prefix string) (string, error) {
 	s = strings.TrimSpace(strings.Map(func(r rune) rune {
-		if r != '\n' && (unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Bidi_Control, r)) {
+		switch {
+		case r == '\n':
+			return r
+		case r == '\t':
+			return ' '
+		case unicode.IsControl(r), r == '\u2028', r == '\u2029':
+			return -1
+		case unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d' && (r < 0xE0020 || r > 0xE007F):
 			return -1
 		}
 		return r

@@ -102,29 +102,27 @@ func DelegateTool(deps DelegateDeps, caller db.Agent, run db.Run, l Lineage) age
 // while it worked. That read is best effort: a report without it is still the
 // report, and says it could not be read, so the parent knows it may repeat.
 func reportOf(ctx context.Context, s DelegateStore, child db.Run) string {
-	told, err := s.ListRunSaid(ctx, child.ID)
-	if err != nil {
-		told = []string{"(what it told them could not be read, so it may have told them some of this already)"}
-	}
+	said, err := s.ListRunSaid(ctx, child.ID)
+	t := toldPerson{said: said, unread: err != nil}
 	if child.Status == "waiting" {
-		return waitingReport(child, told)
+		return waitingReport(child, t)
 	}
-	return report(child, reportEnd(), told)
+	return report(child, reportEnd(), t)
 }
 
 // waitingReport is a delegate that stopped for a person's answer, or for
 // room in the sandbox: what it said about it, in its envelope, after what the
 // caller must do, which is to say so to the person in its own words and
 // stop. The child carries on, and reports again, when the run resumes.
-func waitingReport(child db.Run, told []string) string {
+func waitingReport(child db.Run, t toldPerson) string {
 	if child.WaitingFor != nil && waitsFor(*child.WaitingFor) == waitsForRoom {
 		return fmt.Sprintf("%s is waiting for room in the team's sandbox and carries on once there is, "+
 			"or once it has waited an hour. Say in a line that it waits for the sandbox, then end your "+
-			"turn; its next report comes to you when it carries on.\n\n%s", child.AgentName, report(child, reportEnd(), told))
+			"turn; its next report comes to you when it carries on.\n\n%s", child.AgentName, report(child, reportEnd(), t))
 	}
 	return fmt.Sprintf("%s is waiting for a person's approval and carries on once they answer. "+
 		"Tell them in your own words what it needs and why, then end your turn; its next report "+
-		"comes to you when it carries on.\n\n%s", child.AgentName, report(child, reportEnd(), told))
+		"comes to you when it carries on.\n\n%s", child.AgentName, report(child, reportEnd(), t))
 }
 
 func parseDelegateArgs(raw json.RawMessage) (string, string, error) {

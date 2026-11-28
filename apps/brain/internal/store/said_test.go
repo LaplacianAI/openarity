@@ -168,19 +168,38 @@ func TestWhatATreeSaidIsCountedTogether(t *testing.T) {
 	child := delegateOf(t, s, root, "billing")
 	other := newConversation(t, s, "other").working(t, s, "m2")
 	saysOnRun(t, s, root.ID, "one")
-	saysOnRun(t, s, child, "first")
-	saysOnRun(t, s, child, "second")
+	first := saysOnRun(t, s, child, "first")
+	say(t, s, child, first, "billing: first")
+	saysOnRun(t, s, child, "never posted")
+	second := saysOnRun(t, s, child, "second")
+	say(t, s, child, second, "billing: second")
 	saysOnRun(t, s, other.ID, "elsewhere")
 	if _, err := appendEvent(t, s, child, "w-1", "text"); err != nil {
 		t.Fatal(err)
 	}
 
 	n, err := s.CountSaidInTree(t.Context(), root.ID)
-	if err != nil || n != 3 {
-		t.Errorf("CountSaidInTree = %d, %v; want the tree's 3", n, err)
+	if err != nil || n != 4 {
+		t.Errorf("CountSaidInTree = %d, %v; want the tree's 4, the one never posted too", n, err)
 	}
+	// On a channel, what reached the person: its own words, without the name
+	// its post carries, and not the one whose post failed.
 	told, err := s.ListRunSaid(t.Context(), child)
 	if err != nil || !slices.Equal(told, []string{"first", "second"}) {
-		t.Errorf("ListRunSaid = %q, %v", told, err)
+		t.Errorf("ListRunSaid = %q, %v; want what was posted", told, err)
+	}
+
+	// On the dashboard the event is the delivery: every one is listed.
+	f := newRunFixture(t, s, "said-direct")
+	alice := insertUser(t, s, testIssuer, "alice")
+	f.session = insertDirectSession(t, s, f.team, alice)
+	direct := createRun(t, s, f)
+	if _, err := s.pool.Exec(t.Context(), `UPDATE runs SET status = 'running', worker = 'w-1', heartbeat_at = now() WHERE id = $1`, direct.ID); err != nil {
+		t.Fatal(err)
+	}
+	saysOnRun(t, s, direct.ID, "a")
+	saysOnRun(t, s, direct.ID, "b")
+	if told, err := s.ListRunSaid(t.Context(), direct.ID); err != nil || !slices.Equal(told, []string{"a", "b"}) {
+		t.Errorf("ListRunSaid on the dashboard = %q, %v", told, err)
 	}
 }
