@@ -1477,7 +1477,9 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     (full, preparing, `ErrUnavailable`) makes nothing: the run is told to
     say it waits and stop, and parks with `waiting_for = 'sandbox'`. The
     sweep makes the room itself, a minute after the refusal and then after
-    as long as the run has waited, at most ten minutes apart, and queues the
+    as long as the run has waited, at most two minutes apart (ten noticed a
+    sandbox back, such as a laptop woken, up to ten minutes late; a try is one
+    `Ensure` and no model turn), and queues the
     root once it is made, or at the first try after the wait is an hour old,
     so a try costs no
     model turn and a delegate's parent is not woken to hear it still
