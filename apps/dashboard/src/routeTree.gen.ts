@@ -26,6 +26,10 @@ import { Route as UiAgentsAgentIdRouteImport } from './routes/ui.agents.$agentId
 import { Route as UiAgentsNewRouteImport } from './routes/ui.agents.new'
 import { Route as UiChannelsIndexRouteImport } from './routes/ui.channels.index'
 import { Route as UiRunsIndexRouteImport } from './routes/ui.runs.index'
+import { Route as UiSchedulesIndexRouteImport } from './routes/ui.schedules.index'
+import { Route as UiSchedulesScheduleIdRouteImport } from './routes/ui.schedules.$scheduleId'
+import { Route as UiSchedulesNewRouteImport } from './routes/ui.schedules.new'
+import { Route as UiSchedulesNewsRouteImport } from './routes/ui.schedules.news'
 import { Route as UiServersIndexRouteImport } from './routes/ui.servers.index'
 import { Route as UiSessionsIndexRouteImport } from './routes/ui.sessions.index'
 import { Route as UiSessionsSessionIdRouteImport } from './routes/ui.sessions.$sessionId'
@@ -33,10 +37,13 @@ import { Route as UiSettingsIndexRouteImport } from './routes/ui.settings.index'
 import { Route as UiSettingsApprovalsRouteImport } from './routes/ui.settings.approvals'
 import { Route as UiSettingsGeneralRouteImport } from './routes/ui.settings.general'
 import { Route as UiSettingsImprovementRouteImport } from './routes/ui.settings.improvement'
+import { Route as UiSettingsSchedulesRouteImport } from './routes/ui.settings.schedules'
 import { Route as UiSettingsToolsRouteImport } from './routes/ui.settings.tools'
 import { Route as UiSkillsIndexRouteImport } from './routes/ui.skills.index'
 import { Route as UiTeamsIndexRouteImport } from './routes/ui.teams.index'
 import { Route as UiTeamsDeletedRouteImport } from './routes/ui.teams.deleted'
+import { Route as UiSchedulesWatchersWatcherIdRouteImport } from './routes/ui.schedules.watchers.$watcherId'
+import { Route as UiSchedulesWatchersNewRouteImport } from './routes/ui.schedules.watchers.new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -123,6 +130,26 @@ const UiRunsIndexRoute = UiRunsIndexRouteImport.update({
   path: '/runs/',
   getParentRoute: () => UiRoute,
 } as any)
+const UiSchedulesIndexRoute = UiSchedulesIndexRouteImport.update({
+  id: '/schedules/',
+  path: '/schedules/',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSchedulesScheduleIdRoute = UiSchedulesScheduleIdRouteImport.update({
+  id: '/schedules/$scheduleId',
+  path: '/schedules/$scheduleId',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSchedulesNewRoute = UiSchedulesNewRouteImport.update({
+  id: '/schedules/new',
+  path: '/schedules/new',
+  getParentRoute: () => UiRoute,
+} as any)
+const UiSchedulesNewsRoute = UiSchedulesNewsRouteImport.update({
+  id: '/schedules/news',
+  path: '/schedules/news',
+  getParentRoute: () => UiRoute,
+} as any)
 const UiServersIndexRoute = UiServersIndexRouteImport.update({
   id: '/servers/',
   path: '/servers/',
@@ -158,6 +185,11 @@ const UiSettingsImprovementRoute = UiSettingsImprovementRouteImport.update({
   path: '/settings/improvement',
   getParentRoute: () => UiRoute,
 } as any)
+const UiSettingsSchedulesRoute = UiSettingsSchedulesRouteImport.update({
+  id: '/settings/schedules',
+  path: '/settings/schedules',
+  getParentRoute: () => UiRoute,
+} as any)
 const UiSettingsToolsRoute = UiSettingsToolsRouteImport.update({
   id: '/settings/tools',
   path: '/settings/tools',
@@ -178,6 +210,17 @@ const UiTeamsDeletedRoute = UiTeamsDeletedRouteImport.update({
   path: '/teams/deleted',
   getParentRoute: () => UiRoute,
 } as any)
+const UiSchedulesWatchersWatcherIdRoute =
+  UiSchedulesWatchersWatcherIdRouteImport.update({
+    id: '/schedules/watchers/$watcherId',
+    path: '/schedules/watchers/$watcherId',
+    getParentRoute: () => UiRoute,
+  } as any)
+const UiSchedulesWatchersNewRoute = UiSchedulesWatchersNewRouteImport.update({
+  id: '/schedules/watchers/new',
+  path: '/schedules/watchers/new',
+  getParentRoute: () => UiRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -194,20 +237,27 @@ export interface FileRoutesByFullPath {
   '/ui/': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
   '/ui/agents/new': typeof UiAgentsNewRoute
+  '/ui/schedules/$scheduleId': typeof UiSchedulesScheduleIdRoute
+  '/ui/schedules/new': typeof UiSchedulesNewRoute
+  '/ui/schedules/news': typeof UiSchedulesNewsRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/settings/approvals': typeof UiSettingsApprovalsRoute
   '/ui/settings/general': typeof UiSettingsGeneralRoute
   '/ui/settings/improvement': typeof UiSettingsImprovementRoute
+  '/ui/settings/schedules': typeof UiSettingsSchedulesRoute
   '/ui/settings/tools': typeof UiSettingsToolsRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/runs/': typeof UiRunsIndexRoute
+  '/ui/schedules/': typeof UiSchedulesIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
   '/ui/settings/': typeof UiSettingsIndexRoute
   '/ui/skills/': typeof UiSkillsIndexRoute
   '/ui/teams/': typeof UiTeamsIndexRoute
+  '/ui/schedules/watchers/$watcherId': typeof UiSchedulesWatchersWatcherIdRoute
+  '/ui/schedules/watchers/new': typeof UiSchedulesWatchersNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -223,20 +273,27 @@ export interface FileRoutesByTo {
   '/ui': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
   '/ui/agents/new': typeof UiAgentsNewRoute
+  '/ui/schedules/$scheduleId': typeof UiSchedulesScheduleIdRoute
+  '/ui/schedules/new': typeof UiSchedulesNewRoute
+  '/ui/schedules/news': typeof UiSchedulesNewsRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/settings/approvals': typeof UiSettingsApprovalsRoute
   '/ui/settings/general': typeof UiSettingsGeneralRoute
   '/ui/settings/improvement': typeof UiSettingsImprovementRoute
+  '/ui/settings/schedules': typeof UiSettingsSchedulesRoute
   '/ui/settings/tools': typeof UiSettingsToolsRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents': typeof UiAgentsIndexRoute
   '/ui/channels': typeof UiChannelsIndexRoute
   '/ui/runs': typeof UiRunsIndexRoute
+  '/ui/schedules': typeof UiSchedulesIndexRoute
   '/ui/servers': typeof UiServersIndexRoute
   '/ui/sessions': typeof UiSessionsIndexRoute
   '/ui/settings': typeof UiSettingsIndexRoute
   '/ui/skills': typeof UiSkillsIndexRoute
   '/ui/teams': typeof UiTeamsIndexRoute
+  '/ui/schedules/watchers/$watcherId': typeof UiSchedulesWatchersWatcherIdRoute
+  '/ui/schedules/watchers/new': typeof UiSchedulesWatchersNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -254,20 +311,27 @@ export interface FileRoutesById {
   '/ui/': typeof UiIndexRoute
   '/ui/agents/$agentId': typeof UiAgentsAgentIdRoute
   '/ui/agents/new': typeof UiAgentsNewRoute
+  '/ui/schedules/$scheduleId': typeof UiSchedulesScheduleIdRoute
+  '/ui/schedules/new': typeof UiSchedulesNewRoute
+  '/ui/schedules/news': typeof UiSchedulesNewsRoute
   '/ui/sessions/$sessionId': typeof UiSessionsSessionIdRoute
   '/ui/settings/approvals': typeof UiSettingsApprovalsRoute
   '/ui/settings/general': typeof UiSettingsGeneralRoute
   '/ui/settings/improvement': typeof UiSettingsImprovementRoute
+  '/ui/settings/schedules': typeof UiSettingsSchedulesRoute
   '/ui/settings/tools': typeof UiSettingsToolsRoute
   '/ui/teams/deleted': typeof UiTeamsDeletedRoute
   '/ui/agents/': typeof UiAgentsIndexRoute
   '/ui/channels/': typeof UiChannelsIndexRoute
   '/ui/runs/': typeof UiRunsIndexRoute
+  '/ui/schedules/': typeof UiSchedulesIndexRoute
   '/ui/servers/': typeof UiServersIndexRoute
   '/ui/sessions/': typeof UiSessionsIndexRoute
   '/ui/settings/': typeof UiSettingsIndexRoute
   '/ui/skills/': typeof UiSkillsIndexRoute
   '/ui/teams/': typeof UiTeamsIndexRoute
+  '/ui/schedules/watchers/$watcherId': typeof UiSchedulesWatchersWatcherIdRoute
+  '/ui/schedules/watchers/new': typeof UiSchedulesWatchersNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -286,20 +350,27 @@ export interface FileRouteTypes {
     | '/ui/'
     | '/ui/agents/$agentId'
     | '/ui/agents/new'
+    | '/ui/schedules/$scheduleId'
+    | '/ui/schedules/new'
+    | '/ui/schedules/news'
     | '/ui/sessions/$sessionId'
     | '/ui/settings/approvals'
     | '/ui/settings/general'
     | '/ui/settings/improvement'
+    | '/ui/settings/schedules'
     | '/ui/settings/tools'
     | '/ui/teams/deleted'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/runs/'
+    | '/ui/schedules/'
     | '/ui/servers/'
     | '/ui/sessions/'
     | '/ui/settings/'
     | '/ui/skills/'
     | '/ui/teams/'
+    | '/ui/schedules/watchers/$watcherId'
+    | '/ui/schedules/watchers/new'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -315,20 +386,27 @@ export interface FileRouteTypes {
     | '/ui'
     | '/ui/agents/$agentId'
     | '/ui/agents/new'
+    | '/ui/schedules/$scheduleId'
+    | '/ui/schedules/new'
+    | '/ui/schedules/news'
     | '/ui/sessions/$sessionId'
     | '/ui/settings/approvals'
     | '/ui/settings/general'
     | '/ui/settings/improvement'
+    | '/ui/settings/schedules'
     | '/ui/settings/tools'
     | '/ui/teams/deleted'
     | '/ui/agents'
     | '/ui/channels'
     | '/ui/runs'
+    | '/ui/schedules'
     | '/ui/servers'
     | '/ui/sessions'
     | '/ui/settings'
     | '/ui/skills'
     | '/ui/teams'
+    | '/ui/schedules/watchers/$watcherId'
+    | '/ui/schedules/watchers/new'
   id:
     | '__root__'
     | '/'
@@ -345,20 +423,27 @@ export interface FileRouteTypes {
     | '/ui/'
     | '/ui/agents/$agentId'
     | '/ui/agents/new'
+    | '/ui/schedules/$scheduleId'
+    | '/ui/schedules/new'
+    | '/ui/schedules/news'
     | '/ui/sessions/$sessionId'
     | '/ui/settings/approvals'
     | '/ui/settings/general'
     | '/ui/settings/improvement'
+    | '/ui/settings/schedules'
     | '/ui/settings/tools'
     | '/ui/teams/deleted'
     | '/ui/agents/'
     | '/ui/channels/'
     | '/ui/runs/'
+    | '/ui/schedules/'
     | '/ui/servers/'
     | '/ui/sessions/'
     | '/ui/settings/'
     | '/ui/skills/'
     | '/ui/teams/'
+    | '/ui/schedules/watchers/$watcherId'
+    | '/ui/schedules/watchers/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -487,6 +572,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiRunsIndexRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/schedules/': {
+      id: '/ui/schedules/'
+      path: '/schedules'
+      fullPath: '/ui/schedules/'
+      preLoaderRoute: typeof UiSchedulesIndexRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/schedules/$scheduleId': {
+      id: '/ui/schedules/$scheduleId'
+      path: '/schedules/$scheduleId'
+      fullPath: '/ui/schedules/$scheduleId'
+      preLoaderRoute: typeof UiSchedulesScheduleIdRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/schedules/new': {
+      id: '/ui/schedules/new'
+      path: '/schedules/new'
+      fullPath: '/ui/schedules/new'
+      preLoaderRoute: typeof UiSchedulesNewRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/schedules/news': {
+      id: '/ui/schedules/news'
+      path: '/schedules/news'
+      fullPath: '/ui/schedules/news'
+      preLoaderRoute: typeof UiSchedulesNewsRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/servers/': {
       id: '/ui/servers/'
       path: '/servers'
@@ -536,6 +649,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiSettingsImprovementRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/settings/schedules': {
+      id: '/ui/settings/schedules'
+      path: '/settings/schedules'
+      fullPath: '/ui/settings/schedules'
+      preLoaderRoute: typeof UiSettingsSchedulesRouteImport
+      parentRoute: typeof UiRoute
+    }
     '/ui/settings/tools': {
       id: '/ui/settings/tools'
       path: '/settings/tools'
@@ -564,6 +684,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UiTeamsDeletedRouteImport
       parentRoute: typeof UiRoute
     }
+    '/ui/schedules/watchers/$watcherId': {
+      id: '/ui/schedules/watchers/$watcherId'
+      path: '/schedules/watchers/$watcherId'
+      fullPath: '/ui/schedules/watchers/$watcherId'
+      preLoaderRoute: typeof UiSchedulesWatchersWatcherIdRouteImport
+      parentRoute: typeof UiRoute
+    }
+    '/ui/schedules/watchers/new': {
+      id: '/ui/schedules/watchers/new'
+      path: '/schedules/watchers/new'
+      fullPath: '/ui/schedules/watchers/new'
+      preLoaderRoute: typeof UiSchedulesWatchersNewRouteImport
+      parentRoute: typeof UiRoute
+    }
   }
 }
 
@@ -580,20 +714,27 @@ interface UiRouteChildren {
   UiIndexRoute: typeof UiIndexRoute
   UiAgentsAgentIdRoute: typeof UiAgentsAgentIdRoute
   UiAgentsNewRoute: typeof UiAgentsNewRoute
+  UiSchedulesScheduleIdRoute: typeof UiSchedulesScheduleIdRoute
+  UiSchedulesNewRoute: typeof UiSchedulesNewRoute
+  UiSchedulesNewsRoute: typeof UiSchedulesNewsRoute
   UiSessionsSessionIdRoute: typeof UiSessionsSessionIdRoute
   UiSettingsApprovalsRoute: typeof UiSettingsApprovalsRoute
   UiSettingsGeneralRoute: typeof UiSettingsGeneralRoute
   UiSettingsImprovementRoute: typeof UiSettingsImprovementRoute
+  UiSettingsSchedulesRoute: typeof UiSettingsSchedulesRoute
   UiSettingsToolsRoute: typeof UiSettingsToolsRoute
   UiTeamsDeletedRoute: typeof UiTeamsDeletedRoute
   UiAgentsIndexRoute: typeof UiAgentsIndexRoute
   UiChannelsIndexRoute: typeof UiChannelsIndexRoute
   UiRunsIndexRoute: typeof UiRunsIndexRoute
+  UiSchedulesIndexRoute: typeof UiSchedulesIndexRoute
   UiServersIndexRoute: typeof UiServersIndexRoute
   UiSessionsIndexRoute: typeof UiSessionsIndexRoute
   UiSettingsIndexRoute: typeof UiSettingsIndexRoute
   UiSkillsIndexRoute: typeof UiSkillsIndexRoute
   UiTeamsIndexRoute: typeof UiTeamsIndexRoute
+  UiSchedulesWatchersWatcherIdRoute: typeof UiSchedulesWatchersWatcherIdRoute
+  UiSchedulesWatchersNewRoute: typeof UiSchedulesWatchersNewRoute
 }
 
 const UiRouteChildren: UiRouteChildren = {
@@ -609,20 +750,27 @@ const UiRouteChildren: UiRouteChildren = {
   UiIndexRoute: UiIndexRoute,
   UiAgentsAgentIdRoute: UiAgentsAgentIdRoute,
   UiAgentsNewRoute: UiAgentsNewRoute,
+  UiSchedulesScheduleIdRoute: UiSchedulesScheduleIdRoute,
+  UiSchedulesNewRoute: UiSchedulesNewRoute,
+  UiSchedulesNewsRoute: UiSchedulesNewsRoute,
   UiSessionsSessionIdRoute: UiSessionsSessionIdRoute,
   UiSettingsApprovalsRoute: UiSettingsApprovalsRoute,
   UiSettingsGeneralRoute: UiSettingsGeneralRoute,
   UiSettingsImprovementRoute: UiSettingsImprovementRoute,
+  UiSettingsSchedulesRoute: UiSettingsSchedulesRoute,
   UiSettingsToolsRoute: UiSettingsToolsRoute,
   UiTeamsDeletedRoute: UiTeamsDeletedRoute,
   UiAgentsIndexRoute: UiAgentsIndexRoute,
   UiChannelsIndexRoute: UiChannelsIndexRoute,
   UiRunsIndexRoute: UiRunsIndexRoute,
+  UiSchedulesIndexRoute: UiSchedulesIndexRoute,
   UiServersIndexRoute: UiServersIndexRoute,
   UiSessionsIndexRoute: UiSessionsIndexRoute,
   UiSettingsIndexRoute: UiSettingsIndexRoute,
   UiSkillsIndexRoute: UiSkillsIndexRoute,
   UiTeamsIndexRoute: UiTeamsIndexRoute,
+  UiSchedulesWatchersWatcherIdRoute: UiSchedulesWatchersWatcherIdRoute,
+  UiSchedulesWatchersNewRoute: UiSchedulesWatchersNewRoute,
 }
 
 const UiRouteWithChildren = UiRoute._addFileChildren(UiRouteChildren)

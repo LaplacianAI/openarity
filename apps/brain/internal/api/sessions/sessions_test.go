@@ -1391,3 +1391,33 @@ func TestBothListsCutALongMessage(t *testing.T) {
 }
 
 func (f *fixture) logs() string { return f.log.String() }
+
+// A schedule's or a watcher's own conversation names it, read alone and in
+// both lists; any other names neither.
+func TestATriggersOwnConversationNamesIt(t *testing.T) {
+	t.Parallel()
+
+	for _, which := range []string{"schedule_id", "watcher_id"} {
+		f := newFixture(t)
+		id := uuid.New()
+		if which == "schedule_id" {
+			f.store.sessions[0].ScheduleID = &id
+		} else {
+			f.store.sessions[0].WatcherID = &id
+		}
+		for _, path := range []string{f.session(), f.teamSessions(), f.channelSessions()} {
+			rec := f.get(t, path)
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"`+which+`":"`+id.String()+`"`) {
+				t.Errorf("%s: %d %s, want %s %s", path, rec.Code, rec.Body, which, id)
+			}
+		}
+	}
+
+	f := newFixture(t)
+	for _, path := range []string{f.session(), f.teamSessions(), f.channelSessions()} {
+		body := f.get(t, path).Body.String()
+		if strings.Contains(body, "schedule_id") || strings.Contains(body, "watcher_id") {
+			t.Errorf("%s: an ordinary conversation names a trigger: %s", path, body)
+		}
+	}
+}

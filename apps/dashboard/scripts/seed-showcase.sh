@@ -746,6 +746,26 @@ RUN_LIVE="$(start_run "runbook-writer in thread t-2004" runbook-writer \
 LIVE_STATUS="$(wait_until "$RUN_LIVE" running succeeded failed cancelled)"
 info "$RUN_LIVE: $LIVE_STATUS"
 
+# ------------------------------------------------- schedules and watchers
+
+step "schedules and watchers"
+oa_do schedules create "$TEAM" --name morning-brief --agent log-reader \
+	--objective "Read last night's alerts and say which still need a person, in three lines." \
+	--cron '0 9 * * 1-5' --tz Europe/London >/dev/null
+info "morning-brief (weekdays at 09:00, log-reader)"
+oa_do schedules create "$TEAM" --name weekly-changelog --agent changelog-digest \
+	--objective "Write the week's changelog from merged pull requests." --every 1w >/dev/null
+oa_do schedules pause "$TEAM" weekly-changelog >/dev/null
+info "weekly-changelog (every week, paused)"
+oa_do watchers create "$TEAM" --name status-page --source web_page \
+	--url https://www.githubstatus.com --selector '.page-status' --every 1h \
+	--objective "Say what changed on GitHub's status page, and whether our deploys are affected." >/dev/null
+info "status-page (a page watcher, every hour)"
+# Its secret is printed once; the showcase needs none, so it goes nowhere.
+oa_do watchers create "$TEAM" --name deploy-hook --source webhook \
+	--objective "Summarise the deploy that was just made." >/dev/null 2>&1
+info "deploy-hook (a webhook watcher)"
+
 # ---------------------------------------------------------------- summary
 
 step "summary"
@@ -756,6 +776,7 @@ info "team:          $TEAM"
 info "agents:        ops-lead (hub), log-reader, runbook-writer, release-captain, docs-scout, statuspage-sync, changelog-digest"
 info "mcp servers:   deepwiki (discovered unless the brain cannot reach it), statuspage (discovery failed), runbooks-fs (command)"
 info "skills:        incident-postmortem (uploaded)${IMPORTED_SKILL:+, $IMPORTED_SKILL (imported)}"
+info "schedules:     morning-brief, weekly-changelog (paused); watchers: status-page, deploy-hook"
 info "channels:      $CH1_NAME ($(count_sessions "$CH1_NAME") sessions), $CH2_NAME ($(count_sessions "$CH2_NAME") sessions)"
 info "pending:       u-erik, u-farah, u-gwen on $CH1_NAME; u-jonas, u-kemi on $CH2_NAME"
 info "deliveries:    $POSTED posted, $REFUSED not accepted"

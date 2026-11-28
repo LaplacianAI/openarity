@@ -32,6 +32,7 @@ import { RunSwitcher } from "@/components/run-switcher";
 import { useSessionStream } from "@/components/session-stream";
 import { ErrorState } from "@/components/states";
 import { StatusPill } from "@/components/status";
+import { TriggerStrip } from "@/components/trigger-strip";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -195,6 +196,8 @@ function SessionPage() {
         ) : session.isPending && teamId ? (
           <Skeleton className="h-4 w-64" />
         ) : null}
+        {/* Itself nothing on a conversation no schedule or watcher owns. */}
+        {s && teamId ? <TriggerStrip teamId={teamId} session={s} /> : null}
       </header>
 
       {!teamId ? (

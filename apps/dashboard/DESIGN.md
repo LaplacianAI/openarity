@@ -303,7 +303,7 @@ Quiet, compact, one filled button at most per view.
 ### Navigation
 - **Sidebar:** 36px rows, 14px Muted Slate text and a 16px icon, 8px radius. Hover lays the sheet at 60%. The current item becomes a small piece of sheet (Paper fill, inset sheet-edge ring, 500 Graphite text) with its icon in teal.
 - **Phone:** a bar fixed to the bottom holds Home, Runs, Approvals and More; More opens the rest of the list in a sheet that rises from the bottom, up to 85% of the screen's height.
-- **Groups:** Home stands alone with no label. Needs you holds the three queues that wait for a person (Sender approvals, Tool approvals, Improvements), each with its count. Then Work (Runs, Sessions), Build (Agents, Skills, MCP servers, Channels, Builder, Blueprint, Graph) and Team (Team settings, Teams, Deleted teams). Within a group, the screen used most comes first.
+- **Groups:** Home stands alone with no label. Needs you holds the four queues that wait for a person (Sender approvals, Tool approvals, Improvements, Scheduled), each with its count. Then Work (Runs, Sessions, Schedules), Build (Agents, Skills, MCP servers, Channels, Builder, Blueprint, Graph) and Team (Team settings, Teams, Deleted teams). Within a group, the screen used most comes first.
 - **A page's own pages** (Team settings): from 1024px a 160px list beside the page, held as it scrolls; its current item is a Stone fill and 500 Graphite text. From 768px the same links are a line of tabs. On a phone the list is a page of its own, each entry with what it decides, and each page has a breadcrumb back to it.
 - **Tabs (narrow screens):** a line of tabs over a rule; the current tab is Graphite with a 2px Graphite underline, the rest Muted Slate. A count sits in a small Stone pill.
 

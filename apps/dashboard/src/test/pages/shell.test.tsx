@@ -73,8 +73,8 @@ describe("the navigation on a wide screen", () => {
     // Home stands alone, first, with no group or heading of its own.
     expect(within(nav).getAllByRole("link")[0]).toHaveAccessibleName("Home");
     expect(groups).toEqual([
-      ["Needs you", ["Sender approvals", "Tool approvals", "Improvements"]],
-      ["Work", ["Runs", "Sessions"]],
+      ["Needs you", ["Sender approvals", "Tool approvals", "Improvements", "Scheduled"]],
+      ["Work", ["Runs", "Sessions", "Schedules"]],
       ["Build", ["Agents", "Skills", "MCP servers", "Channels", "Builder", "Blueprint", "Graph"]],
       ["Team", ["Team settings", "Teams"]],
     ]);

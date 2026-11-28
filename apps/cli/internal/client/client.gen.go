@@ -4860,8 +4860,13 @@ type Session struct {
 	// Slack direct message is `D01ABC`, WhatsApp is a phone number
 	// because there is nothing else, and a custom webhook sends whatever
 	// its own service calls an episode.
-	ProviderRef *string   `json:"provider_ref,omitempty" yaml:"provider_ref,omitempty"`
-	StartedAt   time.Time `json:"started_at" yaml:"started_at"`
+	ProviderRef *string `json:"provider_ref,omitempty" yaml:"provider_ref,omitempty"`
+
+	// ScheduleID The schedule whose own conversation this is: where it runs, and
+	// answers when it answers in its own conversation. Absent on any
+	// other conversation, including a chat a schedule posts in.
+	ScheduleID *openapi_types.UUID `json:"schedule_id,omitempty" yaml:"schedule_id,omitempty"`
+	StartedAt  time.Time           `json:"started_at" yaml:"started_at"`
 
 	// Status Always `open` today; nothing closes a session yet. It exists
 	// because a provider gives you identity and never episode — a thread
@@ -4876,6 +4881,9 @@ type Session struct {
 	// been deleted. That session is readable by `session:read_all` only:
 	// absent means nobody, never everybody.
 	UserID *openapi_types.UUID `json:"user_id,omitempty" yaml:"user_id,omitempty"`
+
+	// WatcherID The watcher whose own conversation this is; absent on any other.
+	WatcherID *openapi_types.UUID `json:"watcher_id,omitempty" yaml:"watcher_id,omitempty"`
 }
 
 // SessionKind How many people can speak, not what the provider calls the room.

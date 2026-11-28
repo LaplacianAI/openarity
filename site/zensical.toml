@@ -33,6 +33,7 @@ nav = [
     "docs/platform/whatsapp.md",
     "docs/platform/web.md",
     "docs/platform/workspaces.md",
+    "docs/platform/schedules.md",
     "docs/platform/dashboard.md",
   ] },
   { "Agent SDK" = [

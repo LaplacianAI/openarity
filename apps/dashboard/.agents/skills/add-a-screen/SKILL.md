@@ -49,9 +49,13 @@ change it with `Route.useNavigate()` and `search: (prev) => ({ ...prev, ...next
 ## Step 3 — the navigation entry
 
 Add an item inside `navGroups()` in `src/routes/ui.tsx`. Items are `{ to, label,
-icon, exact }`; the groups are Work (Home, Runs, Sessions, Approvals), Build
-(Agents, Skills, MCP servers, Channels), Understand (Graph) and Team (Team
-settings, Teams, Deleted teams for super admins). Choose the group by the job
+icon, exact }`. Home stands alone; then the groups are Needs you (Sender
+approvals, Tool approvals, Improvements, Scheduled: the queues that wait for a
+person, each with its count in `Badges`), Work (Runs, Sessions, Schedules),
+Build (Agents, Skills, MCP servers, Channels, Builder, Blueprint, Graph) and
+Team (Team settings, Teams, Deleted teams for super admins). A Needs you entry
+and a Work entry never share a path: the badge and the current item are found
+by path. Choose the group by the job
 the screen is for, not the noun it lists.
 
 That one edit also gives the screen to the phone's More list, the tablet rail

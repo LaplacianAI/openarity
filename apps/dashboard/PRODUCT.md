@@ -104,6 +104,10 @@ What the dashboard does today, and must keep doing through any redesign:
 - **Graph:** read the team's graph.
 - **Team settings:** the built-in hub's model and settings, and whether the
   team's agents improve themselves.
+- **Schedules and watchers:** make one that runs an agent at a time, on a
+  rule, or when a page, a feed or a webhook changes, and pick where it answers;
+  pause, resume, run now, change, delete and confirm one; read each fire or
+  look; see what one did under Needs you; set the team's limits.
 - **Improvements:** read the changes agents propose to their own harness, each
   with its reason, what it expects and the runs it came from; approve or
   reject one, and revert an applied one. Only an approver sees what waits,
@@ -197,6 +201,7 @@ not measurements.
 | Graph | tens to hundreds of nodes | How is the team wired? | Something in the team unreachable from the hub | Search the graph |
 | Team settings | one team | How does this team's built-in hub run? | No model set, so the hub cannot run | Set the model |
 | Improvements | 0–20 waiting | What do the agents want to change about themselves? | How many changes wait, and for how long | Approve or reject a change |
+| Schedules | 0–30 a person | Did my schedules and watchers do their job, and does one need me? | A fire that failed, was skipped or missed; a page that could not be read; a proposal waiting for a yes | Open what it did; confirm a proposal |
 | Teams | 1–10 teams, 1–20 members each | Who is in which team? | A team with no admin | Add a member |
 | Deleted teams | 0–5 | Which deleted teams can still come back, and until when? | The team closest to being purged | Restore a team |
 | Sign in | — | Get in | (none) | Sign in |

@@ -47,6 +47,18 @@ export const SCREENS = [
     followName,
     tabs: ["Runs"],
   })),
+  { name: "schedules", path: "/ui/schedules", tabs: ["Watchers"] },
+  { name: "schedules-news", path: "/ui/schedules/news" },
+  { name: "schedule-new", path: "/ui/schedules/new", open: "Its own conversation" },
+  { name: "watcher-new", path: "/ui/schedules/watchers/new" },
+  // By name: "New schedule" and "New watcher" link under the same paths and come first.
+  { name: "schedule", path: "/ui/schedules", follow: "/ui/schedules/", followName: "morning-brief" },
+  {
+    name: "watcher",
+    path: "/ui/schedules?view=watchers",
+    follow: "/ui/schedules/watchers/",
+    followName: "deploy-hook",
+  },
   { name: "agents", path: "/ui/agents" },
   { name: "agent-new", path: "/ui/agents/new" },
   // By name: "Define agent" links under the same path and comes first.
@@ -61,6 +73,7 @@ export const SCREENS = [
   { name: "settings-tools", path: "/ui/settings/tools" },
   { name: "settings-approvals", path: "/ui/settings/approvals" },
   { name: "settings-improvement", path: "/ui/settings/improvement" },
+  { name: "settings-schedules", path: "/ui/settings/schedules" },
   { name: "sign-in", path: "/ui/", signedOut: true },
   { name: "gallery", path: "/ui/_gallery", devOnly: true },
 ];

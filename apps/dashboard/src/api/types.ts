@@ -258,6 +258,10 @@ export type Session = {
   channel_id: string | null;
   /** A dashboard conversation the team's builder answers, rather than its hub. */
   builder?: boolean;
+  /** The schedule whose own conversation this is; absent on any other. */
+  schedule_id?: string;
+  /** The watcher whose own conversation this is; absent on any other. */
+  watcher_id?: string;
   provider_ref: string;
   kind: string;
   status: SessionStatus;
@@ -1353,3 +1357,217 @@ export type ImproverPass = {
 
 /** POST /teams/{id}/improvements/{proposalID}/decision */
 export type ImprovementDecision = { action: "approve" | "reject" | "revert" | "clear" };
+
+/* ------------------------------------------------- schedules and watchers */
+
+/** When a schedule fires: once, every so often, or on a cron rule. */
+export type ScheduleWhen = {
+  kind: "at" | "every" | "cron";
+  at?: string;
+  /** 60 to 2,678,400: a minute to 31 days. */
+  every_seconds?: number;
+  cron?: string;
+};
+
+export type ScheduleTargetKind = "own" | "chat" | "channel" | "direct";
+
+/** Where one answers, as the brain reads it back. */
+export type ScheduleTarget = { kind: ScheduleTargetKind; label?: string; channel_id?: string };
+
+/** A place as picked: opaque, sent back as `GET /schedule-targets` gave it. */
+export type ScheduleTargetPick = {
+  kind: ScheduleTargetKind;
+  session_id?: string;
+  channel_id?: string;
+  ref?: string;
+};
+
+/** What an agent asked of a schedule or watcher from a chat, waiting for its maker. */
+export type WaitingChange = { says: string; since: string };
+
+export type ScheduleStatus = "proposed" | "active" | "paused" | "done" | "deleted";
+export type PausedReason =
+  | "by_person"
+  | "failing"
+  | "maker_cannot_run"
+  | "maker_gone"
+  | "target_gone";
+
+/** GET /teams/{id}/schedules/{scheduleID} */
+export type Schedule = {
+  id: string;
+  name: string;
+  objective: string;
+  when: ScheduleWhen;
+  timezone: string;
+  agent_id?: string;
+  hub: boolean;
+  target: ScheduleTarget;
+  session_id: string;
+  status: ScheduleStatus;
+  paused_reason?: PausedReason;
+  next_fire_at?: string;
+  /** The next three times, or none once it will not fire again. */
+  upcoming: string[];
+  last_fired_at?: string;
+  last_outcome?: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  waiting_change?: WaitingChange;
+};
+
+export type CreateScheduleRequest = {
+  name: string;
+  objective: string;
+  when: ScheduleWhen;
+  timezone?: string;
+  agent_id?: string;
+  target?: ScheduleTargetPick;
+};
+
+export type UpdateScheduleRequest = {
+  name?: string;
+  objective?: string;
+  when?: ScheduleWhen;
+  timezone?: string;
+  agent_id?: string;
+  hub?: boolean;
+  status?: "active" | "paused";
+};
+
+export type ScheduleFireOutcome =
+  | "started"
+  | "late"
+  | "catch_up"
+  | "missed"
+  | "skipped_busy"
+  | "skipped_cap"
+  | "skipped_maker"
+  | "skipped_target"
+  | "silent"
+  | "answered"
+  | "failed"
+  | "cancelled";
+
+export type ScheduleFire = {
+  scheduled_for: string;
+  fired_at: string;
+  outcome: ScheduleFireOutcome;
+  run_id?: string;
+};
+
+/** POST /teams/{id}/schedules/preview */
+export type SchedulePreview = { timezone: string; upcoming: string[] };
+
+/** POST /teams/{id}/schedules/{scheduleID}/run */
+export type ScheduleRun = { run_id: string };
+
+export type WatcherSource = "web_page" | "feed" | "webhook";
+export type WatcherStatus = "proposed" | "waiting_secret" | "active" | "paused" | "deleted";
+
+/** GET /teams/{id}/watchers/{watcherID} */
+export type Watcher = {
+  id: string;
+  name: string;
+  objective: string;
+  source: WatcherSource;
+  url?: string;
+  selector?: string;
+  every_seconds?: number;
+  cooldown_seconds: number;
+  agent_id?: string;
+  hub: boolean;
+  target: ScheduleTarget;
+  session_id: string;
+  status: WatcherStatus;
+  paused_reason?: PausedReason;
+  next_check_at?: string;
+  last_check_at?: string;
+  last_run_at?: string;
+  last_outcome?: string;
+  /** A webhook watcher's address. */
+  hook_url?: string;
+  /** Only in the answer that made it: shown once. */
+  secret?: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  waiting_change?: WaitingChange;
+};
+
+export type CreateWatcherRequest = {
+  name: string;
+  objective: string;
+  source: WatcherSource;
+  url?: string;
+  selector?: string;
+  every_seconds?: number;
+  /** 0 to 604,800: none to 7 days; an hour when left out. */
+  cooldown_seconds?: number;
+  agent_id?: string;
+  target?: ScheduleTargetPick;
+};
+
+export type UpdateWatcherRequest = {
+  name?: string;
+  objective?: string;
+  /** Empty compares the whole page again. */
+  selector?: string;
+  every_seconds?: number;
+  cooldown_seconds?: number;
+  agent_id?: string;
+  hub?: boolean;
+  status?: "active" | "paused";
+};
+
+export type WatcherCheck = {
+  checked_at: string;
+  outcome: string;
+  detail?: string;
+  run_id?: string;
+};
+
+/** POST /teams/{id}/watchers/{watcherID}/secret: shown once. */
+export type WatcherSecret = { secret: string; url?: string };
+
+/** One place a schedule or watcher may answer, from GET /schedule-targets. */
+export type SchedulePlace = {
+  kind: "chat" | "channel" | "direct";
+  label: string;
+  detail: string;
+  channel: { id: string; name: string; provider: string };
+  at?: string;
+  available: boolean;
+  reason?: "needs_channel_write" | "not_in_channel";
+  target: ScheduleTargetPick;
+};
+
+export type SchedulePlacePage = Page<SchedulePlace> & {
+  problems: { channel_id: string; provider: string; message: string }[];
+};
+
+/** A fire or a check the caller has not seen. */
+export type ScheduledNewsItem = {
+  schedule_id?: string;
+  watcher_id?: string;
+  name: string;
+  session_id: string;
+  scheduled_for?: string;
+  fired_at: string;
+  outcome: string;
+  run_id?: string;
+};
+
+/** GET /teams/{id}/scheduled/news */
+export type ScheduledNews = { items: ScheduledNewsItem[]; count: number; more: boolean };
+
+/** GET and PUT /teams/{id}/schedule-settings */
+export type ScheduleSettings = {
+  agents_may_schedule: boolean;
+  timezone: string;
+  schedule_min_interval_minutes: number;
+  schedules_per_member: number;
+  schedules_per_team: number;
+  fires_per_hour: number;
+};
