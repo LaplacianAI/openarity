@@ -540,7 +540,8 @@ func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origi
 	}
 	if row.code == nil || !carriesCode(msg.Text, *row.code) {
 		return refuse(Forbidden, "the person's message does not carry this %s's code, so it is not their yes to it; "+
-			"ask them to reply with the code this tool gave, and do not confirm until they do", row.noun)
+			"the code is in this tool's answer when it was asked, and list gives it again, though a list counts as a read, so confirm "+
+			"only in the run their reply starts; ask them to reply with it, and do not confirm until they do", row.noun)
 	}
 	return nil
 }

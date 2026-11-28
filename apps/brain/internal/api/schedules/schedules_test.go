@@ -556,6 +556,15 @@ func TestAWaitingChangeIsShownAndConfirmedByItsMaker(t *testing.T) {
 	if strings.Contains(read.Body.String(), "4821") {
 		t.Errorf("the code reached the API: %s", read.Body)
 	}
+	var fields map[string]any
+	if err := json.Unmarshal(read.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	for k := range fields {
+		if strings.Contains(k, "code") {
+			t.Errorf("the API answers a field %q", k)
+		}
+	}
 	got := decode[schedule](t, read)
 	if got.WaitingChange == nil || got.WaitingChange.Says != "to change its objective" || got.Objective != s.Objective {
 		t.Fatalf("read back %+v waiting %+v: want it as it was, the change shown", got.Objective, got.WaitingChange)

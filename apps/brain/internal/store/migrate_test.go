@@ -1,6 +1,7 @@
 package store
 
 import (
+	"io/fs"
 	"testing"
 	"time"
 )
@@ -89,7 +90,13 @@ func TestMigrateDownThenUpAgain(t *testing.T) {
 func rollbackAll(t *testing.T, s *Store) {
 	t.Helper()
 
-	const maxMigrations = 100
+	// One rollback per migration there is: a fixed bound goes stale the day
+	// the stack outgrows it.
+	files, err := fs.Glob(migrationFS, "migrations/*.sql")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("list the migrations: %d, %v", len(files), err)
+	}
+	maxMigrations := len(files)
 	for range maxMigrations {
 		if err := s.Rollback(t.Context()); err != nil {
 			return // nothing left to roll back

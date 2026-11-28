@@ -262,7 +262,14 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     brain cannot tell a yes from a thanks, but nothing a run read can make
     the person type the code. Confirming on the dashboard needs no code.
     What is left is a model that tells the person to type the code without
-    saying what it confirms.
+    saying what it confirms, which the confirm-first rule keeps from being
+    text it read in that turn. A message that holds the code by chance (a
+    year, part of a number) confirms too: about one in ten thousand of the
+    four-digit numbers a person writes while something waits, and only what
+    they were asked to confirm in that conversation. Requiring "yes" beside
+    it would refuse a reply in another language. `list` gives the model
+    every waiting code, for a person who lost theirs; the model knew each
+    already, and only the person's own reply confirms.
   - **And it is sent after the run that asked finished, and confirmed before
     the run reads anything** (*user*, 2026-11-27). A message sent while the
     run worked did not answer what it said. A confirm comes before the run

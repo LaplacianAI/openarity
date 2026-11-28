@@ -260,7 +260,7 @@ func (s *Service) confirmable(ctx context.Context, t heldRun) error {
 	}
 	if read {
 		return refuse(Conflict, "a confirm comes before anything else in a turn, as what a tool read could be what says to confirm; "+
-			"ask the person to reply yes again, and confirm first")
+			"ask the person to reply with the code again, and confirm first in the run their reply starts")
 	}
 	return nil
 }

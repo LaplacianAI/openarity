@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/LaplacianAI/openarity/apps/brain/internal/store/db"
 )
 
 // A watcher that runs is asked of as a schedule is: a delete, a look now or
@@ -306,5 +308,65 @@ func TestAFailedActAfterTheTakeSaysToAskAgain(t *testing.T) {
 	}
 	if err := w.service.confirmedButNot(t.Context(), uuid.New(), nil, askRunNow); err != nil {
 		t.Errorf("nothing failed, yet %v", err)
+	}
+}
+
+// A yes from a run another person started confirms nothing, though it is in
+// the same conversation and carries the code.
+func TestAToolConfirmFromAnotherPersonsRunIsRefused(t *testing.T) {
+	w := newWorld(t)
+	c := w.chat(t)
+	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "create", "name": "summary", "objective": "Summarise.", "every": "1h"})
+	yes := w.yes(t, c)
+	w.exec(t, `UPDATE runs SET user_id = $2 WHERE id = $1`, yes.Run, w.other)
+	says(t, w.call(t, yes, ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}),
+		"Refused:", "only a message from the person it was proposed to confirms it")
+	var status string
+	w.scan(t, &status, `SELECT status FROM schedules WHERE team_id = $1 AND name = 'summary'`, w.team)
+	if status != Proposed {
+		t.Errorf("status %s, want it still proposed", status)
+	}
+}
+
+// A proposal made before codes has none, and no reply confirms it.
+func TestAProposalWithNoCodeIsNotConfirmedFromAChat(t *testing.T) {
+	w := newWorld(t)
+	c := w.chat(t)
+	w.call(t, c.origin, ScheduleToolName, map[string]any{"action": "create", "name": "summary", "objective": "Summarise.", "every": "1h"})
+	w.exec(t, `UPDATE schedules SET yes_code = NULL WHERE team_id = $1`, w.team)
+	says(t, w.call(t, w.say(t, c, "yes 1234"), ScheduleToolName, map[string]any{"action": "confirm", "ref": "summary"}),
+		"Refused:", "does not carry")
+}
+
+// Of a key given twice the last counts, as the record is read in SQL too: a
+// call that ends as a list is a read, and one that ends as a confirm is not.
+func TestAKeyGivenTwiceIsReadAsItsLast(t *testing.T) {
+	w := newWorld(t)
+	w.make(t, hourly("summary"))
+	c := w.chat(t)
+	o := w.yes(t, c)
+	r := w.runOf(o)
+	marked := false
+	r.ReadOutside, r.NoteRead = func() bool { return marked }, func() { marked = true }
+	tools, _, err := w.service.Tools(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tools[0].Invoke(t.Context(), []byte(`{"action":"confirm","action":"list"}`))
+	if err != nil || !marked || !strings.Contains(out, `"summary"`) {
+		t.Errorf("confirm then list = %q, %v, marked %v: want it read as a list", out, err, marked)
+	}
+	for payload, read := range map[string]bool{
+		`{"name":"schedule","arguments":"{\"action\":\"confirm\",\"action\":\"list\"}"}`: true,
+		`{"name":"schedule","arguments":"{\"action\":\"list\",\"action\":\"create\"}"}`:  false,
+	} {
+		run := w.yes(t, c).Run
+		w.exec(t, `INSERT INTO run_events (run_id, seq, kind, payload) VALUES ($1, 1, 'tool_call', $2::jsonb)`, run, payload)
+		called, err := w.service.store.RunCalledOtherThan(t.Context(), db.RunCalledOtherThanParams{
+			RunID: run, Quiet: []string{PlanToolName}, Acts: []string{ScheduleToolName, WatchToolName}, Actions: quietActions,
+		})
+		if err != nil || called != read {
+			t.Errorf("%s: read %v, %v; want %v", payload, called, err, read)
+		}
 	}
 }

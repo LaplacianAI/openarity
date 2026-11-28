@@ -7,11 +7,11 @@ import (
 )
 
 const (
-	// addDeliveryEvent is 20261213090000_add_delivery_event.sql, the one
-	// before pending changes.
-	addDeliveryEvent = 20261213090000
-	// addPendingChanges is 20261214090000_add_pending_changes.sql.
-	addPendingChanges = 20261214090000
+	// validateRunsWaitingFor is 20261214090100_validate_runs_waiting_for.sql,
+	// the one before pending changes.
+	validateRunsWaitingFor = 20261214090100
+	// addPendingChanges is 20261215090000_add_pending_changes.sql.
+	addPendingChanges = 20261215090000
 )
 
 // A proposal made before is proposed when it was made; an ask waits with
@@ -23,8 +23,8 @@ func TestPendingChangesBackfillCheckAndRollBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
-	if _, err := p.UpTo(t.Context(), addDeliveryEvent); err != nil {
-		t.Fatalf("UpTo(%d): %v", addDeliveryEvent, err)
+	if _, err := p.UpTo(t.Context(), validateRunsWaitingFor); err != nil {
+		t.Fatalf("UpTo(%d): %v", validateRunsWaitingFor, err)
 	}
 	team := scalar[uuid.UUID](t, s, `INSERT INTO teams (name) VALUES ('asked') RETURNING id`)
 	user := scalar[uuid.UUID](t, s, `INSERT INTO users (issuer, subject) VALUES ('https://id.test', 'maker') RETURNING id`)
@@ -64,13 +64,23 @@ func TestPendingChangesBackfillCheckAndRollBack(t *testing.T) {
 			t.Errorf("%s was stored", what)
 		}
 	}
+	for what, sql := range map[string]string{
+		"a watcher's ask with no time":    `UPDATE watchers SET pending = '{}', pending_run = gen_random_uuid(), yes_code = '1234' WHERE id = $1`,
+		"a watcher's ask with no run":     `UPDATE watchers SET pending = '{}', pending_at = now(), yes_code = '1234' WHERE id = $1`,
+		"a watcher's ask with no code":    `UPDATE watchers SET pending = '{}', pending_at = now(), pending_run = gen_random_uuid() WHERE id = $1`,
+		"a watcher proposal with no time": `UPDATE watchers SET status = 'proposed', proposed_in = '` + session.String() + `', proposed_at = NULL WHERE id = $1`,
+	} {
+		if _, err := s.pool.Exec(t.Context(), sql, waiting); err == nil {
+			t.Errorf("%s was stored", what)
+		}
+	}
 	if _, err := s.pool.Exec(t.Context(), `UPDATE schedules SET pending = '{}', pending_at = now(), pending_run = gen_random_uuid(), yes_code = '1234'
 		WHERE id = $1`, active); err != nil {
 		t.Errorf("a whole ask was refused: %v", err)
 	}
 
-	if _, err := p.DownTo(t.Context(), addDeliveryEvent); err != nil {
-		t.Fatalf("DownTo(%d): %v", addDeliveryEvent, err)
+	if _, err := p.DownTo(t.Context(), validateRunsWaitingFor); err != nil {
+		t.Fatalf("DownTo(%d): %v", validateRunsWaitingFor, err)
 	}
 	if scalar[bool](t, s, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
 		WHERE table_name IN ('schedules', 'watchers') AND column_name IN ('proposed_at', 'pending', 'yes_code'))`) {
