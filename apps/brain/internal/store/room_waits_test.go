@@ -152,6 +152,16 @@ func TestDueWaitsAndTheirBackoff(t *testing.T) {
 	if got := due(); len(got) != 0 {
 		t.Fatalf("a wait a minute from its try is due: %+v", got)
 	}
+	// Pushed a moment after the sweep that tried it, a wait is tried at the
+	// sweep its gap ends on.
+	exec(t, s, `UPDATE room_waits SET retry_at = now() + interval '30 seconds' WHERE id = '`+w.ID.String()+`'`)
+	if got := due(); len(got) != 0 {
+		t.Fatalf("a wait 30 seconds from its try is due: %+v", got)
+	}
+	exec(t, s, `UPDATE room_waits SET retry_at = now() + interval '3 seconds' WHERE id = '`+w.ID.String()+`'`)
+	if got := due(); len(got) != 1 {
+		t.Fatalf("a wait 3 seconds from its try is not due: %+v", got)
+	}
 	exec(t, s, `UPDATE room_waits SET retry_at = now() WHERE id = '`+w.ID.String()+`'`)
 	if got := due(); len(got) != 1 || got[0].GaveUp || got[0].SessionID != f.session || got[0].TeamID != f.team {
 		t.Fatalf("due = %+v", got)
@@ -161,7 +171,7 @@ func TestDueWaitsAndTheirBackoff(t *testing.T) {
 		t.Fatalf("an hour on = %+v, want given up", got)
 	}
 
-	if n, err := s.PushRoomWait(t.Context(), db.PushRoomWaitParams{ID: w.ID, MinSeconds: 60, MaxSeconds: 600}); err != nil || n != 1 {
+	if n, err := s.PushRoomWait(t.Context(), db.PushRoomWaitParams{ID: w.ID, MinSeconds: 60, MaxSeconds: 120}); err != nil || n != 1 {
 		t.Fatalf("PushRoomWait = %d, %v", n, err)
 	}
 	if got := due(); len(got) != 0 {
@@ -170,7 +180,7 @@ func TestDueWaitsAndTheirBackoff(t *testing.T) {
 	if n, err := s.EndTreeRoomWaits(t.Context(), db.EndTreeRoomWaitsParams{RootRunID: root, Ended: "superseded"}); err != nil || n != 1 {
 		t.Fatalf("EndTreeRoomWaits = %d, %v", n, err)
 	}
-	if n, err := s.PushRoomWait(t.Context(), db.PushRoomWaitParams{ID: w.ID, MinSeconds: 60, MaxSeconds: 600}); err != nil || n != 0 {
+	if n, err := s.PushRoomWait(t.Context(), db.PushRoomWaitParams{ID: w.ID, MinSeconds: 60, MaxSeconds: 120}); err != nil || n != 0 {
 		t.Fatalf("an ended wait was put off: %d, %v", n, err)
 	}
 }

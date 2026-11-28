@@ -20,12 +20,14 @@ RETURNING *;
 
 -- The waits whose time to try again has come, read without a lock: each is
 -- then ended or pushed back under its root's session. gave_up is a wait that
--- began at least give_up_seconds ago.
+-- began at least give_up_seconds ago. A wait due within 5 seconds counts as
+-- due: its retry_at is set after the room was tried, a moment past the sweep
+-- that tried it, so it would otherwise miss the sweep its gap ends on.
 -- name: ListDueRoomWaits :many
 SELECT id, team_id, session_id, root_run_id,
        (since <= now() - make_interval(secs => sqlc.arg(give_up_seconds)::float8))::bool AS gave_up
 FROM room_waits
-WHERE ended IS NULL AND retry_at <= now()
+WHERE ended IS NULL AND retry_at <= now() + interval '5 seconds'
 ORDER BY retry_at
 LIMIT sqlc.arg('batch');
 
