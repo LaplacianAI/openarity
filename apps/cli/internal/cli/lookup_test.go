@@ -210,3 +210,60 @@ func TestResolveDeletedTeamIgnoresALiveTeamAnsweredInstead(t *testing.T) {
 		t.Errorf("a live team answered for a deleted one: %v", err)
 	}
 }
+
+// A schedule's or a watcher's name is looked for past the first page, among
+// the caller's own or, with everyone, everyone's; a miss says which.
+func TestTheTriggerResolversLookWhereTheyAreAsked(t *testing.T) {
+	t.Parallel()
+
+	team := uuid.New()
+	want := uuid.New()
+	for _, kind := range []string{"schedule", "watcher"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+
+			var all atomic.Value
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /teams/{id}/"+kind+"s", func(w http.ResponseWriter, r *http.Request) {
+				all.Store(r.URL.Query().Get("all"))
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Query().Get("cursor") {
+				case "":
+					_, _ = w.Write([]byte(`{"items":[{"id":"` + uuid.NewString() + `","name":"first"}],"next_cursor":"p2"}`))
+				default:
+					_, _ = w.Write([]byte(`{"items":[{"id":"` + want.String() + `","name":"wanted"}]}`))
+				}
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			api, err := NewClient(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolve := map[string]func(string, bool) (uuid.UUID, error){
+				"schedule": func(ref string, everyone bool) (uuid.UUID, error) {
+					return ResolveSchedule(t.Context(), api, team, ref, everyone)
+				},
+				"watcher": func(ref string, everyone bool) (uuid.UUID, error) {
+					return ResolveWatcher(t.Context(), api, team, ref, everyone)
+				},
+			}[kind]
+
+			for _, everyone := range []bool{false, true} {
+				if got, err := resolve("wanted", everyone); err != nil || got != want {
+					t.Errorf("everyone=%v: %v, %v; want %v from the second page", everyone, got, err, want)
+				}
+				if got := all.Load(); got != map[bool]string{false: "false", true: "true"}[everyone] {
+					t.Errorf("everyone=%v asked all=%v", everyone, got)
+				}
+			}
+			if _, err := resolve("nobody", false); err == nil || !strings.Contains(err.Error(), "among yours") {
+				t.Errorf("a miss among one's own said: %v", err)
+			}
+			if _, err := resolve("nobody", true); err == nil || !strings.Contains(err.Error(), "in that team") ||
+				!strings.Contains(err.Error(), "list --all") {
+				t.Errorf("a miss among everyone's said: %v", err)
+			}
+		})
+	}
+}
