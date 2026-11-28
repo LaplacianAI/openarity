@@ -101,7 +101,8 @@ func newListCmd(opts *cli.Options) *cobra.Command {
   fails before the request when there is none.
 - **An argument that names a resource goes through a resolver, not a uuid
   parse.** `cli.ResolveTeam`, `ResolveDeletedTeam`, `ResolveMember`,
-  `ResolveChannel`, `ResolveSkill`, `ResolveAgent` and `ResolveMCPServer` take
+  `ResolveChannel`, `ResolveSkill`, `ResolveAgent`, `ResolveMCPServer`,
+  `ResolveSchedule` and `ResolveWatcher` take
   a name *or* an id and return an id — a uuid is used as given and never looked up, so a script
   passing ids pays nothing.
 

@@ -60,6 +60,23 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa runs get <team> <run>`     | Show a run: its status, input, answer, and what it spent of its token budget |
 | `oa runs list <team> <session>`| List the runs started in a conversation                  |
 | `oa runs cancel <team> <run>`  | Stop a run                                               |
+| `oa schedules list <team>`     | List your schedules, or everyone's with `--all`; `--status` for some; a row says what an agent asked of it, waiting for your yes |
+| `oa schedules get <team> <schedule>` | Show a schedule: its objective, when it runs and the next three times, its agent, and where it answers |
+| `oa schedules create <team>`   | Make a schedule: `--name`, `--objective` or `--objective-file` (`-` for stdin), one of `--at` (RFC 3339, or `YYYY-MM-DD HH:MM` in `--tz`), `--every` (`30m`, `1h`, `1d`, `1w`) or `--cron`, then `--tz`, `--agent` or `--hub`, and `--target` |
+| `oa schedules update <team> <schedule>` | Change its name, objective, time, zone or agent; what is not given stays |
+| `oa schedules pause\|resume <team> <schedule>` | Stop it firing, or start it again |
+| `oa schedules run <team> <schedule>` | Run it now, once, without moving its next time |
+| `oa schedules fires <team> <schedule>` | What each time it fired did |
+| `oa schedules confirm <team> <schedule>` | Confirm what an agent proposed or asked of it; in a chat you reply with its code instead |
+| `oa schedules take-over <team> <schedule>` | Take a paused one whose maker left or may no longer run it (`schedule:manage`) |
+| `oa schedules delete <team> <schedule>` | Delete it; its conversation and runs are kept |
+| `oa schedules places <team>`   | Where a schedule or watcher of yours may answer, each with the `--target` to pass, or why it cannot be picked; `--search`, `--kind` |
+| `oa schedules settings show\|set <team>` | The team's limits and whether agents may propose schedules: `--agents-may-schedule`, `--no-agents-may-schedule`, `--tz`, `--min-interval`, `--per-member`, `--per-team`, `--fires-per-hour` (`team:settings`) |
+| `oa watchers list\|get\|update\|pause\|resume\|delete\|confirm\|take-over <team> …` | As for schedules |
+| `oa watchers create <team>`    | Make a watcher: `--source web_page` (`--url`, `--selector`), `feed` (`--url`) or `webhook`; `--every`, `--cooldown`, and `--agent`, `--hub`, `--target` as for schedules. A webhook one prints its URL and secret, once |
+| `oa watchers run <team> <watcher>` | Have a page or feed watcher look now |
+| `oa watchers checks <team> <watcher>` | What each look or delivery found |
+| `oa watchers secret <team> <watcher>` | Make a webhook watcher a new secret; only its URL and the secret reach stdout, and the old one stops working |
 | `oa agents list <team>`        | List a team's agents                                     |
 | `oa agents get <team> <agent>` | Show an agent, with its instructions and its grants      |
 | `oa agents create <team> -f <file>` | Define an agent                                     |
@@ -90,8 +107,8 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 
 `list` accepts `ls`, `delete` and `remove` accept `rm`, and `mcp-servers` accepts `mcp`.
 
-Anywhere a command takes `<team>`, `<channel>`, `<user>`, `<agent>`, `<skill>`
-or `<server>`, a name works as well as an id. A uuid is used as given and never
+Anywhere a command takes `<team>`, `<channel>`, `<user>`, `<agent>`, `<skill>`,
+`<server>`, `<schedule>` or `<watcher>`, a name works as well as an id. A uuid is used as given and never
 looked up, so a script that passes ids pays nothing for the convenience.
 
 ## Flags on every command
