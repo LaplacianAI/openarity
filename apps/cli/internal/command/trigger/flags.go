@@ -55,6 +55,30 @@ func OptLength(flag, v string) (*int64, error) {
 	return &sec, nil
 }
 
+// maxCooldown is the brain's longest cooldown, 7 days.
+const maxCooldown = 7 * 24 * 60 * 60
+
+// OptCooldown reads --cooldown: a length, 0 for no hold at all, or nil
+// when it was left out and the brain's hour holds.
+func OptCooldown(v string) (*int64, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, nil
+	}
+	if d, err := lengthOf(v); err == nil && d == 0 {
+		var none int64
+		return &none, nil
+	}
+	sec, err := Length("cooldown", v)
+	if err != nil {
+		return nil, err
+	}
+	if sec > maxCooldown {
+		return nil, fmt.Errorf("--cooldown is at most %s, not %q", LengthSays(maxCooldown), v)
+	}
+	return &sec, nil
+}
+
 func lengthOf(v string) (time.Duration, error) {
 	for suffix, unit := range map[string]time.Duration{"d": 24 * time.Hour, "w": 7 * 24 * time.Hour} {
 		if n, ok := strings.CutSuffix(v, suffix); ok {
@@ -181,9 +205,9 @@ func atOf(v string, zoneOf func() (string, error)) (time.Time, error) {
 	return at, nil
 }
 
-// TeamZone is the team's zone, read from its schedule settings: what a wall
+// teamZone is the team's zone, read from its schedule settings: what a wall
 // time is read in when --tz is not given.
-func TeamZone(ctx context.Context, api *client.ClientWithResponses, team uuid.UUID) (string, error) {
+func teamZone(ctx context.Context, api *client.ClientWithResponses, team uuid.UUID) (string, error) {
 	s, err := cli.Result(api.GetScheduleSettingsWithResponse(ctx, team))
 	if err != nil {
 		return "", fmt.Errorf("read the team's zone: %w", err)
@@ -197,7 +221,7 @@ func ZoneOr(ctx context.Context, api *client.ClientWithResponses, team uuid.UUID
 		if zone != "" {
 			return zone, nil
 		}
-		return TeamZone(ctx, api, team)
+		return teamZone(ctx, api, team)
 	}
 }
 

@@ -215,7 +215,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if body.EverySeconds, err = trigger.OptLength("every", every); err != nil {
 				return err
 			}
-			if body.CooldownSeconds, err = trigger.OptLength("cooldown", cooldown); err != nil {
+			if body.CooldownSeconds, err = trigger.OptCooldown(cooldown); err != nil {
 				return err
 			}
 			api, err := opts.API(cmd.Context())
@@ -249,7 +249,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 	cmd.Flags().StringVar(&url, "url", "", "the page or feed it looks at")
 	cmd.Flags().StringVar(&selector, "selector", "", "a CSS selector: only what it matches on the page is compared")
 	cmd.Flags().StringVar(&every, "every", "", "how often it looks, such as 1h; the team's minimum unless given")
-	cmd.Flags().StringVar(&cooldown, "cooldown", "", "how long after a run a change waits, such as 1h")
+	cmd.Flags().StringVar(&cooldown, "cooldown", "", "how long after a run a change waits, such as 1h, up to 7d; 0 for none; an hour unless given")
 	agent.Bind(cmd)
 	cmd.Flags().StringVar(&target, "target", "", trigger.TargetHelp)
 	return cmd
@@ -293,7 +293,7 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			if body.EverySeconds, err = trigger.OptLength("every", every); err != nil {
 				return err
 			}
-			if body.CooldownSeconds, err = trigger.OptLength("cooldown", cooldown); err != nil {
+			if body.CooldownSeconds, err = trigger.OptCooldown(cooldown); err != nil {
 				return err
 			}
 			if agent.Hub {
@@ -319,7 +319,7 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	objective.Bind(cmd)
 	cmd.Flags().StringVar(&selector, "selector", "", "a new CSS selector; empty compares the whole page")
 	cmd.Flags().StringVar(&every, "every", "", "how often it looks")
-	cmd.Flags().StringVar(&cooldown, "cooldown", "", "how long after a run a change waits")
+	cmd.Flags().StringVar(&cooldown, "cooldown", "", "how long after a run a change waits, up to 7d; 0 for none")
 	agent.Bind(cmd)
 	return cmd
 }
@@ -548,7 +548,9 @@ func printWatcher(opts *cli.Options, w *client.Watcher, did string) error {
 				table.Row("url", cli.Safe(*w.HookURL), "")
 			}
 			if w.Secret != nil {
-				table.Row("secret", *w.Secret, "shown this once")
+				// Ours, not another's text, and printed as it is so it can be
+				// copied or piped exactly; that it is shown once goes to stderr.
+				table.Row("secret", *w.Secret, "")
 			}
 		},
 	})

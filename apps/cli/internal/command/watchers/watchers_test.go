@@ -72,6 +72,10 @@ func TestCreateSendsEachSourceAsItIs(t *testing.T) {
 		},
 		"a feed":    {[]string{"--source", "feed", "--url", "https://example.com/feed"}, `{"name":"prices","objective":"Tell me what moved.","source":"feed","url":"https://example.com/feed"}`},
 		"a webhook": {[]string{"--source", "webhook"}, `{"name":"prices","objective":"Tell me what moved.","source":"webhook"}`},
+		"a feed held for nothing": {
+			[]string{"--source", "feed", "--url", "https://example.com/feed", "--cooldown", "0"},
+			`{"cooldown_seconds":0,"name":"prices","objective":"Tell me what moved.","source":"feed","url":"https://example.com/feed"}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := clitest.Routes(t, routes(nil))
@@ -116,13 +120,13 @@ func TestAWebhooksSecretIsPrintedOnceAtCreate(t *testing.T) {
 		"POST /teams/{id}/watchers": {Status: http.StatusCreated, Body: watcher(`,"hook_url":"` + hookURL + `","secret":"` + secret + `"`)},
 	}))
 	stdout, stderr := run(t, "watchers", "create", "acme", "--name", "deploys", "--objective", "o", "--source", "webhook")
-	for _, w := range []string{hookURL, secret, "shown this once"} {
+	for _, w := range []string{hookURL, secret} {
 		if !strings.Contains(stdout, w) {
 			t.Errorf("no %q in:\n%s", w, stdout)
 		}
 	}
 	// What is said about it is not on stdout, which may be a file.
-	if !strings.Contains(stderr, "`oa watchers secret` makes a new one") || strings.Contains(stdout, "makes a new one") {
+	if !strings.Contains(stderr, "shown this once") || strings.Contains(stdout, "shown this once") {
 		t.Errorf("stdout = %q\nstderr = %q", stdout, stderr)
 	}
 }
@@ -162,11 +166,13 @@ func TestUpdateSendsOnlyWhatIsGiven(t *testing.T) {
 		args []string
 		want string
 	}{
-		"clear the selector": {[]string{"update", "acme", watcherID, "--selector", ""}, `{"selector":""}`},
-		"how often":          {[]string{"update", "acme", watcherID, "--every", "3h"}, `{"every_seconds":10800}`},
-		"the hub":            {[]string{"update", "acme", watcherID, "--hub"}, `{"hub":true}`},
-		"pause":              {[]string{"pause", "acme", watcherID}, `{"status":"paused"}`},
-		"resume":             {[]string{"resume", "acme", watcherID}, `{"status":"active"}`},
+		"clear the selector":   {[]string{"update", "acme", watcherID, "--selector", ""}, `{"selector":""}`},
+		"how often":            {[]string{"update", "acme", watcherID, "--every", "3h"}, `{"every_seconds":10800}`},
+		"the hub":              {[]string{"update", "acme", watcherID, "--hub"}, `{"hub":true}`},
+		"no cooldown":          {[]string{"update", "acme", watcherID, "--cooldown", "0"}, `{"cooldown_seconds":0}`},
+		"the longest cooldown": {[]string{"update", "acme", watcherID, "--cooldown", "7d"}, `{"cooldown_seconds":604800}`},
+		"pause":                {[]string{"pause", "acme", watcherID}, `{"status":"paused"}`},
+		"resume":               {[]string{"resume", "acme", watcherID}, `{"status":"active"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := clitest.Routes(t, routes(nil))
@@ -189,6 +195,7 @@ func TestAnUpdateIsReadBeforeAnythingIsAsked(t *testing.T) {
 		"an empty name":      {[]string{"--name", " "}, "--name is empty"},
 		"an empty objective": {[]string{"--every", "2h", "--objective", ""}, "the objective is empty"},
 		"part of a minute":   {[]string{"--cooldown", "90s"}, "whole minutes"},
+		"a cooldown past 7d": {[]string{"--cooldown", "8d"}, "--cooldown is at most 7d"},
 		"an agent and a hub": {[]string{"--agent", "triage", "--hub"}, "none of the others can be"},
 	} {
 		t.Run(name, func(t *testing.T) {

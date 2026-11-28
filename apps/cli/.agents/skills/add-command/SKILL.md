@@ -27,7 +27,11 @@ A new verb on an existing noun is one constructor plus one line in that noun's
 
 `internal/cli` is the whole surface. A command package imports it, `client`,
 `printer` and cobra — nothing else from this module. Needing something more is
-a signal to add it to `internal/cli`, not to reach around it.
+a signal to add it to `internal/cli`, not to reach around it. The one
+exception is code two sibling commands share that no other command needs:
+it goes in a package of its own under `internal/command` that is not a
+command, as `trigger` is for `schedules` and `watchers`, and never in one of
+the two, so neither imports the other.
 
 ## Step 1 — the parent
 

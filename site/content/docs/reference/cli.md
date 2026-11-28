@@ -73,7 +73,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa schedules places <team>`   | Where a schedule or watcher of yours may answer, each with the `--target` to pass, or why it cannot be picked; `--search`, `--kind` |
 | `oa schedules settings show\|set <team>` | The team's limits and whether agents may propose schedules: `--agents-may-schedule`, `--no-agents-may-schedule`, `--tz`, `--min-interval` (5m to 7d), `--per-member` (1 to 100), `--per-team` (1 to 1000, no fewer than per member), `--fires-per-hour` (1 to 1000) (`team:settings`) |
 | `oa watchers list\|get\|update\|pause\|resume\|delete\|confirm\|take-over <team> …` | As for schedules |
-| `oa watchers create <team>`    | Make a watcher: `--source web_page` (`--url`, `--selector`), `feed` (`--url`) or `webhook`; `--every`, `--cooldown`, and `--agent`, `--hub`, `--target` as for schedules. A webhook one prints its URL and secret, once |
+| `oa watchers create <team>`    | Make a watcher: `--source web_page` (`--url`, `--selector`), `feed` (`--url`) or `webhook`; `--every`, `--cooldown` (up to 7d, `0` for none, an hour unless given), and `--agent`, `--hub`, `--target` as for schedules. A webhook one prints its URL and secret, once |
 | `oa watchers run <team> <watcher>` | Have a page or feed watcher look now |
 | `oa watchers checks <team> <watcher>` | What each look or delivery found |
 | `oa watchers secret <team> <watcher>` | Make a webhook watcher a new secret; only its URL and the secret reach stdout, and the old one stops working |
