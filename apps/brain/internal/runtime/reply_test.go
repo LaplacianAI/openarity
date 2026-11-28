@@ -253,11 +253,11 @@ func TestATreeTellsItsPersonTenThingsAtMost(t *testing.T) {
 // What is sent is one message: trimmed, line breaks kept and no other
 // control character, counted in characters; nothing at all is refused.
 func TestAReplyIsCleanedAndCountedInCharacters(t *testing.T) {
-	if got, err := replyText("  tagged\x07 v0.4.0\nnotes‮ next   ", ""); err != nil || got != "tagged v0.4.0\nnotes next" {
+	if got, err := replyText("  tagged\x07 v0.4.0\nnotes\u202e next\u2028  ", ""); err != nil || got != "tagged v0.4.0\nnotes next" {
 		t.Errorf("replyText = %q, %v", got, err)
 	}
 	// A joiner is part of an emoji, and stays.
-	if got, _ := replyText("\U0001F469‍\U0001F4BB", ""); got != "\U0001F469‍\U0001F4BB" {
+	if got, _ := replyText("\U0001F469\u200d\U0001F4BB", ""); got != "\U0001F469\u200d\U0001F4BB" {
 		t.Errorf("an emoji became %q", got)
 	}
 	if _, err := replyText(strings.Repeat("é", maxReply), ""); err != nil {
