@@ -92,23 +92,24 @@ func DelegateTool(deps DelegateDeps, caller db.Agent, run db.Run, l Lineage) age
 			if err != nil {
 				return "", err
 			}
-			told := toldBy(ctx, deps.Store, child)
-			if child.Status == "waiting" {
-				return waitingReport(child, told), nil
-			}
-			return reportTold(child, reportEnd(), told), nil
+			return reportOf(ctx, deps.Store, child), nil
 		},
 	}
 }
 
-// toldBy is what a delegate told its person while it worked. Best effort: a
-// report without it is still the report, and the parent may only say it again.
-func toldBy(ctx context.Context, s DelegateStore, child db.Run) []string {
+// reportOf is what a delegate said, as its parent reads it: its report, or,
+// when it waits, what it waits for; either with what it told its person
+// while it worked. That read is best effort: a report without it is still the
+// report, and says it could not be read, so the parent knows it may repeat.
+func reportOf(ctx context.Context, s DelegateStore, child db.Run) string {
 	told, err := s.ListRunSaid(ctx, child.ID)
 	if err != nil {
-		return nil
+		told = []string{"(what it told them could not be read, so it may have told them some of this already)"}
 	}
-	return told
+	if child.Status == "waiting" {
+		return waitingReport(child, told)
+	}
+	return report(child, reportEnd(), told)
 }
 
 // waitingReport is a delegate that stopped for a person's answer, or for
@@ -119,11 +120,11 @@ func waitingReport(child db.Run, told []string) string {
 	if child.WaitingFor != nil && waitsFor(*child.WaitingFor) == waitsForRoom {
 		return fmt.Sprintf("%s is waiting for room in the team's sandbox and carries on once there is, "+
 			"or once it has waited an hour. Say in a line that it waits for the sandbox, then end your "+
-			"turn; its next report comes to you when it carries on.\n\n%s", child.AgentName, reportTold(child, reportEnd(), told))
+			"turn; its next report comes to you when it carries on.\n\n%s", child.AgentName, report(child, reportEnd(), told))
 	}
 	return fmt.Sprintf("%s is waiting for a person's approval and carries on once they answer. "+
 		"Tell them in your own words what it needs and why, then end your turn; its next report "+
-		"comes to you when it carries on.\n\n%s", child.AgentName, reportTold(child, reportEnd(), told))
+		"comes to you when it carries on.\n\n%s", child.AgentName, report(child, reportEnd(), told))
 }
 
 func parseDelegateArgs(raw json.RawMessage) (string, string, error) {

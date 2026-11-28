@@ -511,8 +511,8 @@ func TestADelegatesReportSaysWhatItToldThePerson(t *testing.T) {
 	}
 
 	f.store.saidErr = errors.New("connection reset")
-	if out, err := f.invoke(t, toBilling); err != nil || strings.Contains(out, "it told the person") ||
+	if out, err := f.invoke(t, toBilling); err != nil || !strings.Contains(out, "could not be read") ||
 		!strings.Contains(out, "refund re_118 issued") {
-		t.Errorf("with what it said unread: %q, %v; want the report alone", out, err)
+		t.Errorf("with what it said unread: %q, %v; want the report, saying it may have told them", out, err)
 	}
 }

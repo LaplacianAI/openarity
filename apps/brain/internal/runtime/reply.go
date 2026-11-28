@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -35,6 +36,15 @@ type ReplyStore interface {
 	InsertSaidReply(ctx context.Context, arg db.InsertSaidReplyParams) (int64, error)
 	CountSaidInTree(ctx context.Context, rootID uuid.UUID) (int64, error)
 }
+
+// saying holds a tree's count and its next said event together, so delegates
+// calling reply at once cannot both pass at nine. A tree runs in one process
+// (a delegate on its parent's tool call, a resumed one adopted by its root),
+// so a lock in the process is the tree's; trees share a stripe only by chance
+// of their id, and wait for each other's few milliseconds.
+var saying [64]sync.Mutex
+
+func sayingFor(root uuid.UUID) *sync.Mutex { return &saying[root[15]%byte(len(saying))] }
 
 // replying is the tool. toChannel is a tree answering a channel, whose words
 // are also a reply; a conversation read on its stream has the event alone.
@@ -69,14 +79,20 @@ func (r *replying) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return "", fmt.Errorf("the arguments are not what %s takes, a text: %w", ReplyToolName, err)
 	}
-	text, err := replyText(a.Text)
+	if r.store == nil {
+		return "", errors.New("nothing was sent: this run has no conversation to tell")
+	}
+	text, err := replyText(a.Text, r.prefix())
 	if err != nil {
 		return "", err
 	}
-	call := agent.ToolCallID(ctx)
-	if call == "" || len(call) > maxCallID {
-		return "", errors.New("this call has no id the reply can be kept by, so nothing was sent")
+	call, err := callOf(ctx)
+	if err != nil {
+		return "", fmt.Errorf("nothing was sent: %w", err)
 	}
+	mu := sayingFor(r.run.RootRunID)
+	mu.Lock()
+	defer mu.Unlock()
 	said, err := r.store.CountSaidInTree(ctx, r.run.RootRunID)
 	if err != nil {
 		return "", fmt.Errorf("nothing was sent: %w", err)
@@ -98,20 +114,26 @@ func (r *replying) invoke(ctx context.Context, raw json.RawMessage) (string, err
 	return "Sent. Carry on; your answer still comes at the end, without repeating this.", nil
 }
 
-// post queues what was said for the tree's channel and has it sent now. A
-// delegate's words are its own, so they carry its agent's name. None written
-// is a conversation that can no longer be posted to, which the model is told
-// rather than told it went.
-func (r *replying) post(ctx context.Context, seq int32, text string) error {
-	if r.run.ParentRunID != nil {
-		text = r.run.AgentName + ": " + text
+// prefix is what a delegate's words carry on a channel: its agent's name, as
+// they are its own. A root's carry nothing.
+func (r *replying) prefix() string {
+	if r.run.ParentRunID == nil || !r.toChannel {
+		return ""
 	}
-	n, err := r.store.InsertSaidReply(ctx, db.InsertSaidReplyParams{RunID: r.run.ID, EventSeq: seq, Text: text})
+	return r.run.AgentName + ": "
+}
+
+// post queues what was said for the tree's channel and has it sent now. The
+// said event is already written, so a post that fails leaves it in the run's
+// trace and counted, and the model is told it did not reach the person, not
+// to try again: the event stands as the record of what it meant to say.
+func (r *replying) post(ctx context.Context, seq int32, text string) error {
+	n, err := r.store.InsertSaidReply(ctx, db.InsertSaidReplyParams{RunID: r.run.ID, EventSeq: seq, Text: r.prefix() + text})
 	if err != nil {
-		return fmt.Errorf("nothing was sent: %w", err)
+		return fmt.Errorf("it did not reach the person; do not send it again, put it in your answer: %w", err)
 	}
 	if n == 0 {
-		return errors.New("nothing was sent: this conversation can no longer be posted to; say so in your answer")
+		return errors.New("it did not reach the person: this conversation can no longer be posted to; say so in your answer")
 	}
 	if r.kick != nil {
 		r.kick(seq)
@@ -120,49 +142,45 @@ func (r *replying) post(ctx context.Context, seq int32, text string) error {
 }
 
 // replyText is what a person is sent: line breaks kept, no other control
-// characters, and one message long.
-func replyText(s string) (string, error) {
+// characters, no marks that reorder the text around them, and one message
+// long with prefix. Joiners stay, as emoji are made of them.
+func replyText(s, prefix string) (string, error) {
 	s = strings.TrimSpace(strings.Map(func(r rune) rune {
-		if r == '\n' || !unicode.IsControl(r) && r != ' ' && r != ' ' {
-			return r
+		if r != '\n' && (unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Bidi_Control, r)) {
+			return -1
 		}
-		return -1
+		return r
 	}, s))
 	if s == "" {
 		return "", errors.New("there is nothing to send; say what to tell them")
 	}
-	if n := utf8.RuneCountInString(s); n > maxReply {
-		return "", fmt.Errorf("that is %d characters; one message is %d at most, so keep the rest for your answer", n, maxReply)
+	if most := maxReply - utf8.RuneCountInString(prefix); utf8.RuneCountInString(s) > most {
+		return "", fmt.Errorf("that is %d characters; one message is %d at most, so keep the rest for your answer",
+			utf8.RuneCountInString(s), most)
 	}
 	return s, nil
 }
 
-// Replies is what a run tells its person through: the store, and the
-// recorder writing what was said in turn with the run's own events. Without
-// it no run is given reply.
-type Replies struct {
-	Store ReplyStore
-}
-
 // WithReplies gives a run whose tree answers a person's message reply, on
-// the dashboard or a channel it can post to. A schedule's or a watcher's
-// never has it: nobody is waiting, and its answer is its one message.
-func (b *Builder) WithReplies(r Replies) *Builder {
-	b.replies = &r
+// the dashboard or a channel it can post to, through s. A schedule's or a
+// watcher's never has it: nobody is waiting, and its answer is its one
+// message. Without it no run is given reply.
+func (b *Builder) WithReplies(s ReplyStore) *Builder {
+	b.replies = s
 	return b
 }
 
 // replyFor is the tool for a run, when its tree answers a person: a
 // delegate's as its root's. A replay holds a stand-in wherever a run might,
-// as it has no conversation to ask.
+// as it has no conversation to ask; called, it says so and sends nothing.
 func (b *Builder) replyFor(ctx context.Context, run db.Run, l Lineage) (agent.Tool, bool, error) {
 	if b.replay {
 		return (&replying{run: run}).tool(), true, nil
 	}
-	if b.replies == nil || b.replies.Store == nil || b.noteSeq == nil {
+	if b.replies == nil || b.noteSeq == nil {
 		return agent.Tool{}, false, nil
 	}
-	reach, err := b.replies.Store.GetReplyReach(ctx, run.ID)
+	reach, err := b.replies.GetReplyReach(ctx, run.ID)
 	if err != nil {
 		return agent.Tool{}, false, fmt.Errorf("reading whether the run answers a person: %w", err)
 	}
@@ -170,7 +188,7 @@ func (b *Builder) replyFor(ctx context.Context, run db.Run, l Lineage) (agent.To
 		return agent.Tool{}, false, nil
 	}
 	r := &replying{
-		store: b.replies.Store, run: run, toChannel: !reach.Streamed,
+		store: b.replies, run: run, toChannel: !reach.Streamed,
 		note: func(ctx context.Context, kind string, p any) (int32, error) {
 			return b.noteSeq(ctx, run.ID, l.Worker, kind, p)
 		},

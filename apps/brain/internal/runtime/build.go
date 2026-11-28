@@ -86,7 +86,7 @@ type Builder struct {
 	// replies is how a run tells its person something mid-run (reply.go);
 	// without it no run is given reply. noteSeq writes what it said, as
 	// note does, and kickEvent has a channel's reply sent now.
-	replies   *Replies
+	replies   ReplyStore
 	noteSeq   func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) (int32, error)
 	kickEvent func(runID uuid.UUID, seq int32)
 	// scheduling hands a top-level run the schedule and watch tools

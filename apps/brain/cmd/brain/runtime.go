@@ -86,7 +86,7 @@ func newRunJob(
 		WithFileSends(runtime.FileSends{Store: dbStore, MaxFile: registry.MaxFile, Logger: logger}).
 		// A run answering a person's message tells them things as it works,
 		// on the dashboard or the channel; a schedule's or watcher's never.
-		WithReplies(runtime.Replies{Store: dbStore}).
+		WithReplies(dbStore).
 		WithBrowsers(newBrowsers(secretStore, d.searchHTTP, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)

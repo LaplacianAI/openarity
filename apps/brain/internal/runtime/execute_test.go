@@ -2175,7 +2175,7 @@ func TestARunTellsItsPersonSomethingAndCarriesOn(t *testing.T) {
 			)
 			f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil },
 				agent.Endpoint{BaseURL: "http://model.test"})
-			f.exec.builder.WithReplies(Replies{Store: f.store})
+			f.exec.builder.WithReplies(f.store)
 			steps := &stepKicks{}
 			f.exec.kickEvent = steps.kick
 			if onChannel {

@@ -15,12 +15,11 @@ const maxReport = 32 << 10
 
 var reportTag = regexp.MustCompile(`(?i)<(/?report)`)
 
-func report(child db.Run, end string) string { return reportTold(child, end, nil) }
-
-// reportTold is a delegate's report with what it told the person while it
-// worked, so the parent does not say it again. What was said is the child's
-// own words, so it goes inside the report, as data.
-func reportTold(child db.Run, end string, told []string) string {
+// report is a delegate's report, with what it told the person while it
+// worked (told), so the parent does not say it again. What was said is the
+// child's own words, so it goes inside the report, as data, after any cut so
+// a long answer never loses it; it is held to one cut of its own.
+func report(child db.Run, end string, told []string) string {
 	body := ""
 	switch {
 	case child.Output != nil:
@@ -28,17 +27,11 @@ func reportTold(child db.Run, end string, told []string) string {
 	case child.Error != nil:
 		body = *child.Error
 	}
+	body = cutReport(reportTag.ReplaceAllString(body, "&lt;$1"), child)
 	if len(told) > 0 {
-		body += "\n[it told the person while it worked, so do not tell them again:\n- " + strings.Join(told, "\n- ") + "]"
-	}
-
-	body = reportTag.ReplaceAllString(body, "&lt;$1")
-	if len(body) > maxReport {
-		cut := maxReport
-		for cut > 0 && !utf8.RuneStart(body[cut]) {
-			cut--
-		}
-		body = fmt.Sprintf("%s\n[the report was cut at 32 KiB; the whole answer is run %s]", body[:cut], child.ID)
+		said := reportTag.ReplaceAllString("[it told the person while it worked, so do not tell them again:\n- "+
+			strings.Join(told, "\n- ")+"]", "&lt;$1")
+		body += "\n" + cutReport(said, child)
 	}
 	// A run stopped at a limit kept what it had; say it is not a finished answer.
 	if child.Output != nil && child.Status != "succeeded" && child.Error != nil {
@@ -47,6 +40,18 @@ func reportTold(child db.Run, end string, told []string) string {
 
 	return fmt.Sprintf("<report agent=\"%s\" run=\"%s\" status=\"%s\" end=\"%s\">\n%s\n</report end=\"%s\">",
 		html.EscapeString(child.AgentName), child.ID, child.Status, end, body, end)
+}
+
+// cutReport is s held to maxReport, cut on a rune and saying where the rest is.
+func cutReport(s string, child db.Run) string {
+	if len(s) <= maxReport {
+		return s
+	}
+	cut := maxReport
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\n[the report was cut at 32 KiB; the whole answer is run %s]", s[:cut], child.ID)
 }
 
 func reportEnd() string {
