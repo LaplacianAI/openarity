@@ -1049,8 +1049,8 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   tried at its first read, since openaicompat reports a provider's answer
   there and not when the stream opens, and never after an event, which was
   already shown. After a 400, 422 or 500 the rest of that run sends none, so
-  the refusal is paid once a run, not once a step; a 502, 503 or 504 is a
-  gateway's and may pass, so only that request goes without. openai-go's own
+  the refusal is paid once a run, not once a step; any other 5xx (a
+  gateway's, a 529 overloaded) may pass, so only that request goes without. openai-go's own
   retries come first, so a 5xx is sent three times before it is tried bare.
   The model says the file could not be read rather than the run failing. If
   the try without files fails too, the first answer is the run's error. Not

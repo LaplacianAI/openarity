@@ -106,18 +106,18 @@ func (r *resolving) Stream(ctx context.Context, req agent.Request) (agent.Stream
 }
 
 // settle turns the run's files off after a refusal that a request without
-// them got past, unless the refusal was a gateway's, which the next request
-// may well not meet.
+// them got past: a bad request, or a 500, which is what a router that breaks
+// on a file answers. Any other 5xx is a gateway or an overloaded provider,
+// which the next request may well not meet.
 func (r *resolving) settle(refusal error) {
 	var answered *agent.ModelError
 	if !errors.As(refusal, &answered) {
 		return
 	}
 	switch answered.Status {
-	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return
+	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusInternalServerError:
+		r.filesOff.Store(true)
 	}
-	r.filesOff.Store(true)
 }
 
 // unsendable is a request whose files the provider would not take: refused as
@@ -140,9 +140,11 @@ type refusingStream struct {
 	req   agent.Request
 	files int
 	// first is the answer to the request with its files, once the stream
-	// went without them; seen, that an event was read.
+	// went without them; seen, that an event was read; tried, that it asked
+	// again, whether or not that opened.
 	first error
 	seen  bool
+	tried bool
 }
 
 func (s *refusingStream) Next() bool {
@@ -151,7 +153,7 @@ func (s *refusingStream) Next() bool {
 		return true
 	}
 	err := s.Stream.Err()
-	if s.first != nil || s.seen || !unsendable(err, s.files) {
+	if s.tried || s.seen || !unsendable(err, s.files) {
 		if s.first != nil && err == nil {
 			s.saw()
 		}
@@ -162,6 +164,7 @@ func (s *refusingStream) Next() bool {
 
 // reopen asks again without files, keeping the stream it has when it cannot.
 func (s *refusingStream) reopen(first error) bool {
+	s.tried = true
 	bare, _, err := s.r.resolve(s.ctx, s.req, false)
 	if err != nil {
 		return false

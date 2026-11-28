@@ -604,6 +604,8 @@ func TestAfterARefusalTheRunsLaterRequestsSendNoFiles(t *testing.T) {
 		{http.StatusBadGateway, false},
 		{http.StatusServiceUnavailable, false},
 		{http.StatusGatewayTimeout, false},
+		{529, false},
+		{522, false},
 	} {
 		for how, ask := range asks {
 			t.Run(fmt.Sprintf("%d, %s", tc.status, how), func(t *testing.T) {
@@ -817,11 +819,45 @@ func TestTheBrainsClientStreamsPastARouterThatBreaksOnAFile(t *testing.T) {
 			withFile++
 		}
 	}
+	// Three with the file: openai-go retries a 5xx twice itself before the
+	// stream reports it, which is why this test waits out its backoff.
 	if withFile != 3 || len(bodies) != 4 {
 		t.Errorf("%d requests, %d with the file; want openai-go's three tries, then one without", len(bodies), withFile)
 	}
 	last := bodies[len(bodies)-1]
 	if strings.Contains(last, "file_data") || !strings.Contains(last, "paper.pdf: not sent") {
 		t.Errorf("the request that answered: %s", last)
+	}
+}
+
+// A stream that could not be asked again without its files is not asked a
+// third time by a caller that reads on: it stays at the first refusal.
+func TestAStreamThatCouldNotGoWithoutItsFilesIsNotAskedAgain(t *testing.T) {
+	f := newResolveFixture(t)
+	req := asking(refTo(f.file("paper.pdf", "application/pdf", "%PDF")), refTo(f.file("notes.txt", "text/plain", "the notes")))
+	refusal := &agent.ModelError{Status: http.StatusBadRequest}
+	f.inner.filesErr = refusal
+
+	s, err := f.client.Stream(f.ctx(t), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.objects.err = errors.New("store down")
+	for range 2 {
+		if s.Next() {
+			t.Fatal("an event")
+		}
+	}
+	var refusedFiles *filesRefused
+	if err := s.Err(); !errors.As(err, &refusedFiles) || !errors.Is(err, refusal) {
+		t.Errorf("Err = %v, want the refusal", err)
+	}
+	if len(f.inner.sent) != 1 {
+		t.Errorf("%d requests, want the one refused", len(f.inner.sent))
+	}
+	// The PDF and the notes for the first request, the notes once for the
+	// try without files that failed, and nothing after.
+	if got := len(f.objects.asked()); got != 3 {
+		t.Errorf("%d reads of the store, want 3", got)
 	}
 }
