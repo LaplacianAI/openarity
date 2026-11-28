@@ -62,8 +62,8 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa runs cancel <team> <run>`  | Stop a run                                               |
 | `oa schedules list <team>`     | List your schedules, or everyone's with `--all`; `--status` for some; a row says what an agent asked of it, waiting for your yes |
 | `oa schedules get <team> <schedule>` | Show a schedule: its objective, when it runs and the next three times, its agent, and where it answers |
-| `oa schedules create <team>`   | Make a schedule: `--name`, `--objective` or `--objective-file` (`-` for stdin), one of `--at` (RFC 3339, or `YYYY-MM-DD HH:MM` in `--tz`), `--every` (`30m`, `1h`, `1d`, `1w`) or `--cron`, then `--tz`, `--agent` or `--hub`, and `--target` |
-| `oa schedules update <team> <schedule>` | Change its name, objective, time, zone or agent; what is not given stays |
+| `oa schedules create <team>`   | Make a schedule: `--name`, `--objective` or `--objective-file` (`-` for stdin, 4,000 characters at most), one of `--at` (RFC 3339, or `YYYY-MM-DD HH:MM` in `--tz`), `--every` (whole minutes: `30m`, `1h`, `1d`, `1w`) or `--cron`, then `--tz` (the team's zone unless given), `--agent` or `--hub`, and `--target`: `own` (the default), `chat:<session>`, `channel:<channel>:<ref>` or `direct:<channel>`, as `places` lists them |
+| `oa schedules update <team> <schedule>` | Change its name, objective, time, zone or agent; what is not given stays. A `YYYY-MM-DD HH:MM` `--at` is read in `--tz`, or the schedule's own zone |
 | `oa schedules pause\|resume <team> <schedule>` | Stop it firing, or start it again |
 | `oa schedules run <team> <schedule>` | Run it now, once, without moving its next time |
 | `oa schedules fires <team> <schedule>` | What each time it fired did |
@@ -71,7 +71,7 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 | `oa schedules take-over <team> <schedule>` | Take a paused one whose maker left or may no longer run it (`schedule:manage`) |
 | `oa schedules delete <team> <schedule>` | Delete it; its conversation and runs are kept |
 | `oa schedules places <team>`   | Where a schedule or watcher of yours may answer, each with the `--target` to pass, or why it cannot be picked; `--search`, `--kind` |
-| `oa schedules settings show\|set <team>` | The team's limits and whether agents may propose schedules: `--agents-may-schedule`, `--no-agents-may-schedule`, `--tz`, `--min-interval`, `--per-member`, `--per-team`, `--fires-per-hour` (`team:settings`) |
+| `oa schedules settings show\|set <team>` | The team's limits and whether agents may propose schedules: `--agents-may-schedule`, `--no-agents-may-schedule`, `--tz`, `--min-interval` (5m to 7d), `--per-member` (1 to 100), `--per-team` (1 to 1000, no fewer than per member), `--fires-per-hour` (1 to 1000) (`team:settings`) |
 | `oa watchers list\|get\|update\|pause\|resume\|delete\|confirm\|take-over <team> …` | As for schedules |
 | `oa watchers create <team>`    | Make a watcher: `--source web_page` (`--url`, `--selector`), `feed` (`--url`) or `webhook`; `--every`, `--cooldown`, and `--agent`, `--hub`, `--target` as for schedules. A webhook one prints its URL and secret, once |
 | `oa watchers run <team> <watcher>` | Have a page or feed watcher look now |
@@ -110,6 +110,9 @@ it finds the shared token already in your shell. Anywhere else, `oa login`.
 Anywhere a command takes `<team>`, `<channel>`, `<user>`, `<agent>`, `<skill>`,
 `<server>`, `<schedule>` or `<watcher>`, a name works as well as an id. A uuid is used as given and never
 looked up, so a script that passes ids pays nothing for the convenience.
+A `<schedule>` or `<watcher>` name is looked for among your own, or everyone's
+for `take-over` and with `--all`, which takes `schedule:manage`; two of a name
+among everyone's ask for the id.
 
 ## Flags on every command
 

@@ -13,16 +13,22 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
-	"github.com/LaplacianAI/openarity/apps/cli/internal/command/schedules"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/trigger"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 )
 
 const (
-	readPermission   = "schedule:read"
-	writePermission  = "schedule:write"
-	managePermission = "schedule:manage"
+	readPermission   = trigger.ReadPermission
+	writePermission  = trigger.WritePermission
+	managePermission = trigger.ManagePermission
+)
 
-	webhook = "webhook"
+// A watcher's source and status as the brain sends them back.
+const (
+	sourceFeed    = string(client.Feed)
+	sourceWebhook = string(client.Webhook)
+	statusPaused  = "paused"
+	statusActive  = "active"
 )
 
 func New(opts *cli.Options) *cobra.Command {
@@ -39,8 +45,8 @@ func New(opts *cli.Options) *cobra.Command {
 		newGetCmd(opts),
 		newCreateCmd(opts),
 		newUpdateCmd(opts),
-		newStatusCmd(opts, "pause", "Stop a watcher looking until it is resumed", "paused"),
-		newStatusCmd(opts, "resume", "Start a paused watcher looking again", "active"),
+		newStatusCmd(opts, "pause", "paused", "Stop a watcher looking until it is resumed", statusPaused),
+		newStatusCmd(opts, "resume", "resumed", "Start a paused watcher looking again", statusActive),
 		newDeleteCmd(opts),
 		newRunCmd(opts),
 		newChecksCmd(opts),
@@ -51,20 +57,9 @@ func New(opts *cli.Options) *cobra.Command {
 	return cmd
 }
 
+// one is the team and the watcher a command names.
 func one(ctx context.Context, opts *cli.Options, args []string, everyone bool) (*client.ClientWithResponses, uuid.UUID, uuid.UUID, error) {
-	api, err := opts.API(ctx)
-	if err != nil {
-		return nil, uuid.Nil, uuid.Nil, err
-	}
-	team, err := cli.ResolveTeam(ctx, api, args[0])
-	if err != nil {
-		return nil, uuid.Nil, uuid.Nil, err
-	}
-	id, err := cli.ResolveWatcher(ctx, api, team, args[1], everyone)
-	if err != nil {
-		return nil, uuid.Nil, uuid.Nil, err
-	}
-	return api, team, id, nil
+	return trigger.One(ctx, opts, args, cli.ResolveWatcher, everyone)
 }
 
 func newListCmd(opts *cli.Options) *cobra.Command {
@@ -117,7 +112,7 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 					if w.LastOutcome != nil {
 						last = cli.Safe(*w.LastOutcome)
 					}
-					where := schedules.WhereSays(w.Target)
+					where := trigger.WhereSays(w.Target)
 					if w.WaitingChange != nil {
 						where += opts.Styles.Muted.Render(" · waits: " + cli.Safe(w.WaitingChange.Says))
 					}
@@ -134,15 +129,15 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 
 // watchesSays is what a watcher looks at, and how often.
 func watchesSays(w client.Watcher) string {
-	if w.Source == webhook {
+	if w.Source == sourceWebhook {
 		return "its URL is called"
 	}
 	every := ""
 	if w.EverySeconds != nil {
-		every = ", every " + schedules.LengthSays(int64(*w.EverySeconds))
+		every = ", every " + trigger.LengthSays(int64(*w.EverySeconds))
 	}
 	what := "the page"
-	if w.Source == "feed" {
+	if w.Source == sourceFeed {
 		what = "the feed"
 	}
 	if w.URL != nil {
@@ -173,8 +168,8 @@ func newGetCmd(opts *cli.Options) *cobra.Command {
 func newCreateCmd(opts *cli.Options) *cobra.Command {
 	var (
 		name, source, url, selector, every, cooldown, target string
-		objective                                            schedules.ObjectiveFlags
-		agent                                                schedules.AgentFlags
+		objective                                            trigger.ObjectiveFlags
+		agent                                                trigger.AgentFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "create <team>",
@@ -183,7 +178,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    --source web_page --url https://example.com/prices --selector '#table' --every 2h",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			text, ok, err := objective.Read(cmd.InOrStdin())
+			text, ok, err := objective.Read(cmd)
 			if err != nil {
 				return err
 			}
@@ -193,17 +188,18 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if strings.TrimSpace(name) == "" {
 				return errors.New("name it with --name")
 			}
+			url = strings.TrimSpace(url)
 			body := client.CreateWatcherRequest{
 				Name: strings.TrimSpace(name), Objective: text,
 				Source: client.CreateWatcherRequestSource(source),
 			}
-			switch source {
-			case "web_page", "feed":
+			switch body.Source {
+			case client.WebPage, client.Feed:
 				if url == "" {
 					return fmt.Errorf("a %s watcher needs --url", source)
 				}
 				body.URL = &url
-			case webhook:
+			case client.Webhook:
 				if url != "" || selector != "" || every != "" {
 					return errors.New("a webhook watcher has no --url, --selector or --every: it runs when its own URL is called")
 				}
@@ -211,15 +207,15 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 				return fmt.Errorf("--source is web_page, feed or webhook, not %q", source)
 			}
 			if selector != "" {
-				if source != "web_page" {
+				if body.Source != client.WebPage {
 					return errors.New("--selector is for a web_page watcher")
 				}
 				body.Selector = &selector
 			}
-			if body.EverySeconds, err = optLength("every", every); err != nil {
+			if body.EverySeconds, err = trigger.OptLength("every", every); err != nil {
 				return err
 			}
-			if body.CooldownSeconds, err = optLength("cooldown", cooldown); err != nil {
+			if body.CooldownSeconds, err = trigger.OptLength("cooldown", cooldown); err != nil {
 				return err
 			}
 			api, err := opts.API(cmd.Context())
@@ -233,7 +229,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if body.AgentID, err = agent.ID(cmd.Context(), api, team); err != nil {
 				return err
 			}
-			if body.Target, err = schedules.Target(cmd.Context(), api, team, target); err != nil {
+			if body.Target, err = trigger.Target(cmd.Context(), api, team, target); err != nil {
 				return err
 			}
 			w, err := cli.Created(api.CreateWatcherWithResponse(cmd.Context(), team, body))
@@ -241,40 +237,29 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 				return cli.Needs(err, writePermission)
 			}
 			if w.Secret != nil {
-				opts.Out.Note("its secret is shown this once; `oa watchers secret` makes a new one")
+				// Not on stdout, which holds the secret and may be a file.
+				_, _ = fmt.Fprintln(opts.Stderr, "its secret is shown this once; `oa watchers secret` makes a new one")
 			}
 			return printWatcher(opts, w, "created")
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "a short name, unique among your own")
-	schedules.BindObjective(cmd, &objective)
+	objective.Bind(cmd)
 	cmd.Flags().StringVar(&source, "source", "", "web_page, feed or webhook")
 	cmd.Flags().StringVar(&url, "url", "", "the page or feed it looks at")
 	cmd.Flags().StringVar(&selector, "selector", "", "a CSS selector: only what it matches on the page is compared")
 	cmd.Flags().StringVar(&every, "every", "", "how often it looks, such as 1h; the team's minimum unless given")
 	cmd.Flags().StringVar(&cooldown, "cooldown", "", "how long after a run a change waits, such as 1h")
-	schedules.BindAgent(cmd, &agent)
-	cmd.Flags().StringVar(&target, "target", "",
-		"where it answers: own (the default), chat:<session>, channel:<channel>:<ref> or direct:<channel>")
+	agent.Bind(cmd)
+	cmd.Flags().StringVar(&target, "target", "", trigger.TargetHelp)
 	return cmd
-}
-
-func optLength(flag, v string) (*int64, error) {
-	if strings.TrimSpace(v) == "" {
-		return nil, nil
-	}
-	sec, err := schedules.Length(flag, v)
-	if err != nil {
-		return nil, err
-	}
-	return &sec, nil
 }
 
 func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	var (
 		name, selector, every, cooldown string
-		objective                       schedules.ObjectiveFlags
-		agent                           schedules.AgentFlags
+		objective                       trigger.ObjectiveFlags
+		agent                           trigger.AgentFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "update <team> <watcher>",
@@ -282,37 +267,46 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 		Long:  "What it watches and where it answers cannot change: delete it and make another.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			api, team, id, err := one(cmd.Context(), opts, args, false)
-			if err != nil {
-				return err
+			// What the flags say is read before anything is asked of the brain.
+			if !trigger.Changed(cmd, "name", "objective", "objective-file", "selector", "every", "cooldown", "agent", "hub") {
+				return errors.New("say what to change: --name, --objective, --selector, --every, --cooldown, --agent or --hub")
 			}
 			var body client.UpdateWatcherRequest
 			if cmd.Flags().Changed("name") {
-				body.Name = &name
+				n := strings.TrimSpace(name)
+				if n == "" {
+					return errors.New("--name is empty")
+				}
+				body.Name = &n
 			}
-			if text, ok, err := objective.Read(cmd.InOrStdin()); err != nil {
+			text, ok, err := objective.Read(cmd)
+			if err != nil {
 				return err
-			} else if ok {
+			}
+			if ok {
 				body.Objective = &text
 			}
 			// Empty clears it, so the whole page is compared again.
 			if cmd.Flags().Changed("selector") {
 				body.Selector = &selector
 			}
-			if body.EverySeconds, err = optLength("every", every); err != nil {
+			if body.EverySeconds, err = trigger.OptLength("every", every); err != nil {
 				return err
 			}
-			if body.CooldownSeconds, err = optLength("cooldown", cooldown); err != nil {
+			if body.CooldownSeconds, err = trigger.OptLength("cooldown", cooldown); err != nil {
 				return err
 			}
 			if agent.Hub {
 				hub := true
 				body.Hub = &hub
-			} else if body.AgentID, err = agent.ID(cmd.Context(), api, team); err != nil {
+			}
+
+			api, team, id, err := one(cmd.Context(), opts, args, false)
+			if err != nil {
 				return err
 			}
-			if body == (client.UpdateWatcherRequest{}) {
-				return errors.New("say what to change: --name, --objective, --selector, --every, --cooldown, --agent or --hub")
+			if body.AgentID, err = agent.ID(cmd.Context(), api, team); err != nil {
+				return err
 			}
 			w, err := cli.Result(api.UpdateWatcherWithResponse(cmd.Context(), team, id, body))
 			if err != nil {
@@ -322,15 +316,15 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "a new name")
-	schedules.BindObjective(cmd, &objective)
+	objective.Bind(cmd)
 	cmd.Flags().StringVar(&selector, "selector", "", "a new CSS selector; empty compares the whole page")
 	cmd.Flags().StringVar(&every, "every", "", "how often it looks")
 	cmd.Flags().StringVar(&cooldown, "cooldown", "", "how long after a run a change waits")
-	schedules.BindAgent(cmd, &agent)
+	agent.Bind(cmd)
 	return cmd
 }
 
-func newStatusCmd(opts *cli.Options, verb, short, status string) *cobra.Command {
+func newStatusCmd(opts *cli.Options, verb, did, short, status string) *cobra.Command {
 	return &cobra.Command{
 		Use:   verb + " <team> <watcher>",
 		Short: short,
@@ -345,7 +339,7 @@ func newStatusCmd(opts *cli.Options, verb, short, status string) *cobra.Command 
 			if err != nil {
 				return cli.Needs(err, writePermission)
 			}
-			return printWatcher(opts, w, verb+"d")
+			return printWatcher(opts, w, did)
 		},
 	}
 }
@@ -388,8 +382,11 @@ func newRunCmd(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return cli.Needs(err, writePermission)
 			}
+			if err := printWatcher(opts, w, "looking"); err != nil {
+				return err
+			}
 			opts.Out.Note("`oa watchers checks " + args[0] + " " + args[1] + "` shows what it found")
-			return printWatcher(opts, w, "looking")
+			return nil
 		},
 	}
 }
@@ -424,7 +421,7 @@ func newChecksCmd(opts *cli.Options) *cobra.Command {
 					if c.RunID != nil {
 						run = c.RunID.String()
 					}
-					table.Row(c.CheckedAt.UTC().Format("Mon 2 Jan 15:04 UTC"), cli.Safe(c.Outcome), detail, opts.Styles.Muted.Render(run))
+					table.Row(c.CheckedAt.UTC().Format(trigger.ShownTime+" UTC"), cli.Safe(c.Outcome), detail, opts.Styles.Muted.Render(run))
 				},
 			})
 		},
@@ -472,7 +469,7 @@ func newTakeOverCmd(opts *cli.Options) *cobra.Command {
 				return cli.Needs(err, managePermission)
 			}
 			if w.Secret != nil {
-				opts.Out.Note("its new secret is shown this once")
+				_, _ = fmt.Fprintln(opts.Stderr, "its new secret is shown this once")
 			}
 			return printWatcher(opts, w, "taken over")
 		},
@@ -500,7 +497,7 @@ func newSecretCmd(opts *cli.Options) *cobra.Command {
 			return opts.Out.Print(s, printer.Options{
 				Table: func(table *printer.Table) {
 					if s.URL != nil {
-						table.Row("url", *s.URL)
+						table.Row("url", cli.Safe(*s.URL))
 					}
 					table.Row("secret", s.Secret)
 				},
@@ -526,7 +523,7 @@ func printWatcher(opts *cli.Options, w *client.Watcher, did string) error {
 			if w.Selector != nil {
 				table.Row("selector", cli.Safe(*w.Selector), "")
 			}
-			table.Row("cooldown", schedules.LengthSays(int64(w.CooldownSeconds)), "after a run, before a change runs it again")
+			table.Row("cooldown", trigger.LengthSays(int64(w.CooldownSeconds)), "after a run, before a change runs it again")
 			for i, line := range cli.Lines(w.Objective) {
 				label := ""
 				if i == 0 {
@@ -540,7 +537,7 @@ func printWatcher(opts *cli.Options, w *client.Watcher, did string) error {
 			case w.AgentID != nil:
 				table.Row("agent", w.AgentID.String(), "")
 			}
-			table.Row("answers", schedules.WhereSays(w.Target), "")
+			table.Row("answers", trigger.WhereSays(w.Target), "")
 			if w.LastOutcome != nil {
 				table.Row("last", cli.Safe(*w.LastOutcome), "")
 			}
@@ -548,7 +545,7 @@ func printWatcher(opts *cli.Options, w *client.Watcher, did string) error {
 				table.Row("waits", "an agent asked "+cli.Safe(w.WaitingChange.Says), "")
 			}
 			if w.HookURL != nil {
-				table.Row("url", *w.HookURL, "")
+				table.Row("url", cli.Safe(*w.HookURL), "")
 			}
 			if w.Secret != nil {
 				table.Row("secret", *w.Secret, "shown this once")

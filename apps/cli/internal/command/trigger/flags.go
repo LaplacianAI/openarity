@@ -1,10 +1,11 @@
-package schedules
+package trigger
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -18,13 +19,12 @@ import (
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
 )
 
-// What the schedule and watcher commands share: how a time, a length, a
-// place, an agent and an objective are read from flags. The brain checks
-// each again; reading them here is so a mistake is said before anything is
-// sent, in the words of the flag that made it.
+// How a time, a length, a place, an agent and an objective are read from
+// flags. The brain checks each again; reading them here is so a mistake is
+// said before anything is sent, in the words of the flag that made it.
 
-// maxObjective is the brain's own cap on an objective, in characters.
-const maxObjective = 4000
+// MaxObjective is the brain's own cap on an objective, in characters.
+const MaxObjective = 4000
 
 // wallTime is how --at reads a time in a zone.
 const wallTime = "2006-01-02 15:04"
@@ -43,12 +43,28 @@ func Length(flag, v string) (int64, error) {
 	return int64(d / time.Second), nil
 }
 
+// OptLength is Length for a flag that may be left out: nil when it was.
+func OptLength(flag, v string) (*int64, error) {
+	if strings.TrimSpace(v) == "" {
+		return nil, nil
+	}
+	sec, err := Length(flag, v)
+	if err != nil {
+		return nil, err
+	}
+	return &sec, nil
+}
+
 func lengthOf(v string) (time.Duration, error) {
 	for suffix, unit := range map[string]time.Duration{"d": 24 * time.Hour, "w": 7 * 24 * time.Hour} {
 		if n, ok := strings.CutSuffix(v, suffix); ok {
-			k, err := strconv.Atoi(n)
+			k, err := strconv.ParseInt(n, 10, 64)
 			if err != nil {
 				return 0, err
+			}
+			// More days than a duration holds would wrap round.
+			if k < 0 || k > math.MaxInt64/int64(unit) {
+				return 0, errors.New("out of range")
 			}
 			return time.Duration(k) * unit, nil
 		}
@@ -59,14 +75,15 @@ func lengthOf(v string) (time.Duration, error) {
 // WhenFlags are --at, --every and --cron.
 type WhenFlags struct{ At, Every, Cron string }
 
-func (w *WhenFlags) bind(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&w.At, "at", "", "once, at this time: RFC 3339, or YYYY-MM-DD HH:MM in --tz")
+// Bind adds the three flags to cmd.
+func (w *WhenFlags) Bind(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&w.At, "at", "", "once, at this time: RFC 3339, or YYYY-MM-DD HH:MM read in --tz")
 	cmd.Flags().StringVar(&w.Every, "every", "", "repeatedly, this often: 30m, 1h, 1d or 1w")
 	cmd.Flags().StringVar(&w.Cron, "cron", "", "on a cron rule, five fields or @daily, read in --tz")
 }
 
-// given is how many of the three were set.
-func (w WhenFlags) given() int {
+// Given is how many of the three were set.
+func (w WhenFlags) Given() int {
 	n := 0
 	for _, v := range []string{w.At, w.Every, w.Cron} {
 		if strings.TrimSpace(v) != "" {
@@ -76,17 +93,36 @@ func (w WhenFlags) given() int {
 	return n
 }
 
+// Check is what When would refuse that needs no zone to know, so it can be
+// said before anything is asked of the brain.
+func (w WhenFlags) Check() error {
+	if w.Given() > 1 {
+		return errors.New("say when with one of --at, --every or --cron, not more")
+	}
+	if strings.TrimSpace(w.Every) != "" {
+		if _, err := Length("every", w.Every); err != nil {
+			return err
+		}
+	}
+	if v := strings.TrimSpace(w.At); v != "" {
+		if _, err := time.Parse(time.RFC3339, v); err != nil {
+			if _, err := naiveWall(v); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // When is the time the flags ask for, nil when they name none. A wall time is
 // read in zone, which zoneOf gives when it is needed and only then.
 func (w WhenFlags) When(zoneOf func() (string, error)) (*client.ScheduleWhen, error) {
-	switch w.given() {
-	case 0:
-		return nil, nil
-	case 1:
-	default:
-		return nil, errors.New("say when with one of --at, --every or --cron, not more")
+	if err := w.Check(); err != nil {
+		return nil, err
 	}
 	switch {
+	case w.Given() == 0:
+		return nil, nil
 	case strings.TrimSpace(w.Cron) != "":
 		rule := strings.TrimSpace(w.Cron)
 		return &client.ScheduleWhen{Kind: client.Cron, Cron: &rule}, nil
@@ -104,13 +140,29 @@ func (w WhenFlags) When(zoneOf func() (string, error)) (*client.ScheduleWhen, er
 	return &client.ScheduleWhen{Kind: client.At, At: &at}, nil
 }
 
+// naiveWall reads a wall time with no zone yet, to check its form.
+func naiveWall(v string) (time.Time, error) {
+	at, err := time.Parse(wallTime, v)
+	if err == nil {
+		return at, nil
+	}
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05"} {
+		if _, err := time.Parse(layout, v); err == nil {
+			return time.Time{}, fmt.Errorf("--at %q has no offset: add one, such as Z or +05:30, "+
+				"or write it YYYY-MM-DD HH:MM to read it in --tz", v)
+		}
+	}
+	return time.Time{}, fmt.Errorf("--at is RFC 3339 or YYYY-MM-DD HH:MM, not %q", v)
+}
+
 func atOf(v string, zoneOf func() (string, error)) (time.Time, error) {
 	v = strings.TrimSpace(v)
 	if at, err := time.Parse(time.RFC3339, v); err == nil {
 		return at, nil
 	}
-	if _, err := time.Parse(wallTime, v); err != nil {
-		return time.Time{}, fmt.Errorf("--at is RFC 3339 or YYYY-MM-DD HH:MM, not %q", v)
+	naive, err := naiveWall(v)
+	if err != nil {
+		return time.Time{}, err
 	}
 	zone, err := zoneOf()
 	if err != nil {
@@ -120,9 +172,11 @@ func atOf(v string, zoneOf func() (string, error)) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("the zone %q is not one this machine knows: %w", zone, err)
 	}
-	at, err := time.ParseInLocation(wallTime, v, loc)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("--at is RFC 3339 or YYYY-MM-DD HH:MM, not %q", v)
+	at := time.Date(naive.Year(), naive.Month(), naive.Day(), naive.Hour(), naive.Minute(), 0, 0, loc)
+	// A wall time the clocks skip is moved to another hour: refuse it rather
+	// than run at a time nobody asked for.
+	if at.Format(wallTime) != naive.Format(wallTime) {
+		return time.Time{}, fmt.Errorf("--at %q does not happen in %s: the clocks skip it", v, zone)
 	}
 	return at, nil
 }
@@ -135,6 +189,16 @@ func TeamZone(ctx context.Context, api *client.ClientWithResponses, team uuid.UU
 		return "", fmt.Errorf("read the team's zone: %w", err)
 	}
 	return s.Timezone, nil
+}
+
+// ZoneOr is what a wall time is read in: the zone given, or the team's.
+func ZoneOr(ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, zone string) func() (string, error) {
+	return func() (string, error) {
+		if zone != "" {
+			return zone, nil
+		}
+		return TeamZone(ctx, api, team)
+	}
 }
 
 // Target reads --target: own, chat:<session>, channel:<channel>:<ref> or
@@ -185,7 +249,8 @@ func Target(
 	return nil, bad
 }
 
-// PickSays is a place as --target takes it, for `places` to print.
+// PickSays is a place as --target takes it, for `places` to print. The ref
+// comes from the platform, so it is made safe like any text it sent.
 func PickSays(p client.ScheduleTargetPick) string {
 	switch p.Kind {
 	case client.ScheduleTargetPickKindChat:
@@ -194,7 +259,7 @@ func PickSays(p client.ScheduleTargetPick) string {
 		}
 	case client.ScheduleTargetPickKindChannel:
 		if p.ChannelID != nil && p.Ref != nil {
-			return "channel:" + p.ChannelID.String() + ":" + *p.Ref
+			return "channel:" + p.ChannelID.String() + ":" + cli.Safe(*p.Ref)
 		}
 	case client.ScheduleTargetPickKindDirect:
 		if p.ChannelID != nil {
@@ -212,7 +277,8 @@ type AgentFlags struct {
 	Hub   bool
 }
 
-func (a *AgentFlags) bind(cmd *cobra.Command) {
+// Bind adds --agent and --hub to cmd, as mutually exclusive.
+func (a *AgentFlags) Bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&a.Agent, "agent", "", "the agent that runs it, by name or id; the hub unless given")
 	cmd.Flags().BoolVar(&a.Hub, "hub", false, "the hub runs it")
 	cmd.MarkFlagsMutuallyExclusive("agent", "hub")
@@ -233,45 +299,69 @@ func (a AgentFlags) ID(ctx context.Context, api *client.ClientWithResponses, tea
 // ObjectiveFlags are --objective and --objective-file.
 type ObjectiveFlags struct{ Text, File string }
 
-func (o *ObjectiveFlags) bind(cmd *cobra.Command) {
+// Bind adds --objective and --objective-file to cmd, as mutually exclusive.
+func (o *ObjectiveFlags) Bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.Text, "objective", "", "what each run is to do: its whole instruction")
 	cmd.Flags().StringVar(&o.File, "objective-file", "", "read the objective from a file, or - for stdin")
 	cmd.MarkFlagsMutuallyExclusive("objective", "objective-file")
 }
 
-// Read is the objective given, and whether one was.
-func (o ObjectiveFlags) Read(stdin io.Reader) (string, bool, error) {
-	text := o.Text
+// readCap is the most read of a file or stdin: four bytes a character is
+// the most UTF-8 takes, and one more says there was more.
+const readCap = MaxObjective*utf8.UTFMax + 1
+
+// Read is the objective given to cmd, and whether one was. One given empty
+// is refused, not taken as left out.
+func (o ObjectiveFlags) Read(cmd *cobra.Command) (string, bool, error) {
+	var (
+		text = o.Text
+		b    []byte
+		err  error
+	)
 	switch {
 	case o.File == "-":
-		b, err := io.ReadAll(io.LimitReader(stdin, maxObjective*4+1))
-		if err != nil {
+		if b, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), readCap)); err != nil {
 			return "", false, fmt.Errorf("read the objective from stdin: %w", err)
 		}
 		text = string(b)
 	case o.File != "":
-		b, err := os.ReadFile(o.File)
-		if err != nil {
+		if b, err = readFile(o.File); err != nil {
 			return "", false, fmt.Errorf("read the objective: %w", err)
 		}
 		text = string(b)
-	case text == "":
+	case !cmd.Flags().Changed("objective"):
 		return "", false, nil
 	}
 	text = strings.TrimSpace(text)
 	switch {
+	case len(b) >= readCap:
+		return "", false, fmt.Errorf("the objective is over %d characters; the brain takes %d at most",
+			MaxObjective, MaxObjective)
 	case text == "":
 		return "", false, errors.New("the objective is empty")
-	case utf8.RuneCountInString(text) > maxObjective:
+	case utf8.RuneCountInString(text) > MaxObjective:
 		return "", false, fmt.Errorf("the objective is %d characters; the brain takes %d at most",
-			utf8.RuneCountInString(text), maxObjective)
+			utf8.RuneCountInString(text), MaxObjective)
 	}
 	return text, true, nil
 }
 
-// BindAgent adds --agent and --hub to a command, for watchers as for
-// schedules.
-func BindAgent(cmd *cobra.Command, a *AgentFlags) { a.bind(cmd) }
+// readFile is at most readCap bytes of path, so /dev/zero cannot fill memory.
+func readFile(path string) ([]byte, error) {
+	f, err := os.Open(path) //nolint:gosec // the person names their own file
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(io.LimitReader(f, readCap))
+}
 
-// BindObjective adds --objective and --objective-file to a command.
-func BindObjective(cmd *cobra.Command, o *ObjectiveFlags) { o.bind(cmd) }
+// Changed is whether any of names was given to cmd.
+func Changed(cmd *cobra.Command, names ...string) bool {
+	for _, n := range names {
+		if cmd.Flags().Changed(n) {
+			return true
+		}
+	}
+	return false
+}

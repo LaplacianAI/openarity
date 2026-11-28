@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata" // --tz and a team's zone load on a machine with no zone files
 
 	"github.com/spf13/cobra"
 

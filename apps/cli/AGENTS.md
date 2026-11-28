@@ -89,9 +89,10 @@ apps/cli/
     runs/              oa runs start|list|get|events|cancel — events is an SSE stream; get shows the judge's outcome and your feedback
     schedules/         oa schedules list|get|create|update|pause|resume|delete|run|fires|confirm|take-over|places|settings show|set —
                        --at/--every/--cron, --tz, --agent or --hub, --target own|chat:<session>|channel:<channel>:<ref>|direct:<channel>;
-                       flags.go is shared with watchers
     watchers/          oa watchers list|get|create|update|pause|resume|delete|run|checks|confirm|take-over|secret — --source
                        web_page|feed|webhook; a webhook's secret reaches stdout once, at create or from secret
+    trigger/           not a command: what schedules and watchers share — their permissions, finding the one named, and
+                       reading --at/--every/--cron, lengths, --target, --agent/--hub and the objective from flags
     users/             oa users list — who has logged in, and their id
     skills/            oa skills list|get|upload|replace|import|sync|cat|delete
     agents/            oa agents list|get|create|replace|delete — a file, grants by name

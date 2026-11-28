@@ -11,6 +11,7 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/clitest"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/trigger"
 )
 
 var commands = []clitest.Build{New}
@@ -163,19 +164,24 @@ func TestWhatTheFlagsCannotMeanIsRefusedAndNothingSent(t *testing.T) {
 		args []string
 		want string
 	}{
-		"part of a minute":   {[]string{"--every", "90s"}, "whole minutes"},
-		"not a length":       {[]string{"--every", "often"}, "a length such as"},
-		"two times":          {[]string{"--every", "1h", "--cron", "@daily"}, "not more"},
-		"no time":            {nil, "say when"},
-		"a bad wall time":    {[]string{"--at", "tomorrow"}, "RFC 3339 or YYYY-MM-DD HH:MM"},
-		"an agent and a hub": {[]string{"--every", "1h", "--agent", "triage", "--hub"}, "none of the others can be"},
-		"a bare channel":     {[]string{"--every", "1h", "--target", "channel:slack"}, "--target is own"},
-		"a channel, no ref":  {[]string{"--every", "1h", "--target", "channel:slack:"}, "--target is own"},
-		"a ref, no channel":  {[]string{"--every", "1h", "--target", "channel::C01"}, "--target is own"},
-		"a chat that is not": {[]string{"--every", "1h", "--target", "chat:yesterday"}, "--target is own"},
-		"a place unknown":    {[]string{"--every", "1h", "--target", "pigeon:home"}, "--target is own"},
-		"own with more":      {[]string{"--every", "1h", "--target", "own:x"}, "--target is own"},
-		"direct with a ref":  {[]string{"--every", "1h", "--target", "direct:slack:U1"}, "--target is own"},
+		"part of a minute":       {[]string{"--every", "90s"}, "whole minutes"},
+		"not a length":           {[]string{"--every", "often"}, "a length such as"},
+		"two times":              {[]string{"--every", "1h", "--cron", "@daily"}, "not more"},
+		"no time":                {nil, "say when"},
+		"a bad wall time":        {[]string{"--at", "tomorrow"}, "RFC 3339 or YYYY-MM-DD HH:MM"},
+		"an agent and a hub":     {[]string{"--every", "1h", "--agent", "triage", "--hub"}, "none of the others can be"},
+		"a bare channel":         {[]string{"--every", "1h", "--target", "channel:slack"}, "--target is own"},
+		"a channel, no ref":      {[]string{"--every", "1h", "--target", "channel:slack:"}, "--target is own"},
+		"a ref, no channel":      {[]string{"--every", "1h", "--target", "channel::C01"}, "--target is own"},
+		"a chat that is not":     {[]string{"--every", "1h", "--target", "chat:yesterday"}, "--target is own"},
+		"a place unknown":        {[]string{"--every", "1h", "--target", "pigeon:home"}, "--target is own"},
+		"own with more":          {[]string{"--every", "1h", "--target", "own:x"}, "--target is own"},
+		"direct with a ref":      {[]string{"--every", "1h", "--target", "direct:slack:U1"}, "--target is own"},
+		"days past a length":     {[]string{"--every", "8589934592d"}, "a length such as"},
+		"weeks past a length":    {[]string{"--every", "20000w"}, "a length such as"},
+		"a time with no offset":  {[]string{"--at", "2026-12-01T09:00"}, "has no offset"},
+		"a time the clocks skip": {[]string{"--at", "2026-03-29 01:30", "--tz", "Europe/London"}, "the clocks skip it"},
+		"an empty objective":     {[]string{"--every", "1h", "--objective", ""}, "the objective is empty"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := clitest.Routes(t, routes(nil))
@@ -229,7 +235,7 @@ func TestTheObjectiveIsReadFromAFileOrStdin(t *testing.T) {
 	}
 
 	long := filepath.Join(t.TempDir(), "long.md")
-	if err := os.WriteFile(long, []byte(strings.Repeat("é", maxObjective+1)), 0o600); err != nil {
+	if err := os.WriteFile(long, []byte(strings.Repeat("é", trigger.MaxObjective+1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	script = clitest.Routes(t, routes(nil))
@@ -264,7 +270,7 @@ func TestAScheduleIsNamedByNameOrID(t *testing.T) {
 	t.Run("a name nobody has", func(t *testing.T) {
 		clitest.Routes(t, routes(nil))
 		_, err := clitest.Execute(t, commands, "schedules", "get", "acme", "nightly")
-		if err == nil || !strings.Contains(err.Error(), `no schedule named "nightly"`) || !strings.Contains(err.Error(), "oa schedules list") {
+		if err == nil || !strings.Contains(err.Error(), `no schedule named "nightly" among yours`) || !strings.Contains(err.Error(), "oa schedules list") {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -308,10 +314,57 @@ func TestUpdatePauseAndResumeSendOnlyWhatIsGiven(t *testing.T) {
 			}
 		})
 	}
+}
+
+// What an update's flags cannot mean is refused before the brain is asked
+// anything, the schedule's name not even looked up.
+func TestAnUpdateIsReadBeforeAnythingIsAsked(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"nothing":            {nil, "say what to change"},
+		"an empty name":      {[]string{"--name", "  "}, "--name is empty"},
+		"an empty objective": {[]string{"--name", "daily", "--objective", ""}, "the objective is empty"},
+		"part of a minute":   {[]string{"--every", "90s"}, "whole minutes"},
+		"two times":          {[]string{"--every", "1h", "--cron", "@daily"}, "not more"},
+		"a bad wall time":    {[]string{"--at", "soon"}, "RFC 3339 or YYYY-MM-DD HH:MM"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := clitest.Routes(t, routes(nil))
+			_, err := clitest.Execute(t, commands, append([]string{"schedules", "update", "acme", "standup"}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to say %q", err, tc.want)
+			}
+			if calls := script.All(); len(calls) != 0 {
+				t.Errorf("the brain was asked %d times: %+v", len(calls), calls)
+			}
+		})
+	}
+	// A name is sent as it is trimmed, as create does.
 	script := clitest.Routes(t, routes(nil))
-	if _, err := clitest.Execute(t, commands, "schedules", "update", "acme", scheduleID); err == nil ||
-		!strings.Contains(err.Error(), "say what to change") || script.Calls(http.MethodPatch, schedulesPath+"/"+scheduleID) != 0 {
-		t.Errorf("an empty update: %v", err)
+	clitest.Seed(t, commands, "schedules", "update", "acme", scheduleID, "--name", " daily ")
+	if got := mustJSON(t, sent(t, script, http.MethodPatch, schedulesPath+"/"+scheduleID)); got != `{"name":"daily"}` {
+		t.Errorf("sent %s", got)
+	}
+}
+
+// An objective longer than the cap can hold is not read past it, and says so.
+func TestAnObjectiveFileIsReadNoFurtherThanTheCap(t *testing.T) {
+	huge := filepath.Join(t.TempDir(), "huge.md")
+	if err := os.WriteFile(huge, []byte(strings.Repeat("a", 1<<20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := clitest.Routes(t, routes(nil))
+	_, err := clitest.Execute(t, commands, "schedules", "create", "acme", "--name", "s", "--every", "1h", "--objective-file", huge)
+	if err == nil || !strings.Contains(err.Error(), "over 4000 characters") || script.Calls(http.MethodPost, schedulesPath) != 0 {
+		t.Errorf("a 1 MiB objective: %v", err)
+	}
+	script = clitest.Routes(t, routes(nil))
+	_, err = clitest.ExecuteWithStdin(t, commands, strings.Repeat("a", 1<<20), "schedules", "create", "acme", "--name", "s",
+		"--every", "1h", "--objective-file", "-")
+	if err == nil || !strings.Contains(err.Error(), "over 4000 characters") || script.Calls(http.MethodPost, schedulesPath) != 0 {
+		t.Errorf("a 1 MiB objective on stdin: %v", err)
 	}
 }
 
@@ -340,6 +393,22 @@ func TestPlacesGiveTheirTargetOrWhyNot(t *testing.T) {
 	}
 }
 
+// A ref is the platform's, so it cannot drive the terminal either.
+func TestAPlacesRefIsMadeSafe(t *testing.T) {
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/schedule-targets": {Status: http.StatusOK, Body: `{"items":[
+		  {"kind":"channel","label":"#releases","detail":"","channel":{"id":"` + channelID + `","name":"slack","provider":"slack"},
+		   "available":true,"target":{"kind":"channel","channel_id":"` + channelID + `","ref":"C1\u001b]0;pwned\u0007"}}]}`},
+	}))
+	out, err := clitest.Execute(t, commands, "schedules", "places", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(out, 0x1b) || strings.ContainsRune(out, 0x07) {
+		t.Errorf("an escape reached the terminal: %q", out)
+	}
+}
+
 // What a person or a page wrote cannot drive the terminal.
 func TestWhatOthersWroteIsMadeSafe(t *testing.T) {
 	evil := strings.ReplaceAll(schedule(scheduleID, `\u001b[2Jclear`), `"last_outcome"`, `"x"`)
@@ -353,6 +422,114 @@ func TestWhatOthersWroteIsMadeSafe(t *testing.T) {
 	}
 	if strings.ContainsRune(out, 0x1b) || strings.ContainsRune(out, 0x07) {
 		t.Errorf("an escape reached the terminal: %q", out)
+	}
+}
+
+// A value the brain names from a set it may grow is printed safe too, as one
+// this build has never seen.
+func TestAnUnknownValueIsMadeSafe(t *testing.T) {
+	odd := strings.NewReplacer(
+		`"status":"active"`, `"status":"\u001b[2J","paused_reason":"\u001b]0;a\u0007"`,
+		`"when":{"kind":"every","every_seconds":3600}`, `"when":{"kind":"\u001b[1m"}`,
+		`"target":{"kind":"own"}`, `"target":{"kind":"\u001b[4m"}`,
+	).Replace(schedule(scheduleID, "standup"))
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/schedules/{sid}": {Status: http.StatusOK, Body: odd},
+		"GET /teams/{id}/schedule-targets": {Status: http.StatusOK, Body: `{"items":[
+		  {"kind":"\u001b[5m","label":"x","detail":"","channel":{"id":"` + channelID + `","name":"slack","provider":"slack"},
+		   "available":false,"reason":"\u001b[6m","target":{"kind":"own"}}]}`},
+		"GET /teams/{id}/schedules/{sid}/fires": {Status: http.StatusOK, Body: `{"items":[{"scheduled_for":"2026-11-28T03:30:00Z","outcome":"\u001b[7m"}]}`},
+	}))
+	for _, args := range [][]string{
+		{"schedules", "get", "acme", scheduleID},
+		{"schedules", "places", "acme"},
+		{"schedules", "fires", "acme", scheduleID},
+	} {
+		out, err := clitest.Execute(t, commands, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.ContainsRune(out, 0x1b) || strings.ContainsRune(out, 0x07) {
+			t.Errorf("%s: an escape reached the terminal: %q", args[1], out)
+		}
+	}
+}
+
+const settingsPath = "/teams/" + teamID + "/schedule-settings"
+
+// A bool given false is given: it says no, rather than being dropped.
+func TestSettingsSetReadsABoolGivenFalse(t *testing.T) {
+	was := map[bool]string{
+		true:  settings,
+		false: strings.Replace(settings, `"agents_may_schedule":true`, `"agents_may_schedule":false`, 1),
+	}
+	for _, tc := range []struct {
+		was  bool
+		arg  string
+		want bool
+	}{
+		{true, "--agents-may-schedule=false", false},
+		{false, "--agents-may-schedule", true},
+		{false, "--agents-may-schedule=true", true},
+		{true, "--no-agents-may-schedule", false},
+		{false, "--no-agents-may-schedule=false", true},
+	} {
+		t.Run(tc.arg, func(t *testing.T) {
+			script := clitest.Routes(t, routes(map[string]clitest.Reply{
+				"GET /teams/{id}/schedule-settings": {Status: http.StatusOK, Body: was[tc.was]},
+				"PUT /teams/{id}/schedule-settings": {Status: http.StatusOK, Body: settings},
+			}))
+			clitest.Seed(t, commands, "schedules", "settings", "set", "acme", tc.arg)
+			if got := sent(t, script, http.MethodPut, settingsPath)["agents_may_schedule"]; got != tc.want {
+				t.Errorf("agents_may_schedule = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The brain's ranges are said before a save, and its edges are taken.
+func TestSettingsSetChecksTheBrainsRanges(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"an interval too short":   {[]string{"--min-interval", "4m"}, "between 5m and 7d"},
+		"an interval too long":    {[]string{"--min-interval", "8d"}, "between 5m and 7d"},
+		"nobody may have one":     {[]string{"--per-member", "0"}, "--per-member is between 1 and 100"},
+		"too many for one":        {[]string{"--per-member", "101"}, "--per-member is between 1 and 100"},
+		"too many for a team":     {[]string{"--per-team", "1001"}, "--per-team is between 1 and 1000"},
+		"no fires":                {[]string{"--fires-per-hour", "0"}, "--fires-per-hour is between 1 and 1000"},
+		"too many fires":          {[]string{"--fires-per-hour", "1001"}, "--fires-per-hour is between 1 and 1000"},
+		"a team below one person": {[]string{"--per-team", "4"}, "fewer than the 5 one person may"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := clitest.Routes(t, routes(nil))
+			_, err := clitest.Execute(t, commands, append([]string{"schedules", "settings", "set", "acme"}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to say %q", err, tc.want)
+			}
+			if n := script.Calls(http.MethodPut, settingsPath); n != 0 {
+				t.Errorf("%d saves", n)
+			}
+		})
+	}
+	script := clitest.Routes(t, routes(map[string]clitest.Reply{
+		"PUT /teams/{id}/schedule-settings": {Status: http.StatusOK, Body: settings},
+	}))
+	clitest.Seed(t, commands, "schedules", "settings", "set", "acme", "--min-interval", "7d", "--per-member", "100",
+		"--per-team", "1000", "--fires-per-hour", "1000")
+	want := `{"agents_may_schedule":true,"fires_per_hour":1000,"schedule_min_interval_minutes":10080,"schedules_per_member":100,` +
+		`"schedules_per_team":1000,"timezone":"Asia/Kolkata"}`
+	if got := mustJSON(t, sent(t, script, http.MethodPut, settingsPath)); got != want {
+		t.Errorf("the highest of each: sent %s", got)
+	}
+	script = clitest.Routes(t, routes(map[string]clitest.Reply{
+		"PUT /teams/{id}/schedule-settings": {Status: http.StatusOK, Body: settings},
+	}))
+	clitest.Seed(t, commands, "schedules", "settings", "set", "acme", "--min-interval", "5m", "--per-member", "1",
+		"--per-team", "1", "--fires-per-hour", "1")
+	if got := sent(t, script, http.MethodPut, settingsPath)["schedule_min_interval_minutes"]; got != float64(5) {
+		t.Errorf("the lowest interval: sent %v", got)
 	}
 }
 

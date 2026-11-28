@@ -286,7 +286,7 @@ func ResolveMCPServer(
 func ResolveSchedule(
 	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string, everyone bool,
 ) (uuid.UUID, error) {
-	return onlyNamed(ctx, ref, "schedule", "oa schedules list"+allFlag(everyone),
+	return onlyNamed(ctx, ref, "schedule", "oa schedules list"+allFlag(everyone), whose(everyone),
 		func(ctx context.Context, limit int32, cursor *string) ([]client.Schedule, *string, error) {
 			page, err := Result(api.ListSchedulesWithResponse(ctx, team,
 				&client.ListSchedulesParams{Limit: &limit, Cursor: cursor, All: &everyone}))
@@ -303,7 +303,7 @@ func ResolveSchedule(
 func ResolveWatcher(
 	ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, ref string, everyone bool,
 ) (uuid.UUID, error) {
-	return onlyNamed(ctx, ref, "watcher", "oa watchers list"+allFlag(everyone),
+	return onlyNamed(ctx, ref, "watcher", "oa watchers list"+allFlag(everyone), whose(everyone),
 		func(ctx context.Context, limit int32, cursor *string) ([]client.Watcher, *string, error) {
 			page, err := Result(api.ListWatchersWithResponse(ctx, team,
 				&client.ListWatchersParams{Limit: &limit, Cursor: cursor, All: &everyone}))
@@ -323,10 +323,18 @@ func allFlag(everyone bool) string {
 	return ""
 }
 
+// whose is where a name was looked for: only the caller's own, or everyone's.
+func whose(everyone bool) string {
+	if everyone {
+		return "in that team"
+	}
+	return "among yours"
+}
+
 // onlyNamed is byName for a list that may hold one name twice: it reads every
 // page, and two matches are an error rather than the first.
 func onlyNamed[T any](
-	ctx context.Context, ref, kind, hint string,
+	ctx context.Context, ref, kind, hint, where string,
 	list func(ctx context.Context, limit int32, cursor *string) ([]T, *string, error),
 	name func(T) string, id func(T) uuid.UUID,
 ) (uuid.UUID, error) {
@@ -353,7 +361,7 @@ func onlyNamed[T any](
 		if next == nil {
 			switch len(found) {
 			case 0:
-				return uuid.Nil, fmt.Errorf("no %s named %q in that team — `%s` shows them", kind, ref, hint)
+				return uuid.Nil, fmt.Errorf("no %s named %q %s — `%s` shows them", kind, ref, where, hint)
 			case 1:
 				return found[0], nil
 			}

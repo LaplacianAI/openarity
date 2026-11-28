@@ -93,6 +93,8 @@ func TestWhatASourceCannotTakeIsRefusedAndNothingSent(t *testing.T) {
 		"a webhook's url":    {[]string{"--source", "webhook", "--url", "https://x.example"}, "a webhook watcher has no --url"},
 		"a feed's selector":  {[]string{"--source", "feed", "--url", "https://x.example/f", "--selector", "p"}, "for a web_page watcher"},
 		"a short look":       {[]string{"--source", "feed", "--url", "https://x.example/f", "--every", "30s"}, "whole minutes"},
+		"a url of spaces":    {[]string{"--source", "feed", "--url", "  "}, "needs --url"},
+		"a source unknown":   {[]string{"--source", "rss", "--url", "https://x.example/f"}, "--source is web_page, feed or webhook"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			script := clitest.Routes(t, routes(nil))
@@ -113,15 +115,30 @@ func TestAWebhooksSecretIsPrintedOnceAtCreate(t *testing.T) {
 	clitest.Routes(t, routes(map[string]clitest.Reply{
 		"POST /teams/{id}/watchers": {Status: http.StatusCreated, Body: watcher(`,"hook_url":"` + hookURL + `","secret":"` + secret + `"`)},
 	}))
-	out, err := clitest.Execute(t, commands, "watchers", "create", "acme", "--name", "deploys", "--objective", "o", "--source", "webhook")
-	if err != nil {
-		t.Fatal(err)
-	}
+	stdout, stderr := run(t, "watchers", "create", "acme", "--name", "deploys", "--objective", "o", "--source", "webhook")
 	for _, w := range []string{hookURL, secret, "shown this once"} {
-		if !strings.Contains(out, w) {
-			t.Errorf("no %q in:\n%s", w, out)
+		if !strings.Contains(stdout, w) {
+			t.Errorf("no %q in:\n%s", w, stdout)
 		}
 	}
+	// What is said about it is not on stdout, which may be a file.
+	if !strings.Contains(stderr, "`oa watchers secret` makes a new one") || strings.Contains(stdout, "makes a new one") {
+		t.Errorf("stdout = %q\nstderr = %q", stdout, stderr)
+	}
+}
+
+// run is the command with stdout and stderr apart.
+func run(t *testing.T, args ...string) (string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	root := cli.NewRoot(&stdout, &stderr, func(opts *cli.Options) []*cobra.Command { return []*cobra.Command{New(opts)} })
+	root.SetArgs(args)
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return stdout.String(), stderr.String()
 }
 
 // A new secret goes to stdout and nothing else does, so it can be piped to a
@@ -130,20 +147,13 @@ func TestANewSecretIsAllThatReachesStdout(t *testing.T) {
 	clitest.Routes(t, routes(map[string]clitest.Reply{
 		"POST /teams/{id}/watchers/{wid}/secret": {Status: http.StatusCreated, Body: `{"secret":"` + secret + `","url":"` + hookURL + `"}`},
 	}))
-	var stdout, stderr bytes.Buffer
-	root := cli.NewRoot(&stdout, &stderr, func(opts *cli.Options) []*cobra.Command { return []*cobra.Command{New(opts)} })
-	root.SetArgs([]string{"watchers", "secret", "acme", watcherID})
-	root.SetOut(&stdout)
-	root.SetErr(&stderr)
-	if err := root.ExecuteContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Fields(stdout.String())
+	stdout, stderr := run(t, "watchers", "secret", "acme", watcherID)
+	got := strings.Fields(stdout)
 	if want := []string{"url", hookURL, "secret", secret}; strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Errorf("stdout = %q, want only the url and the secret", stdout.String())
+		t.Errorf("stdout = %q, want only the url and the secret", stdout)
 	}
-	if !strings.Contains(stderr.String(), "the old one no longer works") || strings.Contains(stderr.String(), secret) {
-		t.Errorf("stderr = %q", stderr.String())
+	if !strings.Contains(stderr, "the old one no longer works") || strings.Contains(stderr, secret) {
+		t.Errorf("stderr = %q", stderr)
 	}
 }
 
@@ -166,10 +176,31 @@ func TestUpdateSendsOnlyWhatIsGiven(t *testing.T) {
 			}
 		})
 	}
-	script := clitest.Routes(t, routes(nil))
-	if _, err := clitest.Execute(t, commands, "watchers", "update", "acme", watcherID); err == nil ||
-		script.Calls(http.MethodPatch, watchersPath+"/"+watcherID) != 0 {
-		t.Errorf("an empty update: %v", err)
+}
+
+// What an update's flags cannot mean is refused before the brain is asked
+// anything, the watcher's name not even looked up.
+func TestAnUpdateIsReadBeforeAnythingIsAsked(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"nothing":            {nil, "say what to change"},
+		"an empty name":      {[]string{"--name", " "}, "--name is empty"},
+		"an empty objective": {[]string{"--every", "2h", "--objective", ""}, "the objective is empty"},
+		"part of a minute":   {[]string{"--cooldown", "90s"}, "whole minutes"},
+		"an agent and a hub": {[]string{"--agent", "triage", "--hub"}, "none of the others can be"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script := clitest.Routes(t, routes(nil))
+			_, err := clitest.Execute(t, commands, append([]string{"watchers", "update", "acme", "prices"}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to say %q", err, tc.want)
+			}
+			if calls := script.All(); len(calls) != 0 {
+				t.Errorf("the brain was asked %d times: %+v", len(calls), calls)
+			}
+		})
 	}
 }
 
@@ -212,6 +243,22 @@ func TestWhatAPageSaidIsMadeSafe(t *testing.T) {
 	}
 	if strings.ContainsRune(out, 0x1b) || strings.ContainsRune(out, 0x07) {
 		t.Errorf("an escape reached the terminal: %q", out)
+	}
+}
+
+// A URL is the brain's to give, but it is printed like any text another
+// wrote, in get as in secret.
+func TestAHookURLIsMadeSafe(t *testing.T) {
+	evil := `https://brain.example/hooks/\u001b]0;pwned\u0007`
+	clitest.Routes(t, routes(map[string]clitest.Reply{
+		"GET /teams/{id}/watchers/{wid}":         {Status: http.StatusOK, Body: watcher(`,"hook_url":"` + evil + `"`)},
+		"POST /teams/{id}/watchers/{wid}/secret": {Status: http.StatusCreated, Body: `{"secret":"` + secret + `","url":"` + evil + `"}`},
+	}))
+	for _, verb := range []string{"get", "secret"} {
+		stdout, _ := run(t, "watchers", verb, "acme", watcherID)
+		if strings.ContainsRune(stdout, 0x1b) || strings.ContainsRune(stdout, 0x07) {
+			t.Errorf("%s: an escape reached the terminal: %q", verb, stdout)
+		}
 	}
 }
 

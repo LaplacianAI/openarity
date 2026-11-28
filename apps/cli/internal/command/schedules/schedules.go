@@ -12,13 +12,14 @@ import (
 
 	"github.com/LaplacianAI/openarity/apps/cli/internal/cli"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/client"
+	"github.com/LaplacianAI/openarity/apps/cli/internal/command/trigger"
 	"github.com/LaplacianAI/openarity/apps/cli/internal/output/printer"
 )
 
 const (
-	readPermission   = "schedule:read"
-	writePermission  = "schedule:write"
-	managePermission = "schedule:manage"
+	readPermission   = trigger.ReadPermission
+	writePermission  = trigger.WritePermission
+	managePermission = trigger.ManagePermission
 )
 
 func New(opts *cli.Options) *cobra.Command {
@@ -35,8 +36,8 @@ func New(opts *cli.Options) *cobra.Command {
 		newGetCmd(opts),
 		newCreateCmd(opts),
 		newUpdateCmd(opts),
-		newStatusCmd(opts, "pause", "Stop a schedule firing until it is resumed", client.UpdateScheduleRequestStatusPaused),
-		newStatusCmd(opts, "resume", "Start a paused schedule firing again", client.UpdateScheduleRequestStatusActive),
+		newStatusCmd(opts, "pause", "paused", "Stop a schedule firing until it is resumed", client.UpdateScheduleRequestStatusPaused),
+		newStatusCmd(opts, "resume", "resumed", "Start a paused schedule firing again", client.UpdateScheduleRequestStatusActive),
 		newDeleteCmd(opts),
 		newRunCmd(opts),
 		newFiresCmd(opts),
@@ -50,19 +51,7 @@ func New(opts *cli.Options) *cobra.Command {
 
 // one is the team and the schedule a command names.
 func one(ctx context.Context, opts *cli.Options, args []string, everyone bool) (*client.ClientWithResponses, uuid.UUID, uuid.UUID, error) {
-	api, err := opts.API(ctx)
-	if err != nil {
-		return nil, uuid.Nil, uuid.Nil, err
-	}
-	team, err := cli.ResolveTeam(ctx, api, args[0])
-	if err != nil {
-		return nil, uuid.Nil, uuid.Nil, err
-	}
-	id, err := cli.ResolveSchedule(ctx, api, team, args[1], everyone)
-	if err != nil {
-		return nil, uuid.Nil, uuid.Nil, err
-	}
-	return api, team, id, nil
+	return trigger.One(ctx, opts, args, cli.ResolveSchedule, everyone)
 }
 
 func newListCmd(opts *cli.Options) *cobra.Command {
@@ -111,14 +100,12 @@ func newListCmd(opts *cli.Options) *cobra.Command {
 					if s.LastOutcome != nil {
 						last = cli.Safe(*s.LastOutcome)
 					}
-					row := []string{
-						opts.Styles.Value.Render(cli.Safe(s.Name)), string(s.Status), whenSays(s.When, s.Timezone),
-						nextSays(s), last, WhereSays(s.Target),
-					}
+					where := trigger.WhereSays(s.Target)
 					if s.WaitingChange != nil {
-						row[len(row)-1] += opts.Styles.Muted.Render(" · waits: " + cli.Safe(s.WaitingChange.Says))
+						where += opts.Styles.Muted.Render(" · waits: " + cli.Safe(s.WaitingChange.Says))
 					}
-					table.Row(row...)
+					table.Row(opts.Styles.Value.Render(cli.Safe(s.Name)), cli.Safe(string(s.Status)),
+						whenSays(s.When, s.Timezone), nextSays(s), last, where)
 				},
 			})
 		},
@@ -158,10 +145,10 @@ func newGetCmd(opts *cli.Options) *cobra.Command {
 func newCreateCmd(opts *cli.Options) *cobra.Command {
 	var (
 		name      string
-		objective ObjectiveFlags
-		when      WhenFlags
+		objective trigger.ObjectiveFlags
+		when      trigger.WhenFlags
 		zone      string
-		agent     AgentFlags
+		agent     trigger.AgentFlags
 		target    string
 	)
 	cmd := &cobra.Command{
@@ -171,7 +158,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    --cron '0 9 * * 1-5' --tz Asia/Kolkata --target channel:slack:C0123ABCD",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			text, ok, err := objective.Read(cmd.InOrStdin())
+			text, ok, err := objective.Read(cmd)
 			if err != nil {
 				return err
 			}
@@ -181,8 +168,11 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if strings.TrimSpace(name) == "" {
 				return errors.New("name it with --name")
 			}
-			if when.given() == 0 {
+			if when.Given() == 0 {
 				return errors.New("say when, with one of --at, --every or --cron")
+			}
+			if err := when.Check(); err != nil {
+				return err
 			}
 			api, err := opts.API(cmd.Context())
 			if err != nil {
@@ -192,7 +182,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			w, err := when.When(zoneOr(cmd.Context(), api, team, zone))
+			w, err := when.When(trigger.ZoneOr(cmd.Context(), api, team, zone))
 			if err != nil {
 				return err
 			}
@@ -203,7 +193,7 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			if body.AgentID, err = agent.ID(cmd.Context(), api, team); err != nil {
 				return err
 			}
-			if body.Target, err = Target(cmd.Context(), api, team, target); err != nil {
+			if body.Target, err = trigger.Target(cmd.Context(), api, team, target); err != nil {
 				return err
 			}
 			s, err := cli.Created(api.CreateScheduleWithResponse(cmd.Context(), team, body))
@@ -214,55 +204,63 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "a short name, unique among your own")
-	objective.bind(cmd)
-	when.bind(cmd)
-	cmd.Flags().StringVar(&zone, "tz", "", "the IANA zone its times are read in; the team's unless given")
-	agent.bind(cmd)
-	cmd.Flags().StringVar(&target, "target", "",
-		"where it answers: own (the default), chat:<session>, channel:<channel>:<ref> or direct:<channel>")
+	objective.Bind(cmd)
+	when.Bind(cmd)
+	cmd.Flags().StringVar(&zone, "tz", "",
+		"the IANA zone a cron rule and a YYYY-MM-DD HH:MM --at are read in, and its times shown in; the team's unless given")
+	agent.Bind(cmd)
+	cmd.Flags().StringVar(&target, "target", "", trigger.TargetHelp)
 	return cmd
-}
-
-// zoneOr is what a wall time is read in: the zone given, or the team's.
-func zoneOr(ctx context.Context, api *client.ClientWithResponses, team uuid.UUID, zone string) func() (string, error) {
-	return func() (string, error) {
-		if zone != "" {
-			return zone, nil
-		}
-		return TeamZone(ctx, api, team)
-	}
 }
 
 func newUpdateCmd(opts *cli.Options) *cobra.Command {
 	var (
 		name      string
-		objective ObjectiveFlags
-		when      WhenFlags
+		objective trigger.ObjectiveFlags
+		when      trigger.WhenFlags
 		zone      string
-		agent     AgentFlags
+		agent     trigger.AgentFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "update <team> <schedule>",
 		Short: "Change what a schedule does or when; what is not given stays",
+		Long:  "A YYYY-MM-DD HH:MM --at is read in --tz, or the schedule's own zone.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			api, team, id, err := one(cmd.Context(), opts, args, false)
-			if err != nil {
-				return err
+			// What the flags say is read before anything is asked of the brain.
+			if !trigger.Changed(cmd, "name", "objective", "objective-file", "at", "every", "cron", "tz", "agent", "hub") {
+				return errors.New("say what to change: --name, --objective, --at, --every, --cron, --tz, --agent or --hub")
 			}
 			var body client.UpdateScheduleRequest
 			if cmd.Flags().Changed("name") {
-				body.Name = &name
+				n := strings.TrimSpace(name)
+				if n == "" {
+					return errors.New("--name is empty")
+				}
+				body.Name = &n
 			}
-			if text, ok, err := objective.Read(cmd.InOrStdin()); err != nil {
+			text, ok, err := objective.Read(cmd)
+			if err != nil {
 				return err
-			} else if ok {
+			}
+			if ok {
 				body.Objective = &text
+			}
+			if err := when.Check(); err != nil {
+				return err
 			}
 			if zone != "" {
 				body.Timezone = &zone
 			}
-			// A wall time is read in the zone given, or the schedule's own.
+			if agent.Hub {
+				hub := true
+				body.Hub = &hub
+			}
+
+			api, team, id, err := one(cmd.Context(), opts, args, false)
+			if err != nil {
+				return err
+			}
 			if body.When, err = when.When(func() (string, error) {
 				if zone != "" {
 					return zone, nil
@@ -275,14 +273,8 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			if agent.Hub {
-				hub := true
-				body.Hub = &hub
-			} else if body.AgentID, err = agent.ID(cmd.Context(), api, team); err != nil {
+			if body.AgentID, err = agent.ID(cmd.Context(), api, team); err != nil {
 				return err
-			}
-			if body == (client.UpdateScheduleRequest{}) {
-				return errors.New("say what to change: --name, --objective, --at, --every, --cron, --tz, --agent or --hub")
 			}
 			s, err := cli.Result(api.UpdateScheduleWithResponse(cmd.Context(), team, id, body))
 			if err != nil {
@@ -292,14 +284,14 @@ func newUpdateCmd(opts *cli.Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "a new name")
-	objective.bind(cmd)
-	when.bind(cmd)
+	objective.Bind(cmd)
+	when.Bind(cmd)
 	cmd.Flags().StringVar(&zone, "tz", "", "a new zone")
-	agent.bind(cmd)
+	agent.Bind(cmd)
 	return cmd
 }
 
-func newStatusCmd(opts *cli.Options, verb, short string, status client.UpdateScheduleRequestStatus) *cobra.Command {
+func newStatusCmd(opts *cli.Options, verb, did, short string, status client.UpdateScheduleRequestStatus) *cobra.Command {
 	return &cobra.Command{
 		Use:   verb + " <team> <schedule>",
 		Short: short,
@@ -314,7 +306,7 @@ func newStatusCmd(opts *cli.Options, verb, short string, status client.UpdateSch
 			if err != nil {
 				return cli.Needs(err, writePermission)
 			}
-			return printSchedule(opts, s, verb+"d")
+			return printSchedule(opts, s, did)
 		},
 	}
 }
@@ -357,13 +349,16 @@ func newRunCmd(opts *cli.Options) *cobra.Command {
 			if err != nil {
 				return cli.Needs(err, writePermission)
 			}
-			opts.Out.Note("follow it with `oa runs get " + args[0] + " " + run.RunID.String() + "`")
-			return opts.Out.Print(run, printer.Options{
+			if err := opts.Out.Print(run, printer.Options{
 				Table: func(table *printer.Table) {
 					table.Row(opts.Styles.OK.Render("started"), opts.Styles.Value.Render(cli.Safe(args[1])),
 						opts.Styles.Muted.Render(run.RunID.String()))
 				},
-			})
+			}); err != nil {
+				return err
+			}
+			opts.Out.Note("follow it with `oa runs get " + args[0] + " " + run.RunID.String() + "`")
+			return nil
 		},
 	}
 }
@@ -395,7 +390,7 @@ func newFiresCmd(opts *cli.Options) *cobra.Command {
 					if f.RunID != nil {
 						run = f.RunID.String()
 					}
-					table.Row(f.ScheduledFor.UTC().Format(shownTime+" UTC"), string(f.Outcome), opts.Styles.Muted.Render(run))
+					table.Row(f.ScheduledFor.UTC().Format(trigger.ShownTime+" UTC"), cli.Safe(string(f.Outcome)), opts.Styles.Muted.Render(run))
 				},
 			})
 		},
@@ -457,9 +452,9 @@ func printSchedule(opts *cli.Options, s *client.Schedule, did string) error {
 			table.Row(head, opts.Styles.Value.Render(cli.Safe(s.Name)), opts.Styles.Muted.Render(s.ID.String()))
 			why := ""
 			if s.PausedReason != nil {
-				why = string(*s.PausedReason)
+				why = cli.Safe(string(*s.PausedReason))
 			}
-			table.Row("status", string(s.Status), why)
+			table.Row("status", cli.Safe(string(s.Status)), why)
 			table.Row("when", whenSays(s.When, s.Timezone), "in "+cli.Safe(s.Timezone))
 			if len(s.Upcoming) > 0 {
 				table.Row("next", upcomingSays(*s), "")
@@ -477,16 +472,16 @@ func printSchedule(opts *cli.Options, s *client.Schedule, did string) error {
 			case s.AgentID != nil:
 				table.Row("agent", s.AgentID.String(), "")
 			}
-			table.Row("answers", WhereSays(s.Target), "")
+			table.Row("answers", trigger.WhereSays(s.Target), "")
 			if s.LastOutcome != nil {
 				at := ""
 				if s.LastFiredAt != nil {
-					at = In(*s.LastFiredAt, s.Timezone)
+					at = trigger.In(*s.LastFiredAt, s.Timezone)
 				}
 				table.Row("last", cli.Safe(*s.LastOutcome), at)
 			}
 			if s.WaitingChange != nil {
-				table.Row("waits", "an agent asked "+cli.Safe(s.WaitingChange.Says), "since "+In(s.WaitingChange.Since, s.Timezone))
+				table.Row("waits", "an agent asked "+cli.Safe(s.WaitingChange.Says), "since "+trigger.In(s.WaitingChange.Since, s.Timezone))
 			}
 		},
 	})
