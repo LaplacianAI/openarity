@@ -28,6 +28,7 @@ type listed struct {
 	Web           bool   `json:"web"`
 	Browser       bool   `json:"browser"`
 	Workspace     bool   `json:"workspace"`
+	Schedule      bool   `json:"schedule"`
 	ServerCount   int64  `json:"mcp_server_count"`
 	SkillCount    int64  `json:"skill_count"`
 	DelegateCount int64  `json:"delegate_count"`
@@ -49,6 +50,7 @@ type detail struct {
 	Web                bool                  `json:"web"`
 	Browser            bool                  `json:"browser"`
 	Workspace          bool                  `json:"workspace"`
+	Schedule           bool                  `json:"schedule"`
 	ToolNotes          []harness.ToolNote    `json:"tool_notes"`
 }
 

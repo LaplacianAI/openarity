@@ -48,6 +48,10 @@ func TestCheckPerKind(t *testing.T) {
 		{"builtin both", KindBuiltinTool, func(s *AgentState) { s.Agent.Web = ptr(true); s.Agent.Browser = ptr(true) }, false},
 		// A shell is a person's to grant: no kind of proposal turns it on.
 		{"builtin workspace", KindBuiltinTool, func(s *AgentState) { s.Agent.Workspace = ptr(true) }, false},
+		// Runs of its own are a person's to grant too.
+		{"builtin schedule", KindBuiltinTool, func(s *AgentState) { s.Agent.Schedule = ptr(true) }, false},
+		{"instructions with schedule", KindInstructions, func(s *AgentState) { s.Agent.Instructions = "j"; s.Agent.Schedule = ptr(true) }, false},
+		{"instructions from before schedule", KindInstructions, func(s *AgentState) { s.Agent.Instructions = "j"; s.Agent.Schedule = ptr(false) }, true},
 		{"instructions with a workspace", KindInstructions, func(s *AgentState) { s.Agent.Instructions = "j"; s.Agent.Workspace = ptr(true) }, false},
 		// A snapshot from before the field existed has none: that is off.
 		{"instructions from before workspaces", KindInstructions, func(s *AgentState) { s.Agent.Instructions = "j"; s.Agent.Workspace = ptr(false) }, true},

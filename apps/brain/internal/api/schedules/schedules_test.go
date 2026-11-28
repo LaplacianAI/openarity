@@ -538,3 +538,41 @@ func TestThePlacesToAnswerAndPickingOne(t *testing.T) {
 		t.Errorf("its own conversation's target = %+v", own.Target)
 	}
 }
+
+// An agent's change waiting on a schedule is shown with it, and its maker's
+// confirm applies it.
+func TestAWaitingChangeIsShownAndConfirmedByItsMaker(t *testing.T) {
+	w := newWorld(t)
+	s := w.make(t, "summary")
+	if s.WaitingChange != nil {
+		t.Fatalf("a new schedule waits on %+v", s.WaitingChange)
+	}
+	if _, err := w.raw.Exec(t.Context(), `UPDATE schedules SET pending = '{"action":"change","schedule":{"Objective":"Summarise briefly."}}',
+		pending_run = gen_random_uuid(), pending_in = $2, pending_at = now(), yes_code = '4821' WHERE id = $1`, s.ID, s.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	read := w.serve(t, w.maker, "GET", "/schedules/"+s.ID.String(), nil)
+	// The code is for the person to type in the chat; the dashboard confirms without it.
+	if strings.Contains(read.Body.String(), "4821") {
+		t.Errorf("the code reached the API: %s", read.Body)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(read.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	for k := range fields {
+		if strings.Contains(k, "code") {
+			t.Errorf("the API answers a field %q", k)
+		}
+	}
+	got := decode[schedule](t, read)
+	if got.WaitingChange == nil || got.WaitingChange.Says != "to change its objective" || got.Objective != s.Objective {
+		t.Fatalf("read back %+v waiting %+v: want it as it was, the change shown", got.Objective, got.WaitingChange)
+	}
+	want(t, w.serve(t, w.other, "POST", "/schedules/"+s.ID.String()+"/confirm", nil), http.StatusNotFound, "no such schedule")
+	rec := w.serve(t, w.maker, "POST", "/schedules/"+s.ID.String()+"/confirm", nil)
+	want(t, rec, http.StatusOK, "")
+	if c := decode[schedule](t, rec); c.Objective != "Summarise briefly." || c.WaitingChange != nil || c.Status != "active" {
+		t.Errorf("confirmed %+v", c)
+	}
+}

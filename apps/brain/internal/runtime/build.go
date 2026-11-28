@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -82,6 +83,9 @@ type Builder struct {
 	// is given send_file. kickFile has a channel's file reply sent now.
 	sends    *FileSends
 	kickFile func(runID uuid.UUID, callID string)
+	// scheduling hands a top-level run the schedule and watch tools
+	// (scheduling.go); without it no run is given them.
+	scheduling Scheduling
 	// replay builds a past run again for a replay (replay.go): the tools a
 	// run of the agent would hold, those that reach live state as stand-ins.
 	replay bool
@@ -138,8 +142,11 @@ type Built struct {
 	Spec        agent.Spec
 	Agent       string
 	Unavailable []Unavailable
-	servers     *runServers
-	browser     *runBrowser
+	// outside is set once the run calls a tool that reads what someone
+	// else wrote, for a confirm to come before (scheduling.go).
+	outside *atomic.Bool
+	servers *runServers
+	browser *runBrowser
 	// answerable is every tool a person could be asked about, by the name a
 	// request records, as it is before the gate: what a resume makes once
 	// the call is approved.
@@ -338,6 +345,14 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 		}
 	}
 
+	// Not gated: what they make is a proposal the person confirms by
+	// replying with its code, and what they ask of one that runs waits for
+	// the same yes; only a pause acts at once.
+	if err := b.schedulingFor(ctx, run, a, &built); err != nil {
+		built.Close()
+		return Built{}, err
+	}
+
 	if web {
 		// Reaching the internet is a read for a person who is there, and a
 		// write for a guest or a run nobody is present for.
@@ -431,6 +446,7 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			return Built{}, err
 		}
 	}
+	built.noteReads()
 	return built, nil
 }
 

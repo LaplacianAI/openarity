@@ -19,12 +19,13 @@ export type Draft = {
   web: boolean;
   browser: boolean;
   workspace: boolean;
+  schedule: boolean;
 };
 
 /** The brain refuses more; this only says so before the round trip. */
 const MAX_TOKEN_BUDGET = 100_000_000;
 
-/** A new agent: alone, off the web, with no browser and no workspace, as the brain's own defaults are. */
+/** A new agent: alone, off the web, with no browser, workspace or schedules, as the brain's own defaults are. */
 export const EMPTY: Draft = {
   name: "",
   description: "",
@@ -41,6 +42,7 @@ export const EMPTY: Draft = {
   web: false,
   browser: false,
   workspace: false,
+  schedule: false,
 };
 
 /**
@@ -77,6 +79,7 @@ export function agentRequest(d: Draft): AgentRequest | string {
     web: d.web,
     browser: d.browser,
     workspace: d.workspace,
+    schedule: d.schedule,
   };
 }
 
@@ -98,6 +101,7 @@ export function draftOf(a: Agent): Draft {
     web: a.web === true,
     browser: a.browser === true,
     workspace: a.workspace === true,
+    schedule: a.schedule === true,
   };
 }
 

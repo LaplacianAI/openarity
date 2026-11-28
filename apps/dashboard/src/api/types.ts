@@ -622,6 +622,8 @@ export type ListedAgent = AgentSummary & {
   browser: boolean;
   /** A shell and files in its session's sandbox, by its own grant. Absent from a brain that predates it. */
   workspace?: boolean;
+  /** Proposes schedules and watchers from a chat, by its own grant. Absent from a brain that predates it. */
+  schedule?: boolean;
   mcp_server_count: number;
   skill_count: number;
   /** Read only when delegation is listed. */
@@ -654,6 +656,11 @@ export type Agent = AgentSummary & {
    * chosen hub's as any agent's. Absent from a brain that predates it.
    */
   workspace?: boolean;
+  /**
+   * The schedule and watch tools in a chat: it proposes schedules and
+   * watchers, each confirmed by the person. Absent from a brain that predates it.
+   */
+  schedule?: boolean;
   /**
    * Usage notes on tools, left by approved improvements. Read only: a PUT
    * never sends them, and the brain refuses a body that does.
@@ -695,6 +702,8 @@ export type AgentRequest = {
   browser?: boolean;
   /** Left out, the brain reads false, and a PUT that leaves it out takes it away. */
   workspace?: boolean;
+  /** Left out, the brain reads false, and a PUT that leaves it out takes it away. */
+  schedule?: boolean;
 };
 
 /** GET /teams/{id}/mcp-servers. Credentials are references, never values. */

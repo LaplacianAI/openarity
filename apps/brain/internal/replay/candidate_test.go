@@ -150,7 +150,7 @@ func TestEveryTriedColumnIsCopied(t *testing.T) {
 		"Temperature": true, "Pattern": true, "MaxSteps": true, "SteerContinuations": true,
 		"OutputSchema": true, "Parser": true, "ParserModelName": true, "ParserMaxTokens": true,
 		"ParserTemperature": true, "TokenBudget": true, "Delegation": true, "Web": true,
-		"Browser": true, "Workspace": true,
+		"Browser": true, "Workspace": true, "Schedule": true,
 		// Not moved by a change.
 		"TeamID": true, "Kind": true,
 	}

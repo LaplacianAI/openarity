@@ -98,7 +98,7 @@ func (c *candidate) GetAgent(ctx context.Context, id uuid.UUID) (db.Agent, error
 	row.OutputSchema, row.Parser = p.OutputSchema, p.Parser
 	row.ParserModelName, row.ParserMaxTokens, row.ParserTemperature = p.ParserModelName, p.ParserMaxTokens, p.ParserTemperature
 	row.TokenBudget, row.Delegation = p.TokenBudget, p.Delegation
-	row.Web, row.Browser, row.Workspace = p.Web, p.Browser, p.Workspace
+	row.Web, row.Browser, row.Workspace, row.Schedule = p.Web, p.Browser, p.Workspace, p.Schedule
 	return row, nil
 }
 

@@ -61,6 +61,8 @@ type JobStore interface {
 	PruneWatcherChecks(ctx context.Context, arg db.PruneWatcherChecksParams) (int64, error)
 	DeleteUnwatchedTargets(ctx context.Context) (int64, error)
 	ForgetOldDeliveries(ctx context.Context, before time.Time) (int64, error)
+	DropLapsedScheduleChanges(ctx context.Context, before time.Time) (int64, error)
+	DropLapsedWatcherChanges(ctx context.Context, before time.Time) (int64, error)
 }
 
 // A Job fires schedules, checks watched pages and feeds, and releases what
@@ -189,8 +191,8 @@ func (j *Job) sweep(ctx dbos.Context, in dbos.ScheduledWorkflowInput) (string, e
 	})
 }
 
-// sweepOnce lapses proposals nobody confirmed and keeps each schedule's
-// newest fires.
+// sweepOnce lapses proposals and agents' changes nobody confirmed and keeps
+// each schedule's newest fires.
 func (j *Job) sweepOnce(ctx context.Context) error {
 	var failed []error
 	if n, err := j.store.ExpireProposedSchedules(ctx, j.now().Add(-proposalLife)); err != nil {
@@ -205,6 +207,12 @@ func (j *Job) sweepOnce(ctx context.Context) error {
 		failed = append(failed, fmt.Errorf("lapsing unconfirmed watchers: %w", err))
 	} else if n > 0 {
 		j.logger.InfoContext(ctx, "Lapsed watchers nobody confirmed", "watchers", n)
+	}
+	if _, err := j.store.DropLapsedScheduleChanges(ctx, now.Add(-proposalLife)); err != nil {
+		failed = append(failed, fmt.Errorf("dropping schedule changes nobody confirmed: %w", err))
+	}
+	if _, err := j.store.DropLapsedWatcherChanges(ctx, now.Add(-proposalLife)); err != nil {
+		failed = append(failed, fmt.Errorf("dropping watcher changes nobody confirmed: %w", err))
 	}
 	failed = append(failed, prune("fires", func() (int64, error) {
 		return j.store.PruneScheduleFires(ctx, db.PruneScheduleFiresParams{Keep: keepFires, Batch: pruneBatch})

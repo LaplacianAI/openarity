@@ -64,4 +64,7 @@ type Request struct {
 	// Workspace is Bash, Read, Write, Edit, Glob and Grep in a room of the
 	// session's, offered when the team has a sandbox.
 	Workspace *bool `json:"workspace"`
+	// Schedule is the schedule and watch tools: the agent may propose runs of
+	// its own at a time or on a change, each confirmed by the person.
+	Schedule *bool `json:"schedule"`
 }

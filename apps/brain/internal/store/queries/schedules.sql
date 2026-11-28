@@ -3,12 +3,14 @@
 -- name: CreateSchedule :one
 INSERT INTO schedules (
     id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone,
-    status, next_fire_at, proposed_run, proposed_in, target, target_label
+    status, next_fire_at, proposed_run, proposed_in, proposed_at, yes_code, target, target_label
 ) VALUES (
     sqlc.arg('id'), sqlc.arg('team_id'), sqlc.arg('created_by')::uuid, sqlc.narg('agent_id'), sqlc.arg('hub'),
     sqlc.arg('name'), sqlc.arg('objective'), sqlc.arg('kind'), sqlc.arg('rule'), sqlc.arg('anchor'),
     sqlc.arg('timezone'), sqlc.arg('status'), sqlc.narg('next_fire_at'),
-    sqlc.narg('proposed_run'), sqlc.narg('proposed_in'), sqlc.arg('target'), sqlc.arg('target_label')
+    sqlc.narg('proposed_run'), sqlc.narg('proposed_in'),
+    CASE WHEN sqlc.narg('proposed_in')::uuid IS NULL THEN NULL ELSE now() END, sqlc.narg('yes_code'),
+    sqlc.arg('target'), sqlc.arg('target_label')
 )
 RETURNING *;
 
@@ -78,6 +80,14 @@ UPDATE schedules SET
     last_fired_at = sqlc.narg('last_fired_at'),
     last_local    = sqlc.narg('last_local'),
     consecutive_failures = sqlc.arg('consecutive_failures'),
+    proposed_run  = sqlc.narg('proposed_run'),
+    proposed_in   = sqlc.narg('proposed_in'),
+    proposed_at   = sqlc.narg('proposed_at'),
+    pending       = sqlc.narg('pending'),
+    pending_run   = sqlc.narg('pending_run'),
+    pending_in    = sqlc.narg('pending_in'),
+    pending_at    = sqlc.narg('pending_at'),
+    yes_code      = sqlc.narg('yes_code'),
     updated_at    = now()
 WHERE id = sqlc.arg('id')
 RETURNING *;
@@ -282,11 +292,17 @@ WHERE s.id = f.schedule_id AND f.schedule_id = sqlc.arg('schedule_id')
 -- name: ExpireProposedSchedules :execrows
 WITH gone AS (
     UPDATE schedules SET status = 'deleted', deleted_at = now(), updated_at = now()
-    WHERE status = 'proposed' AND created_at < sqlc.arg('before')
+    WHERE status = 'proposed' AND proposed_at < sqlc.arg('before')::timestamptz
     RETURNING id
 )
 UPDATE sessions SET status = 'closed'
 WHERE schedule_id IN (SELECT id FROM gone);
+
+-- An agent's change nobody confirmed within the hour is dropped; the
+-- schedule runs on as it was.
+-- name: DropLapsedScheduleChanges :execrows
+UPDATE schedules SET pending = NULL, pending_run = NULL, pending_in = NULL, pending_at = NULL, yes_code = NULL, updated_at = now()
+WHERE pending_at < sqlc.arg('before')::timestamptz;
 
 -- Each schedule keeps its newest fires; the rest go a batch at a time.
 -- name: PruneScheduleFires :execrows
@@ -302,10 +318,10 @@ USING (
 ) old
 WHERE f.schedule_id = old.schedule_id AND f.scheduled_for = old.scheduled_for;
 
--- When the message a run answers arrived: a proposal is confirmed only by one
--- sent after it.
--- name: MessageReceivedAt :one
-SELECT received_at FROM messages WHERE id = sqlc.arg('id') AND session_id = sqlc.arg('session_id');
+-- The message a run answers, when it arrived and what it said: a proposal is
+-- confirmed only by one sent after it that carries its code.
+-- name: ConfirmingMessage :one
+SELECT received_at, text FROM messages WHERE id = sqlc.arg('id') AND session_id = sqlc.arg('session_id');
 
 -- A schedule taken over by an admin: its own dashboard conversation is with
 -- them from now on.

@@ -274,7 +274,10 @@ func newCreateCmd(opts *cli.Options) *cobra.Command {
 			"    browser: false\n" +
 			"    # Bash, Read, Write, Edit, Glob and Grep in its session's workspace,\n" +
 			"    # from the team's sandbox provider; off unless set\n" +
-			"    workspace: false\n\n" +
+			"    workspace: false\n" +
+			"    # proposes schedules and watchers from a chat, each confirmed by\n" +
+			"    # the person; off unless set\n" +
+			"    schedule: false\n\n" +
 			"    oa agents create platform -f triage.yaml \\\n" +
 			"        --mcp-server github=search_code --skill pdf-processing",
 		Args: cobra.ExactArgs(1),
@@ -439,6 +442,11 @@ func printAgent(opts *cli.Options, a *client.Agent, did string) error {
 				table.Row("workspace", "on", "a shell and files in the session's sandbox")
 			} else {
 				table.Row("workspace", "off", "")
+			}
+			if a.Schedule {
+				table.Row("schedule", "on", "proposes schedules and watchers, confirmed by the person")
+			} else {
+				table.Row("schedule", "off", "")
 			}
 		},
 	})

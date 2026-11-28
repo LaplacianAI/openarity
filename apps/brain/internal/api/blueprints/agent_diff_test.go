@@ -29,3 +29,13 @@ func TestAPlanNamesABrowserGrantedOrTakenAway(t *testing.T) {
 		t.Errorf("agentDiff with the browser taken away = %v, want [browser]", got)
 	}
 }
+
+func TestAPlanNamesTheScheduleGrant(t *testing.T) {
+	t.Parallel()
+
+	cur := db.Agent{Name: "planner", Pattern: "react", MaxSteps: 5, Delegation: "none"}
+	granted := db.CreateAgentParams{Name: "planner", Pattern: "react", MaxSteps: 5, Delegation: "none", Schedule: true}
+	if got := agentDiff(cur, granted); !slices.Equal(got, []string{"schedule"}) {
+		t.Errorf("agentDiff with schedule granted = %v, want [schedule]", got)
+	}
+}

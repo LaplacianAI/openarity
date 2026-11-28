@@ -537,6 +537,7 @@ func agentDiff(cur db.Agent, p db.CreateAgentParams) []string {
 	add(cur.Web != p.Web, "web")
 	add(cur.Browser != p.Browser, "browser")
 	add(cur.Workspace != p.Workspace, "workspace")
+	add(cur.Schedule != p.Schedule, "schedule")
 	return fields
 }
 

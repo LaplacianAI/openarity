@@ -13,7 +13,7 @@ import (
 )
 
 const claimDueSchedule = `-- name: ClaimDueSchedule :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code FROM schedules
 WHERE status = 'active' AND next_fire_at <= $1::timestamptz
   AND (retry_at IS NULL OR retry_at <= $1::timestamptz)
 ORDER BY next_fire_at
@@ -52,6 +52,12 @@ func (q *Queries) ClaimDueSchedule(ctx context.Context, now time.Time) (Schedule
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }
@@ -70,6 +76,29 @@ type CloseTriggerSessionParams struct {
 func (q *Queries) CloseTriggerSession(ctx context.Context, arg CloseTriggerSessionParams) error {
 	_, err := q.db.Exec(ctx, closeTriggerSession, arg.ScheduleID, arg.WatcherID)
 	return err
+}
+
+const confirmingMessage = `-- name: ConfirmingMessage :one
+SELECT received_at, text FROM messages WHERE id = $1 AND session_id = $2
+`
+
+type ConfirmingMessageParams struct {
+	ID        uuid.UUID
+	SessionID uuid.UUID
+}
+
+type ConfirmingMessageRow struct {
+	ReceivedAt time.Time
+	Text       string
+}
+
+// The message a run answers, when it arrived and what it said: a proposal is
+// confirmed only by one sent after it that carries its code.
+func (q *Queries) ConfirmingMessage(ctx context.Context, arg ConfirmingMessageParams) (ConfirmingMessageRow, error) {
+	row := q.db.QueryRow(ctx, confirmingMessage, arg.ID, arg.SessionID)
+	var i ConfirmingMessageRow
+	err := row.Scan(&i.ReceivedAt, &i.Text)
+	return i, err
 }
 
 const countDueSchedules = `-- name: CountDueSchedules :one
@@ -200,14 +229,16 @@ const createSchedule = `-- name: CreateSchedule :one
 
 INSERT INTO schedules (
     id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone,
-    status, next_fire_at, proposed_run, proposed_in, target, target_label
+    status, next_fire_at, proposed_run, proposed_in, proposed_at, yes_code, target, target_label
 ) VALUES (
     $1, $2, $3::uuid, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13,
-    $14, $15, $16, $17
+    $14, $15,
+    CASE WHEN $15::uuid IS NULL THEN NULL ELSE now() END, $16,
+    $17, $18
 )
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code
 `
 
 type CreateScheduleParams struct {
@@ -226,6 +257,7 @@ type CreateScheduleParams struct {
 	NextFireAt  *time.Time
 	ProposedRun *uuid.UUID
 	ProposedIn  *uuid.UUID
+	YesCode     *string
 	Target      string
 	TargetLabel string
 }
@@ -248,6 +280,7 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.NextFireAt,
 		arg.ProposedRun,
 		arg.ProposedIn,
+		arg.YesCode,
 		arg.Target,
 		arg.TargetLabel,
 	)
@@ -278,6 +311,12 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }
@@ -467,10 +506,25 @@ func (q *Queries) DeferFailedFire(ctx context.Context, arg DeferFailedFireParams
 	return status, err
 }
 
+const dropLapsedScheduleChanges = `-- name: DropLapsedScheduleChanges :execrows
+UPDATE schedules SET pending = NULL, pending_run = NULL, pending_in = NULL, pending_at = NULL, yes_code = NULL, updated_at = now()
+WHERE pending_at < $1::timestamptz
+`
+
+// An agent's change nobody confirmed within the hour is dropped; the
+// schedule runs on as it was.
+func (q *Queries) DropLapsedScheduleChanges(ctx context.Context, before time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, dropLapsedScheduleChanges, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const expireProposedSchedules = `-- name: ExpireProposedSchedules :execrows
 WITH gone AS (
     UPDATE schedules SET status = 'deleted', deleted_at = now(), updated_at = now()
-    WHERE status = 'proposed' AND created_at < $1
+    WHERE status = 'proposed' AND proposed_at < $1::timestamptz
     RETURNING id
 )
 UPDATE sessions SET status = 'closed'
@@ -488,7 +542,7 @@ func (q *Queries) ExpireProposedSchedules(ctx context.Context, before time.Time)
 }
 
 const getScheduleView = `-- name: GetScheduleView :one
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, s.target, s.target_label, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, s.target, s.target_label, s.proposed_at, s.pending, s.pending_run, s.pending_in, s.pending_at, s.yes_code, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -538,6 +592,12 @@ func (q *Queries) GetScheduleView(ctx context.Context, arg GetScheduleViewParams
 		&i.Schedule.UpdatedAt,
 		&i.Schedule.Target,
 		&i.Schedule.TargetLabel,
+		&i.Schedule.ProposedAt,
+		&i.Schedule.Pending,
+		&i.Schedule.PendingRun,
+		&i.Schedule.PendingIn,
+		&i.Schedule.PendingAt,
+		&i.Schedule.YesCode,
 		&i.SessionID,
 		&i.SessionChannelID,
 		&i.LastOutcome,
@@ -731,7 +791,7 @@ func (q *Queries) ListScheduleNews(ctx context.Context, arg ListScheduleNewsPara
 }
 
 const listScheduleViews = `-- name: ListScheduleViews :many
-SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, s.target, s.target_label, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT s.id, s.team_id, s.created_by, s.agent_id, s.hub, s.name, s.objective, s.kind, s.rule, s.anchor, s.timezone, s.status, s.paused_reason, s.deleted_at, s.next_fire_at, s.retry_at, s.last_fired_at, s.last_local, s.consecutive_failures, s.proposed_run, s.proposed_in, s.created_at, s.updated_at, s.target, s.target_label, s.proposed_at, s.pending, s.pending_run, s.pending_in, s.pending_at, s.yes_code, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce((SELECT f.outcome FROM schedule_fires f WHERE f.schedule_id = s.id
                  ORDER BY f.scheduled_for DESC LIMIT 1), '')::text AS last_outcome
 FROM schedules s
@@ -809,6 +869,12 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 			&i.Schedule.UpdatedAt,
 			&i.Schedule.Target,
 			&i.Schedule.TargetLabel,
+			&i.Schedule.ProposedAt,
+			&i.Schedule.Pending,
+			&i.Schedule.PendingRun,
+			&i.Schedule.PendingIn,
+			&i.Schedule.PendingAt,
+			&i.Schedule.YesCode,
 			&i.SessionID,
 			&i.SessionChannelID,
 			&i.LastOutcome,
@@ -824,7 +890,7 @@ func (q *Queries) ListScheduleViews(ctx context.Context, arg ListScheduleViewsPa
 }
 
 const lockSchedule = `-- name: LockSchedule :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label FROM schedules
+SELECT id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code FROM schedules
 WHERE id = $1 AND team_id = $2 AND status <> 'deleted'
 FOR UPDATE
 `
@@ -863,6 +929,12 @@ func (q *Queries) LockSchedule(ctx context.Context, arg LockScheduleParams) (Sch
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }
@@ -898,24 +970,6 @@ func (q *Queries) MarkScheduleSeen(ctx context.Context, arg MarkScheduleSeenPara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const messageReceivedAt = `-- name: MessageReceivedAt :one
-SELECT received_at FROM messages WHERE id = $1 AND session_id = $2
-`
-
-type MessageReceivedAtParams struct {
-	ID        uuid.UUID
-	SessionID uuid.UUID
-}
-
-// When the message a run answers arrived: a proposal is confirmed only by one
-// sent after it.
-func (q *Queries) MessageReceivedAt(ctx context.Context, arg MessageReceivedAtParams) (time.Time, error) {
-	row := q.db.QueryRow(ctx, messageReceivedAt, arg.ID, arg.SessionID)
-	var received_at time.Time
-	err := row.Scan(&received_at)
-	return received_at, err
 }
 
 const pruneScheduleFires = `-- name: PruneScheduleFires :execrows
@@ -966,9 +1020,17 @@ UPDATE schedules SET
     last_fired_at = $14,
     last_local    = $15,
     consecutive_failures = $16,
+    proposed_run  = $17,
+    proposed_in   = $18,
+    proposed_at   = $19,
+    pending       = $20,
+    pending_run   = $21,
+    pending_in    = $22,
+    pending_at    = $23,
+    yes_code      = $24,
     updated_at    = now()
-WHERE id = $17
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label
+WHERE id = $25
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, kind, rule, anchor, timezone, status, paused_reason, deleted_at, next_fire_at, retry_at, last_fired_at, last_local, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code
 `
 
 type SaveScheduleParams struct {
@@ -988,6 +1050,14 @@ type SaveScheduleParams struct {
 	LastFiredAt         *time.Time
 	LastLocal           *string
 	ConsecutiveFailures int32
+	ProposedRun         *uuid.UUID
+	ProposedIn          *uuid.UUID
+	ProposedAt          *time.Time
+	Pending             []byte
+	PendingRun          *uuid.UUID
+	PendingIn           *uuid.UUID
+	PendingAt           *time.Time
+	YesCode             *string
 	ID                  uuid.UUID
 }
 
@@ -1011,6 +1081,14 @@ func (q *Queries) SaveSchedule(ctx context.Context, arg SaveScheduleParams) (Sch
 		arg.LastFiredAt,
 		arg.LastLocal,
 		arg.ConsecutiveFailures,
+		arg.ProposedRun,
+		arg.ProposedIn,
+		arg.ProposedAt,
+		arg.Pending,
+		arg.PendingRun,
+		arg.PendingIn,
+		arg.PendingAt,
+		arg.YesCode,
 		arg.ID,
 	)
 	var i Schedule
@@ -1040,6 +1118,12 @@ func (q *Queries) SaveSchedule(ctx context.Context, arg SaveScheduleParams) (Sch
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }

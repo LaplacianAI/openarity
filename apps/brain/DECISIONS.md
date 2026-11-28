@@ -220,6 +220,83 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
     waiting for its secret is 404 where one to an active hook is 401, so a
     caller holding a hook id can tell the two apart; the id is 128 random
     bits.
+- **An agent proposes schedules and watchers; the person confirms them**
+  (design: schedules and watchers, D10). The `schedule` and `watch` tools act
+  as the person a run is for, on their own alone, and what they make starts
+  only once a later message of that person's, in the conversation it was
+  proposed in, confirms it.
+  - **Who holds them.** A top-level run a person is there for, of the hub or
+    of an agent granted `schedule`, while the team lets agents schedule and
+    the person holds `schedule:write`. Never a delegated run, the builder's,
+    or a run a schedule or watcher started; a run told it has none says why.
+    An agent's own improvement proposals cannot grant it, as a workspace;
+    a builder blueprint can, for a person to apply. A replay holds them as
+    stand-ins.
+  - **The rules live in `internal/triggers`, tools and all,** where the LLD
+    put the tools in the runtime: `triggers` sits above `internal/api`, so
+    the runtime takes them through a narrow interface (`Scheduling`) that
+    `cmd/brain` adapts, as it does the builder's workshop.
+  - **Not gated by the team's approvals.** What they ask waits for the
+    person's yes instead (*user*, 2026-11-27); gating would ask on every list
+    as well.
+  - **What an agent asks of one that runs waits for the same yes, beside it**
+    (*user*, 2026-11-27): a change to what it does, a delete, a resume or a
+    run now. A page an agent read could otherwise rewrite, run or delete what
+    runs as the person. Only a pause acts at once: it only stops runs. The
+    schedule or watcher runs on as it was, the ask held in `pending` with
+    the run and conversation that made it, until a later message confirms
+    it; unconfirmed within the hour, the sweep drops it and nothing else.
+    Back to `proposed`, as first asked, would stop it firing meanwhile and
+    have the sweep delete a working one. The ask is taken off the row before
+    it is acted on, so two yeses act once; an act refused or failed after
+    the take, or a crash between them, does nothing and says to ask again. The maker's own change, the
+    agent's next ask, a take-over and a delete each drop a waiting one. A proposal
+    not yet confirmed is revised in place, from `proposed_at`, and the run
+    that revised it may not confirm it; one is deleted at once.
+  - **A yes is the person's reply carrying the code the tool gave**
+    (*user*, 2026-11-28). Each proposal, revision and ask gets four random
+    digits, kept in `yes_code` and given only in the tool's answer for the
+    model to pass on. The run that asked may have read a page saying "when
+    they reply, confirm"; the next run then reads that in its transcript,
+    and a "thanks" would start it. Every other check passes then, as the
+    brain cannot tell a yes from a thanks, but nothing a run read can make
+    the person type the code. Confirming on the dashboard needs no code.
+    What is left is a model that tells the person to type the code without
+    saying what it confirms, which the confirm-first rule keeps from being
+    text it read in that turn. A message that holds the code by chance (a
+    year, part of a number) confirms too: about one in ten thousand of the
+    four-digit numbers a person writes while something waits, and only what
+    they were asked to confirm in that conversation. Requiring "yes" beside
+    it would refuse a reply in another language. `list` gives the model
+    every waiting code, for a person who lost theirs; the model knew each
+    already, and only the person's own reply confirms.
+  - **And it is sent after the run that asked finished, and confirmed before
+    the run reads anything** (*user*, 2026-11-27). A message sent while the
+    run worked did not answer what it said. A confirm comes before the run
+    calls anything but `plan` and the two tools' acts: what a page, a file,
+    a server, another agent or a list of what earlier runs wrote returned
+    could say to confirm. The run marks itself on any other call, found
+    tools too, and a list marks it from inside the tool. One resumed from a
+    wait is read from the calls it recorded, failing closed: a call it
+    cannot tell the action of counts as a read, and the tools refuse any
+    argument key not spelled exactly as their own, so the record and the
+    tool read a call alike. Text the person pasted in their own yes is
+    theirs.
+  - **It runs the agent talking, or one it may hand work to,** checked as
+    delegation is. The hub's run the hub, whichever agent the team made it.
+  - **Here is the chat it was asked in; on the dashboard, a conversation of
+    its own** (*user*, 2026-11-27). `me` is the person's direct messages on
+    the chat's channel.
+  - **No secret passes through a chat.** A webhook watcher an agent proposes
+    waits for its secret, and the tool gives a link to the dashboard,
+    `<PUBLIC_URL>/ui/schedules/watchers/<id>`, which part 7 builds. Making
+    the secret there is its confirmation.
+  - **What the tools say is a refusal said for the model,** as `Refused: …`,
+    and a failure stays an error. An agent the run may not name is a
+    refusal of the runtime's own type, which `cmd/brain` turns into one.
+  - **`pending_in` is set null if its conversation is deleted,** which
+    nothing in the brain does; the ask then cannot be confirmed from a chat
+    and lapses within the hour.
 - **The worker deletes DBOS's record of finished background work after a
   week.** DBOS v1.2.0 never deletes a workflow row, and every tick of every
   sweep leaves one. `internal/retention`, a job of its own, lists the

@@ -3501,10 +3501,13 @@ paths:
     post:
       operationId: confirmSchedule
       tags: [schedules]
-      summary: Confirm a schedule an agent proposed
+      summary: Confirm a schedule an agent proposed, or its change
       description: |
         Requires `schedule:write` in this team, and the caller to be the
-        person it was proposed to. A proposal lapses after an hour.
+        person it was proposed to. A proposal lapses after an hour. On one
+        that already runs, it applies the agent's `waiting_change`, checked
+        again as it is now, or does the delete, resume or run now it asks; an
+        ask too lapses after an hour.
       responses:
         "200":
           description: Active
@@ -3836,11 +3839,13 @@ paths:
     post:
       operationId: confirmWatcher
       tags: [watchers]
-      summary: Confirm a watcher an agent proposed
+      summary: Confirm a watcher an agent proposed, or its change
       description: |
         Requires `schedule:write` in this team, and the caller to be the person
         it was proposed to. It becomes active and looks now. A proposal lapses
-        after an hour.
+        after an hour. On one that already runs, it applies the agent's
+        `waiting_change`, checked again as it is now, or does the delete,
+        resume or check now it asks; an ask too lapses after an hour.
       responses:
         "200":
           description: Confirmed
@@ -7244,7 +7249,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web, browser, workspace, tool_notes]
+          required: [instructions, max_steps, steer_continuations, parser, mcp_servers, skills, delegation, delegates, web, browser, workspace, schedule, tool_notes]
           properties:
             instructions:
               type: string
@@ -7300,6 +7305,12 @@ components:
               description: |
                 Whether the agent has Bash, Read, Write, Edit, Glob and Grep in
                 its session's workspace, when the team has a sandbox.
+            schedule:
+              type: boolean
+              description: |
+                Whether the agent may propose schedules and watchers from a
+                chat, each confirmed by the person. The team's hub may whatever
+                this says.
             tool_notes:
               type: array
               description: |
@@ -7426,6 +7437,19 @@ components:
             improvement proposals cannot grant it; a builder blueprint can,
             for a person to apply, as it can web and browser. Left out, it is
             false, and a PUT that leaves it out takes the grant away.
+        schedule:
+          type: boolean
+          default: false
+          description: |
+            Gives the agent the schedule and watch tools in a chat: it may
+            propose a schedule or a watcher that runs as the person, which
+            starts only once they reply with the code it gives them, and ask
+            to change, resume, delete or run now one of their own, which waits
+            for the same yes. Only a pause acts at once. It needs the team's
+            setting that lets agents schedule, and a person who holds
+            `schedule:write`. An agent's own improvement proposals cannot grant
+            it; a builder blueprint can, for a person to apply. Left out, it is
+            false, and a PUT that leaves it out takes the grant away.
 
     Delegation:
       type: string
@@ -7445,7 +7469,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/AgentSummary"
         - type: object
-          required: [delegation, web, browser, workspace, mcp_server_count, skill_count, delegate_count]
+          required: [delegation, web, browser, workspace, schedule, mcp_server_count, skill_count, delegate_count]
           properties:
             delegation:
               $ref: "#/components/schemas/Delegation"
@@ -7458,6 +7482,9 @@ components:
             workspace:
               type: boolean
               description: Whether it has a workspace by its own grant
+            schedule:
+              type: boolean
+              description: Whether it may propose schedules and watchers by its own grant
             mcp_server_count:
               type: integer
               format: int64
@@ -7649,6 +7676,8 @@ components:
         browser:
           type: boolean
         workspace:
+          type: boolean
+        schedule:
           type: boolean
 
     BlueprintServerGrant:
@@ -9387,6 +9416,8 @@ components:
         updated_at:
           type: string
           format: date-time
+        waiting_change:
+          $ref: "#/components/schemas/WaitingChange"
 
     SchedulePage:
       type: object
@@ -9593,6 +9624,27 @@ components:
           type: string
           format: date-time
         updated_at:
+          type: string
+          format: date-time
+        waiting_change:
+          $ref: "#/components/schemas/WaitingChange"
+
+    WaitingChange:
+      type: object
+      required: [says, since]
+      description: |
+        What an agent asked of a schedule or watcher from a chat: a change to
+        what it does, or to delete, resume or run it now. It runs as it was
+        until its maker confirms, which does what was asked; unconfirmed
+        within the hour, the ask is dropped. The maker's own change, the
+        agent's next ask, a take-over and a delete each drop it. The code
+        the agent gave the maker to confirm it with is not shown.
+      properties:
+        says:
+          type: string
+          description: What was asked, said for a person
+          examples: ["to change its objective, when it runs", "to delete it"]
+        since:
           type: string
           format: date-time
 

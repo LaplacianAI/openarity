@@ -115,7 +115,7 @@ func (s *Service) Preview(ctx context.Context, who Who, w When, zone string) ([]
 
 // CreateSchedule saves a new schedule and its conversation. Made by a person
 // it is active at once; proposed by an agent's tool, it waits for the
-// person's next message to confirm it (D10).
+// person's reply with its code (D10).
 func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in ScheduleInput) (ScheduleView, error) {
 	name, objective, err := named("schedule", in.Name, in.Objective)
 	if err != nil {
@@ -179,7 +179,7 @@ func (s *Service) CreateSchedule(ctx context.Context, who Who, origin Origin, in
 		}
 		if origin.viaTool() {
 			row.Status, row.NextFireAt = Proposed, nil
-			row.ProposedRun, row.ProposedIn = &origin.Run, &origin.Session
+			row.ProposedRun, row.ProposedIn, row.YesCode = &origin.Run, &origin.Session, newYesCode()
 		}
 		if _, err := q.CreateSchedule(ctx, row); err != nil {
 			return nameTaken(err, name)
@@ -265,6 +265,8 @@ func (s *Service) UpdateSchedule(ctx context.Context, who Who, ref Ref, p Schedu
 			if err := ownsIt(who, *row); err != nil {
 				return err
 			}
+			// The maker's own change replaces an agent's waiting one.
+			waitingOnSchedule(row).drop()
 		}
 		if err := applyPatch(ctx, q, row, p, l, now); err != nil {
 			return err
@@ -422,15 +424,25 @@ func resumeRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Ti
 // a later message from the same person, in the conversation it was proposed
 // in, may: text the proposing run read cannot confirm what it proposed.
 func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) (ScheduleView, error) {
+	l, err := s.limits(ctx, who.Team)
+	if err != nil {
+		return ScheduleView{}, err
+	}
 	now := s.now()
+	act := ""
 	id, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
+		if row.Status != Proposed && row.Pending != nil {
+			var asked error
+			act, asked = confirmScheduleAsk(ctx, q, who, origin, row, l, now)
+			return asked
+		}
 		if row.Status != Proposed {
 			return refuse(Conflict, "this schedule is not waiting to be confirmed; it is %s", row.Status)
 		}
 		if row.CreatedBy == nil || *row.CreatedBy != who.User {
 			return refuse(Forbidden, "only the person it was proposed to may confirm it")
 		}
-		if now.Sub(row.CreatedAt) > proposalLife {
+		if now.Sub(proposalOf(row).at) > proposalLife {
 			return refuse(Conflict, "the proposal waited more than an hour and lapsed; ask for it again")
 		}
 		if origin.viaTool() {
@@ -446,30 +458,46 @@ func (s *Service) Confirm(ctx context.Context, who Who, origin Origin, ref Ref) 
 		if !ok {
 			return refuse(Conflict, "the proposed time has passed; ask for a new one")
 		}
-		row.Status, row.NextFireAt = Active, &next
+		row.Status, row.NextFireAt, row.YesCode = Active, &next, nil
 		return nil
 	})
 	if err != nil {
+		return ScheduleView{}, err
+	}
+	if err := s.actOnSchedule(ctx, who, id, act); err != nil {
 		return ScheduleView{}, err
 	}
 	return s.view(ctx, who, id)
 }
 
 // A proposal is what confirming one reads: which run proposed it, where, to
-// whom, and when.
+// whom, when, and the code a yes to it carries.
 type proposal struct {
 	run, in, maker *uuid.UUID
 	at             time.Time
+	code           *string
 	noun           string
 }
 
 func proposalOf(row *db.Schedule) proposal {
-	return proposal{run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: row.CreatedAt, noun: "schedule"}
+	return proposal{
+		run: row.ProposedRun, in: row.ProposedIn, maker: row.CreatedBy, at: proposedAt(row.ProposedAt, row.CreatedAt),
+		code: row.YesCode, noun: "schedule",
+	}
+}
+
+// proposedAt is when a proposal was last made or revised.
+func proposedAt(at *time.Time, created time.Time) time.Time {
+	if at != nil {
+		return *at
+	}
+	return created
 }
 
 // laterMessage holds a confirmation from a tool to the conversation and the
 // person a schedule or watcher was proposed to, and to a run a later message
-// started.
+// of theirs started: sent once the proposing run finished, and carrying the
+// proposal's code, which only the person's own reply can (changes.go).
 func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origin) error {
 	if row.run != nil && *row.run == origin.Run {
 		return refuse(Conflict, "ask the person; a %s is confirmed by their next message, not in the run that proposed it", row.noun)
@@ -484,15 +512,36 @@ func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origi
 	if run.UserID == nil || row.maker == nil || *run.UserID != *row.maker || run.MessageID == nil {
 		return refuse(Forbidden, "only a message from the person it was proposed to confirms it")
 	}
-	at, err := q.MessageReceivedAt(ctx, db.MessageReceivedAtParams{ID: *run.MessageID, SessionID: origin.Session})
+	msg, err := q.ConfirmingMessage(ctx, db.ConfirmingMessageParams{ID: *run.MessageID, SessionID: origin.Session})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return refuse(Forbidden, "only a message from the person it was proposed to confirms it")
 	}
 	if err != nil {
 		return fmt.Errorf("read the confirming message: %w", err)
 	}
+	at := msg.ReceivedAt
 	if !at.After(row.at) {
 		return refuse(Forbidden, "only a message sent after the proposal confirms it")
+	}
+	// The person answers what the run said once it finished; a message sent
+	// while it worked was not an answer to it.
+	if row.run == nil {
+		return refuse(Forbidden, "only a message sent after the proposal confirms it")
+	}
+	proposer, err := q.GetRun(ctx, *row.run)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return refuse(Forbidden, "only a message sent after the proposal confirms it")
+	}
+	if err != nil {
+		return fmt.Errorf("read the proposing run: %w", err)
+	}
+	if proposer.FinishedAt == nil || !at.After(*proposer.FinishedAt) {
+		return refuse(Forbidden, "only a message sent after the run that proposed it finished confirms it")
+	}
+	if row.code == nil || !carriesCode(msg.Text, *row.code) {
+		return refuse(Forbidden, "the person's message does not carry this %s's code, so it is not their yes to it; "+
+			"the code is in this tool's answer when it was asked, and list gives it again, though a list counts as a read, so confirm "+
+			"only in the run their reply starts; ask them to reply with it, and do not confirm until they do", row.noun)
 	}
 	return nil
 }
@@ -502,13 +551,19 @@ func laterMessage(ctx context.Context, q *db.Queries, row proposal, origin Origi
 func (s *Service) Delete(ctx context.Context, who Who, ref Ref) error {
 	now := s.now()
 	_, err := s.change(ctx, who, ref, func(q *db.Queries, row *db.Schedule) error {
-		row.Status, row.PausedReason, row.NextFireAt, row.DeletedAt = Deleted, nil, nil, &now
-		if err := q.CloseTriggerSession(ctx, db.CloseTriggerSessionParams{ScheduleID: &row.ID}); err != nil {
-			return fmt.Errorf("close the schedule's conversation: %w", err)
-		}
-		return nil
+		return deleteRow(ctx, q, row, now)
 	})
 	return err
+}
+
+// deleteRow marks a schedule deleted and closes its conversation.
+func deleteRow(ctx context.Context, q *db.Queries, row *db.Schedule, now time.Time) error {
+	row.Status, row.PausedReason, row.NextFireAt, row.DeletedAt = Deleted, nil, nil, &now
+	waitingOnSchedule(row).drop()
+	if err := q.CloseTriggerSession(ctx, db.CloseTriggerSessionParams{ScheduleID: &row.ID}); err != nil {
+		return fmt.Errorf("close the schedule's conversation: %w", err)
+	}
+	return nil
 }
 
 // TakeOver gives a schedule whose maker left, or may no longer start runs, to
@@ -546,6 +601,8 @@ func (s *Service) TakeOver(ctx context.Context, who Who, ref Ref) (ScheduleView,
 			return refuse(Forbidden, "this schedule posts where a group reads it, which takes channel:write")
 		}
 		row.CreatedBy = &who.User
+		// What an agent asked of the old maker is not the new one's to confirm.
+		waitingOnSchedule(row).drop()
 		if err := q.SetTriggerSessionUser(ctx, db.SetTriggerSessionUserParams{UserID: who.User, ScheduleID: row.ID}); err != nil {
 			return fmt.Errorf("hand over the schedule's conversation: %w", err)
 		}
@@ -797,6 +854,8 @@ func saveOf(r db.Schedule) db.SaveScheduleParams {
 		Kind: r.Kind, Rule: r.Rule, Anchor: r.Anchor, Timezone: r.Timezone, Status: r.Status,
 		PausedReason: r.PausedReason, DeletedAt: r.DeletedAt, NextFireAt: r.NextFireAt,
 		LastFiredAt: r.LastFiredAt, LastLocal: r.LastLocal, ConsecutiveFailures: r.ConsecutiveFailures,
+		ProposedRun: r.ProposedRun, ProposedIn: r.ProposedIn, ProposedAt: r.ProposedAt,
+		Pending: r.Pending, PendingRun: r.PendingRun, PendingIn: r.PendingIn, PendingAt: r.PendingAt, YesCode: r.YesCode,
 	}
 }
 

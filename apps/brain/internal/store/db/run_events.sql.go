@@ -135,3 +135,43 @@ func (q *Queries) ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([
 	}
 	return items, nil
 }
+
+const runCalledOtherThan = `-- name: RunCalledOtherThan :one
+SELECT EXISTS (
+    SELECT 1 FROM run_events
+    WHERE run_id = $1 AND kind = 'tool_call'
+      AND NOT (
+          coalesce(payload->>'name', '') = ANY($2::text[])
+          OR (coalesce(payload->>'name', '') = ANY($3::text[])
+              AND coalesce(payload->>'truncated', 'false') = 'false'
+              AND coalesce(CASE WHEN pg_input_is_valid(coalesce(payload->>'arguments', ''), 'jsonb')
+                       THEN (payload->>'arguments')::jsonb->>'action' END, '') = ANY($4::text[]))
+      )
+)::bool AS called
+`
+
+type RunCalledOtherThanParams struct {
+	RunID   uuid.UUID
+	Quiet   []string
+	Acts    []string
+	Actions []string
+}
+
+// Whether a run called anything that could have read what someone else
+// wrote, as a run resumed from a wait made calls before it: a confirm may come
+// only before any read. Only a call to a tool named in quiet, or to one named
+// in acts whose arguments name an action in actions, read nothing; anything
+// else counts: a missing name, a list, arguments cut short or not JSON. The
+// arguments are read as the tool reads them, which refuses any key not
+// exactly its own.
+func (q *Queries) RunCalledOtherThan(ctx context.Context, arg RunCalledOtherThanParams) (bool, error) {
+	row := q.db.QueryRow(ctx, runCalledOtherThan,
+		arg.RunID,
+		arg.Quiet,
+		arg.Acts,
+		arg.Actions,
+	)
+	var called bool
+	err := row.Scan(&called)
+	return called, err
+}

@@ -402,6 +402,18 @@ export function AgentForm({
       </Section>
 
       <Section
+        title="Schedules"
+        about="Whether it may set up runs at a time or on a change from a chat, for the person to confirm."
+      >
+        <SwitchField
+          label="Can propose schedules and watchers"
+          description="In a chat it can propose a schedule or a watcher that runs as the person it is talking to, and ask to change, run or delete one of theirs. Nothing starts or changes until that person replies with the code it gives them. It offers this only to people who may make schedules, so never to a guest. The hub can either way, unless the team's settings say agents may not."
+          checked={draft.schedule}
+          onCheckedChange={(schedule) => set({ schedule })}
+        />
+      </Section>
+
+      <Section
         title="Limits"
         about="How long one answer may be, and how many steps and tokens one run may take."
       >

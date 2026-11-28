@@ -665,19 +665,31 @@ func TestAProposalWaitsAndOnlyALaterMessageConfirmsIt(t *testing.T) {
 	_, err = w.service.Confirm(t.Context(), Who{Team: w.team, User: w.other}, origin, Ref{ID: v.ID})
 	kindIs(t, err, NotFound, "no such schedule")
 
+	// Nor a later message of theirs without its code: a "thanks" is no yes,
+	// whatever a run that read a page was told.
+	if v.YesCode == nil || len(*v.YesCode) != yesCodeDigits {
+		t.Fatalf("a proposal from a tool has the code %v", v.YesCode)
+	}
+	var thanks uuid.UUID
+	w.scan(t, &thanks, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at) VALUES ($1, $2, $3, 'm1b', $4, now() + interval '1 day') RETURNING id`,
+		ch, origin.Session, w.maker, "thanks, 1"+*v.YesCode)
+	_, err = w.service.Confirm(t.Context(), w.who(), Origin{Run: w.chatRun(t, origin.Session, thanks), Session: origin.Session}, Ref{ID: v.ID})
+	kindIs(t, err, Forbidden, "does not carry this schedule's code")
+
 	var yes uuid.UUID
-	w.scan(t, &yes, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at) VALUES ($1, $2, $3, 'm2', 'yes', now() + interval '1 day') RETURNING id`, ch, origin.Session, w.maker)
+	w.scan(t, &yes, `INSERT INTO messages (channel_id, session_id, user_id, external_id, text, received_at) VALUES ($1, $2, $3, 'm2', $4, now() + interval '1 day') RETURNING id`,
+		ch, origin.Session, w.maker, "yes "+*v.YesCode+", go")
 	w.exec(t, `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE session_id = $1`, origin.Session)
 	got, err := w.service.Confirm(t.Context(), w.who(), Origin{Run: w.chatRun(t, origin.Session, yes), Session: origin.Session}, Ref{ID: v.ID})
-	if err != nil || got.Status != Active || got.NextFireAt == nil {
-		t.Fatalf("Confirm = %s %v, %v", got.Status, got.NextFireAt, err)
+	if err != nil || got.Status != Active || got.NextFireAt == nil || got.YesCode != nil {
+		t.Fatalf("Confirm = %s %v code %v, %v", got.Status, got.NextFireAt, got.YesCode, err)
 	}
 }
 
 func TestAnUnconfirmedProposalLapsesAfterAnHour(t *testing.T) {
 	w := newWorld(t)
 	v, _ := w.proposal(t)
-	w.exec(t, `UPDATE schedules SET created_at = now() - interval '2 hours' WHERE id = $1`, v.ID)
+	w.exec(t, `UPDATE schedules SET created_at = now() - interval '2 hours', proposed_at = now() - interval '2 hours' WHERE id = $1`, v.ID)
 	j := NewJob(w.store, nil, http.DefaultClient, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	j.now = time.Now
 	if err := j.sweepOnce(t.Context()); err != nil {

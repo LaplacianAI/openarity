@@ -641,3 +641,56 @@ func TestAgentsGetSaysWhetherItHasAWorkspace(t *testing.T) {
 		})
 	}
 }
+
+func TestAFileSendsItsScheduleGrantAsWritten(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml string
+		want any
+	}{
+		"left out": {"", nil},
+		"on":       {"schedule: true\n", true},
+		"off":      {"schedule: false\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			script, err := delegating(t, tc.yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := sent(t, script, http.MethodPost)["schedule"]; got != tc.want {
+				t.Errorf("schedule = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// An agent that says nothing of the grant has none: an older brain leaves
+// the field out.
+func TestAgentsGetSaysWhetherItMaySchedule(t *testing.T) {
+	for name, tc := range map[string]struct {
+		schedule string
+		want     string
+	}{
+		"on":       {`"schedule":true,`, "schedule on proposes schedules and watchers, confirmed by the person"},
+		"off":      {`"schedule":false,`, "schedule off"},
+		"left out": {``, "schedule off"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clitest.Routes(t, routes(map[string]clitest.Reply{
+				"GET /teams/{id}/agents/{agentID}": {Status: http.StatusOK, Body: strings.Replace(oneAgent, `"max_steps":5,`, `"max_steps":5,`+tc.schedule, 1)},
+			}))
+			out, err := clitest.Execute(t, commands, "agents", "get", "platform", "triage")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var row string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "schedule ") {
+					row = strings.Join(strings.Fields(line), " ")
+				}
+			}
+			if row != tc.want {
+				t.Errorf("schedule row = %q, want %q:\n%s", row, tc.want, out)
+			}
+		})
+	}
+}

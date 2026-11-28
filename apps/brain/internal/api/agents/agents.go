@@ -375,6 +375,7 @@ func view(row db.Agent, g grants) (detail, error) {
 		Web:                row.Web,
 		Browser:            row.Browser,
 		Workspace:          row.Workspace,
+		Schedule:           row.Schedule,
 		ToolNotes:          g.notes,
 	}
 	if d.ToolNotes == nil {
@@ -420,6 +421,7 @@ func viewListed(row db.ListAgentsByTeamRow) listed {
 		summary:    viewSummary(row.Agent),
 		Delegation: row.Agent.Delegation, Web: row.Agent.Web, Browser: row.Agent.Browser,
 		Workspace:   row.Agent.Workspace,
+		Schedule:    row.Agent.Schedule,
 		ServerCount: row.ServerCount, SkillCount: row.SkillCount, DelegateCount: row.DelegateCount,
 	}
 }

@@ -143,7 +143,7 @@ func (s *fakeStore) CreateAgent(_ context.Context, p db.CreateAgentParams) (db.A
 		Pattern: p.Pattern, MaxSteps: p.MaxSteps, SteerContinuations: p.SteerContinuations,
 		OutputSchema: p.OutputSchema, Parser: p.Parser, ParserModelName: p.ParserModelName,
 		ParserMaxTokens: p.ParserMaxTokens, ParserTemperature: p.ParserTemperature, TokenBudget: p.TokenBudget,
-		Delegation: p.Delegation, Web: p.Web, Browser: p.Browser, Workspace: p.Workspace, CreatedAt: now, UpdatedAt: now,
+		Delegation: p.Delegation, Web: p.Web, Browser: p.Browser, Workspace: p.Workspace, Schedule: p.Schedule, CreatedAt: now, UpdatedAt: now,
 	}
 	s.agents[a.ID] = a
 	return a, nil
@@ -169,7 +169,7 @@ func (s *fakeStore) UpdateAgent(_ context.Context, p db.UpdateAgentParams) (db.A
 	a.Pattern, a.MaxSteps, a.SteerContinuations = p.Pattern, p.MaxSteps, p.SteerContinuations
 	a.OutputSchema, a.Parser = p.OutputSchema, p.Parser
 	a.ParserModelName, a.ParserMaxTokens, a.ParserTemperature = p.ParserModelName, p.ParserMaxTokens, p.ParserTemperature
-	a.TokenBudget, a.Delegation, a.Web, a.Browser, a.Workspace = p.TokenBudget, p.Delegation, p.Web, p.Browser, p.Workspace
+	a.TokenBudget, a.Delegation, a.Web, a.Browser, a.Workspace, a.Schedule = p.TokenBudget, p.Delegation, p.Web, p.Browser, p.Workspace, p.Schedule
 	a.UpdatedAt = time.Now()
 	s.agents[a.ID] = a
 	return a, nil
@@ -594,7 +594,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	s := newFakeStore(plain, full)
 
 	detailKeys := slices.Sorted(slices.Values(append(slices.Clone(summaryKeys),
-		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills", "delegation", "delegates", "web", "browser", "workspace", "tool_notes")))
+		"instructions", "max_steps", "steer_continuations", "parser", "mcp_servers", "skills", "delegation", "delegates", "web", "browser", "workspace", "schedule", "tool_notes")))
 	if got := keysOf(t, call(t, s, &fakeAuthz{}, memberOf(team), http.MethodGet, one(team, plain.ID), nil).Body.Bytes()); !slices.Equal(got, detailKeys) {
 		t.Errorf("plain agent keys = %v, want %v", got, detailKeys)
 	}
@@ -612,7 +612,7 @@ func TestOnlyContractedFieldsAreSerialised(t *testing.T) {
 	}
 	// A row of the list carries counts of the grants, never the grants.
 	listedKeys := slices.Sorted(slices.Values(append(slices.Clone(summaryKeys),
-		"delegation", "web", "browser", "workspace", "mcp_server_count", "skill_count", "delegate_count")))
+		"delegation", "web", "browser", "workspace", "schedule", "mcp_server_count", "skill_count", "delegate_count")))
 	for _, item := range page.Items {
 		if got := keysOf(t, item); !slices.Equal(got, listedKeys) {
 			t.Errorf("list item keys = %v, want %v", got, listedKeys)

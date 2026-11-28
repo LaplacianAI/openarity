@@ -196,15 +196,16 @@ const createWatcher = `-- name: CreateWatcher :one
 
 INSERT INTO watchers (
     id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id,
-    every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, target, target_label
+    every_seconds, cooldown_seconds, status, next_check_at, proposed_run, proposed_in, proposed_at, yes_code, target, target_label
 ) VALUES (
     $1, $2, $3::uuid, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13, $14,
-    $15, $16, $17, $18,
-    $19
+    $15, $16, $17,
+    CASE WHEN $17::uuid IS NULL THEN NULL ELSE now() END, $18,
+    $19, $20
 )
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code
 `
 
 type CreateWatcherParams struct {
@@ -225,6 +226,7 @@ type CreateWatcherParams struct {
 	NextCheckAt     *time.Time
 	ProposedRun     *uuid.UUID
 	ProposedIn      *uuid.UUID
+	YesCode         *string
 	Target          string
 	TargetLabel     string
 }
@@ -250,6 +252,7 @@ func (q *Queries) CreateWatcher(ctx context.Context, arg CreateWatcherParams) (W
 		arg.NextCheckAt,
 		arg.ProposedRun,
 		arg.ProposedIn,
+		arg.YesCode,
 		arg.Target,
 		arg.TargetLabel,
 	)
@@ -281,6 +284,12 @@ func (q *Queries) CreateWatcher(ctx context.Context, arg CreateWatcherParams) (W
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }
@@ -313,11 +322,26 @@ func (q *Queries) DeleteUnwatchedTargets(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const dropLapsedWatcherChanges = `-- name: DropLapsedWatcherChanges :execrows
+UPDATE watchers SET pending = NULL, pending_run = NULL, pending_in = NULL, pending_at = NULL, yes_code = NULL, updated_at = now()
+WHERE pending_at < $1::timestamptz
+`
+
+// An agent's change nobody confirmed within the hour is dropped; the
+// watcher runs on as it was.
+func (q *Queries) DropLapsedWatcherChanges(ctx context.Context, before time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, dropLapsedWatcherChanges, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const expireProposedWatchers = `-- name: ExpireProposedWatchers :execrows
 WITH gone AS (
     UPDATE watchers SET status = 'deleted', deleted_at = now(), next_check_at = NULL,
         target_id = NULL, updated_at = now()
-    WHERE (status = 'proposed' AND created_at < $1)
+    WHERE (status = 'proposed' AND proposed_at < $1::timestamptz)
        OR (status = 'waiting_secret' AND created_at < $2)
     RETURNING id
 )
@@ -411,7 +435,7 @@ func (q *Queries) GetWatchTarget(ctx context.Context, id uuid.UUID) (WatchTarget
 }
 
 const getWatcherView = `-- name: GetWatcherView :one
-SELECT w.id, w.team_id, w.created_by, w.agent_id, w.hub, w.name, w.objective, w.source, w.target_id, w.selector, w.hook_id, w.every_seconds, w.cooldown_seconds, w.state, w.status, w.paused_reason, w.deleted_at, w.next_check_at, w.last_run_at, w.consecutive_failures, w.proposed_run, w.proposed_in, w.created_at, w.updated_at, w.target, w.target_label, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT w.id, w.team_id, w.created_by, w.agent_id, w.hub, w.name, w.objective, w.source, w.target_id, w.selector, w.hook_id, w.every_seconds, w.cooldown_seconds, w.state, w.status, w.paused_reason, w.deleted_at, w.next_check_at, w.last_run_at, w.consecutive_failures, w.proposed_run, w.proposed_in, w.created_at, w.updated_at, w.target, w.target_label, w.proposed_at, w.pending, w.pending_run, w.pending_in, w.pending_at, w.yes_code, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce(t.url, '')::text AS url,
        coalesce(lc.outcome, '')::text AS last_outcome, lc.checked_at AS last_checked_at
 FROM watchers w
@@ -468,6 +492,12 @@ func (q *Queries) GetWatcherView(ctx context.Context, arg GetWatcherViewParams) 
 		&i.Watcher.UpdatedAt,
 		&i.Watcher.Target,
 		&i.Watcher.TargetLabel,
+		&i.Watcher.ProposedAt,
+		&i.Watcher.Pending,
+		&i.Watcher.PendingRun,
+		&i.Watcher.PendingIn,
+		&i.Watcher.PendingAt,
+		&i.Watcher.YesCode,
 		&i.SessionID,
 		&i.SessionChannelID,
 		&i.Url,
@@ -734,7 +764,7 @@ func (q *Queries) ListWatcherNews(ctx context.Context, arg ListWatcherNewsParams
 }
 
 const listWatcherViews = `-- name: ListWatcherViews :many
-SELECT w.id, w.team_id, w.created_by, w.agent_id, w.hub, w.name, w.objective, w.source, w.target_id, w.selector, w.hook_id, w.every_seconds, w.cooldown_seconds, w.state, w.status, w.paused_reason, w.deleted_at, w.next_check_at, w.last_run_at, w.consecutive_failures, w.proposed_run, w.proposed_in, w.created_at, w.updated_at, w.target, w.target_label, ss.id AS session_id, ss.channel_id AS session_channel_id,
+SELECT w.id, w.team_id, w.created_by, w.agent_id, w.hub, w.name, w.objective, w.source, w.target_id, w.selector, w.hook_id, w.every_seconds, w.cooldown_seconds, w.state, w.status, w.paused_reason, w.deleted_at, w.next_check_at, w.last_run_at, w.consecutive_failures, w.proposed_run, w.proposed_in, w.created_at, w.updated_at, w.target, w.target_label, w.proposed_at, w.pending, w.pending_run, w.pending_in, w.pending_at, w.yes_code, ss.id AS session_id, ss.channel_id AS session_channel_id,
        coalesce(t.url, '')::text AS url,
        coalesce(lc.outcome, '')::text AS last_outcome, lc.checked_at AS last_checked_at
 FROM watchers w
@@ -818,6 +848,12 @@ func (q *Queries) ListWatcherViews(ctx context.Context, arg ListWatcherViewsPara
 			&i.Watcher.UpdatedAt,
 			&i.Watcher.Target,
 			&i.Watcher.TargetLabel,
+			&i.Watcher.ProposedAt,
+			&i.Watcher.Pending,
+			&i.Watcher.PendingRun,
+			&i.Watcher.PendingIn,
+			&i.Watcher.PendingAt,
+			&i.Watcher.YesCode,
 			&i.SessionID,
 			&i.SessionChannelID,
 			&i.Url,
@@ -835,7 +871,7 @@ func (q *Queries) ListWatcherViews(ctx context.Context, arg ListWatcherViewsPara
 }
 
 const lockWatcher = `-- name: LockWatcher :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label FROM watchers
+SELECT id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code FROM watchers
 WHERE id = $1 AND team_id = $2 AND status <> 'deleted'
 FOR UPDATE
 `
@@ -875,6 +911,12 @@ func (q *Queries) LockWatcher(ctx context.Context, arg LockWatcherParams) (Watch
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }
@@ -1054,9 +1096,17 @@ UPDATE watchers SET
     next_check_at    = $14,
     last_run_at      = $15,
     consecutive_failures = $16,
+    proposed_run  = $17,
+    proposed_in   = $18,
+    proposed_at   = $19,
+    pending       = $20,
+    pending_run   = $21,
+    pending_in    = $22,
+    pending_at    = $23,
+    yes_code      = $24,
     updated_at       = now()
-WHERE id = $17
-RETURNING id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label
+WHERE id = $25
+RETURNING id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code
 `
 
 type SaveWatcherParams struct {
@@ -1076,6 +1126,14 @@ type SaveWatcherParams struct {
 	NextCheckAt         *time.Time
 	LastRunAt           *time.Time
 	ConsecutiveFailures int32
+	ProposedRun         *uuid.UUID
+	ProposedIn          *uuid.UUID
+	ProposedAt          *time.Time
+	Pending             []byte
+	PendingRun          *uuid.UUID
+	PendingIn           *uuid.UUID
+	PendingAt           *time.Time
+	YesCode             *string
 	ID                  uuid.UUID
 }
 
@@ -1099,6 +1157,14 @@ func (q *Queries) SaveWatcher(ctx context.Context, arg SaveWatcherParams) (Watch
 		arg.NextCheckAt,
 		arg.LastRunAt,
 		arg.ConsecutiveFailures,
+		arg.ProposedRun,
+		arg.ProposedIn,
+		arg.ProposedAt,
+		arg.Pending,
+		arg.PendingRun,
+		arg.PendingIn,
+		arg.PendingAt,
+		arg.YesCode,
 		arg.ID,
 	)
 	var i Watcher
@@ -1129,6 +1195,12 @@ func (q *Queries) SaveWatcher(ctx context.Context, arg SaveWatcherParams) (Watch
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }
@@ -1331,7 +1403,7 @@ func (q *Queries) UpsertWatchTarget(ctx context.Context, arg UpsertWatchTargetPa
 }
 
 const watcherByHook = `-- name: WatcherByHook :one
-SELECT id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label FROM watchers WHERE hook_id = $1 AND status <> 'deleted'
+SELECT id, team_id, created_by, agent_id, hub, name, objective, source, target_id, selector, hook_id, every_seconds, cooldown_seconds, state, status, paused_reason, deleted_at, next_check_at, last_run_at, consecutive_failures, proposed_run, proposed_in, created_at, updated_at, target, target_label, proposed_at, pending, pending_run, pending_in, pending_at, yes_code FROM watchers WHERE hook_id = $1 AND status <> 'deleted'
 `
 
 // A webhook watcher by the id in its URL. A deleted one has no URL.
@@ -1365,6 +1437,12 @@ func (q *Queries) WatcherByHook(ctx context.Context, hookID *string) (Watcher, e
 		&i.UpdatedAt,
 		&i.Target,
 		&i.TargetLabel,
+		&i.ProposedAt,
+		&i.Pending,
+		&i.PendingRun,
+		&i.PendingIn,
+		&i.PendingAt,
+		&i.YesCode,
 	)
 	return i, err
 }

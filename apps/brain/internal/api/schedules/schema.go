@@ -118,6 +118,22 @@ type schedule struct {
 	CreatedBy    *uuid.UUID  `json:"created_by,omitempty"`
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
+	// WaitingChange is an agent's change waiting for its maker's yes.
+	WaitingChange *waitingChange `json:"waiting_change,omitempty"`
+}
+
+// waitingChange is what an agent's change sets, said for a person, and when
+// it was proposed. Confirming the schedule or watcher applies it.
+type waitingChange struct {
+	Says  string    `json:"says"`
+	Since time.Time `json:"since"`
+}
+
+func waitingOf(says string, since *time.Time) *waitingChange {
+	if says == "" || since == nil {
+		return nil
+	}
+	return &waitingChange{Says: says, Since: *since}
 }
 
 func view(v triggers.ScheduleView) schedule {
@@ -133,6 +149,7 @@ func view(v triggers.ScheduleView) schedule {
 	if v.LastOutcome != "" {
 		out.LastOutcome = &v.LastOutcome
 	}
+	out.WaitingChange = waitingOf(v.WaitingChange())
 	return out
 }
 
