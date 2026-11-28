@@ -1156,3 +1156,16 @@ func TestAFileSentIsALineNamingIt(t *testing.T) {
 		t.Errorf("out = %q", out)
 	}
 }
+
+// What the run told its person while it worked is a line saying so, with its
+// words under it, made safe like an answer.
+func TestWhatTheRunSaidIsShownUnderALine(t *testing.T) {
+	stream := frameOf("1", "said", `{"tool_call_id":"c1","agent":"release","text":"v0.4.0 is tagged\u001b[2J"}`) +
+		frameOf("", "end", `{"status":"succeeded"}`)
+	clitest.Routes(t, eventsRoute(http.StatusOK, stream))
+
+	out, _ := clitest.Execute(t, commands, "runs", "events", "platform", runID)
+	if !strings.HasPrefix(out, "› told the person\n  v0.4.0 is tagged\n") {
+		t.Errorf("out = %q", out)
+	}
+}

@@ -40,6 +40,7 @@ import {
   type Step,
   saying,
   type ToolLine,
+  toldIn,
   worked,
 } from "@/lib/session-stream";
 import { cn } from "@/lib/utils";
@@ -267,6 +268,7 @@ function RunTurnView({
   // The step whose text is the answer is shown as the answer, not again in the working.
   const asked = requestsOf(c, run);
   const answerStep = [...run.steps].reverse().find((s) => s.text !== "")?.step ?? null;
+  const told = toldIn(c, run);
   return (
     <li data-turn={run.id} data-status={run.status} className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -288,6 +290,21 @@ function RunTurnView({
           sessionId={sessionId}
           now={now}
         />
+      ) : null}
+
+      {told.length > 0 ? (
+        // What it said while it worked, before its answer, as a channel sends
+        // it: a delegate's under its own name.
+        <ul aria-label={`What ${run.agent} said while it worked`} className="space-y-2">
+          {told.map((t) => (
+            <li key={`${t.runId}:${t.toolCallId}`} data-told className="max-w-[75ch] text-sm">
+              {t.agent !== run.agent ? (
+                <span className="mb-0.5 block text-xs text-muted-foreground">{t.agent}</span>
+              ) : null}
+              <Markdown>{t.text}</Markdown>
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       {run.files.length > 0 ? (

@@ -191,6 +191,8 @@ func (t *transcript) event(f frame, p payload) error {
 		t.waiting(p)
 	case "file_sent":
 		t.fileSent(p)
+	case "said":
+		t.toldPerson(p)
 	case finishedEvent, endEvent:
 	default:
 		t.block()
@@ -246,6 +248,16 @@ func (t *transcript) fileSent(p payload) {
 		" ("+cli.Line(p.File.MediaType)+", "+sizeOf(p.File.Size)+")"))
 	if p.Caption != "" {
 		t.line(elbow + t.clipAfter(elbow, cli.Line(p.Caption)))
+	}
+}
+
+// toldPerson is what the run told its person while it worked, the brain's text
+// made safe like an answer's.
+func (t *transcript) toldPerson(p payload) {
+	t.block()
+	t.line(t.paint.mark("›") + " " + t.clipAfter("› ", "told the person"))
+	for _, l := range answer(t.paint, p.Text) {
+		t.line(strings.TrimRight("  "+l, " "))
 	}
 }
 

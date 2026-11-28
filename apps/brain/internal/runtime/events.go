@@ -72,7 +72,13 @@ type usagePayload struct {
 type note struct {
 	kind    string
 	payload any
-	done    chan error
+	done    chan noteWritten
+}
+
+// noteWritten is where a note was written: its seq, or why it was not.
+type noteWritten struct {
+	seq int32
+	err error
 }
 
 const (
@@ -144,7 +150,8 @@ func record(ctx context.Context, s EventStore, runID uuid.UUID, worker string, l
 			case n := <-notes:
 				r.flush()
 				// A run this worker lost refuses the write itself, with ErrLostRun.
-				n.done <- appendEvent(ctx, s, runID, worker, n.kind, n.payload)
+				seq, err := appendEventSeq(ctx, s, runID, worker, n.kind, n.payload)
+				n.done <- noteWritten{seq, err}
 			case <-tick:
 				r.flush()
 			}

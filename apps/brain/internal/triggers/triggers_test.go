@@ -281,6 +281,10 @@ func TestAFireStartsOneRunInTheSchedulesConversationAsItsMaker(t *testing.T) {
 		t.Fatalf("FireDue = %d, %v; want 1", fired, err)
 	}
 	run := w.onlyRun(t, v.ID)
+	// Nobody waits on a schedule's run, so it tells nobody anything mid-run.
+	if reach, err := w.store.GetReplyReach(t.Context(), run); err != nil || reach.Answers {
+		t.Errorf("a schedule's run answers a person: %+v, %v", reach, err)
+	}
 	var session, user uuid.UUID
 	var hub, reply bool
 	var input string

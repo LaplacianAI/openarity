@@ -8070,7 +8070,8 @@ type ClientInterface interface {
 	// `approval_requested`, waits in `run_waiting` with what it told them,
 	// and hears the answer in `approval_decided`. A run the team's sandbox
 	// has no room for waits in `run_waiting` too, its `reason` `sandbox`.
-	// A file a run hands the person is `file_sent`.
+	// A file a run hands the person is `file_sent`, and something it tells
+	// them while it works is `said`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -11574,7 +11575,8 @@ func (c *Client) GetSessionAttachment(ctx context.Context, id TeamID, sessionID 
 // `approval_requested`, waits in `run_waiting` with what it told them,
 // and hears the answer in `approval_decided`. A run the team's sandbox
 // has no room for waits in `run_waiting` too, its `reason` `sandbox`.
-// A file a run hands the person is `file_sent`.
+// A file a run hands the person is `file_sent`, and something it tells
+// them while it works is `said`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment
@@ -20781,7 +20783,8 @@ type ClientWithResponsesInterface interface {
 	// `approval_requested`, waits in `run_waiting` with what it told them,
 	// and hears the answer in `approval_decided`. A run the team's sandbox
 	// has no room for waits in `run_waiting` too, its `reason` `sandbox`.
-	// A file a run hands the person is `file_sent`.
+	// A file a run hands the person is `file_sent`, and something it tells
+	// them while it works is `said`.
 	// Events the catalog has no kind for are `custom`, named by the kind
 	// the run recorded. The stream does not end: it follows the
 	// conversation until the client leaves, with a `: keep-alive` comment
@@ -29608,7 +29611,8 @@ func (c *ClientWithResponses) GetSessionAttachmentWithResponse(ctx context.Conte
 // `approval_requested`, waits in `run_waiting` with what it told them,
 // and hears the answer in `approval_decided`. A run the team's sandbox
 // has no room for waits in `run_waiting` too, its `reason` `sandbox`.
-// A file a run hands the person is `file_sent`.
+// A file a run hands the person is `file_sent`, and something it tells
+// them while it works is `said`.
 // Events the catalog has no kind for are `custom`, named by the kind
 // the run recorded. The stream does not end: it follows the
 // conversation until the client leaves, with a `: keep-alive` comment

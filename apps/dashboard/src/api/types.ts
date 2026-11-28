@@ -526,6 +526,10 @@ export type SessionEvent =
         caption?: string;
       };
     }
+  | {
+      kind: "said";
+      data: { at: string; run_id: string; tool_call_id: string; agent: string; text: string };
+    }
   | { kind: "other"; name: string; data: unknown };
 
 export type RunRequest = {

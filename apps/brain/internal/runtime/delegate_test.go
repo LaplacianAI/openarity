@@ -26,6 +26,11 @@ type fakeDelegateStore struct {
 	lookedUp   []db.GetAgentByNameParams
 	listReads  int
 	usageRoots []uuid.UUID
+	// said is what any run told its person, as a child's id is not known
+	// before it starts; saidErr fails reading it.
+	said    []string
+	saidErr error
+	saidBy  []uuid.UUID
 }
 
 func (f *fakeDelegateStore) GetAgent(_ context.Context, id uuid.UUID) (db.Agent, error) {
@@ -61,6 +66,13 @@ func (f *fakeDelegateStore) TreeUsage(_ context.Context, rootID uuid.UUID) (db.T
 	defer f.mu.Unlock()
 	f.usageRoots = append(f.usageRoots, rootID)
 	return f.usage, nil
+}
+
+func (f *fakeDelegateStore) ListRunSaid(_ context.Context, runID uuid.UUID) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.saidBy = append(f.saidBy, runID)
+	return f.said, f.saidErr
 }
 
 type fakeDelegator struct {
@@ -477,5 +489,30 @@ func TestAChildStartsOnItsOwnBudget(t *testing.T) {
 				t.Errorf("budget = %d, want %d", got, c.want)
 			}
 		})
+	}
+}
+
+// The report says what the child told the person while it worked, read for
+// that child, so the caller does not say it again. Not read is the report
+// without it: the work was done.
+func TestADelegatesReportSaysWhatItToldThePerson(t *testing.T) {
+	f := newDelegateFixture()
+	f.store.said = []string{"the refund is issued"}
+
+	out, err := f.invoke(t, toBilling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "refund re_118 issued\n[it told the person while it worked, so do not tell them again:\n- the refund is issued]") {
+		t.Errorf("result =\n%s\nwant what it said in the report", out)
+	}
+	if len(f.store.saidBy) != 1 || f.store.saidBy[0] == f.parent.ID {
+		t.Errorf("read what %v said, want the child", f.store.saidBy)
+	}
+
+	f.store.saidErr = errors.New("connection reset")
+	if out, err := f.invoke(t, toBilling); err != nil || !strings.Contains(out, "could not be read") ||
+		!strings.Contains(out, "refund re_118 issued") {
+		t.Errorf("with what it said unread: %q, %v; want the report, saying it may have told them", out, err)
 	}
 }

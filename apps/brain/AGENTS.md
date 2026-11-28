@@ -140,6 +140,7 @@ apps/brain/
     resolve.go         Resolving: the model client that fetches those files' bytes for each request
     keep.go            a tool's file kept as its conversation's attachment: reserved, sealed, its call recorded
     sendfile.go        send_file(id, caption): a conversation's file handed to its person, a file_sent event and, on a channel, a reply
+    reply.go           reply(text): telling the person something mid-run, a said event and, on a channel, a step; a delegate's too, under its name
     keepfile.go        keep_file(path, server?): a file a tool wrote in the workspace or a command server's room, kept as F2 keeps a returned one
     capped.go          an MCP client's answers capped at 40 MiB, one large answer read at a time per worker
     history.go         history(before, limit): the conversation read back, its people and the top-level runs' answers

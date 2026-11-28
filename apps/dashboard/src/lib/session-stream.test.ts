@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SessionEnvelope, SessionEvent } from "@/api/types";
 
-import { type Conversation, empty, fold, saying, stepOf, worked } from "./session-stream";
+import { type Conversation, empty, fold, saying, stepOf, toldIn, worked } from "./session-stream";
 
 const at = "2026-11-13T10:00:00Z";
 let n = 0;
@@ -245,6 +245,37 @@ describe("fold", () => {
       { toolCallId: "c2", file: chart, caption: "" },
     ]);
     expect(all(frames(sent("c9", report))).runs).toEqual({});
+  });
+
+  it("keeps what a run said while it worked, each call once, and its delegates' with it, oldest first", () => {
+    const said = (
+      run: string,
+      call: string,
+      agent: string,
+      text: string,
+      when: string,
+    ): SessionEvent => ({
+      kind: "said",
+      data: { at: when, run_id: run, tool_call_id: call, agent, text },
+    });
+    const c = all(
+      frames(
+        started("r1"),
+        started("r2", "release", "r1"),
+        said("r1", "c1", "hub", "Starting the release.", "2026-11-13T10:00:01Z"),
+        said("r2", "c1", "release", "v0.4.0 is tagged.", "2026-11-13T10:00:05Z"),
+        said("r1", "c1", "hub", "Starting the release.", "2026-11-13T10:00:01Z"),
+        said("r9", "c1", "nobody", "lost", "2026-11-13T10:00:02Z"),
+      ),
+    );
+    expect(c.runs.r1?.told).toHaveLength(1);
+    const root = c.runs.r1;
+    if (!root) throw new Error("no root");
+    expect(toldIn(c, root).map((t) => `${t.agent}: ${t.text}`)).toEqual([
+      "hub: Starting the release.",
+      "release: v0.4.0 is tagged.",
+    ]);
+    expect(c.runs.r9).toBeUndefined();
   });
 });
 

@@ -243,6 +243,13 @@ describe("groupTrace", () => {
     expect(stepsOf(t)[0]?.other).toEqual([during]);
   });
 
+  it("shows what the run told the person while it worked", () => {
+    const trace = groupTrace([
+      e("said", { tool_call_id: "c1", agent: "hub", text: "v0.4.0 is tagged" }),
+    ]);
+    expect(trace.items).toEqual([{ type: "told", text: "v0.4.0 is tagged" }]);
+  });
+
   it("names a file the run sent, and reads one with no file as nameless", () => {
     const trace = groupTrace([
       e("file_sent", {

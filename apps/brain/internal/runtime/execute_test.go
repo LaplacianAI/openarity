@@ -2149,3 +2149,81 @@ func TestTheStartedEventSaysWhatIsFoundBySearch(t *testing.T) {
 		t.Errorf("small: found %v, want none", got.Found)
 	}
 }
+
+// The whole of reply: a run tells its person something and carries on to its
+// answer. Its said event comes before the answer; on a channel the words are
+// also a step named by that event and kicked at once, and the answer follows
+// them out; on the dashboard the event is the delivery.
+func TestARunTellsItsPersonSomethingAndCarriesOn(t *testing.T) {
+	for _, onChannel := range []bool{true, false} {
+		t.Run(map[bool]string{true: "a channel", false: "the dashboard"}[onChannel], func(t *testing.T) {
+			f := newExecFixture(t, nil)
+			var session, channel uuid.UUID
+			f.mustScan(t, `SELECT session_id FROM runs WHERE id = $1`, []any{f.run}, &session)
+			provider := "dashboard"
+			if onChannel {
+				provider = "telegram"
+				f.mustScan(t, `INSERT INTO channels (team_id, provider, name) VALUES ($1, 'telegram', 'bot') RETURNING id`,
+					[]any{f.team}, &channel)
+			} else {
+				f.mustScan(t, `SELECT id FROM channels WHERE team_id = $1 AND provider = 'dashboard'`, []any{f.team}, &channel)
+			}
+			f.mustExec(t, `UPDATE sessions SET channel_id = $1, provider_ref = '42' WHERE id = $2`, channel, session)
+			f.model = newScripted(
+				callTool("c1", ReplyToolName, `{"text":"v0.4.0 is tagged; writing the notes"}`),
+				answer("Released v0.4.0.", 10, 5),
+			)
+			f.exec = f.executor(t, func(agent.Endpoint) (agent.ModelClient, error) { return f.model, nil },
+				agent.Endpoint{BaseURL: "http://model.test"})
+			f.exec.builder.WithReplies(f.store)
+			steps := &stepKicks{}
+			f.exec.kickEvent = steps.kick
+			if onChannel {
+				f.answersAChannel(t)
+			}
+
+			f.mustExecute(t)
+
+			wantStatus(t, f.row(t), "succeeded", "")
+			var seq int32
+			var payload []byte
+			f.mustScan(t, `SELECT seq, payload FROM run_events WHERE run_id = $1 AND kind = 'said'`, []any{f.run}, &seq, &payload)
+			var got stream.Said
+			if err := json.Unmarshal(payload, &got); err != nil {
+				t.Fatal(err)
+			}
+			if want := (stream.Said{ToolCallID: "c1", Agent: f.row(t).AgentName, Text: "v0.4.0 is tagged; writing the notes"}); got != want {
+				t.Errorf("said = %+v, want %+v", got, want)
+			}
+			var finished int32
+			f.mustScan(t, `SELECT seq FROM run_events WHERE run_id = $1 AND kind = 'finished'`, []any{f.run}, &finished)
+			if seq >= finished {
+				t.Errorf("said at %d, finished at %d; want it said first", seq, finished)
+			}
+
+			var kinds []string
+			rows, err := f.store.Pool().Query(t.Context(), `SELECT kind || ':' || text FROM replies WHERE run_id = $1 ORDER BY id`, f.run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var k string
+				if err := rows.Scan(&k); err != nil {
+					t.Fatal(err)
+				}
+				kinds = append(kinds, k)
+			}
+			rows.Close()
+			want := []string{"event:v0.4.0 is tagged; writing the notes", "answer:Released v0.4.0."}
+			if !onChannel {
+				want = nil
+			}
+			if !slices.Equal(kinds, want) {
+				t.Errorf("%s replies %q, want %q", provider, kinds, want)
+			}
+			if onChannel != slices.Equal(steps.seqs, []int32{seq}) {
+				t.Errorf("kicked %v for said at %d", steps.seqs, seq)
+			}
+		})
+	}
+}

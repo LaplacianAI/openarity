@@ -481,6 +481,30 @@ Telegram and `custom` can. The dashboard channel cannot, and needs none: its
 conversation already shows every step as it happens. `reply_mode` is `final`
 or `events`, and is refused on a channel that cannot show events.
 
+### Telling you something while it works
+
+A run answering your message can tell you something before its answer with
+its `reply` tool, then carry on: what it has done so far, or an answer to what
+you wrote while it worked. A message sent mid-run reaches the agent at its
+next step, labelled as sent while it worked, so "What is the status?" gets an
+answer without stopping the run:
+
+```text
+you    start a release, update the docs and close issue 72
+bot    Tagging v0.4.0 now, then the docs.
+you    what is the status?
+bot    v0.4.0 is tagged and the notes are up; closing #72 next.
+bot    Released v0.4.0, updated the docs and closed #72.
+```
+
+Whatever the channel's `reply_mode`, it is sent as a step is, a reply of
+`kind` `event` named by its run event; on the dashboard it shows above the
+answer. A delegate's words go to the same conversation with its agent's name
+before them, and its report tells the agent that handed it the work what it
+already said, so that is not said again. A run and its delegates say ten
+things at most before the answer. A schedule's or a watcher's run has no
+`reply`: nobody is waiting, and its answer is its one message.
+
 ### What a reply looks like
 
 A `POST` with `Content-Type: application/json`:

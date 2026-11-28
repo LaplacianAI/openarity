@@ -252,3 +252,61 @@ WHERE r.id = sqlc.arg('run_id')::uuid
   AND r.reply_to_channel
   AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
 ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING;
+
+-- Whether a run can tell its person something while it works (reply), and
+-- how: its tree answers a person's message, on the dashboard or the API's
+-- stream, or on a channel it can post to. A schedule's or a watcher's
+-- conversation answers nobody who is waiting, so it says no; a delegate
+-- answers as its root does. streamed is a conversation read on its stream,
+-- whose event is the delivery.
+-- name: GetReplyReach :one
+SELECT (s.schedule_id IS NULL AND s.watcher_id IS NULL
+        AND (s.channel_id IS NULL OR ch.provider = 'dashboard'
+             OR (root.reply_to_channel AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL))))::bool AS answers,
+       (s.channel_id IS NULL OR ch.provider = 'dashboard')::bool AS streamed
+FROM runs r
+JOIN runs root ON root.id = r.root_run_id
+JOIN sessions s ON s.id = root.session_id
+LEFT JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = sqlc.arg('run_id')::uuid;
+
+-- What a run, or a delegate of it, told its person, sent to the root's
+-- channel as a step is, whatever its reply mode: the person is waiting on it,
+-- as on a waiting line. Named by its said event, so a write retried is one
+-- reply. Read again here, so a conversation that can no longer be posted to
+-- is sent nothing.
+-- name: InsertSaidReply :execrows
+INSERT INTO replies (team_id, run_id, session_id, channel_id, kind, text, event_seq)
+SELECT r.team_id, r.id, root.session_id, s.channel_id, 'event', sqlc.arg('text')::text, sqlc.arg('event_seq')::integer
+FROM runs r
+JOIN runs root ON root.id = r.root_run_id
+JOIN sessions s ON s.id = root.session_id
+JOIN channels ch ON ch.id = s.channel_id
+WHERE r.id = sqlc.arg('run_id')::uuid
+  AND root.reply_to_channel
+  AND (ch.provider <> 'custom' OR ch.reply_url IS NOT NULL)
+ON CONFLICT (run_id, event_seq) WHERE event_seq IS NOT NULL DO NOTHING;
+
+-- How often a run's tree has told its person something, for reply's limit:
+-- every delegate's counts, so a tree of five cannot send fifty.
+-- name: CountSaidInTree :one
+SELECT count(*) FROM run_events e
+JOIN runs r ON r.id = e.run_id
+WHERE r.root_run_id = sqlc.arg('root_id')::uuid AND e.kind = 'said';
+
+-- What a delegate told its person, oldest first, for the report its parent
+-- reads: so the parent does not say it again. Only what reached them: on a
+-- channel, a said event with its reply queued; on a conversation read on its
+-- stream (GetReplyReach's streamed), where the event is the delivery, every
+-- one. One whose post failed was put in the
+-- delegate's answer instead, so the parent passes it on.
+-- name: ListRunSaid :many
+SELECT (e.payload->>'text')::text AS text FROM run_events e
+JOIN runs r ON r.id = e.run_id
+JOIN runs root ON root.id = r.root_run_id
+JOIN sessions s ON s.id = root.session_id
+LEFT JOIN channels ch ON ch.id = s.channel_id
+WHERE e.run_id = sqlc.arg('run_id')::uuid AND e.kind = 'said'
+  AND (s.channel_id IS NULL OR ch.provider = 'dashboard'
+       OR EXISTS (SELECT 1 FROM replies rp WHERE rp.run_id = e.run_id AND rp.event_seq = e.seq))
+ORDER BY e.seq;

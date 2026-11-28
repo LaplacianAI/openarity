@@ -83,6 +83,12 @@ type Builder struct {
 	// is given send_file. kickFile has a channel's file reply sent now.
 	sends    *FileSends
 	kickFile func(runID uuid.UUID, callID string)
+	// replies is how a run tells its person something mid-run (reply.go);
+	// without it no run is given reply. noteSeq writes what it said, as
+	// note does, and kickEvent has a channel's reply sent now.
+	replies   ReplyStore
+	noteSeq   func(ctx context.Context, runID uuid.UUID, worker, kind string, payload any) (int32, error)
+	kickEvent func(runID uuid.UUID, seq int32)
 	// scheduling hands a top-level run the schedule and watch tools
 	// (scheduling.go); without it no run is given them.
 	scheduling Scheduling
@@ -229,9 +235,16 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 	// so neither has one.
 	work := a.Workspace && (b.workspaces != nil || b.replay) &&
 		settings.SandboxProvider != string(sandbox.None)
+	// A run, or a delegate of one, answering a person tells them things as
+	// it works. Known before the MCP tools, as a server's reply then yields.
+	say, says, err := b.replyFor(ctx, run, l)
+	if err != nil {
+		return Built{}, err
+	}
 	var held catalogue
 	if a.ID != uuid.Nil {
-		held, err = b.tools(ctx, a.ID, l.Narrow, reservedFor{hub: run.Hub, web: web, browse: browse, work: work}, gates, &built)
+		held, err = b.tools(ctx, a.ID, l.Narrow,
+			reservedFor{hub: run.Hub, web: web, browse: browse, work: work, reply: says}, gates, &built)
 		if err != nil {
 			built.Close()
 			return Built{}, err
@@ -312,6 +325,18 @@ func (b *Builder) Build(ctx context.Context, run db.Run, session agent.Session, 
 			} else {
 				built.Spec.Tools = append(built.Spec.Tools, gated)
 			}
+		}
+	}
+
+	// Only the person the run answers reads what it says, as they read its
+	// answer, so it is a read.
+	if says {
+		built.answerable[say.Name] = say
+		gated, refused := gates.gate(say, target{name: say.Name, class: approval.ClassFor(approval.Looks, actor)})
+		if refused != nil {
+			built.Unavailable = append(built.Unavailable, *refused)
+		} else {
+			built.Spec.Tools = append(built.Spec.Tools, gated)
 		}
 	}
 
@@ -644,7 +669,7 @@ var toolNameShape = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 // reservedFor is which of the brain's own tools a run holds, whose names an
 // MCP server's tool may not take.
-type reservedFor struct{ hub, web, browse, work bool }
+type reservedFor struct{ hub, web, browse, work, reply bool }
 
 func reserved(name string, r reservedFor) bool {
 	switch name {
@@ -660,6 +685,10 @@ func reserved(name string, r reservedFor) bool {
 		return r.hub
 	case WebSearchToolName, WebFetchToolName:
 		return r.web
+	// Only where the run holds the brain's: an email server's reply is
+	// that server's everywhere else.
+	case ReplyToolName:
+		return r.reply
 	}
 	if slices.Contains(BrowserToolNames, name) {
 		return r.browse

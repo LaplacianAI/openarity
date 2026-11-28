@@ -101,10 +101,10 @@ func TestANoteIsWrittenAfterTheTextBeforeIt(t *testing.T) {
 	notes := make(chan note)
 	done := record(t.Context(), h.store, h.id, worker, newSoftLines(maxTokens, 0), true, nil, ch, notes, st.stop)
 	ch <- agent.TextEvent{Delta: "Proposing"}
-	n := note{kind: "proposed", payload: map[string]any{}, done: make(chan error, 1)}
+	n := note{kind: "proposed", payload: map[string]any{}, done: make(chan noteWritten, 1)}
 	notes <- n
-	if err := <-n.done; err != nil {
-		t.Fatal(err)
+	if d := <-n.done; d.err != nil || d.seq == 0 {
+		t.Fatalf("noteWritten at %d, %v", d.seq, d.err)
 	}
 	close(ch)
 	<-done

@@ -84,6 +84,9 @@ func newRunJob(
 		// A top-level run hands its person a file where its conversation can
 		// take one: the dashboard's, or a channel whose provider sends files.
 		WithFileSends(runtime.FileSends{Store: dbStore, MaxFile: registry.MaxFile, Logger: logger}).
+		// A run answering a person's message tells them things as it works,
+		// on the dashboard or the channel; a schedule's or watcher's never.
+		WithReplies(dbStore).
 		WithBrowsers(newBrowsers(secretStore, d.searchHTTP, reachable(cfg.MCPPrivateNetworks), net.DefaultResolver))
 	if reg := newMCPRegistry(cfg); reg != nil {
 		builder.WithRegistry(reg)
