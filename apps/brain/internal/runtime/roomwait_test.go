@@ -179,7 +179,10 @@ func TestStillNoRoomPutsTheTryOff(t *testing.T) {
 		next   time.Duration
 	}{
 		{10 * time.Second, time.Minute},
+		{roomRetryMin - time.Second, roomRetryMin},
 		{90 * time.Second, 90 * time.Second},
+		{roomRetryMax, roomRetryMax},
+		{roomRetryMax + time.Second, roomRetryMax},
 		{40 * time.Minute, 2 * time.Minute},
 	} {
 		t.Run(c.waited.String(), func(t *testing.T) {
