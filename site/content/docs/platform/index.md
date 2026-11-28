@@ -42,9 +42,14 @@ a message on a channel.
   by an admin or approver; a message to the team starts a hub run or steers the
   one going, and the answer goes back into the Telegram or WhatsApp chat, or is
   posted to a custom channel's reply URL, signed. See [Channels](channels.md).
+- **Schedules and watchers**: an agent run at a time, every so often or on a
+  cron rule, or when a page, a feed or a webhook says something changed,
+  answering in its own conversation, a chat, a channel or its maker's direct
+  messages. See [Schedules and watchers](schedules.md).
 - **The dashboard**, served by the brain at `/ui`: a home that says what needs
-  you, runs, sessions, approvals, agents, skills, MCP servers, channels, teams,
-  the graph and the team's settings, and a box to ask the team something.
+  you, runs, sessions, schedules, approvals, agents, skills, MCP servers,
+  channels, teams, the graph and the team's settings, and a box to ask the team
+  something.
 - Underneath: OIDC authentication, role-based authorisation where roles and
   their permissions are rows, an inbound gateway that verifies each channel's
   webhook against its own signing secret, versioned migrations, and health and

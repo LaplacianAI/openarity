@@ -1124,7 +1124,7 @@ describe("its pages", () => {
       within(nav)
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["General", "Tools", "Approvals", "Improvement"]);
+    ).toEqual(["General", "Tools", "Approvals", "Improvement", "Schedules"]);
     expect(within(nav).getByRole("link", { name: "General" })).toHaveAttribute(
       "aria-current",
       "page",

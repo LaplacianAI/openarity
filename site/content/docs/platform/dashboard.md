@@ -13,8 +13,8 @@ for, the one used most first in each:
 
 | Group | Screens | What they are for |
 | ----- | ------- | ----------------- |
-| Needs you | Sender approvals, Tool approvals, Improvements | Who is waiting to be let in, the tool calls waiting for a person, and the changes agents propose to themselves |
-| Work | Runs, Sessions | What the team did, and its conversations |
+| Needs you | Sender approvals, Tool approvals, Improvements, Scheduled | Who is waiting to be let in, the tool calls waiting for a person, the changes agents propose to themselves, and what your schedules did that you have not seen |
+| Work | Runs, Sessions, Schedules | What the team did, its conversations, and what runs on a clock or on a change |
 | Build | Agents, Skills, MCP servers, Channels, Builder, Blueprint, Graph | Defining what the team can do and where it hears from, and the graph that holds it |
 | Team | Team settings, Teams, Deleted teams | How the team's agents run; its members; and, for super admins only, deleted teams and restoring one |
 
@@ -58,6 +58,16 @@ each scrolls on its own, so a conversation that keeps going never pushes the
 run out of view; a line over the run says which of the session's runs it is
 and chooses another, with newer and older beside it. Under a channel's answer is a line saying
 whether the reply was sent, when, or why not; see [Channels](channels.md).
+A schedule's or a watcher's own conversation has a line over it naming it,
+when it fires next, and Pause and Run now.
+
+**Schedules** lists your schedules and watchers, in words ("weekdays at
+09:00", "the page example.com, every hour"), each with its next time in your
+zone, where it answers, what it last did and its state; an admin sees
+everyone's. A schedule's page opens on what is next, or on why it paused or
+what waits for your yes, and lists every fire. Making one is a page of its
+own, which shows the next three times as the rule is typed and lists where it
+may answer. See [Schedules and watchers](schedules.md).
 
 **Improvements** lists the changes the team's agents propose to their own
 harness: instructions, description, skills and their files, servers and tools,
@@ -201,12 +211,14 @@ plan, and any change to the draft takes the plan away. It is a
 [blueprint](blueprints.md), applied in one transaction.
 
 **Teams** lists the teams you can see and their members, with each member's
-role: `member`, `approver` or `admin`. **Team settings** has four pages:
+role: `member`, `approver` or `admin`. **Team settings** has five pages:
 **General** (the model, the hub and compaction, and deleting the team for a
 super admin), **Tools** (web search, the sandbox and the browser),
 **Approvals** (which tool calls wait for a person, and the rules) and
 **Improvement** (whether the team's agents improve themselves from their
-runs). While that is on, every
+runs) and **Schedules** (whether agents may propose schedules and watchers,
+the team's zone, and how many and how often; see
+[Schedules and watchers](schedules.md)). While improvement is on, every
 finished run is judged in the background on whether the task was done, by the
 team's model or a judge model chosen here, and a share of the good runs (10%
 until changed) is studied beside every bad one, as is a run that ended well

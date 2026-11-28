@@ -18,6 +18,10 @@ type session struct {
 	UserID *uuid.UUID `json:"user_id,omitempty"`
 	// Builder is a conversation the team's builder answers, not its hub.
 	Builder bool `json:"builder"`
+	// ScheduleID and WatcherID name the schedule or watcher whose own
+	// conversation this is; absent on any other.
+	ScheduleID *uuid.UUID `json:"schedule_id,omitempty"`
+	WatcherID  *uuid.UUID `json:"watcher_id,omitempty"`
 
 	StartedAt     time.Time `json:"started_at"`
 	LastMessageAt time.Time `json:"last_message_at"`

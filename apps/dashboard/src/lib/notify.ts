@@ -8,7 +8,7 @@
  */
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import type { ToolApproval } from "@/api/types";
+import type { ScheduledNewsItem, ToolApproval } from "@/api/types";
 import { mayAnswer, toolParts } from "@/lib/approvals";
 
 const KEY = "oa.notifications";
@@ -177,6 +177,35 @@ export function sendersNotice(n: number): { title: string; body: string } {
   };
 }
 
+/**
+ * What a notification for what a schedule or watcher did says. It names the
+ * schedule and what happened, never what it answered: a notice can show on a
+ * lock screen.
+ */
+export function scheduledNotice(items: readonly ScheduledNewsItem[]): {
+  title: string;
+  body: string;
+} {
+  const [one] = items;
+  if (items.length !== 1 || !one) {
+    return {
+      title: "Your schedules",
+      body: `${items.length} things your schedules and watchers did wait for you.`,
+    };
+  }
+  const what = one.watcher_id ? "watcher" : "schedule";
+  const did: Record<string, string> = {
+    failed: `A ${what} failed`,
+    error: "A watcher could not read its page",
+    missed: "A schedule was missed",
+    answered: `A ${what} answered`,
+  };
+  const title =
+    did[one.outcome] ??
+    (one.outcome.startsWith("skipped") ? `A ${what} was skipped` : `A ${what} ran`);
+  return { title: `${title}: ${one.name}`, body: "Open Scheduled to see it." };
+}
+
 function show(title: string, body: string, tag: string, open: () => void, again = false) {
   // Someone looking at the dashboard has the badge and the title already.
   if (document.visibilityState === "visible" && document.hasFocus()) return;
@@ -212,12 +241,15 @@ export function useApprovalNotices({
   me,
   pending,
   waiting,
+  scheduled,
 }: {
   teamId: string | null;
   can: (permission: string) => boolean;
   me: string | null;
   pending: readonly ToolApproval[] | undefined;
   waiting: number | null;
+  /** What the viewer's schedules did and they have not seen; undefined until it arrives. */
+  scheduled?: readonly ScheduledNewsItem[] | undefined;
 }) {
   const { state } = useNotifySwitch();
   const on = state === "on" && Boolean(teamId);
@@ -228,6 +260,7 @@ export function useApprovalNotices({
   // are. Permissions arriving late change neither.
   const seen = useRef<{ for: string; ids: Set<string> | null }>({ for: "", ids: null });
   const senders = useRef<{ for: string; n: number | null }>({ for: "", n: null });
+  const heard = useRef<{ for: string; keys: Set<string> | null }>({ for: "", keys: null });
   const who = useRef(can);
   who.current = can;
 
@@ -274,6 +307,20 @@ export function useApprovalNotices({
       show(title, body, `senders:${teamId}`, () => navigate({ to: "/ui/approvals" }), true);
     }
   }, [on, waiting, teamId, navigate]);
+
+  useEffect(() => {
+    const now = `${on}|${teamId}`;
+    if (heard.current.for !== now) heard.current = { for: now, keys: null };
+    if (!on || scheduled === undefined) return;
+    const keyOf = (i: ScheduledNewsItem) => `${i.schedule_id ?? i.watcher_id}|${i.fired_at}`;
+    const keys = scheduled.map(keyOf);
+    const fresher = new Set(fresh(heard.current.keys, keys));
+    heard.current.keys = new Set(keys);
+    const news = scheduled.filter((i) => fresher.has(keyOf(i)));
+    if (news.length === 0) return;
+    const { title, body } = scheduledNotice(news);
+    show(title, body, `scheduled:${teamId}`, () => navigate({ to: "/ui/schedules/news" }), true);
+  }, [on, scheduled, teamId, navigate]);
 }
 
 const PREFIX = /^\(\d+\+?\) /;

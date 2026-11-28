@@ -28,6 +28,8 @@ import type {
   ChannelPairing,
   CreateChannelRequest,
   CreatedChannel,
+  CreateScheduleRequest,
+  CreateWatcherRequest,
   Improvement,
   ImprovementDecision,
   ImprovementFilter,
@@ -55,6 +57,15 @@ import type {
   RunStatus,
   Said,
   SayRequest,
+  Schedule,
+  ScheduledNews,
+  ScheduleFire,
+  SchedulePlacePage,
+  SchedulePreview,
+  ScheduleRun,
+  ScheduleSettings,
+  ScheduleStatus,
+  ScheduleWhen,
   Session,
   SessionEnvelope,
   SessionFeedback,
@@ -69,7 +80,13 @@ import type {
   TeamSummary,
   ToolApproval,
   UpdateChannelRequest,
+  UpdateScheduleRequest,
+  UpdateWatcherRequest,
   User,
+  Watcher,
+  WatcherCheck,
+  WatcherSecret,
+  WatcherStatus,
 } from "./types";
 
 /* ------------------------------------------------------------------- auth */
@@ -1060,4 +1077,200 @@ export function listImproverPasses(
     `/teams/${teamId}/improvements/passes${query ? `?${query}` : ""}`,
     signal ? { signal } : {},
   );
+}
+
+/* ------------------------------------------------- schedules and watchers */
+
+function listQuery(
+  filter: { status?: string[]; all?: boolean },
+  cursor?: string | null,
+  limit?: number,
+): string {
+  const params = new URLSearchParams();
+  for (const st of filter.status ?? []) params.append("status", st);
+  if (filter.all) params.set("all", "true");
+  if (cursor) params.set("cursor", cursor);
+  if (limit) params.set("limit", String(limit));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+/** The caller's own, or with `all` everyone's, which takes schedule:manage. */
+export function listSchedules(
+  teamId: string,
+  filter: { status?: ScheduleStatus[]; all?: boolean } = {},
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<Page<Schedule>> {
+  return request<Page<Schedule>>(
+    `/teams/${teamId}/schedules${listQuery(filter, cursor)}`,
+    signal ? { signal } : {},
+  );
+}
+
+export function getSchedule(teamId: string, id: string, signal?: AbortSignal): Promise<Schedule> {
+  return request<Schedule>(`/teams/${teamId}/schedules/${id}`, signal ? { signal } : {});
+}
+
+export function createSchedule(teamId: string, body: CreateScheduleRequest): Promise<Schedule> {
+  return request<Schedule>(`/teams/${teamId}/schedules`, { method: "POST", body });
+}
+
+export function updateSchedule(
+  teamId: string,
+  id: string,
+  body: UpdateScheduleRequest,
+): Promise<Schedule> {
+  return request<Schedule>(`/teams/${teamId}/schedules/${id}`, { method: "PATCH", body });
+}
+
+/** Its conversation and runs are kept. */
+export function deleteSchedule(teamId: string, id: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/schedules/${id}`, { method: "DELETE" });
+}
+
+export function confirmSchedule(teamId: string, id: string): Promise<Schedule> {
+  return request<Schedule>(`/teams/${teamId}/schedules/${id}/confirm`, { method: "POST" });
+}
+
+/** Runs it now, once, without moving its next time. */
+export function runSchedule(teamId: string, id: string): Promise<ScheduleRun> {
+  return request<ScheduleRun>(`/teams/${teamId}/schedules/${id}/run`, { method: "POST" });
+}
+
+export function takeOverSchedule(teamId: string, id: string): Promise<Schedule> {
+  return request<Schedule>(`/teams/${teamId}/schedules/${id}/take-over`, { method: "POST" });
+}
+
+export function listScheduleFires(
+  teamId: string,
+  id: string,
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<Page<ScheduleFire>> {
+  return request<Page<ScheduleFire>>(
+    `/teams/${teamId}/schedules/${id}/fires${pageQuery(cursor)}`,
+    signal ? { signal } : {},
+  );
+}
+
+/** The next three times a rule would fire, and the zone they are read in. */
+export function previewSchedule(
+  teamId: string,
+  body: { when: ScheduleWhen; timezone?: string },
+  signal?: AbortSignal,
+): Promise<SchedulePreview> {
+  return request<SchedulePreview>(`/teams/${teamId}/schedules/preview`, {
+    method: "POST",
+    body,
+    ...(signal ? { signal } : {}),
+  });
+}
+
+export function listWatchers(
+  teamId: string,
+  filter: { status?: WatcherStatus[]; all?: boolean } = {},
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<Page<Watcher>> {
+  return request<Page<Watcher>>(
+    `/teams/${teamId}/watchers${listQuery(filter, cursor)}`,
+    signal ? { signal } : {},
+  );
+}
+
+export function getWatcher(teamId: string, id: string, signal?: AbortSignal): Promise<Watcher> {
+  return request<Watcher>(`/teams/${teamId}/watchers/${id}`, signal ? { signal } : {});
+}
+
+/** A webhook watcher's answer carries its secret, this once. */
+export function createWatcher(teamId: string, body: CreateWatcherRequest): Promise<Watcher> {
+  return request<Watcher>(`/teams/${teamId}/watchers`, { method: "POST", body });
+}
+
+export function updateWatcher(
+  teamId: string,
+  id: string,
+  body: UpdateWatcherRequest,
+): Promise<Watcher> {
+  return request<Watcher>(`/teams/${teamId}/watchers/${id}`, { method: "PATCH", body });
+}
+
+export function deleteWatcher(teamId: string, id: string): Promise<void> {
+  return request<void>(`/teams/${teamId}/watchers/${id}`, { method: "DELETE" });
+}
+
+export function confirmWatcher(teamId: string, id: string): Promise<Watcher> {
+  return request<Watcher>(`/teams/${teamId}/watchers/${id}/confirm`, { method: "POST" });
+}
+
+/** Has a page or feed watcher look now; it runs only if something changed. */
+export function checkWatcherNow(teamId: string, id: string): Promise<Watcher> {
+  return request<Watcher>(`/teams/${teamId}/watchers/${id}/run`, { method: "POST" });
+}
+
+export function takeOverWatcher(teamId: string, id: string): Promise<Watcher> {
+  return request<Watcher>(`/teams/${teamId}/watchers/${id}/take-over`, { method: "POST" });
+}
+
+/** A new secret for a webhook watcher; the old one stops working at once. */
+export function rollWatcherSecret(teamId: string, id: string): Promise<WatcherSecret> {
+  return request<WatcherSecret>(`/teams/${teamId}/watchers/${id}/secret`, { method: "POST" });
+}
+
+export function listWatcherChecks(
+  teamId: string,
+  id: string,
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<Page<WatcherCheck>> {
+  return request<Page<WatcherCheck>>(
+    `/teams/${teamId}/watchers/${id}/checks${pageQuery(cursor)}`,
+    signal ? { signal } : {},
+  );
+}
+
+/** Where the caller may have one answer: chats, channels and their direct messages. */
+export function listScheduleTargets(
+  teamId: string,
+  filter: { q?: string; kind?: "chat" | "channel" | "direct" } = {},
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<SchedulePlacePage> {
+  const params = new URLSearchParams();
+  if (filter.q?.trim()) params.set("q", filter.q.trim());
+  if (filter.kind) params.set("kind", filter.kind);
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return request<SchedulePlacePage>(
+    `/teams/${teamId}/schedule-targets${query ? `?${query}` : ""}`,
+    signal ? { signal } : {},
+  );
+}
+
+export function getScheduledNews(teamId: string, signal?: AbortSignal): Promise<ScheduledNews> {
+  return request<ScheduledNews>(`/teams/${teamId}/scheduled/news`, signal ? { signal } : {});
+}
+
+/** Marks what one schedule or watcher did as seen. */
+export function markScheduledNewsSeen(
+  teamId: string,
+  which: { schedule_id: string } | { watcher_id: string },
+): Promise<void> {
+  return request<void>(`/teams/${teamId}/scheduled/news/seen`, { method: "POST", body: which });
+}
+
+export function getScheduleSettings(
+  teamId: string,
+  signal?: AbortSignal,
+): Promise<ScheduleSettings> {
+  return request<ScheduleSettings>(`/teams/${teamId}/schedule-settings`, signal ? { signal } : {});
+}
+
+/** A PUT of the whole: read first, change what was given. */
+export function saveScheduleSettings(
+  teamId: string,
+  body: ScheduleSettings,
+): Promise<ScheduleSettings> {
+  return request<ScheduleSettings>(`/teams/${teamId}/schedule-settings`, { method: "PUT", body });
 }

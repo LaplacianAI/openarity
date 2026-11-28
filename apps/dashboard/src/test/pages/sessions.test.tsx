@@ -336,6 +336,42 @@ describe("a session's page", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Direct session" })).toBeVisible();
   });
 
+  it("names the schedule whose own conversation it is, and an ordinary one names none", async () => {
+    listed({
+      [SESSION]: { body: { ...session, schedule_id: "sch-1" } },
+      "GET /teams/{id}/schedules/{sid}": {
+        body: {
+          id: "sch-1",
+          name: "morning-brief",
+          objective: "o",
+          when: { kind: "every", every_seconds: 3600 },
+          timezone: "UTC",
+          hub: true,
+          target: { kind: "own" },
+          session_id: session.id,
+          status: "active",
+          upcoming: [],
+          created_at: STAMP,
+          updated_at: STAMP,
+        },
+      },
+      "POST /teams/{id}/scheduled/news/seen": { status: 204 },
+    });
+    at(PAGE);
+    expect(await screen.findByRole("link", { name: "morning-brief" })).toHaveAttribute(
+      "href",
+      "/ui/schedules/sch-1",
+    );
+
+    cleanup();
+    const seen = listed({});
+    at(PAGE);
+    // Once the session is read: its kind is in the line under the title.
+    await screen.findByText("group");
+    expect(document.querySelector("[data-trigger-strip]")).toBeNull();
+    expect(seen.some((x) => x.path.includes("/schedules/"))).toBe(false);
+  });
+
   it("reads a linked session on its own, never by paging the list", async () => {
     const seen = listed({ "GET /teams/{id}/sessions": { body: { items: [] } } });
     await open();

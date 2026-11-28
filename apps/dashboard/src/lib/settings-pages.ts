@@ -2,7 +2,7 @@
  * The pages of a team's settings, kept apart from the pages themselves so the
  * always-loaded shell can list them in ⌘K without loading the forms.
  */
-export type SettingsPageId = "general" | "tools" | "approvals" | "improvement";
+export type SettingsPageId = "general" | "tools" | "approvals" | "improvement" | "schedules";
 
 export type SettingsPage = {
   id: SettingsPageId;
@@ -37,5 +37,11 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     to: "/ui/settings/improvement",
     label: "Improvement",
     about: "Whether agents propose changes to themselves, and how they are checked.",
+  },
+  {
+    id: "schedules",
+    to: "/ui/settings/schedules",
+    label: "Schedules",
+    about: "Whether agents may propose schedules, the team's zone, and how many and how often.",
   },
 ];

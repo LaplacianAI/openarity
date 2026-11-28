@@ -10,6 +10,7 @@ import {
   Ban,
   CheckCircle2,
   CircleDashed,
+  CircleSlash,
   Clock,
   Loader2,
   type LucideIcon,
@@ -50,6 +51,16 @@ const LOOKS: Record<string, Look> = {
   rejected: { tone: "text-failed", icon: XCircle },
   reverted: { tone: "text-cancelled", icon: Ban },
   withdrawn: { tone: "text-cancelled", icon: Ban },
+  // A schedule's or watcher's state, and what a fire or a look did.
+  proposed: { tone: "text-waiting", icon: Clock },
+  "needs your yes": { tone: "text-waiting", icon: Clock },
+  "needs its secret": { tone: "text-waiting", icon: Clock },
+  done: { tone: "text-cancelled", icon: CheckCircle2 },
+  deleted: { tone: "text-cancelled", icon: Ban },
+  missed: { tone: "text-waiting", icon: CircleSlash },
+  skipped: { tone: "text-waiting", icon: CircleSlash },
+  changed: { tone: "text-succeeded", icon: CheckCircle2 },
+  unchanged: { tone: "text-cancelled" },
 };
 
 const UNKNOWN: Look = { tone: "text-muted-foreground", icon: CircleDashed };

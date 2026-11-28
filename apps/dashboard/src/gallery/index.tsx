@@ -15,6 +15,8 @@ import { AttachedChip } from "@/components/file-chip";
 import { Markdown } from "@/components/markdown";
 import { Field, ReadOnlyNote, Tag, TextArea } from "@/components/registry-bits";
 import { RunView } from "@/components/run-detail";
+import { AskStrip } from "@/components/schedule-page";
+import { SecretReveal } from "@/components/secret-reveal";
 import { ErrorState, ForbiddenState } from "@/components/states";
 import { Count, LiveBadge, StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -745,6 +747,22 @@ export default function Gallery() {
               Approvals <Count n="50+" />
             </span>
           </div>
+          <div className="flex flex-wrap items-center gap-4">
+            {[
+              "active",
+              "paused",
+              "proposed",
+              "needs its secret",
+              "done",
+              "missed",
+              "skipped",
+              "changed",
+              "unchanged",
+            ].map((s) => (
+              <StatusPill key={s} status={s} />
+            ))}
+            <StatusPill status="needs your yes" pill />
+          </div>
         </div>
       </Section>
 
@@ -854,6 +872,36 @@ export default function Gallery() {
 
       <Section title="Conversation">
         <ConversationDemo />
+      </Section>
+
+      <Section title="Schedules">
+        <Grid>
+          <State label="an agent's ask, waiting for a yes">
+            <AskStrip
+              says="to change its objective, when it runs"
+              since={new Date(Date.now() - 12 * 60_000).toISOString()}
+              canConfirm
+              pending={false}
+              onConfirm={() => {}}
+            />
+          </State>
+          <State label="an ask, for a reader who cannot confirm">
+            <AskStrip
+              says="to delete it"
+              since={new Date(Date.now() - 50 * 60_000).toISOString()}
+              canConfirm={false}
+              pending={false}
+              onConfirm={() => {}}
+            />
+          </State>
+          <State label="a webhook's secret, shown once">
+            <SecretReveal
+              url="https://brain.example/hooks/watchers/Zk3n9QpLr2vX8yTq1mWbHa"
+              secret="whsec_0123456789abcdef0123456789abcdef"
+              onDone={() => {}}
+            />
+          </State>
+        </Grid>
       </Section>
     </div>
   );

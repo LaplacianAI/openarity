@@ -7,7 +7,7 @@
  * also the cheapest way to find out whether the token still works.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { onSessionExpired } from "./client";
 import { fetchAuthConfig, fetchWhoami, listTeams } from "./index";
@@ -15,6 +15,41 @@ import { refreshSession } from "./oidc";
 import { getSession, getToken, setSession, subscribeToken } from "./token";
 
 const TEAM_KEY = "openarity.team";
+
+/*
+ * The chosen team is one value for the whole tab, not one per screen: every
+ * caller of useCurrentTeam reads it from here, so choosing a team in the top
+ * bar moves every screen that is open, not only the picker.
+ */
+const teamListeners = new Set<() => void>();
+
+function readChosen(): string | null {
+  try {
+    return window.sessionStorage.getItem(TEAM_KEY);
+  } catch {
+    return chosenHere;
+  }
+}
+
+// What was chosen when storage refuses it: remembered for this page only.
+let chosenHere: string | null = null;
+
+function chooseTeam(teamId: string) {
+  chosenHere = teamId;
+  try {
+    window.sessionStorage.setItem(TEAM_KEY, teamId);
+  } catch {
+    // Remembered for this page only; the default still applies on reload.
+  }
+  for (const l of teamListeners) l();
+}
+
+function subscribeTeam(l: () => void) {
+  teamListeners.add(l);
+  return () => {
+    teamListeners.delete(l);
+  };
+}
 
 /**
  * Teaches the client how to renew a session, once the brain has said which
@@ -74,11 +109,13 @@ export function useToken(): string | null {
  * the teams list falls back to the first one.
  */
 export function forgetTeam() {
+  chosenHere = null;
   try {
     window.sessionStorage.removeItem(TEAM_KEY);
   } catch {
     // Nothing was remembered.
   }
+  for (const l of teamListeners) l();
 }
 
 /**
@@ -97,27 +134,12 @@ export function useCurrentTeam() {
     enabled: Boolean(token),
   });
 
-  const [chosen, setChosen] = useState<string | null>(() => {
-    try {
-      return window.sessionStorage.getItem(TEAM_KEY);
-    } catch {
-      return null;
-    }
-  });
+  const chosen = useSyncExternalStore(subscribeTeam, readChosen);
 
   const items = teams.data?.items ?? [];
   const known = chosen && items.some((t) => t.id === chosen) ? chosen : (items[0]?.id ?? null);
 
-  const choose = useCallback((teamId: string) => {
-    setChosen(teamId);
-    try {
-      window.sessionStorage.setItem(TEAM_KEY, teamId);
-    } catch {
-      // Remembered for this page only; the default still applies on reload.
-    }
-  }, []);
-
-  return { teamId: known, teams: items, isPending: teams.isPending, choose };
+  return { teamId: known, teams: items, isPending: teams.isPending, choose: chooseTeam };
 }
 
 /** The signed-in user's id, from /whoami, which the shell reads already. */

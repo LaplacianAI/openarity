@@ -6052,6 +6052,17 @@ components:
           description: |
             A conversation on the dashboard channel that the team's builder
             answers, rather than its hub. Fixed when the conversation starts.
+        schedule_id:
+          type: string
+          format: uuid
+          description: |
+            The schedule whose own conversation this is: where it runs, and
+            answers when it answers in its own conversation. Absent on any
+            other conversation, including a chat a schedule posts in.
+        watcher_id:
+          type: string
+          format: uuid
+          description: The watcher whose own conversation this is; absent on any other.
         id:
           type: string
           format: uuid

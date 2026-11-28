@@ -265,9 +265,13 @@ export async function pageOf(route: { options: { component?: unknown } }): Promi
  * tree does under the /ui layout, without the layout's sidebar and sign-in.
  * Returns the router, so a test can read where it ended up.
  */
-export function showAt(at: string, routes: [path: string, route: AnyRoute][], strict = false) {
+export function showAt(
+  at: string,
+  routes: [path: string, route: AnyRoute][],
+  strict = false,
+  client: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   setToken("a-token");
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const root = createRootRoute({ component: Outlet });
   for (const [path, route] of routes) {
     route.update({ id: path, path, getParentRoute: () => root } as never);

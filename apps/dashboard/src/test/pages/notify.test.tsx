@@ -92,6 +92,14 @@ function later(): [Promise<void>, () => void] {
 }
 
 let actions: string[] = [];
+/** What the viewer's schedules did and they have not seen, as the brain lists it. */
+let news: {
+  schedule_id: string;
+  name: string;
+  session_id: string;
+  fired_at: string;
+  outcome: string;
+}[] = [];
 
 function shell(granted = ["approval:read", "approval:self", "channel:read"]): Seen[] {
   actions = granted;
@@ -105,6 +113,9 @@ function shell(granted = ["approval:read", "approval:self", "channel:read"]): Se
       await me;
       return { body: { id: "me", subject: "ann", email: "ann@example.com" } };
     },
+    "GET /teams/{id}/scheduled/news": () => ({
+      body: { items: news, count: news.length, more: false },
+    }),
     "GET /teams/{id}/approvals": () => ({
       body: { items: pending, next_cursor: more ? "next" : null },
     }),
@@ -148,6 +159,7 @@ beforeEach(() => {
   pending = [];
   more = false;
   waiting = 0;
+  news = [];
   me = Promise.resolve();
   perms = Promise.resolve();
   window.localStorage.setItem("oa.notifications", "on");
@@ -368,6 +380,33 @@ describe("notifications of approvals", () => {
     await poll();
     await waitFor(() => expect(shown).toHaveLength(4));
     expect(shown.slice(1).map((n) => n.tag)).toEqual(["approval:e", "approval:f", "approval:g"]);
+  });
+
+  it("tells of what a schedule did that is new, once, naming it and not what it said", async () => {
+    const fired = (s: string, at: string, outcome: string) => ({
+      schedule_id: s,
+      name: s,
+      session_id: "x",
+      fired_at: at,
+      outcome,
+    });
+    news = [fired("old", "2026-11-28T01:00:00Z", "failed")];
+    shell(["schedule:read"]);
+    await screen.findByRole("navigation", { name: "Main" });
+    await poll();
+    expect(shown).toEqual([]);
+
+    news = [fired("standup", "2026-11-28T02:00:00Z", "failed"), ...news];
+    await poll();
+    await waitFor(() => expect(shown).toHaveLength(1));
+    expect(shown[0]).toMatchObject({
+      title: "A schedule failed: standup",
+      body: "Open Scheduled to see it.",
+      tag: `scheduled:${TEAM}`,
+    });
+
+    await poll();
+    expect(shown).toHaveLength(1);
   });
 
   it("says nothing of people who were already waiting, or of a count that stands", async () => {

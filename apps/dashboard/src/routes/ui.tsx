@@ -1,12 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   ArchiveRestore,
   Bell,
   BellOff,
+  BellRing,
   BookOpen,
   Bot,
+  CalendarClock,
   ChevronsUpDown,
   Ellipsis,
   FileCode2,
@@ -30,6 +32,7 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { useCallback, useState } from "react";
 import { fetchWhoami, listDeletedTeams, listImprovements, listToolApprovals } from "@/api";
 import { usePermissions } from "@/api/permissions";
+import { newsBadge, useScheduledNews } from "@/api/scheduled";
 import { useCurrentTeam, useMe, useToken } from "@/api/session";
 import { useTeamSummary } from "@/api/summary";
 import { setToken } from "@/api/token";
@@ -109,6 +112,18 @@ const IMPROVEMENTS: NavItem = {
   icon: Lightbulb,
   exact: false,
 };
+const SCHEDULES: NavItem = {
+  to: "/ui/schedules",
+  label: "Schedules",
+  icon: CalendarClock,
+  exact: false,
+};
+const SCHEDULED: NavItem = {
+  to: "/ui/schedules/news",
+  label: "Scheduled",
+  icon: BellRing,
+  exact: false,
+};
 const TEAMS: NavItem = { to: "/ui/teams", label: "Teams", icon: Users, exact: false };
 const DELETED_TEAMS: NavItem = {
   to: "/ui/teams/deleted",
@@ -133,8 +148,8 @@ type NavGroup = { label?: string; items: readonly NavItem[] };
 export function navGroups(superAdmin: boolean): readonly NavGroup[] {
   return [
     { items: [HOME] },
-    { label: "Needs you", items: [APPROVALS, REQUESTS, IMPROVEMENTS] },
-    { label: "Work", items: [RUNS, SESSIONS] },
+    { label: "Needs you", items: [APPROVALS, REQUESTS, IMPROVEMENTS, SCHEDULED] },
+    { label: "Work", items: [RUNS, SESSIONS, SCHEDULES] },
     {
       label: "Build",
       items: [
@@ -296,11 +311,13 @@ function Shell({ pathname }: { pathname: string }) {
   const senders = useWaiting(teamId, every, notifying);
   const requests = usePendingRequests(teamId, every, notifying);
   const improvements = usePendingImprovements(teamId, every, notifying);
+  const scheduled = useScheduledNews(teamId, every, notifying);
   const requestsBadge = requests.n === 0 ? null : `${requests.n}${requests.more ? "+" : ""}`;
   const waiting: Badges = {
     [APPROVALS.to]: senders ? String(senders) : null,
     [REQUESTS.to]: requestsBadge,
     [IMPROVEMENTS.to]: improvements,
+    [SCHEDULED.to]: newsBadge(scheduled.data),
   };
   const perms = usePermissions(teamId);
   useApprovalNotices({
@@ -309,6 +326,7 @@ function Shell({ pathname }: { pathname: string }) {
     me: useMe(),
     pending: requests.items,
     waiting: senders,
+    scheduled: scheduled.data?.items,
   });
   useWaitingTitle(titleCount(senders ?? 0, requests.n, requests.more));
   const [finding, setFinding] = useState(false);
@@ -520,9 +538,25 @@ function Nav({
   );
 }
 
+/**
+ * Screens about no one team: switching teams leaves them where they are.
+ * Every other screen shows one team's things, which the new team does not
+ * have, so switching from one goes Home.
+ */
+const ACROSS_TEAMS = ["/ui/teams"];
+
 /** The team the dashboard is about, and the reader's role in it. */
 function TeamSwitcher() {
-  const { teamId, teams, choose } = useCurrentTeam();
+  const { teamId, teams, choose: chooseTeam } = useCurrentTeam();
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const choose = (id: string) => {
+    if (id === teamId) return;
+    chooseTeam(id);
+    if (!ACROSS_TEAMS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+      void navigate({ to: "/ui" });
+    }
+  };
   const current = teams.find((t) => t.id === teamId);
   const role = current?.role ? (
     <span className="shrink-0 text-xs text-muted-foreground">{current.role}</span>

@@ -315,6 +315,7 @@ func sessionView(row db.Session) session {
 	out := session{
 		ID: row.ID, ChannelID: row.ChannelID, Kind: row.Kind, Status: row.Status,
 		StartedAt: row.StartedAt, LastMessageAt: row.LastMessageAt, Builder: row.Builder,
+		ScheduleID: row.ScheduleID, WatcherID: row.WatcherID,
 	}
 	if row.Kind == "direct" {
 		out.UserID = row.UserID

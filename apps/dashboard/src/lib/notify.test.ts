@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { ToolApproval } from "@/api/types";
-import { answerable, fresh, requestNotice, requestsNotice, sendersNotice } from "@/lib/notify";
+import {
+  answerable,
+  fresh,
+  requestNotice,
+  requestsNotice,
+  scheduledNotice,
+  sendersNotice,
+} from "@/lib/notify";
 
 function request(id: string, extra: Partial<ToolApproval> = {}): ToolApproval {
   return {
@@ -102,5 +109,34 @@ describe("what a notification says", () => {
   it("counts the people waiting to be let in", () => {
     expect(sendersNotice(1).body).toBe("Someone wrote in on a channel and waits to be let in.");
     expect(sendersNotice(3).body).toBe("3 people wrote in on a channel and wait to be let in.");
+  });
+});
+
+describe("what a notice about a schedule says", () => {
+  const item = (outcome: string, watcher = false) => ({
+    ...(watcher ? { watcher_id: "w1" } : { schedule_id: "s1" }),
+    name: "standup",
+    session_id: "x",
+    fired_at: "2026-11-28T00:00:00Z",
+    outcome,
+  });
+
+  it("names the schedule and what happened, never what it answered", () => {
+    expect(scheduledNotice([item("failed")])).toEqual({
+      title: "A schedule failed: standup",
+      body: "Open Scheduled to see it.",
+    });
+    expect(scheduledNotice([item("skipped_busy")]).title).toBe("A schedule was skipped: standup");
+    expect(scheduledNotice([item("error", true)]).title).toBe(
+      "A watcher could not read its page: standup",
+    );
+    expect(scheduledNotice([item("answered")]).title).toBe("A schedule answered: standup");
+  });
+
+  it("says a burst as one notice", () => {
+    expect(scheduledNotice([item("failed"), item("missed")])).toEqual({
+      title: "Your schedules",
+      body: "2 things your schedules and watchers did wait for you.",
+    });
   });
 });
