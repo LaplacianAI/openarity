@@ -1038,6 +1038,23 @@ Read on demand from [AGENTS.md](AGENTS.md): before changing a design, a boundary
   runs other teams' work. At most eight files go in one request, the newest,
   text files among them; images are read up to 5 MB and PDFs and text up to
   10 MB, and a text file is sent as its first 100 KiB.
+- **A request whose files the provider cannot take goes again without
+  them.** A file read stays in the transcript and goes with every later
+  request, so one a provider breaks on would fail the conversation for good:
+  OmniRoute answers a PDF of about 6 MB with a 500, its translation
+  overflowing a regular expression's stack
+  ([OmniRoute#21015](https://github.com/cheaper-inference/OmniRoute/issues/21015)).
+  A 400, 422 or 5xx to a request carrying files is tried once with each
+  image and PDF named as not sent, text files still sent as text. A stream is
+  tried at its first read, since openaicompat reports a provider's answer
+  there and not when the stream opens, and never after an event, which was
+  already shown. After a 400, 422 or 500 the rest of that run sends none, so
+  the refusal is paid once a run, not once a step; any other 5xx (a
+  gateway's, a 529 overloaded) may pass, so only that request goes without. openai-go's own
+  retries come first, so a 5xx is sent three times before it is tried bare.
+  The model says the file could not be read rather than the run failing. If
+  the try without files fails too, the first answer is the run's error. Not
+  tried again: `context_length_exceeded`, which is compaction's, and a 429.
 - **A tool's file is a conversation attachment.** Every file an MCP tool
   returns, readable or not, up to 25 MiB (`mcp.MaxKeptBytes`, a person's
   limit too), is kept by the run's keeper (`runtime/keep.go`) as one of its
